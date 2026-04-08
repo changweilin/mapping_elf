@@ -66,6 +66,7 @@ const progressContainer = document.getElementById('download-progress-container')
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
 const weatherSegmentsContainer = document.getElementById('weather-segments-container');
+const segmentDistSelect = document.getElementById('segment-dist-select');
 
 const statDistance = document.getElementById('stat-distance');
 const statAscent = document.getElementById('stat-ascent');
@@ -145,6 +146,14 @@ routeModeRadios.forEach((radio) => {
     }
   });
 });
+
+if (segmentDistSelect) {
+  segmentDistSelect.addEventListener('change', () => {
+    if (currentRouteCoords && currentRouteCoords.length >= 2) {
+      renderWeatherSegments();
+    }
+  });
+}
 
 // =========== Core Logic ===========
 
@@ -403,7 +412,9 @@ function importGpx(e) {
 let weatherSegments = [];
 
 function generateWeatherSegments(coords, waypoints) {
-  const SEGMENT_MAX_DIST = 10000; // 10km limit
+  const distSelect = document.getElementById('segment-dist-select');
+  const segmentLimitMeters = distSelect ? parseInt(distSelect.value) : 10000;
+  const SEGMENT_MAX_DIST = segmentLimitMeters;
   const segments = [];
   if (coords.length < 2 || waypoints.length < 2) return segments;
 
@@ -488,7 +499,9 @@ function renderWeatherSegments() {
     return;
   }
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   weatherSegments.forEach((seg, idx) => {
     const card = document.createElement('div');
@@ -500,8 +513,9 @@ function renderWeatherSegments() {
         <span class="ws-title">${title}</span>
         <span class="ws-dist">${formatDistance(seg.distance)}</span>
       </div>
-      <div class="ws-controls">
-        <input type="date" value="${todayStr}" class="seg-date" />
+      <div class="ws-controls" style="display: flex; gap: 4px;">
+        <input type="date" value="${todayStr}" class="seg-date" style="flex: 1; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
+        <input type="time" value="${nowTimeStr}" class="seg-time" style="width: 100px; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
       </div>
       <div class="ws-result empty">
         <p>讀取中...</p>
@@ -509,18 +523,21 @@ function renderWeatherSegments() {
     `;
 
     const dateInput = card.querySelector('.seg-date');
+    const timeInput = card.querySelector('.seg-time');
     const resContainer = card.querySelector('.ws-result');
 
     const fetchWeatherForSeg = async () => {
       const dateStr = dateInput.value;
-      if (!dateStr) return;
+      const timeStr = timeInput.value;
+      if (!dateStr || !timeStr) return;
       
       dateInput.disabled = true;
+      timeInput.disabled = true;
       resContainer.classList.remove('empty');
       resContainer.innerHTML = '<p>讀取中...</p>';
       
       try {
-        const results = await weatherService.getWeatherAlongRoute(seg.coords, dateStr);
+        const results = await weatherService.getWeatherAlongRoute(seg.coords, dateStr, timeStr);
         // Use the middle point for segment summary (index 1 if 3 points sampled)
         const mainRes = results.length > 1 ? results[1] : results[0]; 
         
@@ -528,8 +545,8 @@ function renderWeatherSegments() {
           resContainer.innerHTML = `
             <div class="ws-icon">${mainRes.weatherIcon}</div>
             <div class="ws-info">
-              <span class="ws-temp">${mainRes.tempMax} / ${mainRes.tempMin}</span>
-              <span class="ws-desc">${mainRes.weatherDesc} • 降雨 ${mainRes.precipitation}</span>
+              <span class="ws-temp" style="font-weight: 500;">${mainRes.temp} <span style="font-size: 0.85em; opacity: 0.8; font-weight: normal;">(高低 ${mainRes.tempMax} / ${mainRes.tempMin})</span></span>
+              <span class="ws-desc">${mainRes.weatherDesc} • 降水 ${mainRes.precipitation}</span>
             </div>
           `;
         } else {
@@ -541,10 +558,12 @@ function renderWeatherSegments() {
         resContainer.innerHTML = '<p>查詢失敗</p>';
       } finally {
         dateInput.disabled = false;
+        timeInput.disabled = false;
       }
     };
 
     dateInput.addEventListener('change', fetchWeatherForSeg);
+    timeInput.addEventListener('change', fetchWeatherForSeg);
     weatherSegmentsContainer.appendChild(card);
     
     // Auto load weather

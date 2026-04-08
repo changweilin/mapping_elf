@@ -36,7 +36,7 @@ export class WeatherService {
   /**
    * Fetch weather for route points on a given date
    */
-  async getWeatherAlongRoute(routeCoords, dateStr) {
+  async getWeatherAlongRoute(routeCoords, dateStr, timeStr) {
     if (!routeCoords || routeCoords.length < 2 || !dateStr) return [];
 
     // Sample 3-5 points along route
@@ -62,10 +62,10 @@ export class WeatherService {
         let data;
         if (diffDays >= 0 && diffDays <= 16) {
           // Forecast
-          data = await this._fetchForecast(lat, lng, dateStr);
+          data = await this._fetchForecast(lat, lng, dateStr, timeStr);
         } else {
           // Historical
-          data = await this._fetchHistorical(lat, lng, dateStr);
+          data = await this._fetchHistorical(lat, lng, dateStr, timeStr);
         }
         data.label = labels[i];
         data.lat = lat;
@@ -85,49 +85,88 @@ export class WeatherService {
     return results;
   }
 
-  async _fetchForecast(lat, lng, dateStr) {
-    const url = `${FORECAST_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,windspeed_10m_max,relative_humidity_2m_mean&timezone=Asia/Taipei&start_date=${dateStr}&end_date=${dateStr}`;
+  async _fetchForecast(lat, lng, dateStr, timeStr) {
+    const url = `${FORECAST_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,windspeed_10m_max,relative_humidity_2m_mean&hourly=temperature_2m,relative_humidity_2m,precipitation,weathercode,windspeed_10m&timezone=Asia/Taipei&start_date=${dateStr}&end_date=${dateStr}`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`Forecast API error: ${resp.status}`);
     const json = await resp.json();
     const d = json.daily;
+    const h = json.hourly;
     if (!d || !d.time || d.time.length === 0) throw new Error('No forecast data');
 
-    const code = d.weathercode?.[0] ?? -1;
-    const wmo = WMO_CODES[code] || { icon: '❓', desc: '未知' };
+    let targetCode = d.weathercode?.[0] ?? -1;
+    let mainTempStr = '—';
+    let prepStr = d.precipitation_sum?.[0] != null ? `${d.precipitation_sum[0]} mm` : '—';
+    let windStr = d.windspeed_10m_max?.[0] != null ? `${d.windspeed_10m_max[0]} km/h` : '—';
+    let humStr = d.relative_humidity_2m_mean?.[0] != null ? `${d.relative_humidity_2m_mean[0]}%` : '—';
+
+    // If a time was specified, try to find the matching hourly weather
+    if (timeStr && h && h.time) {
+      const hour = parseInt(timeStr.split(':')[0]);
+      if (!isNaN(hour) && hour >= 0 && hour < 24) {
+         targetCode = h.weathercode?.[hour] ?? targetCode;
+         mainTempStr = h.temperature_2m?.[hour] != null ? `${h.temperature_2m[hour]}°C` : '—';
+         prepStr = h.precipitation?.[hour] != null ? `${h.precipitation[hour]} mm` : prepStr;
+         windStr = h.windspeed_10m?.[hour] != null ? `${h.windspeed_10m[hour]} km/h` : windStr;
+         humStr = h.relative_humidity_2m?.[hour] != null ? `${h.relative_humidity_2m[hour]}%` : humStr;
+      }
+    } else {
+      mainTempStr = d.temperature_2m_max?.[0] != null ? `${d.temperature_2m_max[0]}°C` : '—';
+    }
+
+    const wmo = WMO_CODES[targetCode] || { icon: '❓', desc: '未知' };
 
     return {
-      temp: d.temperature_2m_max?.[0] != null ? `${d.temperature_2m_max[0]}°` : '—',
+      temp: mainTempStr,
       tempMax: d.temperature_2m_max?.[0] != null ? `${d.temperature_2m_max[0]}°C` : '—',
       tempMin: d.temperature_2m_min?.[0] != null ? `${d.temperature_2m_min[0]}°C` : '—',
-      humidity: d.relative_humidity_2m_mean?.[0] != null ? `${d.relative_humidity_2m_mean[0]}%` : '—',
-      windSpeed: d.windspeed_10m_max?.[0] != null ? `${d.windspeed_10m_max[0]} km/h` : '—',
-      precipitation: d.precipitation_sum?.[0] != null ? `${d.precipitation_sum[0]} mm` : '—',
-      weatherCode: code,
+      humidity: humStr,
+      windSpeed: windStr,
+      precipitation: prepStr,
+      weatherCode: targetCode,
       weatherDesc: wmo.desc,
       weatherIcon: wmo.icon,
     };
   }
 
-  async _fetchHistorical(lat, lng, dateStr) {
-    const url = `${HISTORICAL_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,windspeed_10m_max&timezone=Asia/Taipei&start_date=${dateStr}&end_date=${dateStr}`;
+  async _fetchHistorical(lat, lng, dateStr, timeStr) {
+    const url = `${HISTORICAL_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,windspeed_10m_max&hourly=temperature_2m,relative_humidity_2m,precipitation,weathercode,windspeed_10m&timezone=Asia/Taipei&start_date=${dateStr}&end_date=${dateStr}`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`Historical API error: ${resp.status}`);
     const json = await resp.json();
     const d = json.daily;
+    const h = json.hourly;
     if (!d || !d.time || d.time.length === 0) throw new Error('No historical data');
 
-    const code = d.weathercode?.[0] ?? -1;
-    const wmo = WMO_CODES[code] || { icon: '❓', desc: '未知' };
+    let targetCode = d.weathercode?.[0] ?? -1;
+    let mainTempStr = '—';
+    let prepStr = d.precipitation_sum?.[0] != null ? `${d.precipitation_sum[0]} mm` : '—';
+    let windStr = d.windspeed_10m_max?.[0] != null ? `${d.windspeed_10m_max[0]} km/h` : '—';
+    let humStr = '—';
+
+    if (timeStr && h && h.time) {
+      const hour = parseInt(timeStr.split(':')[0]);
+      if (!isNaN(hour) && hour >= 0 && hour < 24) {
+         targetCode = h.weathercode?.[hour] ?? targetCode;
+         mainTempStr = h.temperature_2m?.[hour] != null ? `${h.temperature_2m[hour]}°C` : '—';
+         prepStr = h.precipitation?.[hour] != null ? `${h.precipitation[hour]} mm` : prepStr;
+         windStr = h.windspeed_10m?.[hour] != null ? `${h.windspeed_10m[hour]} km/h` : windStr;
+         humStr = h.relative_humidity_2m?.[hour] != null ? `${h.relative_humidity_2m[hour]}%` : humStr;
+      }
+    } else {
+      mainTempStr = d.temperature_2m_max?.[0] != null ? `${d.temperature_2m_max[0]}°C` : '—';
+    }
+
+    const wmo = WMO_CODES[targetCode] || { icon: '❓', desc: '未知' };
 
     return {
-      temp: d.temperature_2m_max?.[0] != null ? `${d.temperature_2m_max[0]}°` : '—',
+      temp: mainTempStr,
       tempMax: d.temperature_2m_max?.[0] != null ? `${d.temperature_2m_max[0]}°C` : '—',
       tempMin: d.temperature_2m_min?.[0] != null ? `${d.temperature_2m_min[0]}°C` : '—',
-      humidity: '—',
-      windSpeed: d.windspeed_10m_max?.[0] != null ? `${d.windspeed_10m_max[0]} km/h` : '—',
-      precipitation: d.precipitation_sum?.[0] != null ? `${d.precipitation_sum[0]} mm` : '—',
-      weatherCode: code,
+      humidity: humStr,
+      windSpeed: windStr,
+      precipitation: prepStr,
+      weatherCode: targetCode,
       weatherDesc: wmo.desc,
       weatherIcon: wmo.icon,
     };
