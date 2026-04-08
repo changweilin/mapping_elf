@@ -198,8 +198,8 @@ function selectAlternative(index) {
   currentRouteCoords = route.coords;
   currentElevations = route.elevations;
 
-  // Update map selection
-  mapManager.selectRoute(allAlternatives, index);
+  // Update map selection - set triggeredByUI to true to prevent recursion
+  mapManager.selectRoute(allAlternatives, index, true);
 
   // Update elevation chart with pre-fetched data
   elevationProfile.updateWithData(

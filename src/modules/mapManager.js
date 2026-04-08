@@ -211,8 +211,11 @@ export class MapManager {
 
   /**
    * Visually select a route among alternatives
+   * @param {Array} routes - Current alternatives
+   * @param {number} selectedIdx - Index to select
+   * @param {boolean} triggeredByUI - If true, do not fire onRouteSelect to avoid recursion
    */
-  selectRoute(routes, selectedIdx) {
+  selectRoute(routes, selectedIdx, triggeredByUI = false) {
     this.selectedRouteIndex = selectedIdx;
 
     // Update polyline styles
@@ -231,8 +234,8 @@ export class MapManager {
       if (isSelected) pl.bringToFront();
     });
 
-    // Callback to update UI
-    if (this.onRouteSelect) {
+    // Callback to update UI, but only if NOT triggered by the UI already
+    if (this.onRouteSelect && !triggeredByUI) {
       this.onRouteSelect(selectedIdx);
     }
   }
