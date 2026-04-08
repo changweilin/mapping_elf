@@ -44,36 +44,60 @@ export class RouteEngine {
   async getAlternativeRoutes(waypoints) {
     if (waypoints.length < 2) return [];
 
-    const profile = PROFILE_MAP[this.mode] || 'foot';
-    const coordStr = waypoints.map((w) => `${w[1]},${w[0]}`).join(';');
-    
-    // Request up to 3 alternatives from OSRM
-    const url = `${OSRM_BASE}/${profile}/${coordStr}?overview=full&geometries=geojson&steps=false&alternatives=3`;
-
     let rawRoutes = [];
 
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`OSRM error: ${resp.status}`);
+    if (this.mode === 'hiking') {
+      try {
+        const coordStr = waypoints.map((w) => `${w[1]},${w[0]}`).join('|');
+        const url = `https://brouter.de/brouter?lonlats=${coordStr}&profile=hiking-mountain&alternativeidx=0&format=geojson`;
+        
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`BRouter error: ${resp.status}`);
+        
+        const data = await resp.json();
+        if (!data.features || data.features.length === 0) {
+          throw new Error('No route found from BRouter');
+        }
 
-      const data = await resp.json();
-      if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
-        throw new Error('No route found');
+        const feature = data.features[0];
+        // BRouter geojson coordinates are [lng, lat, elevation?]
+        const coords = feature.geometry.coordinates.map((c) => [c[1], c[0]]);
+        const distance = feature.properties['track-length'] || 0;
+        const duration = feature.properties['total-time'] || 0;
+
+        rawRoutes = [{
+          coords,
+          osrmDistance: distance,
+          osrmDuration: duration
+        }];
+      } catch (err) {
+        console.warn('BRouter routing failed, using fallback:', err.message);
+        rawRoutes = [{ coords: [...waypoints], osrmDistance: 0, osrmDuration: 0 }];
       }
-
-      // Convert all routes from GeoJSON [lng,lat] to [lat,lng]
-      rawRoutes = data.routes.map((r) => ({
-        coords: r.geometry.coordinates.map((c) => [c[1], c[0]]),
-        osrmDistance: r.distance,
-        osrmDuration: r.duration,
-      }));
+    } else {
+      const profile = PROFILE_MAP[this.mode] || 'foot';
+      const coordStr = waypoints.map((w) => `${w[1]},${w[0]}`).join(';');
       
-      // Feature: If OSRM only returns 1 route but we have > 2 waypoints, 
-      // we could try to generate alternatives by looking at the last segment.
-      // But for now, we process what OSRM gives us (up to 4).
-    } catch (err) {
-      console.warn('OSRM routing failed, using fallback:', err.message);
-      rawRoutes = [{ coords: [...waypoints], osrmDistance: 0, osrmDuration: 0 }];
+      const url = `${OSRM_BASE}/${profile}/${coordStr}?overview=full&geometries=geojson&steps=false&alternatives=3`;
+
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`OSRM error: ${resp.status}`);
+
+        const data = await resp.json();
+        if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+          throw new Error('No route found');
+        }
+
+        rawRoutes = data.routes.map((r) => ({
+          coords: r.geometry.coordinates.map((c) => [c[1], c[0]]),
+          osrmDistance: r.distance,
+          osrmDuration: r.duration,
+        }));
+      } catch (err) {
+        console.warn('OSRM routing failed, using fallback:', err.message);
+        rawRoutes = [{ coords: [...waypoints], osrmDistance: 0, osrmDuration: 0 }];
+      }
     }
 
     // Limit to 4 routes max

@@ -10,7 +10,7 @@ import { ElevationProfile } from './modules/elevationProfile.js';
 import { GpxExporter } from './modules/gpxExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, showNotification, debounce } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance } from './modules/utils.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -58,10 +58,14 @@ const btnExportGpx = document.getElementById('btn-export-gpx');
 const btnImportGpx = document.getElementById('btn-import-gpx');
 const btnClearRoute = document.getElementById('btn-clear-route');
 const btnUndo = document.getElementById('btn-undo');
-const btnFetchWeather = document.getElementById('btn-fetch-weather');
 const btnClearCache = document.getElementById('btn-clear-cache');
 const gpxFileInput = document.getElementById('gpx-file-input');
-const weatherDateInput = document.getElementById('weather-date');
+
+const btnDownloadMap = document.getElementById('btn-download-map');
+const progressContainer = document.getElementById('download-progress-container');
+const progressText = document.getElementById('download-progress-text');
+const progressFill = document.getElementById('download-progress-fill');
+const weatherSegmentsContainer = document.getElementById('weather-segments-container');
 
 const statDistance = document.getElementById('stat-distance');
 const statAscent = document.getElementById('stat-ascent');
@@ -94,7 +98,31 @@ btnClearRoute.addEventListener('click', () => {
 });
 
 btnUndo.addEventListener('click', () => mapManager.removeLastWaypoint());
-btnFetchWeather.addEventListener('click', fetchWeather);
+
+btnDownloadMap.addEventListener('click', async () => {
+  const layerInfo = mapManager.getCurrentLayerInfo();
+  if (!layerInfo) return;
+  const bounds = mapManager.map.getBounds();
+  
+  progressContainer.classList.remove('hidden');
+  btnDownloadMap.disabled = true;
+  
+  try {
+    await offlineManager.downloadArea(bounds, layerInfo, (current, total) => {
+      const pct = Math.round((current / total) * 100) || 0;
+      progressText.textContent = `${pct}% (${current}/${total})`;
+      progressFill.style.width = `${pct}%`;
+    });
+    showNotification('畫面地圖下載完成', 'success');
+  } catch (err) {
+    showNotification(err.message || '地圖下載失敗', 'error');
+  } finally {
+    progressContainer.classList.add('hidden');
+    btnDownloadMap.disabled = false;
+    progressText.textContent = '0%';
+    progressFill.style.width = '0%';
+  }
+});
 
 btnClearCache.addEventListener('click', async () => {
   await offlineManager.clearCache();
@@ -117,9 +145,6 @@ routeModeRadios.forEach((radio) => {
     }
   });
 });
-
-const today = new Date();
-weatherDateInput.value = today.toISOString().split('T')[0];
 
 // =========== Core Logic ===========
 
@@ -215,6 +240,9 @@ function selectAlternative(index) {
 
   // Update card selection highlight
   renderAlternatives(allAlternatives, index);
+
+  // Render weather segments for the new route
+  renderWeatherSegments();
 }
 
 /**
@@ -370,68 +398,165 @@ function importGpx(e) {
   gpxFileInput.value = '';
 }
 
-// =========== Weather ===========
+// =========== Weather Segment API ===========
 
-async function fetchWeather() {
-  const dateStr = weatherDateInput.value;
-  if (!dateStr) {
-    showNotification('請選擇日期', 'warning');
-    return;
-  }
-  if (currentRouteCoords.length < 2) {
-    showNotification('請先建立路線', 'warning');
-    return;
+let weatherSegments = [];
+
+function generateWeatherSegments(coords, waypoints) {
+  const SEGMENT_MAX_DIST = 10000; // 10km limit
+  const segments = [];
+  if (coords.length < 2 || waypoints.length < 2) return segments;
+
+  // Find corresponding index in coords array for each waypoint
+  const wpIndices = [];
+  let searchIdx = 0;
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    let minD = Infinity;
+    let minIdx = searchIdx;
+    for (let j = searchIdx; j < coords.length; j++) {
+      const d = haversineDistance(wp, coords[j]);
+      if (d < minD) {
+        minD = d;
+        minIdx = j;
+      }
+    }
+    wpIndices.push(minIdx);
+    searchIdx = minIdx;
   }
 
-  showNotification('查詢天氣中...', 'info', 2000);
-  const results = await weatherService.getWeatherAlongRoute(currentRouteCoords, dateStr);
-  renderWeatherCards(results);
+  // Generate segments between waypoints
+  for (let w = 0; w < wpIndices.length - 1; w++) {
+    const startIdx = wpIndices[w];
+    const endIdx = wpIndices[w + 1];
+    // Edge case if waypoints resolve to same index (very close)
+    if (startIdx === endIdx) continue;
+    
+    const legCoords = coords.slice(startIdx, endIdx + 1);
+    
+    let legDist = 0;
+    for (let j = 1; j < legCoords.length; j++) {
+      legDist += haversineDistance(legCoords[j-1], legCoords[j]);
+    }
+    
+    if (legDist <= SEGMENT_MAX_DIST) {
+      segments.push({
+        label: `航點 ${w + 1} ➔ 航點 ${w + 2}`,
+        coords: legCoords,
+        distance: legDist
+      });
+    } else {
+      const numParts = Math.ceil(legDist / SEGMENT_MAX_DIST);
+      let currentPart = 1;
+      let currentChunk = [legCoords[0]];
+      let currentDist = 0;
+      const targetDist = legDist / numParts;
+      
+      for (let i = 1; i < legCoords.length; i++) {
+        const p1 = legCoords[i-1];
+        const p2 = legCoords[i];
+        const d = haversineDistance(p1, p2);
+        
+        currentChunk.push(p2);
+        currentDist += d;
+        
+        if (currentDist >= targetDist || i === legCoords.length - 1) {
+          segments.push({
+            label: `航點 ${w + 1} ➔ 航點 ${w + 2}`,
+            partInfo: ` (段落 ${currentPart}/${numParts})`,
+            coords: [...currentChunk],
+            distance: currentDist
+          });
+          if (i !== legCoords.length - 1) {
+            currentChunk = [p2];
+            currentDist = 0;
+            currentPart++;
+          }
+        }
+      }
+    }
+  }
+  return segments;
 }
 
-function renderWeatherCards(results) {
-  const container = document.getElementById('weather-cards');
-  if (!results || results.length === 0) {
-    container.innerHTML = '<div class="weather-empty-state"><p>無天氣資料</p></div>';
+function renderWeatherSegments() {
+  weatherSegments = generateWeatherSegments(currentRouteCoords, mapManager.waypoints);
+  weatherSegmentsContainer.innerHTML = '';
+  
+  if (weatherSegments.length === 0) {
+    clearWeatherCards();
     return;
   }
 
-  container.innerHTML = results
-    .map((w) => `
-    <div class="weather-card">
-      <div class="weather-card-header">
-        <span class="location">${w.label} (${w.lat.toFixed(3)}, ${w.lng.toFixed(3)})</span>
-        <span class="weather-icon">${w.weatherIcon}</span>
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  weatherSegments.forEach((seg, idx) => {
+    const card = document.createElement('div');
+    card.className = 'weather-segment-card';
+    const title = seg.label + (seg.partInfo || '');
+    
+    card.innerHTML = `
+      <div class="ws-header">
+        <span class="ws-title">${title}</span>
+        <span class="ws-dist">${formatDistance(seg.distance)}</span>
       </div>
-      <div class="weather-temp">${w.temp}</div>
-      <div class="weather-card-body">
-        <div class="weather-detail">
-          <span class="wd-label">天氣</span>
-          <span class="wd-value">${w.weatherDesc}</span>
-        </div>
-        <div class="weather-detail">
-          <span class="wd-label">最高/最低溫</span>
-          <span class="wd-value">${w.tempMax} / ${w.tempMin}</span>
-        </div>
-        <div class="weather-detail">
-          <span class="wd-label">風速</span>
-          <span class="wd-value">${w.windSpeed}</span>
-        </div>
-        <div class="weather-detail">
-          <span class="wd-label">降雨量</span>
-          <span class="wd-value">${w.precipitation}</span>
-        </div>
-        <div class="weather-detail">
-          <span class="wd-label">濕度</span>
-          <span class="wd-value">${w.humidity}</span>
-        </div>
+      <div class="ws-controls">
+        <input type="date" value="${todayStr}" class="seg-date" />
       </div>
-    </div>`)
-    .join('');
+      <div class="ws-result empty">
+        <p>讀取中...</p>
+      </div>
+    `;
+
+    const dateInput = card.querySelector('.seg-date');
+    const resContainer = card.querySelector('.ws-result');
+
+    const fetchWeatherForSeg = async () => {
+      const dateStr = dateInput.value;
+      if (!dateStr) return;
+      
+      dateInput.disabled = true;
+      resContainer.classList.remove('empty');
+      resContainer.innerHTML = '<p>讀取中...</p>';
+      
+      try {
+        const results = await weatherService.getWeatherAlongRoute(seg.coords, dateStr);
+        // Use the middle point for segment summary (index 1 if 3 points sampled)
+        const mainRes = results.length > 1 ? results[1] : results[0]; 
+        
+        if (mainRes && mainRes.temp !== '—') {
+          resContainer.innerHTML = `
+            <div class="ws-icon">${mainRes.weatherIcon}</div>
+            <div class="ws-info">
+              <span class="ws-temp">${mainRes.tempMax} / ${mainRes.tempMin}</span>
+              <span class="ws-desc">${mainRes.weatherDesc} • 降雨 ${mainRes.precipitation}</span>
+            </div>
+          `;
+        } else {
+          resContainer.classList.add('empty');
+          resContainer.innerHTML = '<p>無天氣資料</p>';
+        }
+      } catch (err) {
+        resContainer.classList.add('empty');
+        resContainer.innerHTML = '<p>查詢失敗</p>';
+      } finally {
+        dateInput.disabled = false;
+      }
+    };
+
+    dateInput.addEventListener('change', fetchWeatherForSeg);
+    weatherSegmentsContainer.appendChild(card);
+    
+    // Auto load weather
+    fetchWeatherForSeg();
+  });
 }
 
 function clearWeatherCards() {
-  document.getElementById('weather-cards').innerHTML =
-    '<div class="weather-empty-state"><p>選擇日期並新增路線後查詢天氣</p></div>';
+  if (weatherSegmentsContainer) {
+    weatherSegmentsContainer.innerHTML =
+      '<div class="weather-empty-state"><p>完成規劃路線後即可查閱各段段落天氣</p></div>';
+  }
 }
 
 // =========== Init ===========

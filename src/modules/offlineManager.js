@@ -62,4 +62,79 @@ export class OfflineManager {
       this.updateCacheInfo();
     }
   }
+
+  lng2tile(lon, zoom) {
+    return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
+  }
+
+  lat2tile(lat, zoom) {
+    return Math.floor(
+      ((1 -
+        Math.log(
+          Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)
+        ) /
+          Math.PI) /
+        2) *
+        Math.pow(2, zoom)
+    );
+  }
+
+  async downloadArea(bounds, layerInfo, onProgress) {
+    if (!('caches' in window)) throw new Error('不支援離線快取');
+
+    // Download zooms 12 to 15 (reasonable balance for hiking)
+    const minZ = 12;
+    const maxZ = Math.min(15, layerInfo.maxZoom);
+    const urlsToCache = [];
+
+    for (let z = minZ; z <= maxZ; z++) {
+      let xMin = this.lng2tile(bounds.getWest(), z);
+      let xMax = this.lng2tile(bounds.getEast(), z);
+      let yMin = this.lat2tile(bounds.getNorth(), z);
+      let yMax = this.lat2tile(bounds.getSouth(), z);
+
+      if (xMin > xMax) [xMin, xMax] = [xMax, xMin];
+      if (yMin > yMax) [yMin, yMax] = [yMax, yMin];
+
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          const url = layerInfo.urlTemplate
+            .replace('{z}', z)
+            .replace('{x}', x)
+            .replace('{y}', y)
+            .replace('{s}', 'a'); // hardcode sub-domain 'a' for simple fetch
+          urlsToCache.push(url);
+        }
+      }
+    }
+
+    if (urlsToCache.length > 2000) {
+      throw new Error(`範圍過大 (${urlsToCache.length} 張瓦片)，限制為 2000 張。請拉近畫面。`);
+    }
+
+    if (urlsToCache.length === 0) return;
+
+    const cache = await caches.open('mapping-elf-tiles');
+    let count = 0;
+    onProgress(0, urlsToCache.length);
+
+    // Fetch concurrently in chunks 
+    const chunkSize = 10;
+    for (let i = 0; i < urlsToCache.length; i += chunkSize) {
+      const chunk = urlsToCache.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (url) => {
+          try {
+            const resp = await fetch(url, { mode: 'no-cors' });
+            await cache.put(url, resp);
+          } catch (e) {
+            // Silently ignore individual tile failures
+          }
+          count++;
+        })
+      );
+      onProgress(count, urlsToCache.length);
+    }
+    this.updateCacheInfo();
+  }
 }

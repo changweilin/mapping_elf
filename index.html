@@ -107,6 +107,13 @@
           </span>
         </label>
         <label class="mode-option">
+          <input type="radio" name="route-mode" value="hiking" />
+          <span class="mode-label">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor"/></svg>
+            山徑
+          </span>
+        </label>
+        <label class="mode-option">
           <input type="radio" name="route-mode" value="cycling" />
           <span class="mode-label">
             <svg viewBox="0 0 24 24" width="16" height="16"><path d="M15.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM5 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5zm5.8-10l2.4-2.4.8.8c1.3 1.3 3 2.1 5 2.1V9c-1.5 0-2.7-.6-3.6-1.5l-1.9-1.9c-.5-.4-1-.6-1.6-.6s-1.1.2-1.4.6L7.8 8.4c-.4.4-.6.9-.6 1.4 0 .6.2 1.1.6 1.4L11 14v5h2v-6.2l-2.2-2.3zM19 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z" fill="currentColor"/></svg>
@@ -206,22 +213,12 @@
       <div class="section-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z" fill="currentColor"/></svg>
-          天氣資訊
+          分段天氣資訊
         </h3>
       </div>
-      <div class="weather-controls">
-        <div class="date-picker-wrap">
-          <label for="weather-date">查詢日期</label>
-          <input type="date" id="weather-date" />
-        </div>
-        <button class="btn-primary" id="btn-fetch-weather">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" fill="currentColor"/></svg>
-          查詢天氣
-        </button>
-      </div>
-      <div class="weather-cards" id="weather-cards">
-        <div class="weather-empty-state">
-          <p>選擇日期並新增路線後查詢天氣</p>
+      <div id="weather-segments-container">
+        <div class="weather-empty-state" id="weather-global-empty">
+          <p>完成規劃路線後即可查閱各段段落天氣</p>
         </div>
       </div>
     </section>
@@ -242,7 +239,17 @@
         <div class="cache-info" id="cache-info">
           <span>快取瓦片：—</span>
         </div>
-        <button class="btn-secondary" id="btn-clear-cache">清除快取</button>
+        <div class="offline-actions mt-2" style="display:flex; gap: 8px;">
+          <button class="btn-primary flex-1" id="btn-download-map">下載畫面地圖</button>
+          <button class="btn-secondary" id="btn-clear-cache">清除快取</button>
+        </div>
+        <div class="download-progress hidden" id="download-progress-container" style="margin-top: 10px;">
+          <div style="font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between;">
+            <span>下載進度</span>
+            <span id="download-progress-text">0%</span>
+          </div>
+          <div class="loading-bar"><div class="loading-bar-fill" id="download-progress-fill" style="width: 0%"></div></div>
+        </div>
       </div>
     </section>
   </aside>

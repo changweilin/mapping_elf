@@ -318,4 +318,15 @@ export class MapManager {
       marker.setIcon(this._createIcon(i));
     });
   }
+
+  getCurrentLayerInfo() {
+    const layer = this.tileLayers[this.currentLayerName];
+    if (layer) {
+      return {
+        urlTemplate: layer._url,
+        maxZoom: layer.options.maxZoom || 18,
+      };
+    }
+    return null;
+  }
 }
