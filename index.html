@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mapping Elf — GPX 軌跡生成器</title>
+  <meta name="description" content="互動式地圖應用，支援離線/線上地圖、自動GPX軌跡生成、高度剖面圖、距離統計與天氣預報。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/src/styles/main.css" />
+</head>
+<body>
+  <!-- Loading Screen -->
+  <div id="loading-screen" class="loading-screen">
+    <div class="loading-content">
+      <div class="loading-icon">
+        <svg viewBox="0 0 64 64" width="64" height="64">
+          <path d="M32 4 L40 24 L60 24 L44 36 L50 56 L32 44 L14 56 L20 36 L4 24 L24 24 Z" fill="none" stroke="url(#loadGrad)" stroke-width="2"/>
+          <defs><linearGradient id="loadGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6ee7b7"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+        </svg>
+      </div>
+      <h2>Mapping Elf</h2>
+      <p>載入地圖中...</p>
+      <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Top Toolbar -->
+  <header id="toolbar" class="toolbar">
+    <div class="toolbar-left">
+      <div class="app-logo">
+        <svg viewBox="0 0 32 32" width="28" height="28">
+          <path d="M16 2 L20 12 L30 12 L22 18 L25 28 L16 22 L7 28 L10 18 L2 12 L12 12 Z" fill="url(#logoGrad)"/>
+          <defs><linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6ee7b7"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+        </svg>
+        <span class="app-title">Mapping Elf</span>
+      </div>
+    </div>
+    <div class="toolbar-center">
+      <div class="layer-switcher" id="layer-switcher">
+        <button class="layer-btn active" data-layer="streets" id="btn-layer-streets" title="街道圖">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z" fill="currentColor" opacity="0.9"/></svg>
+          <span>街道</span>
+        </button>
+        <button class="layer-btn" data-layer="topo" id="btn-layer-topo" title="地形圖">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor" opacity="0.9"/></svg>
+          <span>地形</span>
+        </button>
+        <button class="layer-btn" data-layer="satellite" id="btn-layer-satellite" title="衛星圖">
+          <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+          <span>衛星</span>
+        </button>
+      </div>
+    </div>
+    <div class="toolbar-right">
+      <button class="tool-btn" id="btn-my-location" title="我的位置">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" fill="currentColor"/></svg>
+      </button>
+      <button class="tool-btn" id="btn-import-gpx" title="匯入 GPX">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor"/></svg>
+      </button>
+      <button class="tool-btn accent" id="btn-export-gpx" title="匯出 GPX">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>
+      </button>
+      <button class="tool-btn" id="btn-toggle-panel" title="切換面板">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Map Container -->
+  <div id="map" class="map-container"></div>
+
+  <!-- Side Panel -->
+  <aside id="side-panel" class="side-panel open">
+    <!-- Route Controls -->
+    <section class="panel-section" id="route-section">
+      <div class="section-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z" fill="currentColor"/></svg>
+          路線規劃
+        </h3>
+        <div class="section-actions">
+          <button class="icon-btn" id="btn-undo" title="復原">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12.5 8c-2.65 0-5.05 1.04-6.83 2.73L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.04 17.15 8 12.5 8z" fill="currentColor"/></svg>
+          </button>
+          <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="waypoint-list" id="waypoint-list">
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" width="40" height="40" opacity="0.4"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/></svg>
+          <p>在地圖上點擊以新增航點</p>
+          <span class="hint">點擊地圖任意位置開始規劃路線</span>
+        </div>
+      </div>
+      <div class="route-mode-selector" id="route-mode-selector">
+        <label class="mode-option">
+          <input type="radio" name="route-mode" value="walking" checked />
+          <span class="mode-label">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7z" fill="currentColor"/></svg>
+            步行
+          </span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="route-mode" value="cycling" />
+          <span class="mode-label">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M15.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM5 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5zm5.8-10l2.4-2.4.8.8c1.3 1.3 3 2.1 5 2.1V9c-1.5 0-2.7-.6-3.6-1.5l-1.9-1.9c-.5-.4-1-.6-1.6-.6s-1.1.2-1.4.6L7.8 8.4c-.4.4-.6.9-.6 1.4 0 .6.2 1.1.6 1.4L11 14v5h2v-6.2l-2.2-2.3zM19 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z" fill="currentColor"/></svg>
+            自行車
+          </span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="route-mode" value="driving" />
+          <span class="mode-label">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" fill="currentColor"/></svg>
+            駕車
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Route Alternatives -->
+    <section class="panel-section" id="alternatives-section" style="display:none;">
+      <div class="section-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 7.5h5v2h-5v-2zm0 7h5v2h-5v-2zM19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM11 6H6v5h5V6zm-1 4H7V7h3v3zm1 3H6v5h5v-5zm-1 4H7v-3h3v3z" fill="currentColor"/></svg>
+          路線方案
+        </h3>
+        <span class="alternatives-count" id="alt-count"></span>
+      </div>
+      <div class="alternatives-list" id="alternatives-list">
+        <!-- Dynamically populated -->
+      </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section class="panel-section" id="stats-section">
+      <div class="section-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z" fill="currentColor"/></svg>
+          路線統計
+        </h3>
+      </div>
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon distance">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" fill="currentColor"/></svg>
+          </div>
+          <div class="stat-info">
+            <span class="stat-label">總距離</span>
+            <span class="stat-value" id="stat-distance">—</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon ascent">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z" fill="currentColor"/></svg>
+          </div>
+          <div class="stat-info">
+            <span class="stat-label">總爬升</span>
+            <span class="stat-value" id="stat-ascent">—</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon descent">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M16 18l2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 6.3 6.29L22 12v6h-6z" fill="currentColor"/></svg>
+          </div>
+          <div class="stat-info">
+            <span class="stat-label">總下降</span>
+            <span class="stat-value" id="stat-descent">—</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon elevation">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor"/></svg>
+          </div>
+          <div class="stat-info">
+            <span class="stat-label">最高海拔</span>
+            <span class="stat-value" id="stat-max-elev">—</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Elevation Profile -->
+    <section class="panel-section" id="elevation-section">
+      <div class="section-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor"/></svg>
+          高度剖面圖
+        </h3>
+      </div>
+      <div class="elevation-chart-container" id="elevation-chart-container">
+        <canvas id="elevation-chart"></canvas>
+        <div class="chart-empty-state" id="chart-empty">
+          <p>新增路線後顯示高度剖面</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Weather Section -->
+    <section class="panel-section" id="weather-section">
+      <div class="section-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z" fill="currentColor"/></svg>
+          天氣資訊
+        </h3>
+      </div>
+      <div class="weather-controls">
+        <div class="date-picker-wrap">
+          <label for="weather-date">查詢日期</label>
+          <input type="date" id="weather-date" />
+        </div>
+        <button class="btn-primary" id="btn-fetch-weather">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" fill="currentColor"/></svg>
+          查詢天氣
+        </button>
+      </div>
+      <div class="weather-cards" id="weather-cards">
+        <div class="weather-empty-state">
+          <p>選擇日期並新增路線後查詢天氣</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Offline Section -->
+    <section class="panel-section" id="offline-section">
+      <div class="section-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg>
+          離線管理
+        </h3>
+      </div>
+      <div class="offline-controls">
+        <div class="offline-status" id="offline-status">
+          <span class="status-dot online"></span>
+          <span>線上模式</span>
+        </div>
+        <div class="cache-info" id="cache-info">
+          <span>快取瓦片：—</span>
+        </div>
+        <button class="btn-secondary" id="btn-clear-cache">清除快取</button>
+      </div>
+    </section>
+  </aside>
+
+  <!-- Notification Container -->
+  <div id="notifications" class="notifications"></div>
+
+  <!-- Hidden file input for GPX import -->
+  <input type="file" id="gpx-file-input" accept=".gpx" style="display:none" />
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
