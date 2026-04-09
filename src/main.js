@@ -578,16 +578,16 @@ function renderWeatherSegments() {
 
   const now = new Date();
   const todayStr = now.toISOString().split('T')[0];
-  const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const nowHour = now.getHours();
 
   weatherSegments.forEach((seg, idx) => {
     // Apply pending dates from GPX import (use saved date/time if available)
     let dateVal = todayStr;
-    let timeVal = nowTimeStr;
+    let timeVal = nowHour;
     if (pendingSegmentDates) {
       const pd = pendingSegmentDates[seg.startWpIndex];
       if (pd?.date) dateVal = pd.date;
-      if (pd?.time) timeVal = pd.time;
+      if (pd?.time) timeVal = parseInt(pd.time.split(':')[0]);
     }
 
     const card = document.createElement('div');
@@ -601,7 +601,7 @@ function renderWeatherSegments() {
       </div>
       <div class="ws-controls" style="display: flex; gap: 4px;">
         <input type="date" value="${dateVal}" class="seg-date" style="flex: 1; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
-        <input type="time" value="${timeVal}" class="seg-time" style="width: 100px; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
+        <select class="seg-time" style="width: 80px; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);">${Array.from({length: 24}, (_, h) => `<option value="${h}"${h === timeVal ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
       </div>
       <div class="ws-result empty">
         <p>讀取中...</p>
