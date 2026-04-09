@@ -1187,6 +1187,138 @@ html, body {
   color: var(--text-secondary);
 }
 
+/* Weather Controls Bar */
+.weather-controls-bar {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+.wcb-date {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.wcb-time {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.wcb-date label,
+.wcb-time label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.wcb-date input[type="date"] {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+.wcb-date input[type="date"]:focus { border-color: var(--accent-primary); }
+.wcb-time select {
+  width: 82px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+.wcb-time select:focus { border-color: var(--accent-primary); }
+#btn-fetch-weather {
+  padding: 6px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+
+/* Weather Point Cards */
+.weather-point-card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  overflow: hidden;
+  animation: fadeSlideIn 0.3s ease;
+}
+.wpc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 12px;
+  background: rgba(110, 231, 183, 0.05);
+  border-bottom: 1px solid var(--border);
+}
+.wpc-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+.wpc-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.wpc-body {
+  padding: 10px 12px;
+}
+.wpc-idle {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 10px 12px;
+}
+.wpc-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.wpc-icon { font-size: 26px; line-height: 1; }
+.wpc-temps { display: flex; flex-direction: column; gap: 1px; }
+.wpc-temp-cur {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.wpc-temp-range {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.wpc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+}
+.wpc-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 1px 0;
+}
+.wpc-lbl {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.wpc-item > span:last-child {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
 /* Utils styles */
 .hidden { display: none !important; }
 .flex-1 { flex: 1; }
