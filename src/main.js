@@ -62,6 +62,7 @@ const btnClearCache = document.getElementById('btn-clear-cache');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
 const btnDownloadMap = document.getElementById('btn-download-map');
+const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
@@ -104,10 +105,11 @@ btnDownloadMap.addEventListener('click', async () => {
   const layerInfo = mapManager.getCurrentLayerInfo();
   if (!layerInfo) return;
   const bounds = mapManager.map.getBounds();
-  
+
   progressContainer.classList.remove('hidden');
   btnDownloadMap.disabled = true;
-  
+  if (btnDownloadRoute) btnDownloadRoute.disabled = true;
+
   try {
     await offlineManager.downloadArea(bounds, layerInfo, (current, total) => {
       const pct = Math.round((current / total) * 100) || 0;
@@ -120,10 +122,43 @@ btnDownloadMap.addEventListener('click', async () => {
   } finally {
     progressContainer.classList.add('hidden');
     btnDownloadMap.disabled = false;
+    if (btnDownloadRoute) btnDownloadRoute.disabled = false;
     progressText.textContent = '0%';
     progressFill.style.width = '0%';
   }
 });
+
+if (btnDownloadRoute) {
+  btnDownloadRoute.addEventListener('click', async () => {
+    if (currentRouteCoords.length < 2) {
+      showNotification('請先建立路線', 'warning');
+      return;
+    }
+    const layerInfo = mapManager.getCurrentLayerInfo();
+    if (!layerInfo) return;
+
+    progressContainer.classList.remove('hidden');
+    btnDownloadMap.disabled = true;
+    btnDownloadRoute.disabled = true;
+
+    try {
+      await offlineManager.downloadRoute(currentRouteCoords, layerInfo, (current, total) => {
+        const pct = Math.round((current / total) * 100) || 0;
+        progressText.textContent = `${pct}% (${current}/${total})`;
+        progressFill.style.width = `${pct}%`;
+      });
+      showNotification('路線地圖下載完成', 'success');
+    } catch (err) {
+      showNotification(err.message || '地圖下載失敗', 'error');
+    } finally {
+      progressContainer.classList.add('hidden');
+      btnDownloadMap.disabled = false;
+      btnDownloadRoute.disabled = false;
+      progressText.textContent = '0%';
+      progressFill.style.width = '0%';
+    }
+  });
+}
 
 btnClearCache.addEventListener('click', async () => {
   await offlineManager.clearCache();
@@ -373,13 +408,40 @@ function exportGpx() {
     showNotification('請先建立路線', 'warning');
     return;
   }
+  const segDates = collectSegmentDates();
   const gpx = GpxExporter.generate(
     mapManager.waypoints,
     currentRouteCoords,
-    currentElevations
+    currentElevations,
+    'Mapping Elf Track',
+    segDates
   );
   GpxExporter.download(gpx);
   showNotification('GPX 檔案已匯出', 'success');
+}
+
+/**
+ * Collect the date/time from each segment's first weather card.
+ * Returns an array indexed by waypoint, one entry per unique segment start.
+ */
+function collectSegmentDates() {
+  const cards = weatherSegmentsContainer.querySelectorAll('.weather-segment-card');
+  const seen = new Set();
+  const result = mapManager.waypoints.map(() => null);
+
+  weatherSegments.forEach((seg, idx) => {
+    const key = seg.startWpIndex;
+    if (!seen.has(key) && cards[idx]) {
+      seen.add(key);
+      const dateInput = cards[idx].querySelector('.seg-date');
+      const timeInput = cards[idx].querySelector('.seg-time');
+      result[key] = {
+        date: dateInput?.value || '',
+        time: timeInput?.value || '',
+      };
+    }
+  });
+  return result;
 }
 
 function importGpx(e) {
@@ -390,6 +452,12 @@ function importGpx(e) {
   reader.onload = (evt) => {
     try {
       const result = GpxExporter.parse(evt.target.result);
+
+      // Store segment dates for applying after route renders
+      if (result.segmentDates?.some(d => d?.date || d?.time)) {
+        pendingSegmentDates = result.segmentDates;
+      }
+
       if (result.waypoints.length > 0) {
         mapManager.setWaypointsFromImport(result.waypoints);
         showNotification(`已匯入 ${result.waypoints.length} 個航點`, 'success');
@@ -413,6 +481,8 @@ function importGpx(e) {
 // =========== Weather Segment API ===========
 
 let weatherSegments = [];
+// Stores segment dates parsed from an imported GPX, applied on next renderWeatherSegments()
+let pendingSegmentDates = null;
 
 function generateWeatherSegments(coords, waypoints) {
   const distSelect = document.getElementById('segment-dist-select');
@@ -511,18 +581,27 @@ function renderWeatherSegments() {
   const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   weatherSegments.forEach((seg, idx) => {
+    // Apply pending dates from GPX import (use saved date/time if available)
+    let dateVal = todayStr;
+    let timeVal = nowTimeStr;
+    if (pendingSegmentDates) {
+      const pd = pendingSegmentDates[seg.startWpIndex];
+      if (pd?.date) dateVal = pd.date;
+      if (pd?.time) timeVal = pd.time;
+    }
+
     const card = document.createElement('div');
     card.className = 'weather-segment-card';
     const title = seg.label + (seg.partInfo || '');
-    
+
     card.innerHTML = `
       <div class="ws-header">
         <span class="ws-title">${title}</span>
         <span class="ws-dist">${formatDistance(seg.distance)}</span>
       </div>
       <div class="ws-controls" style="display: flex; gap: 4px;">
-        <input type="date" value="${todayStr}" class="seg-date" style="flex: 1; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
-        <input type="time" value="${nowTimeStr}" class="seg-time" style="width: 100px; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
+        <input type="date" value="${dateVal}" class="seg-date" style="flex: 1; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
+        <input type="time" value="${timeVal}" class="seg-time" style="width: 100px; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color, #ccc); background: var(--bg-color, #fff); color: var(--text-color, #000);" />
       </div>
       <div class="ws-result empty">
         <p>讀取中...</p>
@@ -580,10 +659,13 @@ function renderWeatherSegments() {
     dateInput.addEventListener('change', fetchWeatherForSeg);
     timeInput.addEventListener('change', fetchWeatherForSeg);
     weatherSegmentsContainer.appendChild(card);
-    
+
     // Auto load weather
     fetchWeatherForSeg();
   });
+
+  // Clear pending dates after applying
+  pendingSegmentDates = null;
 }
 
 function clearWeatherCards() {

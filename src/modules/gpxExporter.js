@@ -5,12 +5,14 @@
 export class GpxExporter {
   /**
    * Generate GPX XML string from route data
+   * @param {Array} segmentDates - [{date, time}|null, ...] indexed by waypoint (segment starting at wp[i])
    */
-  static generate(waypoints, routeCoords, elevations = [], name = 'Mapping Elf Track') {
+  static generate(waypoints, routeCoords, elevations = [], name = 'Mapping Elf Track', segmentDates = []) {
     const now = new Date().toISOString();
     let gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Mapping Elf"
   xmlns="http://www.topografix.com/GPX/1/1"
+  xmlns:mel="https://mapping-elf.app/gpx/1/0"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata>
@@ -19,11 +21,19 @@ export class GpxExporter {
   </metadata>
 `;
 
-    // Waypoints
+    // Waypoints with optional segment date/time extensions
     waypoints.forEach((wp, i) => {
+      const seg = segmentDates[i];
       gpx += `  <wpt lat="${wp[0].toFixed(6)}" lon="${wp[1].toFixed(6)}">
-    <name>航點 ${i + 1}</name>
-  </wpt>\n`;
+    <name>航點 ${i + 1}</name>`;
+      if (seg && (seg.date || seg.time)) {
+        gpx += `
+    <extensions>
+      <mel:date>${this._escapeXml(seg.date || '')}</mel:date>
+      <mel:time>${this._escapeXml(seg.time || '')}</mel:time>
+    </extensions>`;
+      }
+      gpx += `\n  </wpt>\n`;
     });
 
     // Track
@@ -64,7 +74,7 @@ export class GpxExporter {
   }
 
   /**
-   * Parse GPX file and extract waypoints + track points
+   * Parse GPX file and extract waypoints + track points + segment dates
    */
   static parse(gpxString) {
     const parser = new DOMParser();
@@ -72,6 +82,7 @@ export class GpxExporter {
 
     const waypoints = [];
     const trackPoints = [];
+    const segmentDates = [];
 
     // Parse waypoints
     const wpts = doc.querySelectorAll('wpt');
@@ -80,6 +91,10 @@ export class GpxExporter {
       const lon = parseFloat(wpt.getAttribute('lon'));
       if (!isNaN(lat) && !isNaN(lon)) {
         waypoints.push([lat, lon]);
+        segmentDates.push({
+          date: this._getExtValue(wpt, 'date'),
+          time: this._getExtValue(wpt, 'time'),
+        });
       }
     });
 
@@ -100,13 +115,29 @@ export class GpxExporter {
       const step = Math.max(1, Math.floor(trackPoints.length / 10));
       for (let i = 0; i < trackPoints.length; i += step) {
         waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
+        segmentDates.push({ date: null, time: null });
       }
-      // Always include last point
       const last = trackPoints[trackPoints.length - 1];
       waypoints.push([last.lat, last.lon]);
+      segmentDates.push({ date: null, time: null });
     }
 
-    return { waypoints, trackPoints };
+    return { waypoints, trackPoints, segmentDates };
+  }
+
+  /**
+   * Get value of a custom extension element by local name (namespace-agnostic)
+   */
+  static _getExtValue(el, localName) {
+    const exts = el.querySelector('extensions');
+    if (!exts) return null;
+    for (const child of exts.children) {
+      if (child.localName === localName) {
+        const val = child.textContent.trim();
+        return val || null;
+      }
+    }
+    return null;
   }
 
   static _escapeXml(str) {
