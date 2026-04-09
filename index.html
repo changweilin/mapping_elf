@@ -73,6 +73,33 @@
   <!-- Map Container -->
   <div id="map" class="map-container"></div>
 
+  <!-- Bottom Panel: Elevation Profile + Weather Timeline -->
+  <div id="bottom-panel" class="bottom-panel">
+    <div class="bp-chart-row">
+      <div id="elevation-chart-container" class="elevation-chart-container">
+        <canvas id="elevation-chart"></canvas>
+        <div class="chart-empty-state" id="chart-empty">
+          <p>新增路線後顯示高度剖面</p>
+        </div>
+      </div>
+    </div>
+    <div class="bp-weather-header">
+      <div class="bp-weather-title">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z" fill="currentColor"/></svg>
+        天氣資訊
+      </div>
+      <button class="btn-primary" id="btn-fetch-weather">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg>
+        取得天氣
+      </button>
+    </div>
+    <div class="bp-weather-scroll">
+      <div id="weather-table-container">
+        <div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Side Panel -->
   <aside id="side-panel" class="side-panel open">
     <!-- Route Controls -->
@@ -188,51 +215,6 @@
             <span class="stat-label">最高海拔</span>
             <span class="stat-value" id="stat-max-elev">—</span>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Elevation Profile -->
-    <section class="panel-section" id="elevation-section">
-      <div class="section-header">
-        <h3>
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor"/></svg>
-          高度剖面圖
-        </h3>
-      </div>
-      <div class="elevation-chart-container" id="elevation-chart-container">
-        <canvas id="elevation-chart"></canvas>
-        <div class="chart-empty-state" id="chart-empty">
-          <p>新增路線後顯示高度剖面</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Weather Section -->
-    <section class="panel-section" id="weather-section">
-      <div class="section-header">
-        <h3>
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z" fill="currentColor"/></svg>
-          天氣資訊
-        </h3>
-      </div>
-      <div class="weather-controls-bar">
-        <div class="wcb-date">
-          <label for="weather-date">日期</label>
-          <input type="date" id="weather-date" />
-        </div>
-        <div class="wcb-time">
-          <label for="weather-time">時間</label>
-          <select id="weather-time"></select>
-        </div>
-        <button class="btn-primary" id="btn-fetch-weather">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg>
-          取得天氣
-        </button>
-      </div>
-      <div id="weather-points-container">
-        <div class="weather-empty-state">
-          <p>完成規劃路線後點擊「取得天氣」</p>
         </div>
       </div>
     </section>

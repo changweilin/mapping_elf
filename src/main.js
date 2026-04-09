@@ -66,9 +66,6 @@ const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
-const weatherPointsContainer = document.getElementById('weather-points-container');
-const weatherDateInput = document.getElementById('weather-date');
-const weatherTimeSelect = document.getElementById('weather-time');
 const btnFetchWeather = document.getElementById('btn-fetch-weather');
 
 const statDistance = document.getElementById('stat-distance');
@@ -97,7 +94,8 @@ btnClearRoute.addEventListener('click', () => {
   elevationProfile.clear();
   resetStats();
   weatherPoints = [];
-  if (weatherPointsContainer) weatherPointsContainer.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
+  const _wc = document.getElementById('weather-table-container');
+  if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
   hideAlternatives();
   showNotification('路線已清除', 'info');
 });
@@ -417,13 +415,21 @@ function exportGpx() {
 }
 
 /**
- * Collect the global date/time for GPX export (same for all waypoints).
+ * Collect per-waypoint date/time from weather table columns for GPX export.
  */
 function collectSegmentDates() {
-  const date = weatherDateInput?.value || '';
-  const h = weatherTimeSelect?.value;
-  const time = h != null ? `${String(h).padStart(2, '0')}:00` : '';
-  return mapManager.waypoints.map(() => ({ date, time }));
+  const container = document.getElementById('weather-table-container');
+  const result = mapManager.waypoints.map(() => null);
+  weatherPoints.forEach((pt, colIdx) => {
+    if (!pt.isWaypoint || pt.wpIndex === undefined) return;
+    const th = container?.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
+    if (!th) return;
+    const date = th.querySelector('.wt-date-input')?.value || '';
+    const h = th.querySelector('.wt-time-select')?.value;
+    const time = h != null ? `${String(h).padStart(2,'0')}:00` : '';
+    result[pt.wpIndex] = { date, time };
+  });
+  return result;
 }
 
 function importGpx(e) {
@@ -435,15 +441,10 @@ function importGpx(e) {
     try {
       const result = GpxExporter.parse(evt.target.result);
 
-      // Apply first segment date/time to global weather controls
+      // Apply per-waypoint dates to table columns after panel renders
       if (result.segmentDates?.some(d => d?.date || d?.time)) {
-        const first = result.segmentDates.find(d => d?.date || d?.time);
-        if (first?.date && weatherDateInput) weatherDateInput.value = first.date;
-        if (first?.time && weatherTimeSelect) {
-          const h = parseInt(first.time.split(':')[0]);
-          if (!isNaN(h)) weatherTimeSelect.value = String(h);
-        }
-        saveWeatherSettings();
+        // Store for application after renderWeatherPanel() is called
+        window._pendingGpxDates = result.segmentDates;
       }
 
       if (result.waypoints.length > 0) {
@@ -468,42 +469,86 @@ function importGpx(e) {
 
 // =========== Weather Panel ===========
 
-let weatherPoints = []; // { label, lat, lng, isWaypoint, wpIndex? }
+const WEATHER_ROWS = [
+  { key: 'weather',       label: '天氣'   },
+  { key: 'temp',          label: '溫度'   },
+  { key: 'tempRange',     label: '高/低'  },
+  { key: 'feelsLike',     label: '體感'   },
+  { key: 'humidity',      label: '濕度'   },
+  { key: 'dewPoint',      label: '露點'   },
+  { key: 'precipitation', label: '降水'   },
+  { key: 'precipProb',    label: '機率'   },
+  { key: 'cloudCover',    label: '雲量'   },
+  { key: 'windSpeed',     label: '風速'   },
+  { key: 'windGust',      label: '陣風'   },
+  { key: 'uvIndex',       label: 'UV'     },
+  { key: 'visibility',    label: '能見度' },
+  { key: 'sunshineHours', label: '日照'   },
+  { key: 'radiation',     label: '輻射'   },
+  { key: 'sunrise',       label: '日出'   },
+  { key: 'sunset',        label: '日落'   },
+];
 
+let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
 
+function getCellValue(data, key) {
+  if (!data) return '—';
+  const v = (a, b) => a != null ? a : (b != null ? b : '—');
+  switch (key) {
+    case 'weather':       return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
+    case 'temp':          return v(data.temp, data.tempMax);
+    case 'tempRange':     return (data.tempMax || data.tempMin) ? `${v(data.tempMax,'—')} / ${v(data.tempMin,'—')}` : '—';
+    case 'feelsLike':     return v(data.feelsLike, '—');
+    case 'humidity':      return v(data.humidity, '—');
+    case 'dewPoint':      return v(data.dewPoint, '—');
+    case 'precipitation': return v(data.precipitation, v(data.precipitationSum, '—'));
+    case 'precipProb':    return v(data.precipProb, v(data.precipProbMax, '—'));
+    case 'cloudCover':    return v(data.cloudCover, '—');
+    case 'windSpeed':     return v(data.windSpeed, v(data.windSpeedMax, '—'));
+    case 'windGust':      return v(data.windGust, v(data.windGustMax, '—'));
+    case 'uvIndex':       return v(data.uvIndex, v(data.uvIndexMax, '—'));
+    case 'visibility':    return v(data.visibility, '—');
+    case 'sunshineHours': return v(data.sunshineHours, '—');
+    case 'radiation':     return v(data.radiation, '—');
+    case 'sunrise':       return v(data.sunrise, '—');
+    case 'sunset':        return v(data.sunset, '—');
+    default:              return '—';
+  }
+}
+
 function saveWeatherSettings() {
-  localStorage.setItem(LS_WEATHER_KEY, JSON.stringify({
-    date: weatherDateInput?.value || '',
-    hour: weatherTimeSelect?.value ?? '8',
-  }));
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const cols = [];
+  container.querySelectorAll('.wt-col-head').forEach(th => {
+    cols.push({
+      date: th.querySelector('.wt-date-input')?.value || '',
+      hour: th.querySelector('.wt-time-select')?.value ?? '8',
+    });
+  });
+  localStorage.setItem(LS_WEATHER_KEY, JSON.stringify({ cols }));
 }
 
 function loadWeatherSettings() {
-  try {
-    const s = JSON.parse(localStorage.getItem(LS_WEATHER_KEY) || 'null');
-    if (!s) return;
-    if (s.date && weatherDateInput) weatherDateInput.value = s.date;
-    if (s.hour != null && weatherTimeSelect) weatherTimeSelect.value = String(s.hour);
-  } catch {}
+  try { return JSON.parse(localStorage.getItem(LS_WEATHER_KEY) || 'null'); }
+  catch { return null; }
 }
 
 function initWeatherControls() {
-  if (!weatherTimeSelect || !weatherDateInput || !btnFetchWeather) return;
+  if (btnFetchWeather) btnFetchWeather.addEventListener('click', fetchAllWeatherData);
 
-  weatherTimeSelect.innerHTML = Array.from({ length: 24 }, (_, h) =>
-    `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`
-  ).join('');
-
-  const now = new Date();
-  weatherDateInput.value = now.toISOString().split('T')[0];
-  weatherTimeSelect.value = String(now.getHours());
-
-  loadWeatherSettings();
-
-  weatherDateInput.addEventListener('change', saveWeatherSettings);
-  weatherTimeSelect.addEventListener('change', saveWeatherSettings);
-  btnFetchWeather.addEventListener('click', fetchAllWeatherData);
+  const panel = document.getElementById('bottom-panel');
+  if (panel) {
+    new ResizeObserver(entries => {
+      const h = Math.round(entries[0]?.contentRect.height || 0);
+      if (h > 0) document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+    }).observe(panel);
+    requestAnimationFrame(() => {
+      const h = panel.offsetHeight;
+      if (h > 0) document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+    });
+  }
 }
 
 function buildWeatherPoints() {
@@ -537,108 +582,157 @@ function buildWeatherPoints() {
       const ei = wpIndices[i + 1] ?? coords.length - 1;
       const mc = coords[Math.max(0, Math.min(Math.floor((si + ei) / 2), coords.length - 1))];
       const nextLabel = (i + 1 === wps.length - 1) ? '終點' : `航點 ${i + 2}`;
-      points.push({ label: `${label} → ${nextLabel} 中點`, lat: mc[0], lng: mc[1], isWaypoint: false });
+      points.push({ label: `${label}→${nextLabel}`, lat: mc[0], lng: mc[1], isWaypoint: false });
     }
   }
   return points;
 }
 
-function renderWeatherPanel() {
-  weatherPoints = buildWeatherPoints();
-  if (!weatherPointsContainer) return;
-  weatherPointsContainer.innerHTML = '';
+function computeWeatherPointPositions() {
+  const coords = currentRouteCoords;
+  const N = weatherPoints.length;
+  if (coords.length < 2 || N === 0) return weatherPoints.map((_, i) => N <= 1 ? 0.5 : i / (N - 1));
 
-  if (weatherPoints.length === 0) {
-    weatherPointsContainer.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
-    return;
-  }
+  let totalDist = 0;
+  for (let j = 1; j < coords.length; j++) totalDist += haversineDistance(coords[j-1], coords[j]);
+  if (totalDist === 0) return weatherPoints.map((_, i) => N <= 1 ? 0.5 : i / (N - 1));
 
-  weatherPoints.forEach((pt, idx) => {
-    const card = document.createElement('div');
-    card.className = 'weather-point-card';
-    card.dataset.index = idx;
-    card.innerHTML = `
-      <div class="wpc-header">
-        <span class="wpc-label">${pt.label}</span>
-        <span class="wpc-status">等待查詢</span>
-      </div>
-      <div class="wpc-body wpc-idle">點擊「取得天氣」查閱資訊</div>
-    `;
-    weatherPointsContainer.appendChild(card);
+  return weatherPoints.map(pt => {
+    let minD = Infinity, ci = 0;
+    for (let j = 0; j < coords.length; j++) {
+      const d = haversineDistance([pt.lat, pt.lng], coords[j]);
+      if (d < minD) { minD = d; ci = j; }
+    }
+    let cum = 0;
+    for (let j = 1; j <= ci; j++) cum += haversineDistance(coords[j-1], coords[j]);
+    return cum / totalDist;
   });
 }
 
-function _renderWeatherCardData(card, data) {
-  const d = (v, alt = '—') => v != null ? v : alt;
-  card.querySelector('.wpc-status').textContent = data.weatherDesc;
-  card.querySelector('.wpc-body').className = 'wpc-body';
-  card.querySelector('.wpc-body').innerHTML = `
-    <div class="wpc-main">
-      <span class="wpc-icon">${data.weatherIcon}</span>
-      <div class="wpc-temps">
-        <span class="wpc-temp-cur">${d(data.temp, d(data.tempMax))}</span>
-        <span class="wpc-temp-range">高 ${d(data.tempMax)} / 低 ${d(data.tempMin)}</span>
-      </div>
-    </div>
-    <div class="wpc-grid">
-      <div class="wpc-item"><span class="wpc-lbl">體感</span><span>${d(data.feelsLike)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">濕度</span><span>${d(data.humidity)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">露點</span><span>${d(data.dewPoint)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">降水</span><span>${d(data.precipitation, d(data.precipitationSum))}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">機率</span><span>${d(data.precipProb, d(data.precipProbMax))}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">雲量</span><span>${d(data.cloudCover)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">風速</span><span>${d(data.windSpeed, d(data.windSpeedMax))}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">陣風</span><span>${d(data.windGust, d(data.windGustMax))}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">UV</span><span>${d(data.uvIndex, d(data.uvIndexMax))}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">能見度</span><span>${d(data.visibility)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">日照</span><span>${d(data.sunshineHours)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">輻射</span><span>${d(data.radiation)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">日出</span><span>${d(data.sunrise)}</span></div>
-      <div class="wpc-item"><span class="wpc-lbl">日落</span><span>${d(data.sunset)}</span></div>
-    </div>
-  `;
+function renderWeatherPanel() {
+  weatherPoints = buildWeatherPoints();
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+
+  if (weatherPoints.length === 0) {
+    container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
+    return;
+  }
+
+  const saved = loadWeatherSettings();
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const nowHour = now.getHours();
+  const N = weatherPoints.length;
+
+  // Proportional column widths aligned with elevation chart X axis
+  const positions = computeWeatherPointPositions();
+  const voronoi = positions.map((p, i) => {
+    const left  = i === 0   ? p       : (p - positions[i-1]) / 2;
+    const right = i === N-1 ? (1 - p) : (positions[i+1] - p) / 2;
+    return left + right;
+  });
+  const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
+  const labelW = 58;
+  const minColW = 110;
+  const dataW = Math.max(panelW - labelW, N * minColW);
+  const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
+
+  const timeOpts = (sel) => Array.from({length: 24}, (_, h) =>
+    `<option value="${h}"${h === sel ? ' selected' : ''}>${String(h).padStart(2,'0')}:00</option>`
+  ).join('');
+
+  let html = `<table class="weather-table"><colgroup><col style="width:${labelW}px">`;
+  colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
+  html += '</colgroup><thead><tr class="wt-header-row"><th class="wt-label-cell wt-th"></th>';
+
+  weatherPoints.forEach((pt, i) => {
+    const sv = saved?.cols?.[i];
+    const date = sv?.date || todayStr;
+    const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
+    html += `
+      <th class="wt-col-head wt-th" data-idx="${i}">
+        <div class="wt-col-label">${pt.label}</div>
+        <input type="date" class="wt-date-input" value="${date}">
+        <select class="wt-time-select">${timeOpts(hour)}</select>
+      </th>`;
+  });
+
+  html += '</tr></thead><tbody>';
+  WEATHER_ROWS.forEach(row => {
+    html += `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
+    weatherPoints.forEach((_, i) => html += `<td class="wt-data-cell wt-td" data-col="${i}" data-key="${row.key}">—</td>`);
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+
+  // Bind auto-save and restore pending GPX dates
+  container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
+    el.addEventListener('change', saveWeatherSettings)
+  );
+  if (window._pendingGpxDates) {
+    weatherPoints.forEach((pt, colIdx) => {
+      if (!pt.isWaypoint || pt.wpIndex === undefined) return;
+      const sd = window._pendingGpxDates[pt.wpIndex];
+      if (!sd) return;
+      const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
+      if (!th) return;
+      if (sd.date) th.querySelector('.wt-date-input').value = sd.date;
+      if (sd.time) {
+        const h = parseInt(sd.time.split(':')[0]);
+        if (!isNaN(h)) th.querySelector('.wt-time-select').value = String(h);
+      }
+    });
+    window._pendingGpxDates = null;
+    saveWeatherSettings();
+  }
 }
 
 async function fetchAllWeatherData() {
   if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
-  const dateStr = weatherDateInput?.value;
-  if (!dateStr) { showNotification('請選擇日期', 'warning'); return; }
-  const hour = parseInt(weatherTimeSelect?.value ?? '8');
+
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
 
   saveWeatherSettings();
   mapManager.clearWaypointWeather();
-  btnFetchWeather.disabled = true;
+  if (btnFetchWeather) btnFetchWeather.disabled = true;
 
   for (let i = 0; i < weatherPoints.length; i++) {
     const pt = weatherPoints[i];
-    const card = weatherPointsContainer.querySelector(`[data-index="${i}"]`);
-    btnFetchWeather.textContent = `${i + 1} / ${weatherPoints.length}`;
+    if (btnFetchWeather) btnFetchWeather.textContent = `${i + 1} / ${weatherPoints.length}`;
 
-    if (card) {
-      card.querySelector('.wpc-status').textContent = '讀取中...';
-      card.querySelector('.wpc-body').className = 'wpc-body';
-      card.querySelector('.wpc-body').innerHTML = '<p style="text-align:center;color:var(--text-muted);font-size:12px;padding:8px 0">讀取中...</p>';
-    }
+    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
+    const dateStr = th?.querySelector('.wt-date-input')?.value;
+    const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '8');
+    if (!dateStr) continue;
+
+    WEATHER_ROWS.forEach(row => {
+      const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+      if (cell) { cell.textContent = '...'; cell.className = 'wt-data-cell wt-td loading'; }
+    });
 
     try {
       const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
-      if (card) _renderWeatherCardData(card, data);
-      if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon) {
+      WEATHER_ROWS.forEach(row => {
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) { cell.textContent = getCellValue(data, row.key); cell.className = 'wt-data-cell wt-td'; }
+      });
+      if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
-      }
     } catch (err) {
       console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
-      if (card) {
-        card.querySelector('.wpc-status').textContent = '查詢失敗';
-        card.querySelector('.wpc-body').innerHTML = '<p style="text-align:center;color:var(--danger,#f87171);font-size:12px;padding:8px 0">無法取得天氣資料</p>';
-      }
+      WEATHER_ROWS.forEach(row => {
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) { cell.textContent = '—'; cell.className = 'wt-data-cell wt-td error'; }
+      });
     }
 
     if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
   }
 
-  btnFetchWeather.disabled = false;
-  btnFetchWeather.textContent = '取得天氣';
+  if (btnFetchWeather) { btnFetchWeather.disabled = false; btnFetchWeather.textContent = '取得天氣'; }
   showNotification('天氣資訊已更新', 'success', 2000);
 }
 
