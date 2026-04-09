@@ -297,6 +297,7 @@ html, body {
 
 /* Custom marker styles */
 .custom-waypoint-icon {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -310,6 +311,7 @@ html, body {
   font-size: 11px;
   font-weight: 700;
   transition: transform var(--transition-fast);
+  overflow: visible;
 }
 .custom-waypoint-icon:hover {
   transform: scale(1.2);
@@ -319,6 +321,18 @@ html, body {
   border-color: #fbbf24;
   z-index: 1000 !important;
   cursor: grabbing;
+}
+
+.wp-weather-badge {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 15px;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 @keyframes pulseRotate {

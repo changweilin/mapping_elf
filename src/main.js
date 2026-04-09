@@ -188,6 +188,9 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   try {
     showNotification('規劃最佳路徑中...', 'info', 1500);
 
+    // Clear stale weather icons while recalculating
+    mapManager.clearWaypointWeather();
+
     // Get all alternative routes (with elevation already fetched)
     allAlternatives = await routeEngine.getAlternativeRoutes(waypoints);
 
@@ -453,6 +456,8 @@ function generateWeatherSegments(coords, waypoints) {
     if (legDist <= SEGMENT_MAX_DIST) {
       segments.push({
         label: `航點 ${w + 1} ➔ 航點 ${w + 2}`,
+        startWpIndex: w,
+        endWpIndex: w + 1,
         coords: legCoords,
         distance: legDist
       });
@@ -462,19 +467,21 @@ function generateWeatherSegments(coords, waypoints) {
       let currentChunk = [legCoords[0]];
       let currentDist = 0;
       const targetDist = legDist / numParts;
-      
+
       for (let i = 1; i < legCoords.length; i++) {
         const p1 = legCoords[i-1];
         const p2 = legCoords[i];
         const d = haversineDistance(p1, p2);
-        
+
         currentChunk.push(p2);
         currentDist += d;
-        
+
         if (currentDist >= targetDist || i === legCoords.length - 1) {
           segments.push({
             label: `航點 ${w + 1} ➔ 航點 ${w + 2}`,
             partInfo: ` (段落 ${currentPart}/${numParts})`,
+            startWpIndex: w,
+            endWpIndex: w + 1,
             coords: [...currentChunk],
             distance: currentDist
           });
@@ -549,6 +556,14 @@ function renderWeatherSegments() {
               <span class="ws-desc">${mainRes.weatherDesc} • 降水 ${mainRes.precipitation}</span>
             </div>
           `;
+
+          // Update waypoint marker weather icons
+          if (results[0]?.weatherIcon && seg.startWpIndex !== undefined) {
+            mapManager.setWaypointWeather(seg.startWpIndex, results[0].weatherIcon);
+          }
+          if (results[results.length - 1]?.weatherIcon && seg.endWpIndex !== undefined) {
+            mapManager.setWaypointWeather(seg.endWpIndex, results[results.length - 1].weatherIcon);
+          }
         } else {
           resContainer.classList.add('empty');
           resContainer.innerHTML = '<p>無天氣資料</p>';

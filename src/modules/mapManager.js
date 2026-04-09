@@ -42,6 +42,7 @@ export class MapManager {
     this.onRouteSelect = null; // callback(index)
     this.waypoints = [];
     this.waypointMarkers = [];
+    this.waypointWeather = []; // Weather emoji per waypoint index
     this.routePolylines = []; // Array of polylines for alternatives
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
@@ -82,21 +83,33 @@ export class MapManager {
     }).addTo(this.map);
 
     // Long press (contextmenu) enables dragging
+    let _dragModeActive = false;
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
+      _dragModeActive = true;
       marker.dragging.enable();
       marker.getElement().classList.add('is-dragging');
+    });
+
+    // Tap/click when drag mode is active → cancel drag mode
+    marker.on('click', (e) => {
+      if (_dragModeActive) {
+        L.DomEvent.stopPropagation(e);
+        _dragModeActive = false;
+        marker.dragging.disable();
+        marker.getElement().classList.remove('is-dragging');
+      }
     });
 
     marker.on('dragend', (e) => {
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
       this.waypoints[idx] = [pos.lat, pos.lng];
-      
-      // Disable dragging again after move
+
+      _dragModeActive = false;
       marker.dragging.disable();
       marker.getElement().classList.remove('is-dragging');
-      
+
       this.onWaypointChange(this.waypoints);
     });
 
@@ -109,6 +122,7 @@ export class MapManager {
     this.map.removeLayer(this.waypointMarkers[index]);
     this.waypoints.splice(index, 1);
     this.waypointMarkers.splice(index, 1);
+    this.waypointWeather.splice(index, 1);
     this._updateMarkerIcons();
     this.onWaypointChange(this.waypoints);
   }
@@ -139,8 +153,20 @@ export class MapManager {
     this.waypointMarkers.forEach((m) => this.map.removeLayer(m));
     this.waypoints = [];
     this.waypointMarkers = [];
+    this.waypointWeather = [];
     this.clearAllRoutes();
     this.onWaypointChange(this.waypoints);
+  }
+
+  setWaypointWeather(index, emoji) {
+    if (index < 0 || index >= this.waypointMarkers.length) return;
+    this.waypointWeather[index] = emoji;
+    this.waypointMarkers[index].setIcon(this._createIcon(index));
+  }
+
+  clearWaypointWeather() {
+    this.waypointWeather = [];
+    this.waypointMarkers.forEach((marker, i) => marker.setIcon(this._createIcon(i)));
   }
 
   /**
@@ -305,11 +331,15 @@ export class MapManager {
     if (index === 0 && total > 1) cls = 'start';
     else if (index === total - 1 && total > 1) cls = 'end';
 
+    const weather = this.waypointWeather[index];
+    const weatherHtml = weather ? `<div class="wp-weather-badge">${weather}</div>` : '';
+
+    const size = cls ? 32 : 28;
     return L.divIcon({
       className: `custom-waypoint-icon ${cls}`,
-      html: `<span>${index + 1}</span>`,
-      iconSize: [28, 28],
-      iconAnchor: [14, 14],
+      html: `${weatherHtml}<span>${index + 1}</span>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
     });
   }
 
