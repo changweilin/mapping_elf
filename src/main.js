@@ -535,8 +535,31 @@ function loadWeatherSettings() {
   catch { return null; }
 }
 
+function shiftAllDates(deltaDays, deltaHours) {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  container.querySelectorAll('.wt-col-head').forEach(th => {
+    const dateInput = th.querySelector('.wt-date-input');
+    const timeSelect = th.querySelector('.wt-time-select');
+    if (!dateInput || !timeSelect) return;
+    const base = dateInput.value ? new Date(dateInput.value + 'T00:00:00') : new Date();
+    let hour = parseInt(timeSelect.value) || 0;
+    hour += deltaHours;
+    const dayCarry = Math.floor(hour / 24);
+    hour = ((hour % 24) + 24) % 24;
+    base.setDate(base.getDate() + deltaDays + dayCarry);
+    dateInput.value = base.toISOString().split('T')[0];
+    timeSelect.value = String(hour);
+  });
+  saveWeatherSettings();
+}
+
 function initWeatherControls() {
   if (btnFetchWeather) btnFetchWeather.addEventListener('click', fetchAllWeatherData);
+  document.getElementById('btn-date-minus-day') ?.addEventListener('click', () => shiftAllDates(-1, 0));
+  document.getElementById('btn-date-plus-day')  ?.addEventListener('click', () => shiftAllDates(+1, 0));
+  document.getElementById('btn-date-minus-hour')?.addEventListener('click', () => shiftAllDates(0, -1));
+  document.getElementById('btn-date-plus-hour') ?.addEventListener('click', () => shiftAllDates(0, +1));
 
   const panel = document.getElementById('bottom-panel');
   if (panel) {
