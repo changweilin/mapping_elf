@@ -32,6 +32,9 @@ let pendingUpdate = false;
 const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 
+const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
+let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
+
 // =========== Initialize Modules ===========
 const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
@@ -249,7 +252,10 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     mapManager.clearWaypointWeather();
 
     // Get all alternative routes (with elevation already fetched)
-    allAlternatives = await routeEngine.getAlternativeRoutes(waypoints);
+    const routeWaypoints = roundTripMode && waypoints.length >= 2
+      ? [...waypoints, ...waypoints.slice(0, -1).reverse()]
+      : waypoints;
+    allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
 
     if (allAlternatives.length > 0) {
       // Draw all routes on map
@@ -970,6 +976,17 @@ function updateElevationMarkers() {
 async function init() {
   await offlineManager.register();
   initWeatherControls();
+
+  // Restore + wire round-trip toggle
+  const toggleRoundtrip = document.getElementById('toggle-roundtrip');
+  if (toggleRoundtrip) {
+    toggleRoundtrip.checked = roundTripMode;
+    toggleRoundtrip.addEventListener('change', () => {
+      roundTripMode = toggleRoundtrip.checked;
+      localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+      if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+    });
+  }
 
   // Restore + wire segment interval controls
   if (segmentIntervalEnable && segmentIntervalInput) {
