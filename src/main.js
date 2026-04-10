@@ -508,6 +508,39 @@ function cascadeWeatherTimes() {
   });
 }
 
+/**
+ * Enforce non-decreasing time order across all editable columns.
+ * If column i is earlier than column i-1, snap it forward to match column i-1.
+ * Skips auto-cascade columns (speed mode cols 1..N).
+ */
+function enforceTimeOrdering() {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const heads = Array.from(container.querySelectorAll('.wt-col-head'));
+  if (heads.length < 2) return;
+
+  const toMs = (th) => {
+    const d = th.querySelector('.wt-date-input')?.value || '';
+    const h = parseInt(th.querySelector('.wt-time-select')?.value ?? '0');
+    if (!d) return -Infinity;
+    return new Date(d + 'T00:00:00').getTime() + h * 3600000;
+  };
+
+  for (let i = 1; i < heads.length; i++) {
+    // Auto-cascade columns are already monotonic — skip to avoid overwriting cascade output
+    if (heads[i].classList.contains('wt-time-auto')) continue;
+
+    if (toMs(heads[i]) < toMs(heads[i - 1])) {
+      const prevDate = heads[i - 1].querySelector('.wt-date-input')?.value || '';
+      const prevHour = heads[i - 1].querySelector('.wt-time-select')?.value ?? '0';
+      const di = heads[i].querySelector('.wt-date-input');
+      const hs = heads[i].querySelector('.wt-time-select');
+      if (di) di.value = prevDate;
+      if (hs) hs.value = prevHour;
+    }
+  }
+}
+
 // =========== GPX Export / Import ===========
 
 function exportGpx() {
@@ -682,6 +715,7 @@ function shiftAllDates(deltaDays, deltaHours) {
   });
 
   if (speedIntervalMode) cascadeWeatherTimes();
+  enforceTimeOrdering();
   saveWeatherSettings();
 }
 
@@ -997,17 +1031,19 @@ function renderWeatherPanel() {
   html += '</tbody></table>';
   container.innerHTML = html;
 
-  // Bind auto-save. In speed mode, changing col-0 also cascades all other columns.
+  // Unified change handler: cascade (speed mode) → enforce order → save
+  const onTimeChange = () => {
+    if (speedIntervalMode) cascadeWeatherTimes();
+    enforceTimeOrdering();
+    saveWeatherSettings();
+  };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
-    el.addEventListener('change', saveWeatherSettings)
+    el.addEventListener('change', onTimeChange)
   );
-  if (speedIntervalMode) {
-    const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
-    th0?.querySelector('.wt-date-input')?.addEventListener('change', cascadeWeatherTimes);
-    th0?.querySelector('.wt-time-select')?.addEventListener('change', cascadeWeatherTimes);
-    // Initial cascade from saved start time
-    cascadeWeatherTimes();
-  }
+
+  // Initial cascade + enforce on first render
+  if (speedIntervalMode) cascadeWeatherTimes();
+  enforceTimeOrdering();
 
   // Restore previously fetched weather data for matching coordinates
   weatherPoints.forEach((pt, colIdx) => {
