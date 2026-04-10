@@ -3,6 +3,7 @@
  * Handles Leaflet map, layers, waypoints, multiple route polylines
  */
 import L from 'leaflet';
+import { interpolateRouteColor } from './utils.js';
 
 const TILE_LAYERS = {
   streets: {
@@ -31,13 +32,13 @@ const TILE_LAYERS = {
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
 
-// Colors for alternative routes (index 0 = selected, rest = alternatives)
+// Colors for alternative routes
 const ROUTE_COLORS = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171'];
 const ROUTE_ALT_OPACITY = 0.4;
 const ROUTE_SELECTED_OPACITY = 0.9;
 
-// Gradient palette: one color per waypoint, applied per segment
-const GRADIENT_PALETTE = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171', '#a78bfa', '#34d399', '#fb7185', '#38bdf8'];
+// Max gradient chunks for the selected route polyline
+const GRADIENT_CHUNKS = 80;
 
 export class MapManager {
   constructor(containerId, onWaypointChange) {
@@ -48,8 +49,7 @@ export class MapManager {
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
-    this.gradientPolylines = []; // Segment-colored polylines for selected route
-    this.effectiveWaypoints = []; // Waypoints used for gradient split
+    this.gradientPolylines = []; // Gradient chunks for selected route
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
     this.currentLayerName = 'streets';
@@ -209,14 +209,11 @@ export class MapManager {
   }
 
   /**
-   * Draw a single route with gradient segment coloring
-   * @param {Array} routeCoords
-   * @param {Array} [waypoints] - Effective waypoints for gradient split
+   * Draw a single route with continuous gradient coloring
    */
-  drawRoute(routeCoords, waypoints = null) {
+  drawRoute(routeCoords) {
     this.clearAllRoutes();
-    this.effectiveWaypoints = waypoints || this.waypoints;
-    this._drawGradientRoute(routeCoords, this.effectiveWaypoints);
+    this._drawGradientRoute(routeCoords);
     this.selectedRouteIndex = 0;
   }
 
@@ -224,12 +221,10 @@ export class MapManager {
    * Draw multiple alternative routes on the map
    * @param {Array} routes - Array of { coords, label, index, ... }
    * @param {number} selectedIdx - Index of the currently selected route
-   * @param {Array} [effectiveWaypoints] - Waypoints used for routing (may differ from this.waypoints in round-trip mode)
    */
-  drawMultipleRoutes(routes, selectedIdx = 0, effectiveWaypoints = null) {
+  drawMultipleRoutes(routes, selectedIdx = 0) {
     this.clearAllRoutes();
     this.selectedRouteIndex = selectedIdx;
-    this.effectiveWaypoints = effectiveWaypoints || this.waypoints;
     this._redrawRoutes(routes, selectedIdx);
   }
 
@@ -290,45 +285,33 @@ export class MapManager {
       this.routePolylines.push(pl);
     }
 
-    // Draw selected route as gradient segments on top
+    // Draw selected route as continuous gradient on top
     const selectedRoute = routes.find((r) => r.index === selectedIdx);
     if (selectedRoute) {
-      this._drawGradientRoute(selectedRoute.coords, this.effectiveWaypoints);
+      this._drawGradientRoute(selectedRoute.coords);
     }
   }
 
   /**
-   * Draw the selected route split into per-waypoint-segment colored polylines
+   * Draw the selected route as GRADIENT_CHUNKS small polylines colored by
+   * position along the route (t=0 at start → t=1 at end).
    */
-  _drawGradientRoute(routeCoords, waypoints) {
+  _drawGradientRoute(routeCoords) {
     this.clearGradientRoute();
+    const N = routeCoords.length;
+    if (N < 2) return;
 
-    const wps = waypoints && waypoints.length >= 2 ? waypoints : null;
+    const chunks = Math.min(GRADIENT_CHUNKS, N - 1);
+    const chunkSize = (N - 1) / chunks;
 
-    if (!wps) {
-      const pl = L.polyline(routeCoords, {
-        color: GRADIENT_PALETTE[0],
-        weight: 5,
-        opacity: ROUTE_SELECTED_OPACITY,
-        lineCap: 'round',
-        lineJoin: 'round',
-      }).addTo(this.map);
-      this._bindRouteHoverEvents(pl);
-      this.gradientPolylines.push(pl);
-      return;
-    }
+    for (let chunk = 0; chunk < chunks; chunk++) {
+      const startI = Math.floor(chunk * chunkSize);
+      const endI = Math.min(Math.floor((chunk + 1) * chunkSize), N - 1);
+      if (endI <= startI) continue;
 
-    const wpIndices = this._findWaypointIndicesInRoute(routeCoords, wps);
-
-    for (let seg = 0; seg < wpIndices.length - 1; seg++) {
-      const startIdx = wpIndices[seg];
-      const endIdx = wpIndices[seg + 1];
-      if (endIdx <= startIdx) continue;
-      const segCoords = routeCoords.slice(startIdx, endIdx + 1);
-      if (segCoords.length < 2) continue;
-
-      const color = GRADIENT_PALETTE[seg % GRADIENT_PALETTE.length];
-      const pl = L.polyline(segCoords, {
+      const t = startI / (N - 1);
+      const color = interpolateRouteColor(t);
+      const pl = L.polyline(routeCoords.slice(startI, endI + 1), {
         color,
         weight: 5,
         opacity: ROUTE_SELECTED_OPACITY,
@@ -340,22 +323,6 @@ export class MapManager {
     }
   }
 
-  /**
-   * Find the index in routeCoords closest to each waypoint
-   */
-  _findWaypointIndicesInRoute(routeCoords, waypoints) {
-    return waypoints.map((wp) => {
-      let minD = Infinity, minIdx = 0;
-      for (let i = 0; i < routeCoords.length; i++) {
-        const dlat = wp[0] - routeCoords[i][0];
-        const dlng = wp[1] - routeCoords[i][1];
-        const d = dlat * dlat + dlng * dlng;
-        if (d < minD) { minD = d; minIdx = i; }
-      }
-      return minIdx;
-    });
-  }
-
   clearGradientRoute() {
     this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
     this.gradientPolylines = [];
@@ -365,10 +332,12 @@ export class MapManager {
    * Set km-interval intermediate markers (non-interactive, small icons)
    * @param {Array<{lat,lng,cumDistM}>} points
    */
-  setIntermediateMarkers(points) {
+  setIntermediateMarkers(points, totalDistM = 0) {
     this.clearIntermediateMarkers();
     points.forEach((pt) => {
       const km = (pt.cumDistM / 1000).toFixed(0);
+      const t = totalDistM > 0 ? Math.min(1, pt.cumDistM / totalDistM) : 0;
+      const color = interpolateRouteColor(t);
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
         html: `<span>${km}</span>`,
@@ -376,6 +345,9 @@ export class MapManager {
         iconAnchor: [11, 11],
       });
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: false }).addTo(this.map);
+      // Override the CSS background with the gradient color
+      const el = marker.getElement();
+      if (el) el.style.background = color;
       this.intermediateMarkers.push(marker);
     });
   }

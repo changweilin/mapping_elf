@@ -3,13 +3,11 @@
  * Queries Open-Meteo Elevation API and renders Chart.js profile
  */
 import { Chart, registerables } from 'chart.js';
-import { samplePoints, cumulativeDistances, formatDistance, formatElevation } from './utils.js';
+import { samplePoints, cumulativeDistances, formatDistance, formatElevation, interpolateRouteColor, interpolateRouteColorRgb } from './utils.js';
 
 Chart.register(...registerables);
 
 const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
-
-const GRADIENT_PALETTE = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171', '#a78bfa', '#34d399', '#fb7185', '#38bdf8'];
 
 export class ElevationProfile {
   constructor(canvasId, emptyStateId, onHover, onMarkerClick) {
@@ -22,7 +20,6 @@ export class ElevationProfile {
     this.distances = [];
     this.points = [];
     this._markers = []; // [{cumDistM, label, colIdx, isWaypoint}]
-    this._wpSampleIndices = null; // waypoint positions within sampled coords
   }
 
   /** Programmatically show the chart tooltip/crosshair at a sampled point index */
@@ -105,11 +102,8 @@ export class ElevationProfile {
 
   /**
    * Update chart with pre-fetched elevation data (no API call)
-   * @param {Array} sampledCoords
-   * @param {Array} elevations
-   * @param {Array} [waypoints] - Effective waypoints for gradient segment coloring
    */
-  updateWithData(sampledCoords, elevations, waypoints = null) {
+  updateWithData(sampledCoords, elevations) {
     if (!sampledCoords || sampledCoords.length < 2) {
       this.clear();
       return;
@@ -118,24 +112,7 @@ export class ElevationProfile {
     this.points = sampledCoords;
     this.elevations = elevations;
     this.distances = cumulativeDistances(this.points);
-    this._wpSampleIndices = waypoints && waypoints.length >= 2
-      ? this._findWaypointIndicesInSamples(sampledCoords, waypoints)
-      : null;
     this._renderChart();
-  }
-
-  /** Find the index in sampledCoords closest to each waypoint */
-  _findWaypointIndicesInSamples(sampledCoords, waypoints) {
-    return waypoints.map((wp) => {
-      let minD = Infinity, minIdx = 0;
-      for (let i = 0; i < sampledCoords.length; i++) {
-        const dlat = wp[0] - sampledCoords[i][0];
-        const dlng = wp[1] - sampledCoords[i][1];
-        const d = dlat * dlat + dlng * dlng;
-        if (d < minD) { minD = d; minIdx = i; }
-      }
-      return minIdx;
-    });
   }
 
   clear() {
@@ -147,7 +124,6 @@ export class ElevationProfile {
     this.distances = [];
     this.points = [];
     this._markers = [];
-    this._wpSampleIndices = null;
     this.emptyState.classList.remove('hidden');
   }
 
@@ -205,12 +181,14 @@ export class ElevationProfile {
           const elev = self._interpolateElevAtCumM(m.cumDistM);
           const yPx = scales.y.getPixelForValue(elev);
 
+          const rgb = interpolateRouteColorRgb(xFrac);
+          const baseColor = `rgb(${rgb.r},${rgb.g},${rgb.b})`;
+          const lineColor = `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`;
+
           c.save();
 
-          // Vertical dashed line
-          c.strokeStyle = m.isWaypoint
-            ? 'rgba(110,231,183,0.55)'
-            : 'rgba(148,163,184,0.4)';
+          // Vertical dashed line in gradient color
+          c.strokeStyle = lineColor;
           c.lineWidth = 1;
           c.setLineDash([3, 3]);
           c.beginPath();
@@ -219,9 +197,9 @@ export class ElevationProfile {
           c.stroke();
           c.setLineDash([]);
 
-          // Dot on elevation line
+          // Dot on elevation line in gradient color
           const r = m.isWaypoint ? 5 : 3.5;
-          c.fillStyle = m.isWaypoint ? '#6ee7b7' : '#94a3b8';
+          c.fillStyle = baseColor;
           c.beginPath();
           c.arc(xPx, yPx, r, 0, Math.PI * 2);
           c.fill();
@@ -234,19 +212,9 @@ export class ElevationProfile {
       },
     };
 
-    // Build segment color function based on waypoint split indices
-    const wpIdx = this._wpSampleIndices;
-    const segmentBorderColor = wpIdx && wpIdx.length >= 2
-      ? (ctx) => {
-          const i = ctx.p0DataIndex;
-          for (let seg = 0; seg < wpIdx.length - 1; seg++) {
-            if (i >= wpIdx[seg] && i < wpIdx[seg + 1]) {
-              return GRADIENT_PALETTE[seg % GRADIENT_PALETTE.length];
-            }
-          }
-          return GRADIENT_PALETTE[(wpIdx.length - 2) % GRADIENT_PALETTE.length];
-        }
-      : undefined;
+    // Continuous gradient: color each chart segment by its position along the route
+    const totalPts = this.elevations.length;
+    const segmentBorderColor = (ctx) => interpolateRouteColor(ctx.p0DataIndex / Math.max(1, totalPts - 1));
 
     this.chart = new Chart(ctx, {
       type: 'line',
@@ -260,11 +228,9 @@ export class ElevationProfile {
             borderColor: '#6ee7b7',
             borderWidth: 2,
             pointRadius: 0,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: '#fbbf24',
-            pointHoverBorderColor: '#fff',
+            pointHoverRadius: 0,
             tension: 0.3,
-            ...(segmentBorderColor ? { segment: { borderColor: segmentBorderColor } } : {}),
+            segment: { borderColor: segmentBorderColor },
           },
         ],
       },

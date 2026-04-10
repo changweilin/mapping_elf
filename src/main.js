@@ -40,7 +40,6 @@ const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 
-let currentRouteWaypoints = []; // Effective waypoints used for routing (may be expanded for round-trip)
 
 // =========== Initialize Modules ===========
 const routeEngine = new RouteEngine();
@@ -267,12 +266,11 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     const routeWaypoints = roundTripMode && waypoints.length >= 2
       ? [...waypoints, ...waypoints.slice(0, -1).reverse()]
       : waypoints;
-    currentRouteWaypoints = routeWaypoints;
     allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
 
     if (allAlternatives.length > 0) {
-      // Draw all routes on map with gradient segment coloring
-      mapManager.drawMultipleRoutes(allAlternatives, 0, currentRouteWaypoints);
+      // Draw all routes on map with continuous gradient coloring
+      mapManager.drawMultipleRoutes(allAlternatives, 0);
 
       // Show alternatives panel
       renderAlternatives(allAlternatives, 0);
@@ -314,12 +312,8 @@ function selectAlternative(index) {
   // Update map selection - set triggeredByUI to true to prevent recursion
   mapManager.selectRoute(allAlternatives, index, true);
 
-  // Update elevation chart with pre-fetched data and waypoint gradient info
-  elevationProfile.updateWithData(
-    route.sampledCoords,
-    route.elevations,
-    currentRouteWaypoints
-  );
+  // Update elevation chart with pre-fetched data
+  elevationProfile.updateWithData(route.sampledCoords, route.elevations);
 
   // Update stats from pre-calculated route data
   statDistance.textContent = formatDistance(route.distance);
@@ -721,9 +715,12 @@ function computeIntermediatePoints(coords, intervalKm) {
 
 function updateIntermediateMarkers() {
   if (segmentIntervalKm > 0 && currentRouteCoords.length > 1) {
-    mapManager.setIntermediateMarkers(
-      computeIntermediatePoints(currentRouteCoords, segmentIntervalKm)
-    );
+    const pts = computeIntermediatePoints(currentRouteCoords, segmentIntervalKm);
+    let totalDistM = 0;
+    for (let i = 1; i < currentRouteCoords.length; i++) {
+      totalDistM += haversineDistance(currentRouteCoords[i - 1], currentRouteCoords[i]);
+    }
+    mapManager.setIntermediateMarkers(pts, totalDistM);
   } else {
     mapManager.clearIntermediateMarkers();
   }
@@ -998,12 +995,13 @@ function updateElevationMarkers() {
     elevationProfile.setWaypointMarkers([]);
     return;
   }
-  const markers = weatherPoints.map((pt, i) => ({
-    cumDistM: pt._cum || 0,
-    label: pt.label,
-    colIdx: i,
-    isWaypoint: pt.isWaypoint,
-  }));
+  // Only show actual waypoints and km-interval markers; exclude auto-midpoints
+  const markers = [];
+  weatherPoints.forEach((pt, colIdx) => {
+    if (pt.isWaypoint || segmentIntervalKm > 0) {
+      markers.push({ cumDistM: pt._cum || 0, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
+    }
+  });
   elevationProfile.setWaypointMarkers(markers);
 }
 
