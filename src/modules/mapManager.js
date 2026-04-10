@@ -36,6 +36,9 @@ const ROUTE_COLORS = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171'];
 const ROUTE_ALT_OPACITY = 0.4;
 const ROUTE_SELECTED_OPACITY = 0.9;
 
+// Gradient palette: one color per waypoint, applied per segment
+const GRADIENT_PALETTE = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171', '#a78bfa', '#34d399', '#fb7185', '#38bdf8'];
+
 export class MapManager {
   constructor(containerId, onWaypointChange) {
     this.onWaypointChange = onWaypointChange;
@@ -44,7 +47,9 @@ export class MapManager {
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
-    this.routePolylines = []; // Array of polylines for alternatives
+    this.routePolylines = []; // Solid polylines for alternative routes
+    this.gradientPolylines = []; // Segment-colored polylines for selected route
+    this.effectiveWaypoints = []; // Waypoints used for gradient split
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
     this.currentLayerName = 'streets';
@@ -204,20 +209,14 @@ export class MapManager {
   }
 
   /**
-   * Draw a single route (backwards compatible)
+   * Draw a single route with gradient segment coloring
+   * @param {Array} routeCoords
+   * @param {Array} [waypoints] - Effective waypoints for gradient split
    */
-  drawRoute(routeCoords) {
+  drawRoute(routeCoords, waypoints = null) {
     this.clearAllRoutes();
-    const polyline = L.polyline(routeCoords, {
-      color: ROUTE_COLORS[0],
-      weight: 4,
-      opacity: ROUTE_SELECTED_OPACITY,
-      smoothFactor: 1,
-      lineCap: 'round',
-      lineJoin: 'round',
-    }).addTo(this.map);
-    this._bindRouteHoverEvents(polyline);
-    this.routePolylines = [polyline];
+    this.effectiveWaypoints = waypoints || this.waypoints;
+    this._drawGradientRoute(routeCoords, this.effectiveWaypoints);
     this.selectedRouteIndex = 0;
   }
 
@@ -225,82 +224,141 @@ export class MapManager {
    * Draw multiple alternative routes on the map
    * @param {Array} routes - Array of { coords, label, index, ... }
    * @param {number} selectedIdx - Index of the currently selected route
+   * @param {Array} [effectiveWaypoints] - Waypoints used for routing (may differ from this.waypoints in round-trip mode)
    */
-  drawMultipleRoutes(routes, selectedIdx = 0) {
+  drawMultipleRoutes(routes, selectedIdx = 0, effectiveWaypoints = null) {
     this.clearAllRoutes();
     this.selectedRouteIndex = selectedIdx;
-
-    // Draw alternatives first (behind), then selected on top
-    const ordered = routes
-      .map((r, i) => ({ ...r, drawOrder: i === selectedIdx ? 999 : i }))
-      .sort((a, b) => a.drawOrder - b.drawOrder);
-
-    for (const route of ordered) {
-      const isSelected = route.index === selectedIdx;
-      const color = ROUTE_COLORS[route.index % ROUTE_COLORS.length];
-
-      const polyline = L.polyline(route.coords, {
-        color: color,
-        weight: isSelected ? 5 : 3,
-        opacity: isSelected ? ROUTE_SELECTED_OPACITY : ROUTE_ALT_OPACITY,
-        smoothFactor: 1,
-        lineCap: 'round',
-        lineJoin: 'round',
-        dashArray: isSelected ? null : '8 6',
-        className: `route-line route-${route.index}`,
-      }).addTo(this.map);
-
-      this._bindRouteHoverEvents(polyline);
-
-      // Click on alternative route to select it
-      polyline.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        this.selectRoute(routes, route.index);
-      });
-
-      // Tooltip on hover
-      polyline.bindTooltip(route.label, {
-        sticky: true,
-        className: 'route-tooltip',
-        direction: 'top',
-        offset: [0, -10],
-      });
-
-      // Store reference with route index
-      polyline._routeIndex = route.index;
-      this.routePolylines.push(polyline);
-    }
+    this.effectiveWaypoints = effectiveWaypoints || this.waypoints;
+    this._redrawRoutes(routes, selectedIdx);
   }
 
   /**
    * Visually select a route among alternatives
    * @param {Array} routes - Current alternatives
    * @param {number} selectedIdx - Index to select
-   * @param {boolean} triggeredByUI - If true, do not fire onRouteSelect to avoid recursion
+   * @param {boolean} triggeredByUI - If true, skip redraw if index unchanged (avoids double-draw)
    */
   selectRoute(routes, selectedIdx, triggeredByUI = false) {
+    // Skip redundant redraw when triggered by UI after a map-click already updated things
+    if (this.selectedRouteIndex === selectedIdx && triggeredByUI) return;
+
     this.selectedRouteIndex = selectedIdx;
+    this._redrawRoutes(routes, selectedIdx);
 
-    // Update polyline styles
-    this.routePolylines.forEach((pl) => {
-      const isSelected = pl._routeIndex === selectedIdx;
-      const color = ROUTE_COLORS[pl._routeIndex % ROUTE_COLORS.length];
-
-      pl.setStyle({
-        color: color,
-        weight: isSelected ? 5 : 3,
-        opacity: isSelected ? ROUTE_SELECTED_OPACITY : ROUTE_ALT_OPACITY,
-        dashArray: isSelected ? null : '8 6',
-      });
-
-      // Bring selected to front
-      if (isSelected) pl.bringToFront();
-    });
-
-    // Callback to update UI, but only if NOT triggered by the UI already
     if (this.onRouteSelect && !triggeredByUI) {
       this.onRouteSelect(selectedIdx);
     }
+  }
+
+  /**
+   * Internal: clear and redraw all route polylines for a given selection
+   */
+  _redrawRoutes(routes, selectedIdx) {
+    this.routePolylines.forEach((pl) => this.map.removeLayer(pl));
+    this.routePolylines = [];
+    this.clearGradientRoute();
+
+    // Draw alternative routes first (behind selected)
+    for (const route of routes) {
+      if (route.index === selectedIdx) continue;
+
+      const color = ROUTE_COLORS[route.index % ROUTE_COLORS.length];
+      const pl = L.polyline(route.coords, {
+        color,
+        weight: 3,
+        opacity: ROUTE_ALT_OPACITY,
+        smoothFactor: 1,
+        lineCap: 'round',
+        lineJoin: 'round',
+        dashArray: '8 6',
+        className: `route-line route-${route.index}`,
+      }).addTo(this.map);
+
+      pl._routeIndex = route.index;
+      pl.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        this.selectRoute(routes, route.index);
+      });
+      pl.bindTooltip(route.label, {
+        sticky: true,
+        className: 'route-tooltip',
+        direction: 'top',
+        offset: [0, -10],
+      });
+      this._bindRouteHoverEvents(pl);
+      this.routePolylines.push(pl);
+    }
+
+    // Draw selected route as gradient segments on top
+    const selectedRoute = routes.find((r) => r.index === selectedIdx);
+    if (selectedRoute) {
+      this._drawGradientRoute(selectedRoute.coords, this.effectiveWaypoints);
+    }
+  }
+
+  /**
+   * Draw the selected route split into per-waypoint-segment colored polylines
+   */
+  _drawGradientRoute(routeCoords, waypoints) {
+    this.clearGradientRoute();
+
+    const wps = waypoints && waypoints.length >= 2 ? waypoints : null;
+
+    if (!wps) {
+      const pl = L.polyline(routeCoords, {
+        color: GRADIENT_PALETTE[0],
+        weight: 5,
+        opacity: ROUTE_SELECTED_OPACITY,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(this.map);
+      this._bindRouteHoverEvents(pl);
+      this.gradientPolylines.push(pl);
+      return;
+    }
+
+    const wpIndices = this._findWaypointIndicesInRoute(routeCoords, wps);
+
+    for (let seg = 0; seg < wpIndices.length - 1; seg++) {
+      const startIdx = wpIndices[seg];
+      const endIdx = wpIndices[seg + 1];
+      if (endIdx <= startIdx) continue;
+      const segCoords = routeCoords.slice(startIdx, endIdx + 1);
+      if (segCoords.length < 2) continue;
+
+      const color = GRADIENT_PALETTE[seg % GRADIENT_PALETTE.length];
+      const pl = L.polyline(segCoords, {
+        color,
+        weight: 5,
+        opacity: ROUTE_SELECTED_OPACITY,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(this.map);
+      this._bindRouteHoverEvents(pl);
+      this.gradientPolylines.push(pl);
+    }
+  }
+
+  /**
+   * Find the index in routeCoords closest to each waypoint
+   */
+  _findWaypointIndicesInRoute(routeCoords, waypoints) {
+    return waypoints.map((wp) => {
+      let minD = Infinity, minIdx = 0;
+      for (let i = 0; i < routeCoords.length; i++) {
+        const dlat = wp[0] - routeCoords[i][0];
+        const dlng = wp[1] - routeCoords[i][1];
+        const d = dlat * dlat + dlng * dlng;
+        if (d < minD) { minD = d; minIdx = i; }
+      }
+      return minIdx;
+    });
+  }
+
+  clearGradientRoute() {
+    this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
+    this.gradientPolylines = [];
   }
 
   /**
@@ -333,6 +391,7 @@ export class MapManager {
     this.selectedRouteIndex = 0;
     this.clearHoverMarker();
     this.clearIntermediateMarkers();
+    this.clearGradientRoute();
   }
 
   // Keep clearRoute as alias
@@ -361,9 +420,10 @@ export class MapManager {
   }
 
   fitToRoute() {
-    if (this.routePolylines.length > 0) {
+    const allPl = [...this.routePolylines, ...this.gradientPolylines];
+    if (allPl.length > 0) {
       const bounds = L.latLngBounds([]);
-      this.routePolylines.forEach((pl) => bounds.extend(pl.getBounds()));
+      allPl.forEach((pl) => bounds.extend(pl.getBounds()));
       this.map.fitBounds(bounds, { padding: [50, 50] });
     } else if (this.waypoints.length > 0) {
       const bounds = L.latLngBounds(this.waypoints.map((w) => [w[0], w[1]]));

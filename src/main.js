@@ -35,6 +35,8 @@ let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') ||
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
 let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 
+let currentRouteWaypoints = []; // Effective waypoints used for routing (may be expanded for round-trip)
+
 // =========== Initialize Modules ===========
 const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
@@ -255,11 +257,12 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     const routeWaypoints = roundTripMode && waypoints.length >= 2
       ? [...waypoints, ...waypoints.slice(0, -1).reverse()]
       : waypoints;
+    currentRouteWaypoints = routeWaypoints;
     allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
 
     if (allAlternatives.length > 0) {
-      // Draw all routes on map
-      mapManager.drawMultipleRoutes(allAlternatives, 0);
+      // Draw all routes on map with gradient segment coloring
+      mapManager.drawMultipleRoutes(allAlternatives, 0, currentRouteWaypoints);
 
       // Show alternatives panel
       renderAlternatives(allAlternatives, 0);
@@ -301,10 +304,11 @@ function selectAlternative(index) {
   // Update map selection - set triggeredByUI to true to prevent recursion
   mapManager.selectRoute(allAlternatives, index, true);
 
-  // Update elevation chart with pre-fetched data
+  // Update elevation chart with pre-fetched data and waypoint gradient info
   elevationProfile.updateWithData(
     route.sampledCoords,
-    route.elevations
+    route.elevations,
+    currentRouteWaypoints
   );
 
   // Update stats from pre-calculated route data
