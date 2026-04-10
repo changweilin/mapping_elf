@@ -996,10 +996,24 @@ function updateElevationMarkers() {
     return;
   }
   // Only show actual waypoints and km-interval markers; exclude auto-midpoints
+  const sampledPts = elevationProfile.points;
+  const sampledDists = elevationProfile.distances;
   const markers = [];
   weatherPoints.forEach((pt, colIdx) => {
     if (pt.isWaypoint || segmentIntervalKm > 0) {
-      markers.push({ cumDistM: pt._cum || 0, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
+      // Find the closest sampled point to this weather point to get accurate cumDistM
+      let cumDistM = pt._cum || 0;
+      if (sampledPts && sampledPts.length > 0) {
+        let minD2 = Infinity, closestIdx = 0;
+        for (let i = 0; i < sampledPts.length; i++) {
+          const dlat = sampledPts[i][0] - pt.lat;
+          const dlng = sampledPts[i][1] - pt.lng;
+          const d2 = dlat * dlat + dlng * dlng;
+          if (d2 < minD2) { minD2 = d2; closestIdx = i; }
+        }
+        cumDistM = sampledDists[closestIdx] || 0;
+      }
+      markers.push({ cumDistM, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
     }
   });
   elevationProfile.setWaypointMarkers(markers);

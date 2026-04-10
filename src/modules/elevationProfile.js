@@ -212,9 +212,20 @@ export class ElevationProfile {
       },
     };
 
-    // Continuous gradient: color each chart segment by its position along the route
-    const totalPts = this.elevations.length;
-    const segmentBorderColor = (ctx) => interpolateRouteColor(ctx.p0DataIndex / Math.max(1, totalPts - 1));
+    // Canvas gradient plugin: horizontal linear gradient teal→sky→amber→red
+    const lineGradientPlugin = {
+      id: 'lineGradient',
+      beforeDatasetsDraw(chart) {
+        const { chartArea, ctx: c } = chart;
+        if (!chartArea) return;
+        const g = c.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
+        g.addColorStop(0,    'rgb(110,231,183)');
+        g.addColorStop(0.33, 'rgb(56,189,248)');
+        g.addColorStop(0.66, 'rgb(251,191,36)');
+        g.addColorStop(1,    'rgb(248,113,113)');
+        chart.data.datasets[0].borderColor = g;
+      },
+    };
 
     this.chart = new Chart(ctx, {
       type: 'line',
@@ -230,7 +241,6 @@ export class ElevationProfile {
             pointRadius: 0,
             pointHoverRadius: 0,
             tension: 0.3,
-            segment: { borderColor: segmentBorderColor },
           },
         ],
       },
@@ -309,7 +319,7 @@ export class ElevationProfile {
           }
         },
       },
-      plugins: [markerPlugin],
+      plugins: [markerPlugin, lineGradientPlugin],
     });
   }
 }
