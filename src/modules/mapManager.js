@@ -345,7 +345,8 @@ export class MapManager {
     this.clearIntermediateMarkers();
     points.forEach((pt) => {
       const km = (pt.cumDistM / 1000).toFixed(0);
-      const t = totalDistM > 0 ? Math.min(1, pt.cumDistM / totalDistM) : 0;
+      const tLinear = totalDistM > 0 ? Math.min(1, pt.cumDistM / totalDistM) : 0;
+      const t = this.isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
       const color = interpolateRouteColor(t);
       const icon = L.divIcon({
         className: 'intermediate-point-icon',

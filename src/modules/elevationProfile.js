@@ -189,7 +189,8 @@ export class ElevationProfile {
           const elev = self._interpolateElevAtCumM(m.cumDistM);
           const yPx = scales.y.getPixelForValue(elev);
 
-          const rgb = interpolateRouteColorRgb(xFrac);
+          const tColor = self.isRoundTrip ? 1 - Math.abs(2 * xFrac - 1) : xFrac;
+          const rgb = interpolateRouteColorRgb(tColor);
           const baseColor = `rgb(${rgb.r},${rgb.g},${rgb.b})`;
           const lineColor = `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`;
 

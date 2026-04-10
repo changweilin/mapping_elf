@@ -645,16 +645,6 @@ html, body {
   color: #818cf8;
 }
 
-/* Locked (auto-computed) weather time columns */
-.wt-col-head.wt-time-auto .wt-date-input,
-.wt-col-head.wt-time-auto .wt-time-select {
-  opacity: 0.5;
-  pointer-events: none;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
 /* Elapsed time badge inside column header */
 .wt-elapsed-badge {
   display: inline-block;

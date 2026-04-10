@@ -468,6 +468,26 @@ function updateTimeStat() {
   statTime.textContent = formatDuration(totalH);
 }
 
+/** Convert a column header's current date+hour to milliseconds (local time). */
+function colToMs(th) {
+  const d = th.querySelector('.wt-date-input')?.value || '';
+  const h = parseInt(th.querySelector('.wt-time-select')?.value ?? '0');
+  if (!d) return 0;
+  return new Date(d + 'T00:00:00').getTime() + h * 3600000;
+}
+
+/** Set a column header's date/time from a millisecond value (local time). */
+function setColToMs(th, ms) {
+  const d = new Date(Math.max(0, ms));
+  const y  = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  const di = th.querySelector('.wt-date-input');
+  const hs = th.querySelector('.wt-time-select');
+  if (di) di.value = `${y}-${mo}-${dy}`;
+  if (hs) hs.value = String(d.getHours());
+}
+
 /** Add elapsedH hours to a date/hour, returning the new { date, hour }. */
 function addHoursToDateTime(dateStr, startHour, elapsedH) {
   const totalMins = startHour * 60 + Math.round(elapsedH * 60);
@@ -527,16 +547,8 @@ function enforceTimeOrdering() {
   };
 
   for (let i = 1; i < heads.length; i++) {
-    // Auto-cascade columns are already monotonic — skip to avoid overwriting cascade output
-    if (heads[i].classList.contains('wt-time-auto')) continue;
-
     if (toMs(heads[i]) < toMs(heads[i - 1])) {
-      const prevDate = heads[i - 1].querySelector('.wt-date-input')?.value || '';
-      const prevHour = heads[i - 1].querySelector('.wt-time-select')?.value ?? '0';
-      const di = heads[i].querySelector('.wt-date-input');
-      const hs = heads[i].querySelector('.wt-time-select');
-      if (di) di.value = prevDate;
-      if (hs) hs.value = prevHour;
+      setColToMs(heads[i], toMs(heads[i - 1]));
     }
   }
 }
@@ -692,29 +704,11 @@ function shiftAllDates(deltaDays, deltaHours) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
-  // In speed mode only shift the start column (col 0), then cascade
-  const targets = speedIntervalMode
-    ? [container.querySelector('.wt-col-head[data-idx="0"]')].filter(Boolean)
-    : Array.from(container.querySelectorAll('.wt-col-head'));
-
-  targets.forEach(th => {
-    const dateInput = th.querySelector('.wt-date-input');
-    const timeSelect = th.querySelector('.wt-time-select');
-    if (!dateInput || !timeSelect) return;
-    const base = dateInput.value ? new Date(dateInput.value + 'T00:00:00') : new Date();
-    let hour = parseInt(timeSelect.value) || 0;
-    hour += deltaHours;
-    const dayCarry = Math.floor(hour / 24);
-    hour = ((hour % 24) + 24) % 24;
-    base.setDate(base.getDate() + deltaDays + dayCarry);
-    const y = base.getFullYear();
-    const mo = String(base.getMonth() + 1).padStart(2, '0');
-    const d = String(base.getDate()).padStart(2, '0');
-    dateInput.value = `${y}-${mo}-${d}`;
-    timeSelect.value = String(hour);
+  const deltaMs = deltaDays * 86400000 + deltaHours * 3600000;
+  Array.from(container.querySelectorAll('.wt-col-head')).forEach(th => {
+    setColToMs(th, colToMs(th) + deltaMs);
   });
 
-  if (speedIntervalMode) cascadeWeatherTimes();
   enforceTimeOrdering();
   saveWeatherSettings();
 }
@@ -1006,13 +1000,11 @@ function renderWeatherPanel() {
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
-    const isAuto = speedIntervalMode && i > 0;
-    const autoClass = isAuto ? ' wt-time-auto' : '';
     const elapsedBadge = speedIntervalMode && pt._elapsedH > 0
       ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
       : '';
     html += `
-      <th class="wt-col-head wt-th${autoClass}" data-idx="${i}">
+      <th class="wt-col-head wt-th" data-idx="${i}">
         <div class="wt-col-label">${pt.label}${elapsedBadge}</div>
         <input type="date" class="wt-date-input" value="${date}">
         <div class="wt-time-row">
@@ -1031,9 +1023,30 @@ function renderWeatherPanel() {
   html += '</tbody></table>';
   container.innerHTML = html;
 
-  // Unified change handler: cascade (speed mode) → enforce order → save
-  const onTimeChange = () => {
-    if (speedIntervalMode) cascadeWeatherTimes();
+  // Snapshot each column's time before the user changes it (for delta-shift in speed mode)
+  const heads = Array.from(container.querySelectorAll('.wt-col-head'));
+  const snapshot = (th) => () => { th.dataset.prevMs = String(colToMs(th)); };
+  heads.forEach(th => {
+    const di = th.querySelector('.wt-date-input');
+    const hs = th.querySelector('.wt-time-select');
+    di?.addEventListener('focus',     snapshot(th));
+    hs?.addEventListener('mousedown', snapshot(th));
+    hs?.addEventListener('focus',     snapshot(th));
+  });
+
+  // On change: speed mode → delta-shift subsequent columns; all modes → enforce order → save
+  const onTimeChange = (e) => {
+    const th = e.target.closest('.wt-col-head');
+    if (speedIntervalMode && th) {
+      const idx      = parseInt(th.dataset.idx);
+      const prevMs   = parseInt(th.dataset.prevMs) || colToMs(th);
+      const deltaMs  = colToMs(th) - prevMs;
+      if (deltaMs !== 0) {
+        for (let j = idx + 1; j < heads.length; j++) {
+          setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
+        }
+      }
+    }
     enforceTimeOrdering();
     saveWeatherSettings();
   };
@@ -1041,7 +1054,7 @@ function renderWeatherPanel() {
     el.addEventListener('change', onTimeChange)
   );
 
-  // Initial cascade + enforce on first render
+  // Initial cascade (speed mode) + enforce on first render
   if (speedIntervalMode) cascadeWeatherTimes();
   enforceTimeOrdering();
 
