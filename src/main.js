@@ -1286,9 +1286,35 @@ async function init() {
     speedActivitySelectEl.disabled = !speedIntervalMode;
     if (statTimeCard) statTimeCard.style.display = speedIntervalMode ? '' : 'none';
 
+    // Track previous activity for pace conversion
+    let prevActivity = speedActivity;
+
     const applySpeedInterval = () => {
+      const newActivity = speedActivitySelectEl.value;
       speedIntervalMode = speedIntervalEnableEl.checked;
-      speedActivity     = speedActivitySelectEl.value;
+
+      // Convert custom flat pace proportionally when activity switches
+      if (newActivity !== prevActivity) {
+        const flatEl = document.getElementById('pace-flat-input');
+        const bodyEl = document.getElementById('pace-body-weight');
+        const packEl = document.getElementById('pace-pack-weight');
+        const rawFlat = parseFloat(flatEl?.value);
+        if (flatEl && !isNaN(rawFlat) && flatEl.value !== '') {
+          const body = parseFloat(bodyEl?.value) || 70;
+          const pack = parseFloat(packEl?.value) || 0;
+          const prevDefault = defaultSpeed(prevActivity, body, pack);
+          const newDefault  = defaultSpeed(newActivity,  body, pack);
+          if (prevDefault > 0) {
+            const converted = +(rawFlat / prevDefault * newDefault).toFixed(2);
+            flatEl.value = converted;
+            paceParams = { ...paceParams, flatPaceKmH: converted };
+            localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+          }
+        }
+        prevActivity = newActivity;
+      }
+
+      speedActivity = newActivity;
       speedActivitySelectEl.disabled = !speedIntervalMode;
       if (statTimeCard) statTimeCard.style.display = speedIntervalMode ? '' : 'none';
       const panel = document.getElementById('pace-params-panel');
