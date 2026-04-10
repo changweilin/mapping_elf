@@ -83,7 +83,8 @@ const btnUndo = document.getElementById('btn-undo');
 const btnClearCache = document.getElementById('btn-clear-cache');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
-const segmentIntervalSelect = document.getElementById('segment-interval-select');
+const segmentIntervalEnable = document.getElementById('segment-interval-enable');
+const segmentIntervalInput  = document.getElementById('segment-interval-input');
 
 const btnDownloadMap = document.getElementById('btn-download-map');
 const btnDownloadRoute = document.getElementById('btn-download-route');
@@ -970,15 +971,36 @@ async function init() {
   await offlineManager.register();
   initWeatherControls();
 
-  // Restore + wire segment interval selector
-  if (segmentIntervalSelect) {
-    segmentIntervalSelect.value = String(segmentIntervalKm);
-    segmentIntervalSelect.addEventListener('change', () => {
-      segmentIntervalKm = parseInt(segmentIntervalSelect.value) || 0;
+  // Restore + wire segment interval controls
+  if (segmentIntervalEnable && segmentIntervalInput) {
+    // Restore saved state: value > 0 means enabled
+    if (segmentIntervalKm > 0) {
+      segmentIntervalEnable.checked = true;
+      segmentIntervalInput.value = String(segmentIntervalKm);
+    } else {
+      segmentIntervalEnable.checked = false;
+      segmentIntervalInput.disabled = true;
+    }
+
+    const applySegmentInterval = () => {
+      if (!segmentIntervalEnable.checked) {
+        segmentIntervalKm = 0;
+      } else {
+        const v = Math.min(100, Math.max(1, parseInt(segmentIntervalInput.value) || 5));
+        segmentIntervalInput.value = String(v);
+        segmentIntervalKm = v;
+      }
       localStorage.setItem(LS_SEGMENT_KEY, String(segmentIntervalKm));
       updateIntermediateMarkers();
       renderWeatherPanel();
+    };
+
+    segmentIntervalEnable.addEventListener('change', () => {
+      segmentIntervalInput.disabled = !segmentIntervalEnable.checked;
+      applySegmentInterval();
     });
+
+    segmentIntervalInput.addEventListener('change', applySegmentInterval);
   }
 
   setTimeout(() => {
