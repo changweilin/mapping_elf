@@ -948,6 +948,8 @@ async function fetchAllWeatherData() {
     try {
       const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
       cachedWeatherData[weatherCoordKey(pt.lat, pt.lng)] = data;
+      // Save after each point so partial data survives a mid-fetch page close
+      localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
       WEATHER_ROWS.forEach(row => {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
         if (cell) { cell.textContent = getCellValue(data, row.key); cell.className = 'wt-data-cell wt-td'; }
@@ -966,7 +968,6 @@ async function fetchAllWeatherData() {
   }
 
   if (btnFetchWeather) { btnFetchWeather.disabled = false; btnFetchWeather.textContent = '取得天氣'; }
-  localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
   showNotification('天氣資訊已更新', 'success', 2000);
 }
 
