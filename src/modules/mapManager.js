@@ -47,6 +47,7 @@ export class MapManager {
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
     this.currentLayerName = 'streets';
+    this.intermediateMarkers = [];
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -298,11 +299,36 @@ export class MapManager {
     }
   }
 
+  /**
+   * Set km-interval intermediate markers (non-interactive, small icons)
+   * @param {Array<{lat,lng,cumDistM}>} points
+   */
+  setIntermediateMarkers(points) {
+    this.clearIntermediateMarkers();
+    points.forEach((pt) => {
+      const km = (pt.cumDistM / 1000).toFixed(0);
+      const icon = L.divIcon({
+        className: 'intermediate-point-icon',
+        html: `<span>${km}</span>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+      const marker = L.marker([pt.lat, pt.lng], { icon, interactive: false }).addTo(this.map);
+      this.intermediateMarkers.push(marker);
+    });
+  }
+
+  clearIntermediateMarkers() {
+    this.intermediateMarkers.forEach((m) => this.map.removeLayer(m));
+    this.intermediateMarkers = [];
+  }
+
   clearAllRoutes() {
     this.routePolylines.forEach((pl) => this.map.removeLayer(pl));
     this.routePolylines = [];
     this.selectedRouteIndex = 0;
     this.clearHoverMarker();
+    this.clearIntermediateMarkers();
   }
 
   // Keep clearRoute as alias

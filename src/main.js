@@ -29,6 +29,9 @@ let selectedAltIndex = 0;
 let isProcessing = false;
 let pendingUpdate = false;
 
+const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
+let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
+
 // =========== Initialize Modules ===========
 const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
@@ -61,6 +64,8 @@ const btnUndo = document.getElementById('btn-undo');
 const btnClearCache = document.getElementById('btn-clear-cache');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
+const segmentIntervalSelect = document.getElementById('segment-interval-select');
+
 const btnDownloadMap = document.getElementById('btn-download-map');
 const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
@@ -91,9 +96,12 @@ gpxFileInput.addEventListener('change', importGpx);
 
 btnClearRoute.addEventListener('click', () => {
   mapManager.clearWaypoints();
+  mapManager.clearIntermediateMarkers();
   elevationProfile.clear();
   resetStats();
   weatherPoints = [];
+  currentRouteCoords = [];
+  currentElevations = [];
   const _wc = document.getElementById('weather-table-container');
   if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
   hideAlternatives();
@@ -281,6 +289,9 @@ function selectAlternative(index) {
 
   // Update card selection highlight
   renderAlternatives(allAlternatives, index);
+
+  // Update intermediate km-interval markers
+  updateIntermediateMarkers();
 
   // Render weather panel placeholder cards for the new route
   renderWeatherPanel();
@@ -632,15 +643,89 @@ function initWeatherControls() {
   }, { passive: false });
 }
 
+/**
+ * Compute lat/lng points spaced every intervalKm along the route.
+ * Returns [{lat, lng, cumDistM}]
+ */
+function computeIntermediatePoints(coords, intervalKm) {
+  const intervalM = intervalKm * 1000;
+  const result = [];
+  let cumDist = 0;
+  let nextMarkM = intervalM;
+
+  for (let i = 1; i < coords.length; i++) {
+    const segDist = haversineDistance(coords[i - 1], coords[i]);
+    while (nextMarkM <= cumDist + segDist + 1e-6) {
+      const frac = segDist > 0 ? (nextMarkM - cumDist) / segDist : 0;
+      result.push({
+        lat: coords[i - 1][0] + frac * (coords[i][0] - coords[i - 1][0]),
+        lng: coords[i - 1][1] + frac * (coords[i][1] - coords[i - 1][1]),
+        cumDistM: nextMarkM,
+      });
+      nextMarkM += intervalM;
+    }
+    cumDist += segDist;
+  }
+  return result;
+}
+
+function updateIntermediateMarkers() {
+  if (segmentIntervalKm > 0 && currentRouteCoords.length > 1) {
+    mapManager.setIntermediateMarkers(
+      computeIntermediatePoints(currentRouteCoords, segmentIntervalKm)
+    );
+  } else {
+    mapManager.clearIntermediateMarkers();
+  }
+}
+
 function buildWeatherPoints() {
   const wps = mapManager.waypoints;
   const coords = currentRouteCoords;
   if (wps.length === 0) return [];
 
-  const points = [];
-  const wpIndices = [];
+  // --- Compute cumulative distances for waypoints along the route ---
+  let totalDistM = 0;
+  const wpCumDist = [];
+  if (coords.length > 1) {
+    for (let j = 1; j < coords.length; j++) totalDistM += haversineDistance(coords[j - 1], coords[j]);
+    let searchStart = 0;
+    for (let i = 0; i < wps.length; i++) {
+      let minDist = Infinity, minIdx = searchStart;
+      const end = Math.min(coords.length, searchStart + 600);
+      for (let j = searchStart; j < end; j++) {
+        const d = haversineDistance(wps[i], coords[j]);
+        if (d < minDist) { minDist = d; minIdx = j; }
+      }
+      let cum = 0;
+      for (let j = 1; j <= minIdx; j++) cum += haversineDistance(coords[j - 1], coords[j]);
+      wpCumDist.push(cum);
+      searchStart = minIdx;
+    }
+  } else {
+    wps.forEach((_, i) => wpCumDist.push(i));
+  }
 
-  if (coords.length > 0) {
+  const all = [];
+
+  // Add actual waypoints
+  for (let i = 0; i < wps.length; i++) {
+    const label = i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`;
+    all.push({ label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i, _cum: wpCumDist[i] });
+  }
+
+  if (segmentIntervalKm > 0 && coords.length > 1) {
+    // Add km-interval intermediate points
+    const intermediates = computeIntermediatePoints(coords, segmentIntervalKm);
+    intermediates.forEach((pt) => {
+      const kmLabel = (pt.cumDistM / 1000 % 1 === 0)
+        ? `${pt.cumDistM / 1000 | 0} km`
+        : `${(pt.cumDistM / 1000).toFixed(1)} km`;
+      all.push({ label: kmLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false, _cum: pt.cumDistM });
+    });
+  } else if (coords.length > 0) {
+    // Fallback: auto-midpoints between each waypoint pair
+    const wpIndices = [];
     let searchStart = 0;
     for (let i = 0; i < wps.length; i++) {
       let minDist = Infinity, minIdx = searchStart;
@@ -652,21 +737,20 @@ function buildWeatherPoints() {
       wpIndices.push(minIdx);
       searchStart = minIdx;
     }
-  }
-
-  for (let i = 0; i < wps.length; i++) {
-    const label = i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`;
-    points.push({ label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i });
-
-    if (i < wps.length - 1 && coords.length > 0 && wpIndices.length > i + 1) {
+    for (let i = 0; i < wps.length - 1; i++) {
       const si = wpIndices[i];
       const ei = wpIndices[i + 1] ?? coords.length - 1;
       const mc = coords[Math.max(0, Math.min(Math.floor((si + ei) / 2), coords.length - 1))];
-      const nextLabel = (i + 1 === wps.length - 1) ? '終點' : `航點 ${i + 2}`;
-      points.push({ label: `${label}→${nextLabel}`, lat: mc[0], lng: mc[1], isWaypoint: false });
+      const labelA = i === 0 ? '起點' : `航點 ${i + 1}`;
+      const labelB = (i + 1 === wps.length - 1) ? '終點' : `航點 ${i + 2}`;
+      const midCum = (wpCumDist[i] + wpCumDist[i + 1]) / 2;
+      all.push({ label: `${labelA}→${labelB}`, lat: mc[0], lng: mc[1], isWaypoint: false, _cum: midCum });
     }
   }
-  return points;
+
+  // Sort by position along route
+  all.sort((a, b) => a._cum - b._cum);
+  return all;
 }
 
 function computeWeatherPointPositions() {
@@ -822,6 +906,17 @@ async function fetchAllWeatherData() {
 async function init() {
   await offlineManager.register();
   initWeatherControls();
+
+  // Restore + wire segment interval selector
+  if (segmentIntervalSelect) {
+    segmentIntervalSelect.value = String(segmentIntervalKm);
+    segmentIntervalSelect.addEventListener('change', () => {
+      segmentIntervalKm = parseInt(segmentIntervalSelect.value) || 0;
+      localStorage.setItem(LS_SEGMENT_KEY, String(segmentIntervalKm));
+      updateIntermediateMarkers();
+      renderWeatherPanel();
+    });
+  }
 
   setTimeout(() => {
     loadingScreen.classList.add('hidden');

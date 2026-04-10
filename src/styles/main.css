@@ -352,6 +352,25 @@ html, body {
   height: 40px;
 }
 
+/* Intermediate (km-interval) markers — non-interactive, smaller */
+.intermediate-point-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(71, 85, 105, 0.88);
+  border: 2px solid rgba(255,255,255,0.65);
+  box-shadow: 0 1px 5px rgba(0,0,0,0.35);
+  color: #e2e8f0;
+  font-size: 9px;
+  font-weight: 700;
+  pointer-events: none;
+  overflow: visible;
+}
+
 .elevation-hover-marker {
   width: 14px;
   height: 14px;
@@ -539,6 +558,37 @@ html, body {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+/* Segment Interval Row */
+.segment-interval-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 4px;
+  gap: 8px;
+}
+.segment-interval-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.segment-interval-select {
+  flex: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+.segment-interval-select:focus {
+  border-color: var(--accent-primary);
 }
 
 /* Route Mode Selector */

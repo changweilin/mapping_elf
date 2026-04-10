@@ -132,6 +132,21 @@
           <span class="hint">點擊地圖任意位置開始規劃路線</span>
         </div>
       </div>
+      <div class="segment-interval-row">
+        <label class="segment-interval-label" for="segment-interval-select">
+          <svg viewBox="0 0 24 24" width="13" height="13"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm0-4h-2V7h2v8z" fill="currentColor"/></svg>
+          中繼點間距
+        </label>
+        <select id="segment-interval-select" class="segment-interval-select">
+          <option value="0">不設置</option>
+          <option value="5">每 5 km</option>
+          <option value="10">每 10 km</option>
+          <option value="20">每 20 km</option>
+          <option value="30">每 30 km</option>
+          <option value="50">每 50 km</option>
+          <option value="100">每 100 km</option>
+        </select>
+      </div>
       <div class="route-mode-selector" id="route-mode-selector">
         <label class="mode-option">
           <input type="radio" name="route-mode" value="walking" checked />
