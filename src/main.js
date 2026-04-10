@@ -11,7 +11,7 @@ import { GpxExporter } from './modules/gpxExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance } from './modules/utils.js';
-import { computeCumulativeTimes, computeHourlyPoints, formatDuration } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, formatDuration, defaultSpeed } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -39,11 +39,16 @@ const LS_MAP_VIEW_KEY      = 'mappingElf_mapView';
 const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
 const LS_SPEED_MODE_KEY    = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY= 'mappingElf_speedActivity';
+const LS_PACE_PARAMS_KEY   = 'mappingElf_paceParams';
 
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 let roundTripMode     = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
 let speedActivity     = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
+let paceParams = (() => {
+  try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
+  catch { return { ...DEFAULT_PACE_PARAMS }; }
+})();
 
 
 // =========== Initialize Modules ===========
@@ -463,7 +468,7 @@ function updateTimeStat() {
     statTime.textContent = '—';
     return;
   }
-  const times = computeCumulativeTimes(elevs, dists, speedActivity);
+  const times = computeCumulativeTimes(elevs, dists, speedActivity, paceParams);
   const totalH = times[times.length - 1] || 0;
   statTime.textContent = formatDuration(totalH);
 }
@@ -864,7 +869,7 @@ function buildWeatherPoints() {
   let cumTimes = null;
   let fullTotalDistBuild = 0;
   if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
-    cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity);
+    cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
     for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
   }
 
@@ -888,7 +893,7 @@ function buildWeatherPoints() {
 
   if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     // Speed mode: intermediate points every 1 hour of travel time
-    const hourlyPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0);
+    const hourlyPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0, paceParams);
     hourlyPts.forEach((pt) => {
       const hLabel = Number.isInteger(pt.estTimeH)
         ? `第 ${pt.estTimeH} 小時`
@@ -1286,8 +1291,18 @@ async function init() {
       speedActivity     = speedActivitySelectEl.value;
       speedActivitySelectEl.disabled = !speedIntervalMode;
       if (statTimeCard) statTimeCard.style.display = speedIntervalMode ? '' : 'none';
+      const panel = document.getElementById('pace-params-panel');
+      if (panel) panel.style.display = speedIntervalMode ? '' : 'none';
       localStorage.setItem(LS_SPEED_MODE_KEY, speedIntervalMode ? '1' : '0');
       localStorage.setItem(LS_SPEED_ACTIVITY_KEY, speedActivity);
+      // Update flat pace placeholder when activity changes
+      const bodyEl = document.getElementById('pace-body-weight');
+      const packEl = document.getElementById('pace-pack-weight');
+      const flatEl = document.getElementById('pace-flat-input');
+      if (flatEl) {
+        const spd = defaultSpeed(speedActivity, parseFloat(bodyEl?.value) || 70, parseFloat(packEl?.value) || 0);
+        flatEl.placeholder = spd.toFixed(1);
+      }
       updateTimeStat();
       updateIntermediateMarkers();
       renderWeatherPanel();
@@ -1296,6 +1311,70 @@ async function init() {
     speedIntervalEnableEl.addEventListener('change', applySpeedInterval);
     speedActivitySelectEl.addEventListener('change', applySpeedInterval);
   }
+
+  // --- Pace params panel wiring ---
+  const paceParamsPanel   = document.getElementById('pace-params-panel');
+  const paceFlatInput     = document.getElementById('pace-flat-input');
+  const paceBodyWeight    = document.getElementById('pace-body-weight');
+  const pacePackWeight    = document.getElementById('pace-pack-weight');
+  const paceFatigueEnable = document.getElementById('pace-fatigue-enable');
+  const paceRestRow       = document.getElementById('pace-rest-row');
+  const paceRestEvery     = document.getElementById('pace-rest-every');
+  const paceRestMinutes   = document.getElementById('pace-rest-minutes');
+
+  // Sync flat pace placeholder based on activity + weights
+  const updateFlatPlaceholder = () => {
+    if (!paceFlatInput) return;
+    const body = parseFloat(paceBodyWeight?.value) || 70;
+    const pack = parseFloat(pacePackWeight?.value) || 0;
+    const spd  = defaultSpeed(speedActivity, body, pack);
+    paceFlatInput.placeholder = spd.toFixed(1);
+  };
+
+  // Restore saved paceParams to UI inputs
+  if (paceFlatInput)     paceFlatInput.value     = paceParams.flatPaceKmH ?? '';
+  if (paceBodyWeight)    paceBodyWeight.value     = paceParams.bodyWeightKg ?? 70;
+  if (pacePackWeight)    pacePackWeight.value     = paceParams.packWeightKg ?? 0;
+  if (paceFatigueEnable) paceFatigueEnable.checked = paceParams.fatigue ?? true;
+  if (paceRestEvery)     paceRestEvery.value      = paceParams.restEveryH ?? 1.0;
+  if (paceRestMinutes)   paceRestMinutes.value    = paceParams.restMinutes ?? 10;
+
+  // Show/hide pace-rest-row based on fatigue checkbox
+  const applyFatigueToggle = () => {
+    if (paceRestRow) paceRestRow.style.display = paceFatigueEnable?.checked ? '' : 'none';
+  };
+  applyFatigueToggle();
+
+  // Show/hide panel based on current speed mode state
+  if (paceParamsPanel) paceParamsPanel.style.display = speedIntervalMode ? '' : 'none';
+
+  // Read all pace inputs → paceParams → save → recalc
+  const onPaceParamChange = () => {
+    const rawFlat = parseFloat(paceFlatInput?.value);
+    paceParams = {
+      flatPaceKmH:  isNaN(rawFlat) || paceFlatInput?.value === '' ? null : rawFlat,
+      bodyWeightKg: parseFloat(paceBodyWeight?.value)  || 70,
+      packWeightKg: parseFloat(pacePackWeight?.value)  || 0,
+      fatigue:      paceFatigueEnable?.checked ?? true,
+      restEveryH:   parseFloat(paceRestEvery?.value)   || 1.0,
+      restMinutes:  parseFloat(paceRestMinutes?.value) || 10,
+    };
+    localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+    updateFlatPlaceholder();
+    applyFatigueToggle();
+    updateTimeStat();
+    updateIntermediateMarkers();
+    renderWeatherPanel();
+  };
+
+  [paceFlatInput, paceBodyWeight, pacePackWeight, paceRestEvery, paceRestMinutes].forEach(el => {
+    if (el) el.addEventListener('change', onPaceParamChange);
+  });
+  if (paceFatigueEnable) {
+    paceFatigueEnable.addEventListener('change', onPaceParamChange);
+  }
+
+  updateFlatPlaceholder();
 
   // Restore saved waypoints (triggers route recalculation + weather cache restore)
   const savedWaypoints = (() => {

@@ -645,6 +645,80 @@ html, body {
   color: #818cf8;
 }
 
+/* Pace parameters panel */
+.pace-params-panel {
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pace-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pace-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pace-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pace-input {
+  width: 52px;
+  padding: 3px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.pace-input::-webkit-outer-spin-button,
+.pace-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.pace-input:focus { border-color: var(--accent-primary); }
+
+.pace-unit {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pace-fatigue-row {
+  padding-top: 2px;
+}
+
+.pace-fatigue-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pace-fatigue-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
 /* Elapsed time badge inside column header */
 .wt-elapsed-badge {
   display: inline-block;

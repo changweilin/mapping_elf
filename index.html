@@ -169,6 +169,46 @@
           </select>
         </div>
       </div>
+      <!-- Pace Parameters (shown when speed mode is ON) -->
+      <div class="pace-params-panel" id="pace-params-panel" style="display:none">
+        <div class="pace-row">
+          <div class="pace-field">
+            <label class="pace-label">平地配速</label>
+            <input type="number" id="pace-flat-input" class="pace-input" min="0.5" max="80" step="0.5" placeholder="—">
+            <span class="pace-unit">km/h</span>
+          </div>
+        </div>
+        <div class="pace-row">
+          <div class="pace-field">
+            <label class="pace-label">體重</label>
+            <input type="number" id="pace-body-weight" class="pace-input" min="30" max="200" step="1" value="70">
+            <span class="pace-unit">kg</span>
+          </div>
+          <div class="pace-field">
+            <label class="pace-label">負重</label>
+            <input type="number" id="pace-pack-weight" class="pace-input" min="0" max="80" step="0.5" value="0">
+            <span class="pace-unit">kg</span>
+          </div>
+        </div>
+        <div class="pace-row pace-fatigue-row">
+          <label class="pace-fatigue-label">
+            <input type="checkbox" id="pace-fatigue-enable" checked>
+            疲勞模式
+          </label>
+        </div>
+        <div class="pace-row" id="pace-rest-row">
+          <div class="pace-field">
+            <label class="pace-label">休息間隔</label>
+            <input type="number" id="pace-rest-every" class="pace-input" min="0.5" max="12" step="0.5" value="1">
+            <span class="pace-unit">小時</span>
+          </div>
+          <div class="pace-field">
+            <label class="pace-label">休息時長</label>
+            <input type="number" id="pace-rest-minutes" class="pace-input" min="1" max="120" step="5" value="10">
+            <span class="pace-unit">分</span>
+          </div>
+        </div>
+      </div>
       <div class="route-mode-selector" id="route-mode-selector">
         <label class="mode-option">
           <input type="radio" name="route-mode" value="walking" checked />
