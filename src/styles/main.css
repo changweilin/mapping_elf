@@ -1386,8 +1386,19 @@ html, body {
   text-align: center;
   vertical-align: top;
   padding: 5px 4px 4px;
-  background: rgba(110, 231, 183, 0.04);
+  background: rgba(30, 32, 48, 0.98);
   border-bottom: 2px solid rgba(110, 231, 183, 0.2);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.wt-label-cell.wt-th {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  background: rgba(30, 32, 48, 0.98);
 }
 
 .wt-col-label {
@@ -1404,25 +1415,48 @@ html, body {
   width: 100%;
   padding: 2px 3px;
   border-radius: 3px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.15);
+  background: #1e2030;
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
   box-sizing: border-box;
+  color-scheme: dark;
+}
+
+.wt-time-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.wt-time-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .wt-time-select {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 2px 3px;
   border-radius: 3px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.15);
+  background: #1e2030;
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
   box-sizing: border-box;
+  cursor: pointer;
+}
+
+.wt-time-select:focus,
+.wt-date-input:focus {
+  border-color: rgba(110,231,183,0.5);
+  box-shadow: 0 0 0 2px rgba(110,231,183,0.1);
 }
 
 .wt-data-cell {

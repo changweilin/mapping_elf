@@ -838,7 +838,10 @@ function renderWeatherPanel() {
       <th class="wt-col-head wt-th" data-idx="${i}">
         <div class="wt-col-label">${pt.label}</div>
         <input type="date" class="wt-date-input" value="${date}">
-        <select class="wt-time-select">${timeOpts(hour)}</select>
+        <div class="wt-time-row">
+          <span class="wt-time-label">時:</span>
+          <select class="wt-time-select">${timeOpts(hour)}</select>
+        </div>
       </th>`;
   });
 
