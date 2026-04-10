@@ -651,6 +651,8 @@ html, body {
   opacity: 0.5;
   pointer-events: none;
   cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Elapsed time badge inside column header */

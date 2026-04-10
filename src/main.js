@@ -973,7 +973,6 @@ function renderWeatherPanel() {
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
     const isAuto = speedIntervalMode && i > 0;
-    const autoAttr = isAuto ? ' readonly' : '';
     const autoClass = isAuto ? ' wt-time-auto' : '';
     const elapsedBadge = speedIntervalMode && pt._elapsedH > 0
       ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
@@ -981,10 +980,10 @@ function renderWeatherPanel() {
     html += `
       <th class="wt-col-head wt-th${autoClass}" data-idx="${i}">
         <div class="wt-col-label">${pt.label}${elapsedBadge}</div>
-        <input type="date" class="wt-date-input" value="${date}"${autoAttr}>
+        <input type="date" class="wt-date-input" value="${date}">
         <div class="wt-time-row">
           <span class="wt-time-label">時:</span>
-          <select class="wt-time-select"${isAuto ? ' disabled' : ''}>${timeOpts(hour)}</select>
+          <select class="wt-time-select">${timeOpts(hour)}</select>
         </div>
       </th>`;
   });
