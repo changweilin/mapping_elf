@@ -29,10 +29,15 @@ let selectedAltIndex = 0;
 let isProcessing = false;
 let pendingUpdate = false;
 
-const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
-let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
+const LS_SEGMENT_KEY      = 'mappingElf_segmentKm';
+const LS_ROUNDTRIP_KEY    = 'mappingElf_roundTrip';
+const LS_WAYPOINTS_KEY    = 'mappingElf_waypoints';
+const LS_ROUTE_MODE_KEY   = 'mappingElf_routeMode';
+const LS_MAP_LAYER_KEY    = 'mappingElf_mapLayer';
+const LS_MAP_VIEW_KEY     = 'mappingElf_mapView';
+const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
 
-const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
+let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 
 let currentRouteWaypoints = []; // Effective waypoints used for routing (may be expanded for round-trip)
@@ -126,6 +131,7 @@ btnClearRoute.addEventListener('click', () => {
   resetStats();
   weatherPoints = [];
   cachedWeatherData = {};
+  localStorage.removeItem(LS_WEATHER_CACHE_KEY);
   currentRouteCoords = [];
   currentElevations = [];
   const _wc = document.getElementById('weather-table-container');
@@ -203,6 +209,7 @@ btnClearCache.addEventListener('click', async () => {
 layerBtns.forEach((btn) => {
   btn.addEventListener('click', () => {
     mapManager.switchLayer(btn.dataset.layer);
+    localStorage.setItem(LS_MAP_LAYER_KEY, btn.dataset.layer);
     layerBtns.forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
   });
@@ -211,6 +218,7 @@ layerBtns.forEach((btn) => {
 routeModeRadios.forEach((radio) => {
   radio.addEventListener('change', (e) => {
     routeEngine.setMode(e.target.value);
+    localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
     if (mapManager.waypoints.length >= 2) {
       onWaypointsChanged(mapManager.waypoints);
     }
@@ -221,6 +229,7 @@ routeModeRadios.forEach((radio) => {
 // =========== Core Logic ===========
 
 async function onWaypointsChanged(waypoints) {
+  localStorage.setItem(LS_WAYPOINTS_KEY, JSON.stringify(waypoints));
   // Update UI list immediately for responsive feel
   updateWaypointList(waypoints);
 
@@ -534,8 +543,11 @@ const WEATHER_ROWS = [
 let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
 
-// Persist fetched weather data across route edits, keyed by rounded lat/lng
-let cachedWeatherData = {}; // { "lat4,lng4": weatherResponseObject }
+// Persist fetched weather data across route edits and page refreshes
+let cachedWeatherData = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}'); }
+  catch { return {}; }
+})();
 const weatherCoordKey = (lat, lng) => `${lat.toFixed(4)},${lng.toFixed(4)}`;
 
 function getCellValue(data, key) {
@@ -957,6 +969,7 @@ async function fetchAllWeatherData() {
   }
 
   if (btnFetchWeather) { btnFetchWeather.disabled = false; btnFetchWeather.textContent = '取得天氣'; }
+  localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
   showNotification('天氣資訊已更新', 'success', 2000);
 }
 
@@ -999,6 +1012,34 @@ function updateElevationMarkers() {
 async function init() {
   await offlineManager.register();
   initWeatherControls();
+
+  // Restore route mode
+  const savedMode = localStorage.getItem(LS_ROUTE_MODE_KEY);
+  if (savedMode) {
+    routeEngine.setMode(savedMode);
+    const modeRadio = document.querySelector(`input[name="route-mode"][value="${savedMode}"]`);
+    if (modeRadio) modeRadio.checked = true;
+  }
+
+  // Restore map tile layer
+  const savedLayer = localStorage.getItem(LS_MAP_LAYER_KEY);
+  if (savedLayer) {
+    mapManager.switchLayer(savedLayer);
+    layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === savedLayer));
+  }
+
+  // Restore map view (center + zoom) — will be overridden by fitToRoute if waypoints exist
+  const savedView = (() => {
+    try { return JSON.parse(localStorage.getItem(LS_MAP_VIEW_KEY) || 'null'); }
+    catch { return null; }
+  })();
+  if (savedView) mapManager.map.setView([savedView.lat, savedView.lng], savedView.zoom);
+
+  // Persist map view on every move
+  mapManager.map.on('moveend', () => {
+    const c = mapManager.map.getCenter();
+    localStorage.setItem(LS_MAP_VIEW_KEY, JSON.stringify({ lat: c.lat, lng: c.lng, zoom: mapManager.map.getZoom() }));
+  });
 
   // Restore + wire round-trip toggle
   const toggleRoundtrip = document.getElementById('toggle-roundtrip');
@@ -1043,16 +1084,24 @@ async function init() {
     segmentIntervalInput.addEventListener('change', applySegmentInterval);
   }
 
-  setTimeout(() => {
-    loadingScreen.classList.add('hidden');
-  }, 800);
-
-  if (navigator.geolocation) {
+  // Restore saved waypoints (triggers route recalculation + weather cache restore)
+  const savedWaypoints = (() => {
+    try { return JSON.parse(localStorage.getItem(LS_WAYPOINTS_KEY) || 'null'); }
+    catch { return null; }
+  })();
+  if (savedWaypoints && savedWaypoints.length > 0) {
+    mapManager.setWaypointsFromImport(savedWaypoints);
+  } else if (!savedView && navigator.geolocation) {
+    // No saved state at all — pan to user's location
     navigator.geolocation.getCurrentPosition(
       (pos) => mapManager.map.setView([pos.coords.latitude, pos.coords.longitude], 13),
       () => {}
     );
   }
+
+  setTimeout(() => {
+    loadingScreen.classList.add('hidden');
+  }, 800);
 }
 
 init();
