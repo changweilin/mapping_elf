@@ -125,6 +125,7 @@ btnClearRoute.addEventListener('click', () => {
   elevationProfile.clear();
   resetStats();
   weatherPoints = [];
+  cachedWeatherData = {};
   currentRouteCoords = [];
   currentElevations = [];
   const _wc = document.getElementById('weather-table-container');
@@ -533,6 +534,10 @@ const WEATHER_ROWS = [
 let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
 
+// Persist fetched weather data across route edits, keyed by rounded lat/lng
+let cachedWeatherData = {}; // { "lat4,lng4": weatherResponseObject }
+const weatherCoordKey = (lat, lng) => `${lat.toFixed(4)},${lng.toFixed(4)}`;
+
 function getCellValue(data, key) {
   if (!data) return '—';
   const v = (a, b) => a != null ? a : (b != null ? b : '—');
@@ -873,6 +878,19 @@ function renderWeatherPanel() {
     el.addEventListener('change', saveWeatherSettings)
   );
 
+  // Restore previously fetched weather data for matching coordinates
+  weatherPoints.forEach((pt, colIdx) => {
+    const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng)];
+    if (!cached) return;
+    WEATHER_ROWS.forEach(row => {
+      const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
+      if (cell) cell.textContent = getCellValue(cached, row.key);
+    });
+    if (pt.isWaypoint && pt.wpIndex !== undefined && cached.weatherIcon) {
+      mapManager.setWaypointWeather(pt.wpIndex, cached.weatherIcon);
+    }
+  });
+
   // Sync elevation chart markers with weather columns
   updateElevationMarkers();
 
@@ -920,6 +938,7 @@ async function fetchAllWeatherData() {
 
     try {
       const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
+      cachedWeatherData[weatherCoordKey(pt.lat, pt.lng)] = data;
       WEATHER_ROWS.forEach(row => {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
         if (cell) { cell.textContent = getCellValue(data, row.key); cell.className = 'wt-data-cell wt-td'; }
