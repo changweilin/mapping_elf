@@ -40,6 +40,7 @@ export class MapManager {
   constructor(containerId, onWaypointChange) {
     this.onWaypointChange = onWaypointChange;
     this.onRouteSelect = null; // callback(index)
+    this.onRouteHover = null;  // callback(lat, lng) | callback(null, null)
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
@@ -215,6 +216,7 @@ export class MapManager {
       lineCap: 'round',
       lineJoin: 'round',
     }).addTo(this.map);
+    this._bindRouteHoverEvents(polyline);
     this.routePolylines = [polyline];
     this.selectedRouteIndex = 0;
   }
@@ -247,6 +249,8 @@ export class MapManager {
         dashArray: isSelected ? null : '8 6',
         className: `route-line route-${route.index}`,
       }).addTo(this.map);
+
+      this._bindRouteHoverEvents(polyline);
 
       // Click on alternative route to select it
       polyline.on('click', (e) => {
@@ -404,6 +408,15 @@ export class MapManager {
   _updateMarkerIcons() {
     this.waypointMarkers.forEach((marker, i) => {
       marker.setIcon(this._createIcon(i));
+    });
+  }
+
+  _bindRouteHoverEvents(polyline) {
+    polyline.on('mousemove', (e) => {
+      if (this.onRouteHover) this.onRouteHover(e.latlng.lat, e.latlng.lng);
+    });
+    polyline.on('mouseout', () => {
+      if (this.onRouteHover) this.onRouteHover(null, null);
     });
   }
 

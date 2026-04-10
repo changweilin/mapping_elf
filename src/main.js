@@ -48,6 +48,24 @@ const elevationProfile = new ElevationProfile(
 // When user clicks an alternative route on the map
 mapManager.onRouteSelect = (idx) => selectAlternative(idx);
 
+// Bidirectional: hovering the map route highlights the elevation chart
+mapManager.onRouteHover = (lat, lng) => {
+  if (lat == null) {
+    elevationProfile.hideCrosshair();
+    mapManager.clearHoverMarker();
+    return;
+  }
+  const pts = elevationProfile.points;
+  if (!pts || pts.length === 0) return;
+  let minD = Infinity, closestIdx = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const d = haversineDistance([lat, lng], pts[i]);
+    if (d < minD) { minD = d; closestIdx = i; }
+  }
+  elevationProfile.showCrosshairAtIndex(closestIdx);
+  mapManager.showHoverMarker(lat, lng);
+};
+
 // =========== DOM Elements ===========
 const loadingScreen = document.getElementById('loading-screen');
 const sidePanel = document.getElementById('side-panel');

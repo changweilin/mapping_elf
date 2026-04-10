@@ -22,6 +22,23 @@ export class ElevationProfile {
     this._markers = []; // [{cumDistM, label, colIdx, isWaypoint}]
   }
 
+  /** Programmatically show the chart tooltip/crosshair at a sampled point index */
+  showCrosshairAtIndex(idx) {
+    if (!this.chart || idx < 0 || idx >= this.elevations.length) return;
+    const meta = this.chart.getDatasetMeta(0);
+    const pt = meta.data[idx];
+    if (!pt) return;
+    this.chart.tooltip.setActiveElements([{ datasetIndex: 0, index: idx }], { x: pt.x, y: pt.y });
+    this.chart.update('active');
+  }
+
+  /** Hide the programmatic crosshair */
+  hideCrosshair() {
+    if (!this.chart) return;
+    this.chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+    this.chart.update('none');
+  }
+
   /** Set waypoint/intermediate markers to draw on the chart */
   setWaypointMarkers(markers) {
     this._markers = markers || [];
