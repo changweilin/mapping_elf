@@ -76,28 +76,64 @@ export class MapManager {
     this.waypoints.push([lat, lng]);
     const icon = this._createIcon(this.waypoints.length - 1);
     
-    // Initially not draggable to fulfill "long press to move" requirement
-    const marker = L.marker([lat, lng], { 
-      icon, 
-      draggable: false 
+    const marker = L.marker([lat, lng], {
+      icon,
+      draggable: false,
     }).addTo(this.map);
 
-    // Long press (contextmenu) enables dragging
     let _dragModeActive = false;
-    marker.on('contextmenu', (e) => {
-      L.DomEvent.stopPropagation(e);
+
+    const _enableDrag = () => {
       _dragModeActive = true;
       marker.dragging.enable();
-      marker.getElement().classList.add('is-dragging');
+      marker.getElement()?.classList.add('is-dragging');
+      if (navigator.vibrate) navigator.vibrate(40);
+    };
+
+    const _disableDrag = () => {
+      _dragModeActive = false;
+      marker.dragging.disable();
+      marker.getElement()?.classList.remove('is-dragging');
+    };
+
+    // Desktop: right-click / context menu
+    marker.on('contextmenu', (e) => {
+      L.DomEvent.stopPropagation(e);
+      _enableDrag();
     });
 
-    // Tap/click when drag mode is active → cancel drag mode
+    // Touch: long-press (500ms) enables drag mode
+    let _longPressTimer = null;
+    let _touchStartX = 0, _touchStartY = 0;
+    marker.on('touchstart', (e) => {
+      const t = e.originalEvent.touches[0];
+      _touchStartX = t.clientX;
+      _touchStartY = t.clientY;
+      _longPressTimer = setTimeout(() => {
+        if (!_dragModeActive) _enableDrag();
+      }, 500);
+    });
+    marker.on('touchmove', (e) => {
+      if (_longPressTimer) {
+        const t = e.originalEvent.touches[0];
+        const dx = t.clientX - _touchStartX;
+        const dy = t.clientY - _touchStartY;
+        if (dx * dx + dy * dy > 64) { // >8px moved → cancel long-press
+          clearTimeout(_longPressTimer);
+          _longPressTimer = null;
+        }
+      }
+    });
+    marker.on('touchend', () => {
+      clearTimeout(_longPressTimer);
+      _longPressTimer = null;
+    });
+
+    // Click/tap when drag mode active → cancel
     marker.on('click', (e) => {
       if (_dragModeActive) {
         L.DomEvent.stopPropagation(e);
-        _dragModeActive = false;
-        marker.dragging.disable();
-        marker.getElement().classList.remove('is-dragging');
+        _disableDrag();
       }
     });
 
@@ -105,11 +141,7 @@ export class MapManager {
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
       this.waypoints[idx] = [pos.lat, pos.lng];
-
-      _dragModeActive = false;
-      marker.dragging.disable();
-      marker.getElement().classList.remove('is-dragging');
-
+      _disableDrag();
       this.onWaypointChange(this.waypoints);
     });
 
@@ -334,7 +366,7 @@ export class MapManager {
     const weather = this.waypointWeather[index];
     const weatherHtml = weather ? `<div class="wp-weather-badge">${weather}</div>` : '';
 
-    const size = cls ? 32 : 28;
+    const size = cls ? 40 : 36;
     return L.divIcon({
       className: `custom-waypoint-icon ${cls}`,
       html: `${weatherHtml}<span>${index + 1}</span>`,

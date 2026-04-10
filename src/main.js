@@ -554,6 +554,8 @@ function shiftAllDates(deltaDays, deltaHours) {
   saveWeatherSettings();
 }
 
+const LS_PANEL_HEIGHT_KEY = 'mappingElf_panelHeight';
+
 function initWeatherControls() {
   if (btnFetchWeather) btnFetchWeather.addEventListener('click', fetchAllWeatherData);
   document.getElementById('btn-date-minus-day') ?.addEventListener('click', () => shiftAllDates(-1, 0));
@@ -562,16 +564,72 @@ function initWeatherControls() {
   document.getElementById('btn-date-plus-hour') ?.addEventListener('click', () => shiftAllDates(0, +1));
 
   const panel = document.getElementById('bottom-panel');
-  if (panel) {
-    new ResizeObserver(entries => {
-      const h = Math.round(entries[0]?.contentRect.height || 0);
-      if (h > 0) document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
-    }).observe(panel);
+  const handle = document.getElementById('bp-resize-handle');
+  if (!panel) return;
+
+  // Restore saved height
+  const savedH = parseInt(localStorage.getItem(LS_PANEL_HEIGHT_KEY));
+  if (savedH > 0) {
+    const clamped = Math.max(56, Math.min(Math.round(window.innerHeight * 0.85), savedH));
+    panel.style.height = `${clamped}px`;
+    document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
+  } else {
     requestAnimationFrame(() => {
       const h = panel.offsetHeight;
       if (h > 0) document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
     });
   }
+
+  // Sync CSS var whenever panel naturally resizes (content changes)
+  new ResizeObserver(entries => {
+    const h = Math.round(entries[0]?.contentRect.height || 0);
+    if (h > 0 && !panel._resizing)
+      document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+  }).observe(panel);
+
+  if (!handle) return;
+
+  // --- Drag-to-resize ---
+  const MIN_H = 56;
+  const applyHeight = (clientY) => {
+    const h = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - clientY));
+    panel.style.height = `${h}px`;
+    document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+  };
+
+  // Mouse
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    panel._resizing = true;
+    handle.classList.add('dragging');
+    const onMove = (ev) => applyHeight(ev.clientY);
+    const onUp = () => {
+      panel._resizing = false;
+      handle.classList.remove('dragging');
+      localStorage.setItem(LS_PANEL_HEIGHT_KEY, panel.offsetHeight);
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  // Touch
+  handle.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    panel._resizing = true;
+    handle.classList.add('dragging');
+    const onMove = (ev) => applyHeight(ev.touches[0].clientY);
+    const onEnd = () => {
+      panel._resizing = false;
+      handle.classList.remove('dragging');
+      localStorage.setItem(LS_PANEL_HEIGHT_KEY, panel.offsetHeight);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onEnd);
+    };
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd);
+  }, { passive: false });
 }
 
 function buildWeatherPoints() {
