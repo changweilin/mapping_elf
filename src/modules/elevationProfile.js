@@ -20,6 +20,7 @@ export class ElevationProfile {
     this.distances = [];
     this.points = [];
     this._markers = []; // [{cumDistM, label, colIdx, isWaypoint}]
+    this.isRoundTrip = false;
   }
 
   /** Programmatically show the chart tooltip/crosshair at a sampled point index */
@@ -63,8 +64,11 @@ export class ElevationProfile {
 
   /**
    * Fetch elevations for route points and render chart
+   * @param {Array} routeCoords
+   * @param {boolean} [isRoundTrip=false]
    */
-  async update(routeCoords) {
+  async update(routeCoords, isRoundTrip = false) {
+    this.isRoundTrip = isRoundTrip;
     if (!routeCoords || routeCoords.length < 2) {
       this.clear();
       return { ascent: 0, descent: 0, maxElev: 0, minElev: 0 };
@@ -102,13 +106,17 @@ export class ElevationProfile {
 
   /**
    * Update chart with pre-fetched elevation data (no API call)
+   * @param {Array} sampledCoords
+   * @param {Array} elevations
+   * @param {boolean} [isRoundTrip=false]
    */
-  updateWithData(sampledCoords, elevations) {
+  updateWithData(sampledCoords, elevations, isRoundTrip = false) {
     if (!sampledCoords || sampledCoords.length < 2) {
       this.clear();
       return;
     }
 
+    this.isRoundTrip = isRoundTrip;
     this.points = sampledCoords;
     this.elevations = elevations;
     this.distances = cumulativeDistances(this.points);
@@ -213,16 +221,28 @@ export class ElevationProfile {
     };
 
     // Canvas gradient plugin: horizontal linear gradient teal→sky→amber→red
+    // For round-trip: symmetric teal→red→teal
     const lineGradientPlugin = {
       id: 'lineGradient',
       beforeDatasetsDraw(chart) {
         const { chartArea, ctx: c } = chart;
         if (!chartArea) return;
         const g = c.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
-        g.addColorStop(0,    'rgb(110,231,183)');
-        g.addColorStop(0.33, 'rgb(56,189,248)');
-        g.addColorStop(0.66, 'rgb(251,191,36)');
-        g.addColorStop(1,    'rgb(248,113,113)');
+        if (self.isRoundTrip) {
+          // Symmetric: teal→sky→amber→red→amber→sky→teal
+          g.addColorStop(0,    'rgb(110,231,183)');
+          g.addColorStop(0.165,'rgb(56,189,248)');
+          g.addColorStop(0.33, 'rgb(251,191,36)');
+          g.addColorStop(0.5,  'rgb(248,113,113)');
+          g.addColorStop(0.67, 'rgb(251,191,36)');
+          g.addColorStop(0.835,'rgb(56,189,248)');
+          g.addColorStop(1,    'rgb(110,231,183)');
+        } else {
+          g.addColorStop(0,    'rgb(110,231,183)');
+          g.addColorStop(0.33, 'rgb(56,189,248)');
+          g.addColorStop(0.66, 'rgb(251,191,36)');
+          g.addColorStop(1,    'rgb(248,113,113)');
+        }
         chart.data.datasets[0].borderColor = g;
       },
     };

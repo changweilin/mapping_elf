@@ -45,6 +45,7 @@ export class MapManager {
     this.onWaypointChange = onWaypointChange;
     this.onRouteSelect = null; // callback(index)
     this.onRouteHover = null;  // callback(lat, lng) | callback(null, null)
+    this.isRoundTrip = false;
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
@@ -210,10 +211,12 @@ export class MapManager {
 
   /**
    * Draw a single route with continuous gradient coloring
+   * @param {Array} routeCoords
+   * @param {boolean} isRoundTrip - if true, gradient goes teal→red→teal (symmetric)
    */
-  drawRoute(routeCoords) {
+  drawRoute(routeCoords, isRoundTrip = false) {
     this.clearAllRoutes();
-    this._drawGradientRoute(routeCoords);
+    this._drawGradientRoute(routeCoords, isRoundTrip);
     this.selectedRouteIndex = 0;
   }
 
@@ -221,10 +224,12 @@ export class MapManager {
    * Draw multiple alternative routes on the map
    * @param {Array} routes - Array of { coords, label, index, ... }
    * @param {number} selectedIdx - Index of the currently selected route
+   * @param {boolean} isRoundTrip - if true, gradient is symmetric (teal→red→teal)
    */
-  drawMultipleRoutes(routes, selectedIdx = 0) {
+  drawMultipleRoutes(routes, selectedIdx = 0, isRoundTrip = false) {
     this.clearAllRoutes();
     this.selectedRouteIndex = selectedIdx;
+    this.isRoundTrip = isRoundTrip;
     this._redrawRoutes(routes, selectedIdx);
   }
 
@@ -288,15 +293,17 @@ export class MapManager {
     // Draw selected route as continuous gradient on top
     const selectedRoute = routes.find((r) => r.index === selectedIdx);
     if (selectedRoute) {
-      this._drawGradientRoute(selectedRoute.coords);
+      this._drawGradientRoute(selectedRoute.coords, this.isRoundTrip || false);
     }
   }
 
   /**
    * Draw the selected route as GRADIENT_CHUNKS small polylines colored by
    * position along the route (t=0 at start → t=1 at end).
+   * @param {Array} routeCoords
+   * @param {boolean} isRoundTrip - if true, gradient goes teal→red→teal (symmetric)
    */
-  _drawGradientRoute(routeCoords) {
+  _drawGradientRoute(routeCoords, isRoundTrip = false) {
     this.clearGradientRoute();
     const N = routeCoords.length;
     if (N < 2) return;
@@ -309,7 +316,9 @@ export class MapManager {
       const endI = Math.min(Math.floor((chunk + 1) * chunkSize), N - 1);
       if (endI <= startI) continue;
 
-      const t = startI / (N - 1);
+      const tLinear = startI / (N - 1);
+      // For round-trip: mirror gradient at midpoint (0→1→0)
+      const t = isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
       const color = interpolateRouteColor(t);
       const pl = L.polyline(routeCoords.slice(startI, endI + 1), {
         color,
