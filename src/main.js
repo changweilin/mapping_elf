@@ -11,6 +11,7 @@ import { GpxExporter } from './modules/gpxExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance } from './modules/utils.js';
+import { computeCumulativeTimes, computeHourlyPoints, formatDuration } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -29,16 +30,20 @@ let selectedAltIndex = 0;
 let isProcessing = false;
 let pendingUpdate = false;
 
-const LS_SEGMENT_KEY      = 'mappingElf_segmentKm';
-const LS_ROUNDTRIP_KEY    = 'mappingElf_roundTrip';
-const LS_WAYPOINTS_KEY    = 'mappingElf_waypoints';
-const LS_ROUTE_MODE_KEY   = 'mappingElf_routeMode';
-const LS_MAP_LAYER_KEY    = 'mappingElf_mapLayer';
-const LS_MAP_VIEW_KEY     = 'mappingElf_mapView';
+const LS_SEGMENT_KEY       = 'mappingElf_segmentKm';
+const LS_ROUNDTRIP_KEY     = 'mappingElf_roundTrip';
+const LS_WAYPOINTS_KEY     = 'mappingElf_waypoints';
+const LS_ROUTE_MODE_KEY    = 'mappingElf_routeMode';
+const LS_MAP_LAYER_KEY     = 'mappingElf_mapLayer';
+const LS_MAP_VIEW_KEY      = 'mappingElf_mapView';
 const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
+const LS_SPEED_MODE_KEY    = 'mappingElf_speedMode';
+const LS_SPEED_ACTIVITY_KEY= 'mappingElf_speedActivity';
 
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
-let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
+let roundTripMode     = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
+let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
+let speedActivity     = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 
 
 // =========== Initialize Modules ===========
@@ -106,6 +111,8 @@ const statDistance = document.getElementById('stat-distance');
 const statAscent = document.getElementById('stat-ascent');
 const statDescent = document.getElementById('stat-descent');
 const statMaxElev = document.getElementById('stat-max-elev');
+const statTime    = document.getElementById('stat-time');
+const statTimeCard= document.getElementById('stat-time-card');
 
 const layerBtns = document.querySelectorAll('.layer-btn');
 const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
@@ -327,6 +334,9 @@ function selectAlternative(index) {
   // Update intermediate km-interval markers
   updateIntermediateMarkers();
 
+  // Update pace time stat (needs elevation data from profile, available after updateWithData)
+  updateTimeStat();
+
   // Render weather panel placeholder cards for the new route
   renderWeatherPanel();
 }
@@ -438,6 +448,64 @@ function resetStats() {
   statAscent.textContent = '—';
   statDescent.textContent = '—';
   statMaxElev.textContent = '—';
+  if (statTime) statTime.textContent = '—';
+}
+
+// =========== Pace / Speed Interval ===========
+
+/** Compute total travel time for the current route and update the time stat card. */
+function updateTimeStat() {
+  if (!speedIntervalMode || !statTime || !statTimeCard) return;
+  const pts  = elevationProfile.points;
+  const elevs = elevationProfile.elevations;
+  const dists = elevationProfile.distances;
+  if (!pts || pts.length < 2 || !elevs.length) {
+    statTime.textContent = '—';
+    return;
+  }
+  const times = computeCumulativeTimes(elevs, dists, speedActivity);
+  const totalH = times[times.length - 1] || 0;
+  statTime.textContent = formatDuration(totalH);
+}
+
+/** Add elapsedH hours to a date/hour, returning the new { date, hour }. */
+function addHoursToDateTime(dateStr, startHour, elapsedH) {
+  const totalMins = startHour * 60 + Math.round(elapsedH * 60);
+  const addDays   = Math.floor(totalMins / (24 * 60));
+  const finalHour = Math.floor(totalMins / 60) % 24;
+  // Use noon to avoid DST-boundary issues
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + addDays);
+  const y  = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  return { date: `${y}-${mo}-${dy}`, hour: finalHour };
+}
+
+/**
+ * When speed mode is ON, cascade column 0's date/time to all other columns
+ * using each point's _elapsedH.
+ */
+function cascadeWeatherTimes() {
+  if (!speedIntervalMode || weatherPoints.length === 0) return;
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
+  if (!th0) return;
+  const startDate = th0.querySelector('.wt-date-input')?.value || '';
+  const startHour = parseInt(th0.querySelector('.wt-time-select')?.value ?? '8');
+  if (!startDate) return;
+
+  weatherPoints.forEach((pt, i) => {
+    if (i === 0) return;
+    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
+    if (!th) return;
+    const { date, hour } = addHoursToDateTime(startDate, startHour, pt._elapsedH || 0);
+    const dateInput  = th.querySelector('.wt-date-input');
+    const hourSelect = th.querySelector('.wt-time-select');
+    if (dateInput)  dateInput.value  = date;
+    if (hourSelect) hourSelect.value = String(hour);
+  });
 }
 
 // =========== GPX Export / Import ===========
@@ -590,7 +658,13 @@ function loadWeatherSettings() {
 function shiftAllDates(deltaDays, deltaHours) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  container.querySelectorAll('.wt-col-head').forEach(th => {
+
+  // In speed mode only shift the start column (col 0), then cascade
+  const targets = speedIntervalMode
+    ? [container.querySelector('.wt-col-head[data-idx="0"]')].filter(Boolean)
+    : Array.from(container.querySelectorAll('.wt-col-head'));
+
+  targets.forEach(th => {
     const dateInput = th.querySelector('.wt-date-input');
     const timeSelect = th.querySelector('.wt-time-select');
     if (!dateInput || !timeSelect) return;
@@ -606,6 +680,8 @@ function shiftAllDates(deltaDays, deltaHours) {
     dateInput.value = `${y}-${mo}-${d}`;
     timeSelect.value = String(hour);
   });
+
+  if (speedIntervalMode) cascadeWeatherTimes();
   saveWeatherSettings();
 }
 
@@ -753,22 +829,54 @@ function buildWeatherPoints() {
     wps.forEach((_, i) => wpCumDist.push(i));
   }
 
+  // Prepare pace cumulative times if speed mode is ON
+  const sampledPts   = elevationProfile.points;
+  const sampledElevs = elevationProfile.elevations;
+  const sampledDists = elevationProfile.distances;
+  let cumTimes = null;
+  let fullTotalDistBuild = 0;
+  if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
+    cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity);
+    for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
+  }
+
+  /** Get elapsed hours for a given cumDistM (full-route metres). */
+  const getElapsedH = (cumDistM) => {
+    if (!cumTimes || !sampledDists.length || fullTotalDistBuild === 0) return 0;
+    // Map full-route fraction → sampled index → cumulative time
+    const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDistBuild));
+    const idx = Math.round(fraction * (sampledPts.length - 1));
+    return cumTimes[idx] ?? 0;
+  };
+
   const all = [];
 
   // Add actual waypoints
   for (let i = 0; i < wps.length; i++) {
     const label = i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`;
-    all.push({ label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i, _cum: wpCumDist[i] });
+    all.push({ label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i,
+               _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i]) });
   }
 
-  if (segmentIntervalKm > 0 && coords.length > 1) {
-    // Add km-interval intermediate points
+  if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
+    // Speed mode: intermediate points every 1 hour of travel time
+    const hourlyPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0);
+    hourlyPts.forEach((pt) => {
+      const hLabel = Number.isInteger(pt.estTimeH)
+        ? `第 ${pt.estTimeH} 小時`
+        : `${pt.estTimeH.toFixed(1)} 小時`;
+      all.push({ label: hLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
+                 _cum: pt.cumDistM, _elapsedH: pt.estTimeH });
+    });
+  } else if (segmentIntervalKm > 0 && coords.length > 1) {
+    // km-interval intermediate points
     const intermediates = computeIntermediatePoints(coords, segmentIntervalKm);
     intermediates.forEach((pt) => {
       const kmLabel = (pt.cumDistM / 1000 % 1 === 0)
         ? `${pt.cumDistM / 1000 | 0} km`
         : `${(pt.cumDistM / 1000).toFixed(1)} km`;
-      all.push({ label: kmLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false, _cum: pt.cumDistM });
+      all.push({ label: kmLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
+                 _cum: pt.cumDistM, _elapsedH: getElapsedH(pt.cumDistM) });
     });
   } else if (coords.length > 0) {
     // Fallback: auto-midpoints between each waypoint pair
@@ -791,7 +899,8 @@ function buildWeatherPoints() {
       const labelA = i === 0 ? '起點' : `航點 ${i + 1}`;
       const labelB = (i + 1 === wps.length - 1) ? '終點' : `航點 ${i + 2}`;
       const midCum = (wpCumDist[i] + wpCumDist[i + 1]) / 2;
-      all.push({ label: `${labelA}→${labelB}`, lat: mc[0], lng: mc[1], isWaypoint: false, _cum: midCum });
+      all.push({ label: `${labelA}→${labelB}`, lat: mc[0], lng: mc[1], isWaypoint: false,
+                 _cum: midCum, _elapsedH: getElapsedH(midCum) });
     }
   }
 
@@ -860,15 +969,22 @@ function renderWeatherPanel() {
 
   weatherPoints.forEach((pt, i) => {
     const sv = saved?.cols?.[i];
+    // For speed mode: only col-0 uses saved/default; others are cascaded after render
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
+    const isAuto = speedIntervalMode && i > 0;
+    const autoAttr = isAuto ? ' readonly' : '';
+    const autoClass = isAuto ? ' wt-time-auto' : '';
+    const elapsedBadge = speedIntervalMode && pt._elapsedH > 0
+      ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
+      : '';
     html += `
-      <th class="wt-col-head wt-th" data-idx="${i}">
-        <div class="wt-col-label">${pt.label}</div>
-        <input type="date" class="wt-date-input" value="${date}">
+      <th class="wt-col-head wt-th${autoClass}" data-idx="${i}">
+        <div class="wt-col-label">${pt.label}${elapsedBadge}</div>
+        <input type="date" class="wt-date-input" value="${date}"${autoAttr}>
         <div class="wt-time-row">
           <span class="wt-time-label">時:</span>
-          <select class="wt-time-select">${timeOpts(hour)}</select>
+          <select class="wt-time-select"${isAuto ? ' disabled' : ''}>${timeOpts(hour)}</select>
         </div>
       </th>`;
   });
@@ -882,10 +998,17 @@ function renderWeatherPanel() {
   html += '</tbody></table>';
   container.innerHTML = html;
 
-  // Bind auto-save and restore pending GPX dates
+  // Bind auto-save. In speed mode, changing col-0 also cascades all other columns.
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', saveWeatherSettings)
   );
+  if (speedIntervalMode) {
+    const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
+    th0?.querySelector('.wt-date-input')?.addEventListener('change', cascadeWeatherTimes);
+    th0?.querySelector('.wt-time-select')?.addEventListener('change', cascadeWeatherTimes);
+    // Initial cascade from saved start time
+    cascadeWeatherTimes();
+  }
 
   // Restore previously fetched weather data for matching coordinates
   weatherPoints.forEach((pt, colIdx) => {
@@ -1008,7 +1131,7 @@ function updateElevationMarkers() {
 
   const markers = [];
   weatherPoints.forEach((pt, colIdx) => {
-    if (pt.isWaypoint || segmentIntervalKm > 0) {
+    if (pt.isWaypoint || segmentIntervalKm > 0 || speedIntervalMode) {
       let cumDistM = pt._cum || 0;
       if (sampledPts && sampledPts.length > 1 && fullTotalDist > 0) {
         // Map pt._cum fraction → sampled index (handles round-trip correctly since
@@ -1098,6 +1221,32 @@ async function init() {
     });
 
     segmentIntervalInput.addEventListener('change', applySegmentInterval);
+  }
+
+  // Restore + wire speed-interval controls
+  const speedIntervalEnableEl = document.getElementById('speed-interval-enable');
+  const speedActivitySelectEl = document.getElementById('speed-activity-select');
+  if (speedIntervalEnableEl && speedActivitySelectEl) {
+    // Restore saved state
+    speedIntervalEnableEl.checked = speedIntervalMode;
+    speedActivitySelectEl.value   = speedActivity;
+    speedActivitySelectEl.disabled = !speedIntervalMode;
+    if (statTimeCard) statTimeCard.style.display = speedIntervalMode ? '' : 'none';
+
+    const applySpeedInterval = () => {
+      speedIntervalMode = speedIntervalEnableEl.checked;
+      speedActivity     = speedActivitySelectEl.value;
+      speedActivitySelectEl.disabled = !speedIntervalMode;
+      if (statTimeCard) statTimeCard.style.display = speedIntervalMode ? '' : 'none';
+      localStorage.setItem(LS_SPEED_MODE_KEY, speedIntervalMode ? '1' : '0');
+      localStorage.setItem(LS_SPEED_ACTIVITY_KEY, speedActivity);
+      updateTimeStat();
+      updateIntermediateMarkers();
+      renderWeatherPanel();
+    };
+
+    speedIntervalEnableEl.addEventListener('change', applySpeedInterval);
+    speedActivitySelectEl.addEventListener('change', applySpeedInterval);
   }
 
   // Restore saved waypoints (triggers route recalculation + weather cache restore)

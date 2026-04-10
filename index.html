@@ -153,6 +153,22 @@
           <span class="segment-interval-unit">km</span>
         </div>
       </div>
+      <div class="segment-interval-row speed-interval-row">
+        <label class="segment-interval-label">
+          <svg viewBox="0 0 24 24" width="13" height="13"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z" fill="currentColor"/></svg>
+          速度中繼
+        </label>
+        <div class="segment-interval-controls">
+          <input type="checkbox" id="speed-interval-enable" class="segment-interval-check">
+          <select id="speed-activity-select" class="speed-activity-select" disabled>
+            <option value="walking">步行</option>
+            <option value="hiking" selected>健行</option>
+            <option value="trail-run">越野跑</option>
+            <option value="cycling">自行車</option>
+            <option value="driving">駕車</option>
+          </select>
+        </div>
+      </div>
       <div class="route-mode-selector" id="route-mode-selector">
         <label class="mode-option">
           <input type="radio" name="route-mode" value="walking" checked />
@@ -242,6 +258,15 @@
           <div class="stat-info">
             <span class="stat-label">最高海拔</span>
             <span class="stat-value" id="stat-max-elev">—</span>
+          </div>
+        </div>
+        <div class="stat-card" id="stat-time-card" style="display:none">
+          <div class="stat-icon time-icon">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z" fill="currentColor"/></svg>
+          </div>
+          <div class="stat-info">
+            <span class="stat-label">預估時間</span>
+            <span class="stat-value" id="stat-time">—</span>
           </div>
         </div>
       </div>
