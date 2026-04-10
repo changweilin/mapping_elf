@@ -578,7 +578,10 @@ function shiftAllDates(deltaDays, deltaHours) {
     const dayCarry = Math.floor(hour / 24);
     hour = ((hour % 24) + 24) % 24;
     base.setDate(base.getDate() + deltaDays + dayCarry);
-    dateInput.value = base.toISOString().split('T')[0];
+    const y = base.getFullYear();
+    const mo = String(base.getMonth() + 1).padStart(2, '0');
+    const d = String(base.getDate()).padStart(2, '0');
+    dateInput.value = `${y}-${mo}-${d}`;
     timeSelect.value = String(hour);
   });
   saveWeatherSettings();
@@ -805,7 +808,7 @@ function renderWeatherPanel() {
 
   const saved = loadWeatherSettings();
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   const nowHour = now.getHours();
   const N = weatherPoints.length;
 
