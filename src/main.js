@@ -41,7 +41,8 @@ const mapManager = new MapManager('map', onWaypointsChanged);
 const elevationProfile = new ElevationProfile(
   'elevation-chart',
   'chart-empty',
-  (lat, lng) => mapManager.showHoverMarker(lat, lng)
+  (lat, lng) => mapManager.showHoverMarker(lat, lng),
+  (colIdx) => highlightWeatherColumn(colIdx)
 );
 
 // When user clicks an alternative route on the map
@@ -836,6 +837,10 @@ function renderWeatherPanel() {
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', saveWeatherSettings)
   );
+
+  // Sync elevation chart markers with weather columns
+  updateElevationMarkers();
+
   if (window._pendingGpxDates) {
     weatherPoints.forEach((pt, colIdx) => {
       if (!pt.isWaypoint || pt.wpIndex === undefined) return;
@@ -899,6 +904,40 @@ async function fetchAllWeatherData() {
 
   if (btnFetchWeather) { btnFetchWeather.disabled = false; btnFetchWeather.textContent = '取得天氣'; }
   showNotification('天氣資訊已更新', 'success', 2000);
+}
+
+// =========== Elevation Markers ===========
+
+function highlightWeatherColumn(colIdx) {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+
+  // Clear previous highlight
+  container.querySelectorAll('.wt-col-highlight')
+    .forEach(el => el.classList.remove('wt-col-highlight'));
+
+  // Highlight header + data cells for this column
+  const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
+  if (th) {
+    th.classList.add('wt-col-highlight');
+    th.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
+  container.querySelectorAll(`[data-col="${colIdx}"]`)
+    .forEach(td => td.classList.add('wt-col-highlight'));
+}
+
+function updateElevationMarkers() {
+  if (weatherPoints.length === 0 || currentRouteCoords.length < 2) {
+    elevationProfile.setWaypointMarkers([]);
+    return;
+  }
+  const markers = weatherPoints.map((pt, i) => ({
+    cumDistM: pt._cum || 0,
+    label: pt.label,
+    colIdx: i,
+    isWaypoint: pt.isWaypoint,
+  }));
+  elevationProfile.setWaypointMarkers(markers);
 }
 
 // =========== Init ===========

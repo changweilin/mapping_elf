@@ -10,14 +10,38 @@ Chart.register(...registerables);
 const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
 
 export class ElevationProfile {
-  constructor(canvasId, emptyStateId, onHover) {
+  constructor(canvasId, emptyStateId, onHover, onMarkerClick) {
     this.canvas = document.getElementById(canvasId);
     this.emptyState = document.getElementById(emptyStateId);
     this.onHover = onHover;
+    this.onMarkerClick = onMarkerClick || null;
     this.chart = null;
     this.elevations = [];
     this.distances = [];
     this.points = [];
+    this._markers = []; // [{cumDistM, label, colIdx, isWaypoint}]
+  }
+
+  /** Set waypoint/intermediate markers to draw on the chart */
+  setWaypointMarkers(markers) {
+    this._markers = markers || [];
+    if (this.chart) this.chart.update('none');
+  }
+
+  /** Interpolate elevation at a given cumulative distance (metres) */
+  _interpolateElevAtCumM(cumM) {
+    const D = this.distances;
+    const E = this.elevations;
+    if (!D.length || !E.length) return 0;
+    if (cumM <= D[0]) return E[0] ?? 0;
+    for (let i = 1; i < D.length; i++) {
+      if (D[i] >= cumM) {
+        const span = D[i] - D[i - 1];
+        const f = span > 0 ? (cumM - D[i - 1]) / span : 0;
+        return E[i - 1] + f * (E[i] - E[i - 1]);
+      }
+    }
+    return E[E.length - 1] ?? 0;
   }
 
   /**
@@ -82,6 +106,7 @@ export class ElevationProfile {
     this.elevations = [];
     this.distances = [];
     this.points = [];
+    this._markers = [];
     this.emptyState.classList.remove('hidden');
   }
 
@@ -122,6 +147,51 @@ export class ElevationProfile {
     const gradient = ctx.createLinearGradient(0, 0, 0, 160);
     gradient.addColorStop(0, 'rgba(110, 231, 183, 0.4)');
     gradient.addColorStop(1, 'rgba(59, 130, 246, 0.05)');
+
+    // Plugin: draw waypoint / intermediate markers on the chart
+    const self = this;
+    const markerPlugin = {
+      id: 'wpMarkers',
+      afterDraw(chart) {
+        const markers = self._markers;
+        if (!markers || markers.length === 0) return;
+        const { ctx: c, chartArea: { top, bottom, left, right }, scales } = chart;
+        const totalM = self.distances[self.distances.length - 1] || 1;
+
+        markers.forEach((m) => {
+          const xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
+          const xPx = left + xFrac * (right - left);
+          const elev = self._interpolateElevAtCumM(m.cumDistM);
+          const yPx = scales.y.getPixelForValue(elev);
+
+          c.save();
+
+          // Vertical dashed line
+          c.strokeStyle = m.isWaypoint
+            ? 'rgba(110,231,183,0.55)'
+            : 'rgba(148,163,184,0.4)';
+          c.lineWidth = 1;
+          c.setLineDash([3, 3]);
+          c.beginPath();
+          c.moveTo(xPx, top);
+          c.lineTo(xPx, bottom);
+          c.stroke();
+          c.setLineDash([]);
+
+          // Dot on elevation line
+          const r = m.isWaypoint ? 5 : 3.5;
+          c.fillStyle = m.isWaypoint ? '#6ee7b7' : '#94a3b8';
+          c.beginPath();
+          c.arc(xPx, yPx, r, 0, Math.PI * 2);
+          c.fill();
+          c.strokeStyle = 'rgba(255,255,255,0.85)';
+          c.lineWidth = 1.5;
+          c.stroke();
+
+          c.restore();
+        });
+      },
+    };
 
     this.chart = new Chart(ctx, {
       type: 'line',
@@ -164,6 +234,7 @@ export class ElevationProfile {
               label: (item) => `海拔: ${formatElevation(item.raw)}`,
             },
           },
+          wpMarkers: {}, // enable local plugin
         },
         scales: {
           x: {
@@ -179,15 +250,44 @@ export class ElevationProfile {
             border: { color: 'rgba(255,255,255,0.06)' },
           },
         },
-        onHover: (event, elements) => {
-          if (elements.length > 0 && this.onHover) {
+        onClick: (event, _elements, chart) => {
+          const markers = self._markers;
+          if (!markers || markers.length === 0 || !self.onMarkerClick) return;
+          const rect = chart.canvas.getBoundingClientRect();
+          const xPx = (event.native?.clientX ?? 0) - rect.left;
+          const { left: cLeft, right: cRight } = chart.chartArea;
+          const totalM = self.distances[self.distances.length - 1] || 1;
+          let closest = null, minDist = 18;
+          markers.forEach((m) => {
+            const mxPx = cLeft + (m.cumDistM / totalM) * (cRight - cLeft);
+            const d = Math.abs(xPx - mxPx);
+            if (d < minDist) { minDist = d; closest = m; }
+          });
+          if (closest) self.onMarkerClick(closest.colIdx);
+        },
+        onHover: (event, elements, chart) => {
+          if (elements.length > 0 && self.onHover) {
             const idx = elements[0].index;
-            if (idx < this.points.length) {
-              this.onHover(this.points[idx][0], this.points[idx][1]);
+            if (idx < self.points.length) {
+              self.onHover(self.points[idx][0], self.points[idx][1]);
             }
+          }
+          // Change cursor when hovering near a marker
+          const markers = self._markers;
+          if (markers && markers.length > 0 && event.native) {
+            const rect = chart.canvas.getBoundingClientRect();
+            const xPx = event.native.clientX - rect.left;
+            const { left: cLeft, right: cRight } = chart.chartArea;
+            const totalM = self.distances[self.distances.length - 1] || 1;
+            const near = markers.some((m) => {
+              const mxPx = cLeft + (m.cumDistM / totalM) * (cRight - cLeft);
+              return Math.abs(xPx - mxPx) < 18;
+            });
+            chart.canvas.style.cursor = near ? 'pointer' : 'default';
           }
         },
       },
+      plugins: [markerPlugin],
     });
   }
 }

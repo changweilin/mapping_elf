@@ -1432,6 +1432,11 @@ html, body {
   font-size: 12px;
 }
 
+.wt-col-highlight {
+  background: rgba(110, 231, 183, 0.13) !important;
+  transition: background 0.2s;
+}
+
 .wt-data-cell.loading { color: var(--text-muted); }
 .wt-data-cell.error   { color: var(--danger); }
 
