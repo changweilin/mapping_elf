@@ -158,6 +158,106 @@ export function interpolateTimeAtDist(cumDistM, distances, cumulativeTimes) {
 }
 
 /**
+ * Compute cumulative elapsed time for ONE route segment, starting from an
+ * arbitrary fatigue / rest-break state.
+ *
+ * Designed for per-waypoint-segment recalculation with carry-over fatigue.
+ *
+ * @param {number[]} elevations  elevation (m) at each sample in this segment
+ * @param {number[]} distances   cumulative distances (m), starting from 0
+ * @param {string}   activity
+ * @param {object}   params      pace parameters (see DEFAULT_PACE_PARAMS)
+ * @param {object}   [state]     initial state: { movingH, fatH, nextRestH }
+ *                               Omit (or pass null) to start fresh.
+ * @returns {{ times: number[], finalState: { movingH, fatH, nextRestH } }}
+ *   times[i] = elapsed hours from the START OF THIS SEGMENT to sample i.
+ */
+export function computeSegmentTimesFromState(elevations, distances, activity, params = {}, state = null) {
+  const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
+  const {
+    flatPaceKmH  = null,
+    bodyWeightKg = 70,
+    packWeightKg = 0,
+    fatigue      = prof.fatigue,
+    restEveryH   = 1.0,
+    restMinutes  = 10,
+  } = { ...DEFAULT_PACE_PARAMS, ...params };
+
+  const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
+  const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
+  const baseSpeed   = flatPaceKmH != null ? Math.max(0.1, flatPaceKmH) : prof.speedKmH * loadPenalty;
+  const ascentRate  = Math.max(1, prof.ascentMH  * loadPenalty);
+  const descentRate = Math.max(1, prof.descentMH * loadPenalty);
+  const restH       = restMinutes / 60;
+
+  let movingH   = state?.movingH  ?? 0;
+  let fatH      = state?.fatH     ?? 0;
+  let nextRestH = state?.nextRestH ?? ((fatigue && restEveryH > 0) ? movingH + restEveryH : Infinity);
+  let segElapsed = 0;
+
+  const times = [0];
+
+  for (let i = 1; i < elevations.length; i++) {
+    const distKm = (distances[i] - distances[i - 1]) / 1000;
+    const dElev  = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
+    const ascM   = Math.max(0, dElev);
+    const descM  = Math.max(0, -dElev);
+
+    let fm = 1.0;
+    if (fatigue && fatH > 2.0) fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+
+    let rem = distKm / Math.max(0.01, baseSpeed * fm);
+    if (prof.ascentMH  > 0) rem += ascM  / Math.max(1, ascentRate  * fm);
+    if (prof.descentMH > 0) rem += descM / Math.max(1, descentRate * fm);
+
+    while (fatigue && restEveryH > 0 && movingH + rem >= nextRestH) {
+      const toRest = nextRestH - movingH;
+      movingH    += toRest;
+      segElapsed += toRest;
+      fatH       += toRest;
+      rem        -= toRest;
+      segElapsed += restH;
+      fatH        = Math.max(0, fatH - restMinutes / 20.0);
+      nextRestH  += restEveryH;
+      fm = 1.0;
+      if (fatigue && fatH > 2.0) fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+    }
+
+    movingH    += rem;
+    segElapsed += rem;
+    fatH       += rem;
+    times.push(segElapsed);
+  }
+
+  return {
+    times,
+    finalState: { movingH, fatH, nextRestH },
+  };
+}
+
+/**
+ * Apply rest/recovery at a waypoint before the next segment.
+ *
+ * Model: each hour of rest cancels 3 hours of accumulated fatigue
+ * (consistent with the in-segment rest-break model: 1 rest-minute → 3 fatigue-minutes).
+ * Also resets the rest-break interval so the next break is restEveryH from now.
+ *
+ * @param {{ movingH, fatH, nextRestH }} state
+ * @param {number} restH     hours of rest at the waypoint
+ * @param {object} params    pace parameters (uses restEveryH)
+ * @returns {{ movingH, fatH, nextRestH }}  updated state
+ */
+export function applyWaypointRecovery(state, restH, params = {}) {
+  const { restEveryH = 1.0, fatigue = true } = { ...DEFAULT_PACE_PARAMS, ...params };
+  const newFatH = Math.max(0, state.fatH - restH * 3);
+  return {
+    movingH:   state.movingH,
+    fatH:      newFatH,
+    nextRestH: (fatigue && restEveryH > 0) ? state.movingH + restEveryH : Infinity,
+  };
+}
+
+/**
  * Compute intermediate waypoints at every intervalH hours of elapsed travel time.
  *
  * @param {Array}    sampledCoords [[lat,lng], …]

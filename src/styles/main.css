@@ -801,6 +801,34 @@ html, body {
   cursor: pointer;
 }
 
+/* Per-segment recalculation row */
+.pace-per-segment-row {
+  padding: 4px 12px 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.pace-per-segment-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.pace-per-segment-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pace-per-segment-label span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* Elapsed time badge inside column header */
 .wt-elapsed-badge {
   display: inline-block;

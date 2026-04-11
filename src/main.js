@@ -12,7 +12,7 @@ import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeSegmentTimesFromState, applyWaypointRecovery, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -41,11 +41,13 @@ const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
 const LS_SPEED_MODE_KEY    = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY= 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY   = 'mappingElf_paceParams';
+const LS_PER_SEGMENT_KEY   = 'mappingElf_perSegment';
 
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 let roundTripMode     = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
-let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
-let speedActivity     = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
+let speedIntervalMode  = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
+let speedActivity      = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
+let perSegmentMode     = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -1260,6 +1262,77 @@ function buildWeatherPoints() {
   if ((speedIntervalMode || segmentIntervalKm > 0) && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
     for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
+
+    // ── Per-segment second pass ──────────────────────────────────────────────
+    // When perSegmentMode is on, recalculate cumTimes segment by segment so
+    // that fatigue carries over correctly and waypoint rest/recovery is applied.
+    // Rest time at each waypoint = scheduledDepartureH − estimatedArrivalH
+    // (negative rest = traveller is already behind schedule → no rest).
+    if (perSegmentMode && wps.length >= 2 && fullTotalDistBuild > 0) {
+      const saved   = loadWeatherSettings();
+      const wp0sv   = getSavedCol({ isWaypoint: true, isReturn: false, wpIndex: 0 }, 0, saved);
+      const startMs = wp0sv?.date
+        ? new Date(wp0sv.date + 'T00:00:00').getTime() + (parseInt(wp0sv.hour) || 0) * 3600000
+        : null;
+
+      // Map each outgoing waypoint to its sampled-array index
+      const wpSampIdx = wps.map((_, k) => {
+        const frac = Math.max(0, Math.min(1, wpCumDist[k] / fullTotalDistBuild));
+        return Math.round(frac * (sampledPts.length - 1));
+      });
+
+      // Get each waypoint's scheduled departure in hours relative to WP0 departure
+      const wpScheduledH = wps.map((_, k) => {
+        if (!startMs) return null;
+        const sv = getSavedCol({ isWaypoint: true, isReturn: false, wpIndex: k }, k, saved);
+        if (!sv?.date || sv?.hour == null) return null;
+        const wpMs = new Date(sv.date + 'T00:00:00').getTime() + (parseInt(sv.hour) || 0) * 3600000;
+        return (wpMs - startMs) / 3600000;
+      });
+
+      // Initial fatigue state (fresh start at WP0)
+      const { fatigue = true, restEveryH = 1.0 } = { ...DEFAULT_PACE_PARAMS, ...paceParams };
+      let state = {
+        movingH:   0,
+        fatH:      0,
+        nextRestH: (fatigue && restEveryH > 0) ? restEveryH : Infinity,
+      };
+      let globalElapsedH = 0;
+      const segTimes = [...cumTimes]; // copy; overwrite outgoing portion below
+
+      for (let seg = 0; seg < wps.length - 1; seg++) {
+        const si = wpSampIdx[seg];
+        const ei = wpSampIdx[seg + 1];
+        if (si >= ei) continue;
+
+        const segElevs     = sampledElevs.slice(si, ei + 1);
+        const segDistsBase = sampledDists[si];
+        const segDists     = sampledDists.slice(si, ei + 1).map(d => d - segDistsBase);
+
+        const { times: tSeg, finalState } =
+          computeSegmentTimesFromState(segElevs, segDists, speedActivity, paceParams, state);
+
+        for (let j = 0; j < tSeg.length; j++) {
+          segTimes[si + j] = globalElapsedH + tSeg[j];
+        }
+
+        const arrivalH        = globalElapsedH + tSeg[tSeg.length - 1];
+        const scheduledDepart = wpScheduledH[seg + 1];
+        const restH           = (scheduledDepart != null) ? Math.max(0, scheduledDepart - arrivalH) : 0;
+
+        if (restH > 0) {
+          state          = applyWaypointRecovery(finalState, restH, paceParams);
+          globalElapsedH = scheduledDepart;
+        } else {
+          state          = finalState;
+          globalElapsedH = arrivalH;
+        }
+      }
+      // Last outgoing waypoint
+      segTimes[wpSampIdx[wps.length - 1]] = globalElapsedH;
+      cumTimes = segTimes;
+    }
+    // ────────────────────────────────────────────────────────────────────────
   }
 
   /** Get elapsed hours for a given cumDistM (full-route metres). */
@@ -1503,6 +1576,9 @@ function renderWeatherPanel() {
     }
     enforceTimeOrdering();
     saveWeatherSettings();
+    // In per-segment mode, waypoint time changes affect _elapsedH of interval
+    // points → rebuild weather points with updated rest/recovery times.
+    if (perSegmentMode) renderWeatherPanel();
   };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', onTimeChange)
@@ -1967,6 +2043,17 @@ async function init() {
   });
   if (paceFatigueEnable) {
     paceFatigueEnable.addEventListener('change', onPaceParamChange);
+  }
+
+  // --- Per-segment mode checkbox ---
+  const perSegmentEl = document.getElementById('pace-per-segment-enable');
+  if (perSegmentEl) {
+    perSegmentEl.checked = perSegmentMode;
+    perSegmentEl.addEventListener('change', () => {
+      perSegmentMode = perSegmentEl.checked;
+      localStorage.setItem(LS_PER_SEGMENT_KEY, perSegmentMode ? '1' : '0');
+      renderWeatherPanel();
+    });
   }
 
   updateFlatPlaceholder();
