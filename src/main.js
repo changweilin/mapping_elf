@@ -1433,6 +1433,10 @@ async function init() {
     );
   }
 
+  // Map action buttons
+  document.getElementById('btn-fit-route')?.addEventListener('click', () => mapManager.fitToRoute());
+  document.getElementById('btn-my-location')?.addEventListener('click', () => mapManager.goToMyLocation());
+
   setTimeout(() => {
     loadingScreen.classList.add('hidden');
   }, 800);

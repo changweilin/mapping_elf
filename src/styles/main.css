@@ -264,6 +264,41 @@ html, body {
   z-index: 1;
 }
 
+/* Floating map action buttons */
+.map-action-btns {
+  position: fixed;
+  right: 10px;
+  bottom: calc(var(--bottom-panel-height) + 80px);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.map-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  padding: 0;
+}
+.map-action-btn:hover {
+  background: var(--bg-glass-hover);
+  color: var(--accent-primary);
+  transform: scale(1.08);
+}
+.map-action-btn:active {
+  transform: scale(0.95);
+}
+
 /* Custom Leaflet overrides */
 .leaflet-control-zoom {
   border: none !important;

@@ -90,6 +90,7 @@ export class MapManager {
     }).addTo(this.map);
 
     let _dragModeActive = false;
+    let _justDragged = false;
 
     const _enableDrag = () => {
       _dragModeActive = true;
@@ -104,13 +105,66 @@ export class MapManager {
       marker.getElement()?.classList.remove('is-dragging');
     };
 
-    // Desktop: right-click / context menu
+    // Desktop: right-click / context menu → Leaflet built-in drag
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
       _enableDrag();
     });
 
-    // Touch: long-press (500ms) enables drag mode
+    // Desktop: left-button long-press (500ms) → manual drag
+    let _mouseLPTimer = null;
+    let _mouseStartX = 0, _mouseStartY = 0;
+    marker.on('mousedown', (e) => {
+      if (e.originalEvent.button !== 0 || _dragModeActive) return;
+      L.DomEvent.stopPropagation(e);
+      _mouseStartX = e.originalEvent.clientX;
+      _mouseStartY = e.originalEvent.clientY;
+
+      const cancelLP = () => {
+        clearTimeout(_mouseLPTimer);
+        _mouseLPTimer = null;
+        document.removeEventListener('mousemove', onMoveGuard);
+        document.removeEventListener('mouseup', cancelLP);
+      };
+      const onMoveGuard = (ev) => {
+        const dx = ev.clientX - _mouseStartX, dy = ev.clientY - _mouseStartY;
+        if (dx * dx + dy * dy > 64) cancelLP();
+      };
+
+      _mouseLPTimer = setTimeout(() => {
+        document.removeEventListener('mousemove', onMoveGuard);
+        document.removeEventListener('mouseup', cancelLP);
+        _mouseLPTimer = null;
+        _dragModeActive = true;
+        marker.getElement()?.classList.add('is-dragging');
+        if (navigator.vibrate) navigator.vibrate(40);
+        this.map.dragging.disable();
+
+        const onMove = (ev) => marker.setLatLng(this.map.mouseEventToLatLng(ev));
+        const onUp = () => {
+          _dragModeActive = false;
+          _justDragged = true;
+          setTimeout(() => { _justDragged = false; }, 150);
+          marker.getElement()?.classList.remove('is-dragging');
+          this.map.dragging.enable();
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          const pos = marker.getLatLng();
+          const idx = this.waypointMarkers.indexOf(marker);
+          if (idx >= 0) {
+            this.waypoints[idx] = [pos.lat, pos.lng];
+            this.onWaypointChange(this.waypoints);
+          }
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      }, 500);
+
+      document.addEventListener('mousemove', onMoveGuard);
+      document.addEventListener('mouseup', cancelLP);
+    });
+
+    // Touch: long-press (500ms) → Leaflet built-in drag
     let _longPressTimer = null;
     let _touchStartX = 0, _touchStartY = 0;
     marker.on('touchstart', (e) => {
@@ -126,7 +180,7 @@ export class MapManager {
         const t = e.originalEvent.touches[0];
         const dx = t.clientX - _touchStartX;
         const dy = t.clientY - _touchStartY;
-        if (dx * dx + dy * dy > 64) { // >8px moved → cancel long-press
+        if (dx * dx + dy * dy > 64) {
           clearTimeout(_longPressTimer);
           _longPressTimer = null;
         }
@@ -137,11 +191,11 @@ export class MapManager {
       _longPressTimer = null;
     });
 
-    // Click/tap when drag mode active → cancel
+    // Click/tap: cancel drag mode; suppress map click after manual drag
     marker.on('click', (e) => {
-      if (_dragModeActive) {
+      if (_dragModeActive || _justDragged) {
         L.DomEvent.stopPropagation(e);
-        _disableDrag();
+        if (_dragModeActive) _disableDrag();
       }
     });
 
