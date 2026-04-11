@@ -11,7 +11,7 @@ import { GpxExporter } from './modules/gpxExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, formatDuration, defaultSpeed } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -118,6 +118,10 @@ const statDescent = document.getElementById('stat-descent');
 const statMaxElev = document.getElementById('stat-max-elev');
 const statTime    = document.getElementById('stat-time');
 const statTimeCard= document.getElementById('stat-time-card');
+const statKcal    = document.getElementById('stat-kcal');
+const statKcalCard= document.getElementById('stat-kcal-card');
+const statIntake  = document.getElementById('stat-intake');
+const statIntakeCard = document.getElementById('stat-intake-card');
 
 const layerBtns = document.querySelectorAll('.layer-btn');
 const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
@@ -453,24 +457,32 @@ function resetStats() {
   statAscent.textContent = '—';
   statDescent.textContent = '—';
   statMaxElev.textContent = '—';
-  if (statTime) statTime.textContent = '—';
+  if (statTime)   statTime.textContent   = '—';
+  if (statKcal)   statKcal.textContent   = '—';
+  if (statIntake) statIntake.textContent = '—';
 }
 
 // =========== Pace / Speed Interval ===========
 
-/** Compute total travel time for the current route and update the time stat card. */
+/** Compute total travel time and calorie stats for the current route. */
 function updateTimeStat() {
   if (!speedIntervalMode || !statTime || !statTimeCard) return;
-  const pts  = elevationProfile.points;
+  const pts   = elevationProfile.points;
   const elevs = elevationProfile.elevations;
   const dists = elevationProfile.distances;
   if (!pts || pts.length < 2 || !elevs.length) {
     statTime.textContent = '—';
+    if (statKcal)   statKcal.textContent   = '—';
+    if (statIntake) statIntake.textContent = '—';
     return;
   }
   const times = computeCumulativeTimes(elevs, dists, speedActivity, paceParams);
   const totalH = times[times.length - 1] || 0;
   statTime.textContent = formatDuration(totalH);
+
+  const trip = computeTripStats(elevs, dists, speedActivity, paceParams);
+  if (statKcal)   statKcal.textContent   = `${trip.kcalExpended.toLocaleString()} kcal`;
+  if (statIntake) statIntake.textContent = `${trip.kcalSuggested.toLocaleString()} kcal`;
 }
 
 /** Convert a column header's current date+hour to milliseconds (local time). */
@@ -1284,7 +1296,9 @@ async function init() {
     speedIntervalEnableEl.checked = speedIntervalMode;
     speedActivitySelectEl.value   = speedActivity;
     speedActivitySelectEl.disabled = !speedIntervalMode;
-    if (statTimeCard) statTimeCard.style.display = speedIntervalMode ? '' : 'none';
+    if (statTimeCard)    statTimeCard.style.display    = speedIntervalMode ? '' : 'none';
+    if (statKcalCard)    statKcalCard.style.display    = speedIntervalMode ? '' : 'none';
+    if (statIntakeCard)  statIntakeCard.style.display  = speedIntervalMode ? '' : 'none';
 
     // Track previous activity for pace conversion
     let prevActivity = speedActivity;
@@ -1316,7 +1330,9 @@ async function init() {
 
       speedActivity = newActivity;
       speedActivitySelectEl.disabled = !speedIntervalMode;
-      if (statTimeCard) statTimeCard.style.display = speedIntervalMode ? '' : 'none';
+      if (statTimeCard)   statTimeCard.style.display   = speedIntervalMode ? '' : 'none';
+      if (statKcalCard)   statKcalCard.style.display   = speedIntervalMode ? '' : 'none';
+      if (statIntakeCard) statIntakeCard.style.display = speedIntervalMode ? '' : 'none';
       const panel = document.getElementById('pace-params-panel');
       if (panel) panel.style.display = speedIntervalMode ? '' : 'none';
       localStorage.setItem(LS_SPEED_MODE_KEY, speedIntervalMode ? '1' : '0');

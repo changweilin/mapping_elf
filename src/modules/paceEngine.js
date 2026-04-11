@@ -5,12 +5,17 @@
  */
 
 export const ACTIVITY_PROFILES = {
-  walking:     { name: '步行',   speedKmH: 3.5, ascentMH: 400,  descentMH: 700,  fatigue: false },
-  hiking:      { name: '健行',   speedKmH: 4.0, ascentMH: 450,  descentMH: 600,  fatigue: true  },
-  'trail-run': { name: '越野跑', speedKmH: 8.0, ascentMH: 800,  descentMH: 1200, fatigue: true  },
-  cycling:     { name: '自行車', speedKmH: 15,  ascentMH: 1200, descentMH: 0,    fatigue: false },
-  driving:     { name: '駕車',   speedKmH: 40,  ascentMH: 0,    descentMH: 0,    fatigue: false },
+  walking:     { name: '步行',   speedKmH: 3.5, ascentMH: 400,  descentMH: 700,  fatigue: false, baseMET: 3.5  },
+  hiking:      { name: '健行',   speedKmH: 4.0, ascentMH: 450,  descentMH: 600,  fatigue: true,  baseMET: 6.5  },
+  'trail-run': { name: '越野跑', speedKmH: 8.0, ascentMH: 800,  descentMH: 1200, fatigue: true,  baseMET: 10.0 },
+  cycling:     { name: '自行車', speedKmH: 15,  ascentMH: 1200, descentMH: 0,    fatigue: false, baseMET: 8.0  },
+  driving:     { name: '駕車',   speedKmH: 40,  ascentMH: 0,    descentMH: 0,    fatigue: false, baseMET: 2.0  },
 };
+
+/** MET during rest breaks */
+const REST_MET = 1.5;
+/** Suggested carbohydrate/fuel intake per moving hour (kcal) */
+const KCAL_PER_MOVING_H = 250;
 
 export const DEFAULT_PACE_PARAMS = {
   flatPaceKmH:  null,   // null = use activity default (adjusted by load)
@@ -186,4 +191,96 @@ export function computeHourlyPoints(sampledCoords, elevations, distances, activi
     nextH += intervalH;
   }
   return result;
+}
+
+/**
+ * Compute trip summary statistics including calorie expenditure.
+ *
+ * Calorie model (MET-based):
+ *   Moving: kcal/h = baseMET × bodyWeightKg × fatigueMultiplier
+ *   Resting: kcal/h = REST_MET (1.5) × bodyWeightKg
+ *   Suggested intake: KCAL_PER_MOVING_H (250) × movingH  (carb/fuel)
+ *
+ * @param {number[]} elevations  elevation (m) at each sample
+ * @param {number[]} distances   cumulative distance (m) at each sample
+ * @param {string}   activity    key in ACTIVITY_PROFILES
+ * @param {object}   params      pace parameters (see DEFAULT_PACE_PARAMS)
+ * @returns {{ totalH, movingH, restH, kcalExpended, kcalSuggested }}
+ */
+export function computeTripStats(elevations, distances, activity, params = {}) {
+  const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
+  const {
+    flatPaceKmH  = null,
+    bodyWeightKg = 70,
+    packWeightKg = 0,
+    fatigue      = prof.fatigue,
+    restEveryH   = 1.0,
+    restMinutes  = 10,
+  } = { ...DEFAULT_PACE_PARAMS, ...params };
+
+  const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
+  const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
+
+  const baseSpeed   = flatPaceKmH != null ? Math.max(0.1, flatPaceKmH) : prof.speedKmH * loadPenalty;
+  const ascentRate  = Math.max(1, prof.ascentMH  * loadPenalty);
+  const descentRate = Math.max(1, prof.descentMH * loadPenalty);
+  const baseMET     = prof.baseMET;
+
+  const restH = restMinutes / 60;
+  let movingH   = 0;
+  let fatH      = 0;
+  let elapsedH  = 0;
+  let kcalMoving = 0;
+  let kcalRest   = 0;
+  let nextRestH  = (fatigue && restEveryH > 0) ? restEveryH : Infinity;
+
+  for (let i = 1; i < elevations.length; i++) {
+    const distKm = (distances[i] - distances[i - 1]) / 1000;
+    const dElev  = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
+    const ascM   = Math.max(0, dElev);
+    const descM  = Math.max(0, -dElev);
+
+    let fm = 1.0;
+    if (fatigue && fatH > 2.0) {
+      fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+    }
+
+    let segH = distKm / Math.max(0.01, baseSpeed * fm);
+    if (prof.ascentMH  > 0) segH += ascM  / Math.max(1, ascentRate  * fm);
+    if (prof.descentMH > 0) segH += descM / Math.max(1, descentRate * fm);
+
+    let rem = segH;
+    while (fatigue && restEveryH > 0 && movingH + rem >= nextRestH) {
+      const toRest = nextRestH - movingH;
+      movingH  += toRest;
+      elapsedH += toRest;
+      fatH     += toRest;
+      rem      -= toRest;
+      kcalMoving += baseMET * bodyWeightKg * toRest * fm;
+
+      elapsedH  += restH;
+      kcalRest  += REST_MET * bodyWeightKg * restH;
+      fatH       = Math.max(0, fatH - restMinutes / 20.0);
+      nextRestH += restEveryH;
+
+      fm = 1.0;
+      if (fatigue && fatH > 2.0) {
+        fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+      }
+    }
+
+    kcalMoving += baseMET * bodyWeightKg * rem * fm;
+    movingH  += rem;
+    elapsedH += rem;
+    fatH     += rem;
+  }
+
+  const totalRestH = elapsedH - movingH;
+  return {
+    totalH:       elapsedH,
+    movingH:      movingH,
+    restH:        totalRestH,
+    kcalExpended: Math.round(kcalMoving + kcalRest),
+    kcalSuggested: Math.round(movingH * KCAL_PER_MOVING_H),
+  };
 }
