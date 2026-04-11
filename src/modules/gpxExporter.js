@@ -4,8 +4,8 @@
 
 export class GpxExporter {
   /**
-   * Generate GPX XML string from route data
-   * @param {Array} segmentDates - [{date, time}|null, ...] indexed by waypoint (segment starting at wp[i])
+   * Generate GPX XML string from route data.
+   * @param {Array}  segmentDates - [{date, time, weather:{key:{label,value}}}|null, …] indexed by waypoint
    */
   static generate(waypoints, routeCoords, elevations = [], name = 'Mapping Elf Track', segmentDates = []) {
     const now = new Date().toISOString();
@@ -26,12 +26,18 @@ export class GpxExporter {
       const seg = segmentDates[i];
       gpx += `  <wpt lat="${wp[0].toFixed(6)}" lon="${wp[1].toFixed(6)}">
     <name>航點 ${i + 1}</name>`;
-      if (seg && (seg.date || seg.time)) {
-        gpx += `
-    <extensions>
-      <mel:date>${this._escapeXml(seg.date || '')}</mel:date>
-      <mel:time>${this._escapeXml(seg.time || '')}</mel:time>
-    </extensions>`;
+      if (seg && (seg.date || seg.time || seg.weather)) {
+        gpx += `\n    <extensions>`;
+        if (seg.date) gpx += `\n      <mel:date>${this._escapeXml(seg.date)}</mel:date>`;
+        if (seg.time) gpx += `\n      <mel:time>${this._escapeXml(seg.time)}</mel:time>`;
+        if (seg.weather) {
+          for (const [key, { value }] of Object.entries(seg.weather)) {
+            if (value && value !== '—') {
+              gpx += `\n      <mel:${key}>${this._escapeXml(String(value))}</mel:${key}>`;
+            }
+          }
+        }
+        gpx += `\n    </extensions>`;
       }
       gpx += `\n  </wpt>\n`;
     });

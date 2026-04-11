@@ -61,7 +61,7 @@
       <button class="tool-btn" id="btn-import-gpx" title="匯入 GPX">
         <svg viewBox="0 0 24 24" width="20" height="20"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor"/></svg>
       </button>
-      <button class="tool-btn accent" id="btn-export-gpx" title="匯出 GPX">
+      <button class="tool-btn accent" id="btn-export-gpx" title="匯出路線">
         <svg viewBox="0 0 24 24" width="20" height="20"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>
       </button>
       <button class="tool-btn" id="btn-toggle-panel" title="切換面板">
@@ -374,6 +374,31 @@
       </div>
     </section>
   </aside>
+
+  <!-- Export Format Modal -->
+  <div id="export-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 class="modal-title">匯出路線</h3>
+      <div class="export-options">
+        <label class="export-option">
+          <input type="radio" name="export-fmt" value="gpx" checked>
+          <span>GPX <small>（通用格式，含天氣資訊）</small></span>
+        </label>
+        <label class="export-option">
+          <input type="radio" name="export-fmt" value="kml">
+          <span>KML <small>（Google Maps / Earth）</small></span>
+        </label>
+        <label class="export-option">
+          <input type="radio" name="export-fmt" value="both">
+          <span>GPX + KML <small>（同時匯出兩份）</small></span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="btn-export-cancel">取消</button>
+        <button class="btn-primary" id="btn-export-confirm">匯出</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Notification Container -->
   <div id="notifications" class="notifications"></div>

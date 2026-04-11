@@ -1872,6 +1872,61 @@ html, body {
   color: var(--text-primary);
 }
 
+/* Export Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.modal-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  min-width: 280px;
+  max-width: 360px;
+  width: 90%;
+  box-shadow: var(--shadow-lg);
+}
+.modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px;
+}
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.export-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.export-option input[type="radio"] {
+  margin-top: 2px;
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+}
+.export-option small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* Utils styles */
 .hidden { display: none !important; }
 .flex-1 { flex: 1; }

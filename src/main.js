@@ -8,6 +8,7 @@ import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
 import { ElevationProfile } from './modules/elevationProfile.js';
 import { GpxExporter } from './modules/gpxExporter.js';
+import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance } from './modules/utils.js';
@@ -151,7 +152,7 @@ btnMyLocation.addEventListener('click', () => {
   showNotification('正在定位...', 'info');
 });
 
-btnExportGpx.addEventListener('click', exportGpx);
+btnExportGpx.addEventListener('click', openExportModal);
 btnImportGpx.addEventListener('click', () => gpxFileInput.click());
 gpxFileInput.addEventListener('change', importGpx);
 
@@ -603,41 +604,102 @@ function enforceTimeOrdering() {
   }
 }
 
-// =========== GPX Export / Import ===========
+// =========== Export (GPX / KML) ===========
 
-function exportGpx() {
+const exportModal   = document.getElementById('export-modal');
+const btnExportConfirm = document.getElementById('btn-export-confirm');
+const btnExportCancel  = document.getElementById('btn-export-cancel');
+
+function openExportModal() {
   if (currentRouteCoords.length === 0) {
     showNotification('請先建立路線', 'warning');
     return;
   }
-  const segDates = collectSegmentDates();
-  const gpx = GpxExporter.generate(
-    mapManager.waypoints,
-    currentRouteCoords,
-    currentElevations,
-    'Mapping Elf Track',
-    segDates
-  );
-  GpxExporter.download(gpx);
-  showNotification('GPX 檔案已匯出', 'success');
+  exportModal.classList.remove('hidden');
+}
+
+function closeExportModal() {
+  exportModal.classList.add('hidden');
+}
+
+exportModal?.addEventListener('click', (e) => {
+  if (e.target === exportModal) closeExportModal();
+});
+btnExportCancel?.addEventListener('click', closeExportModal);
+btnExportConfirm?.addEventListener('click', () => {
+  const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
+  closeExportModal();
+  doExport(fmt);
+});
+
+/**
+ * Collect all weather-column data for export (date, time, weather rows).
+ * Returns array parallel to weatherPoints.
+ */
+function collectExportData() {
+  const container = document.getElementById('weather-table-container');
+  return weatherPoints.map((pt, colIdx) => {
+    const th = container?.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
+    const date = th?.querySelector('.wt-date-input')?.value || '';
+    const h    = th?.querySelector('.wt-time-select')?.value;
+    const hour = h != null ? parseInt(h) : 0;
+    const time = h != null ? `${String(hour).padStart(2, '0')}:00` : '';
+    const cached = date ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, date, hour)] : null;
+    const weather = {};
+    if (cached) {
+      WEATHER_ROWS.forEach(row => {
+        const val = getCellValue(cached, row.key);
+        if (val && val !== '—') weather[row.key] = { label: row.label, value: val };
+      });
+    }
+    return {
+      lat:        pt.lat,
+      lng:        pt.lng,
+      label:      pt.label,
+      isWaypoint: pt.isWaypoint || false,
+      isReturn:   pt.isReturn   || false,
+      wpIndex:    pt.wpIndex,
+      date,
+      time,
+      weather,
+    };
+  });
 }
 
 /**
- * Collect per-waypoint date/time from weather table columns for GPX export.
+ * Collect per-waypoint date/time/weather for GPX (indexed by wpIndex).
  */
 function collectSegmentDates() {
-  const container = document.getElementById('weather-table-container');
+  const exportData = collectExportData();
   const result = mapManager.waypoints.map(() => null);
-  weatherPoints.forEach((pt, colIdx) => {
-    if (!pt.isWaypoint || pt.wpIndex === undefined) return;
-    const th = container?.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
-    if (!th) return;
-    const date = th.querySelector('.wt-date-input')?.value || '';
-    const h = th.querySelector('.wt-time-select')?.value;
-    const time = h != null ? `${String(h).padStart(2,'0')}:00` : '';
-    result[pt.wpIndex] = { date, time };
+  exportData.forEach(d => {
+    if (!d.isWaypoint || d.isReturn || d.wpIndex === undefined) return;
+    result[d.wpIndex] = { date: d.date, time: d.time, weather: d.weather };
   });
   return result;
+}
+
+function doExport(fmt) {
+  const name = 'Mapping Elf Track';
+  const ts   = new Date().toISOString().slice(0, 10);
+  const filename = `mapping_elf_${ts}`;
+
+  if (fmt === 'gpx' || fmt === 'both') {
+    const segDates = collectSegmentDates();
+    const gpx = GpxExporter.generate(
+      mapManager.waypoints, currentRouteCoords, currentElevations, name, segDates
+    );
+    GpxExporter.download(gpx, `${filename}.gpx`);
+  }
+
+  if (fmt === 'kml' || fmt === 'both') {
+    const wpData = collectExportData();
+    const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, name);
+    KmlExporter.download(kml, `${filename}.kml`);
+  }
+
+  const label = fmt === 'both' ? 'GPX + KML' : fmt.toUpperCase();
+  showNotification(`${label} 檔案已匯出`, 'success');
 }
 
 function importGpx(e) {
