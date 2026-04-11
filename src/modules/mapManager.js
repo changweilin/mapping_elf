@@ -3,6 +3,7 @@
  * Handles Leaflet map, layers, waypoints, multiple route polylines
  */
 import L from 'leaflet';
+import { interpolateRouteColor } from './utils.js';
 
 const TILE_LAYERS = {
   streets: {
@@ -31,19 +32,26 @@ const TILE_LAYERS = {
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
 
-// Colors for alternative routes (index 0 = selected, rest = alternatives)
+// Colors for alternative routes
 const ROUTE_COLORS = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171'];
 const ROUTE_ALT_OPACITY = 0.4;
 const ROUTE_SELECTED_OPACITY = 0.9;
 
+// Max gradient chunks for the selected route polyline
+const GRADIENT_CHUNKS = 80;
+
 export class MapManager {
   constructor(containerId, onWaypointChange) {
     this.onWaypointChange = onWaypointChange;
-    this.onRouteSelect = null; // callback(index)
+    this.onRouteSelect    = null; // callback(index)
+    this.onRouteHover     = null; // callback(lat, lng) | callback(null, null)
+    this.onWaypointSelect = null; // callback(wpIndex)
+    this.isRoundTrip = false;
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
-    this.routePolylines = []; // Array of polylines for alternatives
+    this.routePolylines = []; // Solid polylines for alternative routes
+    this.gradientPolylines = []; // Gradient chunks for selected route
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
     this.currentLayerName = 'streets';
@@ -83,6 +91,7 @@ export class MapManager {
     }).addTo(this.map);
 
     let _dragModeActive = false;
+    let _justDragged = false;
 
     const _enableDrag = () => {
       _dragModeActive = true;
@@ -97,13 +106,66 @@ export class MapManager {
       marker.getElement()?.classList.remove('is-dragging');
     };
 
-    // Desktop: right-click / context menu
+    // Desktop: right-click / context menu → Leaflet built-in drag
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
       _enableDrag();
     });
 
-    // Touch: long-press (500ms) enables drag mode
+    // Desktop: left-button long-press (500ms) → manual drag
+    let _mouseLPTimer = null;
+    let _mouseStartX = 0, _mouseStartY = 0;
+    marker.on('mousedown', (e) => {
+      if (e.originalEvent.button !== 0 || _dragModeActive) return;
+      L.DomEvent.stopPropagation(e);
+      _mouseStartX = e.originalEvent.clientX;
+      _mouseStartY = e.originalEvent.clientY;
+
+      const cancelLP = () => {
+        clearTimeout(_mouseLPTimer);
+        _mouseLPTimer = null;
+        document.removeEventListener('mousemove', onMoveGuard);
+        document.removeEventListener('mouseup', cancelLP);
+      };
+      const onMoveGuard = (ev) => {
+        const dx = ev.clientX - _mouseStartX, dy = ev.clientY - _mouseStartY;
+        if (dx * dx + dy * dy > 64) cancelLP();
+      };
+
+      _mouseLPTimer = setTimeout(() => {
+        document.removeEventListener('mousemove', onMoveGuard);
+        document.removeEventListener('mouseup', cancelLP);
+        _mouseLPTimer = null;
+        _dragModeActive = true;
+        marker.getElement()?.classList.add('is-dragging');
+        if (navigator.vibrate) navigator.vibrate(40);
+        this.map.dragging.disable();
+
+        const onMove = (ev) => marker.setLatLng(this.map.mouseEventToLatLng(ev));
+        const onUp = () => {
+          _dragModeActive = false;
+          _justDragged = true;
+          setTimeout(() => { _justDragged = false; }, 150);
+          marker.getElement()?.classList.remove('is-dragging');
+          this.map.dragging.enable();
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          const pos = marker.getLatLng();
+          const idx = this.waypointMarkers.indexOf(marker);
+          if (idx >= 0) {
+            this.waypoints[idx] = [pos.lat, pos.lng];
+            this.onWaypointChange(this.waypoints);
+          }
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      }, 500);
+
+      document.addEventListener('mousemove', onMoveGuard);
+      document.addEventListener('mouseup', cancelLP);
+    });
+
+    // Touch: long-press (500ms) → Leaflet built-in drag
     let _longPressTimer = null;
     let _touchStartX = 0, _touchStartY = 0;
     marker.on('touchstart', (e) => {
@@ -119,7 +181,7 @@ export class MapManager {
         const t = e.originalEvent.touches[0];
         const dx = t.clientX - _touchStartX;
         const dy = t.clientY - _touchStartY;
-        if (dx * dx + dy * dy > 64) { // >8px moved → cancel long-press
+        if (dx * dx + dy * dy > 64) {
           clearTimeout(_longPressTimer);
           _longPressTimer = null;
         }
@@ -130,12 +192,15 @@ export class MapManager {
       _longPressTimer = null;
     });
 
-    // Click/tap when drag mode active → cancel
+    // Click/tap: cancel drag mode; on normal click → notify selection
     marker.on('click', (e) => {
-      if (_dragModeActive) {
+      if (_dragModeActive || _justDragged) {
         L.DomEvent.stopPropagation(e);
-        _disableDrag();
+        if (_dragModeActive) _disableDrag();
+        return;
       }
+      const idx = this.waypointMarkers.indexOf(marker);
+      if (idx >= 0) this.onWaypointSelect?.(idx);
     });
 
     marker.on('dragend', (e) => {
@@ -203,19 +268,13 @@ export class MapManager {
   }
 
   /**
-   * Draw a single route (backwards compatible)
+   * Draw a single route with continuous gradient coloring
+   * @param {Array} routeCoords
+   * @param {boolean} isRoundTrip - if true, gradient goes teal→red→teal (symmetric)
    */
-  drawRoute(routeCoords) {
+  drawRoute(routeCoords, isRoundTrip = false) {
     this.clearAllRoutes();
-    const polyline = L.polyline(routeCoords, {
-      color: ROUTE_COLORS[0],
-      weight: 4,
-      opacity: ROUTE_SELECTED_OPACITY,
-      smoothFactor: 1,
-      lineCap: 'round',
-      lineJoin: 'round',
-    }).addTo(this.map);
-    this.routePolylines = [polyline];
+    this._drawGradientRoute(routeCoords, isRoundTrip);
     this.selectedRouteIndex = 0;
   }
 
@@ -223,90 +282,130 @@ export class MapManager {
    * Draw multiple alternative routes on the map
    * @param {Array} routes - Array of { coords, label, index, ... }
    * @param {number} selectedIdx - Index of the currently selected route
+   * @param {boolean} isRoundTrip - if true, gradient is symmetric (teal→red→teal)
    */
-  drawMultipleRoutes(routes, selectedIdx = 0) {
+  drawMultipleRoutes(routes, selectedIdx = 0, isRoundTrip = false) {
     this.clearAllRoutes();
     this.selectedRouteIndex = selectedIdx;
-
-    // Draw alternatives first (behind), then selected on top
-    const ordered = routes
-      .map((r, i) => ({ ...r, drawOrder: i === selectedIdx ? 999 : i }))
-      .sort((a, b) => a.drawOrder - b.drawOrder);
-
-    for (const route of ordered) {
-      const isSelected = route.index === selectedIdx;
-      const color = ROUTE_COLORS[route.index % ROUTE_COLORS.length];
-
-      const polyline = L.polyline(route.coords, {
-        color: color,
-        weight: isSelected ? 5 : 3,
-        opacity: isSelected ? ROUTE_SELECTED_OPACITY : ROUTE_ALT_OPACITY,
-        smoothFactor: 1,
-        lineCap: 'round',
-        lineJoin: 'round',
-        dashArray: isSelected ? null : '8 6',
-        className: `route-line route-${route.index}`,
-      }).addTo(this.map);
-
-      // Click on alternative route to select it
-      polyline.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        this.selectRoute(routes, route.index);
-      });
-
-      // Tooltip on hover
-      polyline.bindTooltip(route.label, {
-        sticky: true,
-        className: 'route-tooltip',
-        direction: 'top',
-        offset: [0, -10],
-      });
-
-      // Store reference with route index
-      polyline._routeIndex = route.index;
-      this.routePolylines.push(polyline);
-    }
+    this.isRoundTrip = isRoundTrip;
+    this._redrawRoutes(routes, selectedIdx);
   }
 
   /**
    * Visually select a route among alternatives
    * @param {Array} routes - Current alternatives
    * @param {number} selectedIdx - Index to select
-   * @param {boolean} triggeredByUI - If true, do not fire onRouteSelect to avoid recursion
+   * @param {boolean} triggeredByUI - If true, skip redraw if index unchanged (avoids double-draw)
    */
   selectRoute(routes, selectedIdx, triggeredByUI = false) {
+    // Skip redundant redraw when triggered by UI after a map-click already updated things
+    if (this.selectedRouteIndex === selectedIdx && triggeredByUI) return;
+
     this.selectedRouteIndex = selectedIdx;
+    this._redrawRoutes(routes, selectedIdx);
 
-    // Update polyline styles
-    this.routePolylines.forEach((pl) => {
-      const isSelected = pl._routeIndex === selectedIdx;
-      const color = ROUTE_COLORS[pl._routeIndex % ROUTE_COLORS.length];
-
-      pl.setStyle({
-        color: color,
-        weight: isSelected ? 5 : 3,
-        opacity: isSelected ? ROUTE_SELECTED_OPACITY : ROUTE_ALT_OPACITY,
-        dashArray: isSelected ? null : '8 6',
-      });
-
-      // Bring selected to front
-      if (isSelected) pl.bringToFront();
-    });
-
-    // Callback to update UI, but only if NOT triggered by the UI already
     if (this.onRouteSelect && !triggeredByUI) {
       this.onRouteSelect(selectedIdx);
     }
   }
 
   /**
+   * Internal: clear and redraw all route polylines for a given selection
+   */
+  _redrawRoutes(routes, selectedIdx) {
+    this.routePolylines.forEach((pl) => this.map.removeLayer(pl));
+    this.routePolylines = [];
+    this.clearGradientRoute();
+
+    // Draw alternative routes first (behind selected)
+    for (const route of routes) {
+      if (route.index === selectedIdx) continue;
+
+      const color = ROUTE_COLORS[route.index % ROUTE_COLORS.length];
+      const pl = L.polyline(route.coords, {
+        color,
+        weight: 3,
+        opacity: ROUTE_ALT_OPACITY,
+        smoothFactor: 1,
+        lineCap: 'round',
+        lineJoin: 'round',
+        dashArray: '8 6',
+        className: `route-line route-${route.index}`,
+      }).addTo(this.map);
+
+      pl._routeIndex = route.index;
+      pl.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        this.selectRoute(routes, route.index);
+      });
+      pl.bindTooltip(route.label, {
+        sticky: true,
+        className: 'route-tooltip',
+        direction: 'top',
+        offset: [0, -10],
+      });
+      this._bindRouteHoverEvents(pl);
+      this.routePolylines.push(pl);
+    }
+
+    // Draw selected route as continuous gradient on top
+    const selectedRoute = routes.find((r) => r.index === selectedIdx);
+    if (selectedRoute) {
+      this._drawGradientRoute(selectedRoute.coords, this.isRoundTrip || false);
+    }
+  }
+
+  /**
+   * Draw the selected route as GRADIENT_CHUNKS small polylines colored by
+   * position along the route (t=0 at start → t=1 at end).
+   * @param {Array} routeCoords
+   * @param {boolean} isRoundTrip - if true, gradient goes teal→red→teal (symmetric)
+   */
+  _drawGradientRoute(routeCoords, isRoundTrip = false) {
+    this.clearGradientRoute();
+    const N = routeCoords.length;
+    if (N < 2) return;
+
+    const chunks = Math.min(GRADIENT_CHUNKS, N - 1);
+    const chunkSize = (N - 1) / chunks;
+
+    for (let chunk = 0; chunk < chunks; chunk++) {
+      const startI = Math.floor(chunk * chunkSize);
+      const endI = Math.min(Math.floor((chunk + 1) * chunkSize), N - 1);
+      if (endI <= startI) continue;
+
+      const tLinear = startI / (N - 1);
+      // For round-trip: mirror gradient at midpoint (0→1→0)
+      const t = isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
+      const color = interpolateRouteColor(t);
+      const pl = L.polyline(routeCoords.slice(startI, endI + 1), {
+        color,
+        weight: 5,
+        opacity: ROUTE_SELECTED_OPACITY,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(this.map);
+      this._bindRouteHoverEvents(pl);
+      this.gradientPolylines.push(pl);
+    }
+  }
+
+  clearGradientRoute() {
+    this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
+    this.gradientPolylines = [];
+  }
+
+  /**
    * Set km-interval intermediate markers (non-interactive, small icons)
    * @param {Array<{lat,lng,cumDistM}>} points
    */
-  setIntermediateMarkers(points) {
+  setIntermediateMarkers(points, totalDistM = 0) {
     this.clearIntermediateMarkers();
     points.forEach((pt) => {
       const km = (pt.cumDistM / 1000).toFixed(0);
+      const tLinear = totalDistM > 0 ? Math.min(1, pt.cumDistM / totalDistM) : 0;
+      const t = this.isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
+      const color = interpolateRouteColor(t);
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
         html: `<span>${km}</span>`,
@@ -314,6 +413,9 @@ export class MapManager {
         iconAnchor: [11, 11],
       });
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: false }).addTo(this.map);
+      // Override the CSS background with the gradient color
+      const el = marker.getElement();
+      if (el) el.style.background = color;
       this.intermediateMarkers.push(marker);
     });
   }
@@ -329,6 +431,7 @@ export class MapManager {
     this.selectedRouteIndex = 0;
     this.clearHoverMarker();
     this.clearIntermediateMarkers();
+    this.clearGradientRoute();
   }
 
   // Keep clearRoute as alias
@@ -357,9 +460,10 @@ export class MapManager {
   }
 
   fitToRoute() {
-    if (this.routePolylines.length > 0) {
+    const allPl = [...this.routePolylines, ...this.gradientPolylines];
+    if (allPl.length > 0) {
       const bounds = L.latLngBounds([]);
-      this.routePolylines.forEach((pl) => bounds.extend(pl.getBounds()));
+      allPl.forEach((pl) => bounds.extend(pl.getBounds()));
       this.map.fitBounds(bounds, { padding: [50, 50] });
     } else if (this.waypoints.length > 0) {
       const bounds = L.latLngBounds(this.waypoints.map((w) => [w[0], w[1]]));
@@ -407,6 +511,15 @@ export class MapManager {
     });
   }
 
+  _bindRouteHoverEvents(polyline) {
+    polyline.on('mousemove', (e) => {
+      if (this.onRouteHover) this.onRouteHover(e.latlng.lat, e.latlng.lng);
+    });
+    polyline.on('mouseout', () => {
+      if (this.onRouteHover) this.onRouteHover(null, null);
+    });
+  }
+
   getCurrentLayerInfo() {
     const layer = this.tileLayers[this.currentLayerName];
     if (layer) {
@@ -416,5 +529,17 @@ export class MapManager {
       };
     }
     return null;
+  }
+
+  /** Highlight a waypoint marker by index (adds .is-selected class). */
+  highlightWaypoint(wpIndex) {
+    this.waypointMarkers.forEach(m => m.getElement()?.classList.remove('is-selected'));
+    const m = this.waypointMarkers[wpIndex];
+    if (m) m.getElement()?.classList.add('is-selected');
+  }
+
+  /** Remove all waypoint selection highlights. */
+  clearWaypointHighlight() {
+    this.waypointMarkers.forEach(m => m.getElement()?.classList.remove('is-selected'));
   }
 }

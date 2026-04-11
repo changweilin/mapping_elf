@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "WebSearch",
+      "WebFetch(domain:yangstory.com)",
+      "WebFetch(domain:moptt.tw)",
+      "WebFetch(domain:melissalin510.pixnet.net)",
+      "WebFetch(domain:www.moonskyedu.com)",
+      "WebFetch(domain:www.sunriver.com.tw)",
+      "WebFetch(domain:hiking.biji.co)"
     ]
   }
 }

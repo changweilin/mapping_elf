@@ -1,13 +1,24 @@
 /**
  * Mapping Elf — GPX Exporter / Importer
+ *
+ * wpData item shape (same as KML):
+ *   { lat, lng, label, isWaypoint, isReturn, date, time,
+ *     weather: { key: { label, value } } }
  */
 
 export class GpxExporter {
   /**
-   * Generate GPX XML string from route data
-   * @param {Array} segmentDates - [{date, time}|null, ...] indexed by waypoint (segment starting at wp[i])
+   * Generate GPX XML from all weather-column points.
+   * Actual route waypoints get <wpt> elements as before.
+   * Interval/intermediate points also get <wpt> but tagged with
+   * <type>mel:interval</type> so the importer can skip them.
+   *
+   * @param {Array}    wpData      - all weather column points
+   * @param {Array}    routeCoords - [[lat,lng], …] full track
+   * @param {number[]} elevations  - elevation at each route coord
+   * @param {string}   name
    */
-  static generate(waypoints, routeCoords, elevations = [], name = 'Mapping Elf Track', segmentDates = []) {
+  static generate(wpData, routeCoords, elevations = [], name = 'Mapping Elf Track') {
     const now = new Date().toISOString();
     let gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Mapping Elf"
@@ -21,37 +32,45 @@ export class GpxExporter {
   </metadata>
 `;
 
-    // Waypoints with optional segment date/time extensions
-    waypoints.forEach((wp, i) => {
-      const seg = segmentDates[i];
-      gpx += `  <wpt lat="${wp[0].toFixed(6)}" lon="${wp[1].toFixed(6)}">
-    <name>航點 ${i + 1}</name>`;
-      if (seg && (seg.date || seg.time)) {
-        gpx += `
-    <extensions>
-      <mel:date>${this._escapeXml(seg.date || '')}</mel:date>
-      <mel:time>${this._escapeXml(seg.time || '')}</mel:time>
-    </extensions>`;
+    wpData.forEach((pt) => {
+      gpx += `  <wpt lat="${pt.lat.toFixed(6)}" lon="${pt.lng.toFixed(6)}">\n`;
+      gpx += `    <name>${this._escapeXml(pt.label)}</name>\n`;
+
+      // Mark non-waypoint columns so the importer can skip them
+      if (!pt.isWaypoint) {
+        gpx += `    <type>mel:interval</type>\n`;
       }
-      gpx += `\n  </wpt>\n`;
+
+      const hasExt = pt.date || pt.time ||
+        (pt.weather && Object.values(pt.weather).some(v => v.value && v.value !== '—'));
+      if (hasExt) {
+        gpx += `    <extensions>\n`;
+        if (pt.date) gpx += `      <mel:date>${this._escapeXml(pt.date)}</mel:date>\n`;
+        if (pt.time) gpx += `      <mel:time>${this._escapeXml(pt.time)}</mel:time>\n`;
+        if (pt.weather) {
+          for (const [key, { value }] of Object.entries(pt.weather)) {
+            if (value && value !== '—') {
+              gpx += `      <mel:${key}>${this._escapeXml(String(value))}</mel:${key}>\n`;
+            }
+          }
+        }
+        gpx += `    </extensions>\n`;
+      }
+
+      gpx += `  </wpt>\n`;
     });
 
     // Track
     if (routeCoords.length > 0) {
-      gpx += `  <trk>
-    <name>${this._escapeXml(name)}</name>
-    <trkseg>\n`;
-
+      gpx += `  <trk>\n    <name>${this._escapeXml(name)}</name>\n    <trkseg>\n`;
       routeCoords.forEach((coord, i) => {
         const ele = elevations[i] !== undefined ? elevations[i] : 0;
-        gpx += `      <trkpt lat="${coord[0].toFixed(6)}" lon="${coord[1].toFixed(6)}">
-        <ele>${ele.toFixed(1)}</ele>
-        <time>${now}</time>
-      </trkpt>\n`;
+        gpx += `      <trkpt lat="${coord[0].toFixed(6)}" lon="${coord[1].toFixed(6)}">\n`;
+        gpx += `        <ele>${ele.toFixed(1)}</ele>\n`;
+        gpx += `        <time>${now}</time>\n`;
+        gpx += `      </trkpt>\n`;
       });
-
-      gpx += `    </trkseg>
-  </trk>\n`;
+      gpx += `    </trkseg>\n  </trk>\n`;
     }
 
     gpx += `</gpx>`;
@@ -74,7 +93,8 @@ export class GpxExporter {
   }
 
   /**
-   * Parse GPX file and extract waypoints + track points + segment dates
+   * Parse GPX file and extract waypoints + track points + segment dates.
+   * Skips <wpt> elements tagged with <type>mel:interval</type>.
    */
   static parse(gpxString) {
     const parser = new DOMParser();
@@ -84,9 +104,12 @@ export class GpxExporter {
     const trackPoints = [];
     const segmentDates = [];
 
-    // Parse waypoints
+    // Parse waypoints — skip interval annotations
     const wpts = doc.querySelectorAll('wpt');
     wpts.forEach((wpt) => {
+      const typeEl = wpt.querySelector('type');
+      if (typeEl && typeEl.textContent.trim() === 'mel:interval') return;
+
       const lat = parseFloat(wpt.getAttribute('lat'));
       const lon = parseFloat(wpt.getAttribute('lon'));
       if (!isNaN(lat) && !isNaN(lon)) {
@@ -141,7 +164,7 @@ export class GpxExporter {
   }
 
   static _escapeXml(str) {
-    return str
+    return (str || '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')

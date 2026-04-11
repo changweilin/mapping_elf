@@ -78,3 +78,34 @@ export function debounce(fn, delay = 300) {
 export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+/**
+ * Interpolate the route gradient color at fraction t (0 = start, 1 = end).
+ * Returns { r, g, b } integers.
+ */
+export function interpolateRouteColorRgb(t) {
+  const stops = [
+    { t: 0,    r: 110, g: 231, b: 183 }, // #6ee7b7  teal-green
+    { t: 0.33, r: 56,  g: 189, b: 248 }, // #38bdf8  sky-blue
+    { t: 0.66, r: 251, g: 191, b: 36  }, // #fbbf24  amber
+    { t: 1,    r: 248, g: 113, b: 113 }, // #f87171  red
+  ];
+  const tc = Math.max(0, Math.min(1, t));
+  let lo = stops[0], hi = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (tc <= stops[i + 1].t) { lo = stops[i]; hi = stops[i + 1]; break; }
+  }
+  const span = hi.t - lo.t;
+  const f = span > 0 ? (tc - lo.t) / span : 0;
+  return {
+    r: Math.round(lo.r + (hi.r - lo.r) * f),
+    g: Math.round(lo.g + (hi.g - lo.g) * f),
+    b: Math.round(lo.b + (hi.b - lo.b) * f),
+  };
+}
+
+/** Returns `rgb(r,g,b)` string for gradient at fraction t. */
+export function interpolateRouteColor(t) {
+  const { r, g, b } = interpolateRouteColorRgb(t);
+  return `rgb(${r},${g},${b})`;
+}

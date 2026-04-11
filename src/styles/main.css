@@ -264,6 +264,41 @@ html, body {
   z-index: 1;
 }
 
+/* Floating map action buttons — left side to stay clear of the side panel */
+.map-action-btns {
+  position: fixed;
+  left: 10px;
+  bottom: calc(var(--bottom-panel-height) + 10px);
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.map-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  padding: 0;
+}
+.map-action-btn:hover {
+  background: var(--bg-glass-hover);
+  color: var(--accent-primary);
+  transform: scale(1.08);
+}
+.map-action-btn:active {
+  transform: scale(0.95);
+}
+
 /* Custom Leaflet overrides */
 .leaflet-control-zoom {
   border: none !important;
@@ -322,6 +357,12 @@ html, body {
   border-color: #fbbf24;
   z-index: 1000 !important;
   cursor: grabbing;
+}
+.custom-waypoint-icon.is-selected {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 5px rgba(251,191,36,0.35), var(--shadow-glow);
+  transform: scale(1.25);
+  z-index: 900 !important;
 }
 
 .wp-weather-badge {
@@ -489,9 +530,14 @@ html, body {
   margin-bottom: 6px;
   transition: background var(--transition-fast);
   animation: fadeSlideIn 0.3s ease;
+  cursor: pointer;
 }
 .waypoint-item:hover {
   background: rgba(255,255,255,0.06);
+}
+.waypoint-item.wp-highlight {
+  background: rgba(251,191,36,0.12);
+  outline: 1px solid rgba(251,191,36,0.35);
 }
 .waypoint-item .wp-index {
   display: flex;
@@ -515,8 +561,20 @@ html, body {
 .waypoint-item .wp-coords {
   flex: 1;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--accent-primary); /* overridden per-item by inline style */
   font-family: 'SF Mono', 'Cascadia Code', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.waypoint-item .wp-place-name {
+  font-family: var(--font-sans, sans-serif);
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .waypoint-item .wp-actions {
   display: flex;
@@ -576,19 +634,296 @@ html, body {
   color: var(--text-secondary);
   white-space: nowrap;
 }
-.segment-interval-select {
-  flex: 1;
-  padding: 4px 6px;
+.segment-interval-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.segment-interval-check {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.segment-interval-input {
+  width: 60px;
+  padding: 3px 6px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: 12px;
-  cursor: pointer;
+  text-align: center;
   outline: none;
+  -moz-appearance: textfield;
 }
-.segment-interval-select:focus {
+.segment-interval-input::-webkit-outer-spin-button,
+.segment-interval-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.segment-interval-input:focus {
   border-color: var(--accent-primary);
+}
+.segment-interval-input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.segment-interval-unit {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Interval mode radio group */
+.interval-mode-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.imode-opt {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.imode-opt input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+/* Speed activity dropdown */
+.speed-activity-select {
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+.speed-activity-select:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.speed-activity-select:focus {
+  border-color: var(--accent-primary);
+}
+
+/* Stat time icon */
+.stat-icon.time-icon {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+}
+
+/* Pace parameters panel */
+.pace-section-header {
+  margin-bottom: 10px;
+}
+
+.pace-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+/* Full-width field */
+.pace-field-full {
+  grid-column: 1 / -1;
+}
+
+.pace-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pace-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pace-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 58px;
+  padding: 4px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.pace-input::-webkit-outer-spin-button,
+.pace-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.pace-input:focus { border-color: var(--accent-primary); }
+
+.pace-unit {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Pace unit toggle select (km/h ↔ 上河) */
+.pace-unit-select {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  text-align: center;
+}
+.pace-unit-select:focus {
+  border-color: var(--accent-primary);
+}
+
+.pace-fatigue-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pace-fatigue-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+/* Per-segment recalculation row */
+.pace-per-segment-row {
+  padding: 4px 12px 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.pace-per-segment-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.pace-per-segment-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pace-per-segment-label span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Elapsed time badge inside column header */
+.wt-elapsed-badge {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--accent-primary);
+  background: rgba(110, 231, 183, 0.12);
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Round-trip toggle */
+.roundtrip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 4px;
+  gap: 8px;
+}
+
+.roundtrip-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-hover);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.toggle-track::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  top: 2px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background: rgba(110, 231, 183, 0.2);
+  border-color: var(--accent-primary);
+}
+
+.toggle-switch input:checked + .toggle-track::before {
+  transform: translateX(16px);
+  background: var(--accent-primary);
 }
 
 /* Route Mode Selector */
@@ -1386,43 +1721,124 @@ html, body {
   text-align: center;
   vertical-align: top;
   padding: 5px 4px 4px;
-  background: rgba(110, 231, 183, 0.04);
+  background: rgba(30, 32, 48, 0.98);
   border-bottom: 2px solid rgba(110, 231, 183, 0.2);
+  border-top: 2px solid transparent;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+/* Intermediate (non-waypoint) columns — subtle visual distinction */
+.wt-interval-col {
+  background: rgba(26, 28, 42, 0.98) !important;
+  border-bottom-color: rgba(255,255,255,0.06) !important;
+}
+.wt-interval-col .wt-col-label {
+  color: #4b5563;
+  font-size: 10.5px;
+  font-weight: 500;
+}
+/* Locked (auto-calculated) date/time inputs in interval columns */
+.wt-interval-col .wt-date-input:disabled,
+.wt-interval-col .wt-time-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+  border-color: rgba(255,255,255,0.06);
+  background: transparent;
+}
+
+.wt-label-cell.wt-th {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  background: rgba(30, 32, 48, 0.98);
 }
 
 .wt-col-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent-primary);
+  color: var(--accent-primary); /* fallback; overridden by inline style for waypoints */
   margin-bottom: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding: 4px 2px;
+  cursor: pointer;
+  user-select: none;
+}
+.wt-label-edit-input {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+  min-width: 0;
+}
+.wp-name-edit-input {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+  min-width: 0;
 }
 
 .wt-date-input {
   width: 100%;
   padding: 2px 3px;
   border-radius: 3px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.15);
+  background: #1e2030;
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
   box-sizing: border-box;
+  color-scheme: dark;
+}
+
+.wt-time-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.wt-time-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .wt-time-select {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 2px 3px;
   border-radius: 3px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.15);
+  background: #1e2030;
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
   box-sizing: border-box;
+  cursor: pointer;
+}
+
+.wt-time-select:focus,
+.wt-date-input:focus {
+  border-color: rgba(110,231,183,0.5);
+  box-shadow: 0 0 0 2px rgba(110,231,183,0.1);
 }
 
 .wt-data-cell {
@@ -1430,6 +1846,21 @@ html, body {
   padding: 3px 6px;
   color: var(--text-primary);
   font-size: 12px;
+}
+
+.wt-col-highlight {
+  background: rgba(110, 231, 183, 0.13) !important;
+  transition: background 0.2s;
+}
+
+/* Return-trip columns: subtle sky-blue tint */
+.wt-return-col {
+  background: rgba(56, 189, 248, 0.06) !important;
+}
+/* Return label color is set via inline style (gradient); no override here */
+/* Left border separator at the start of the return section */
+.wt-return-start {
+  border-left: 2px solid rgba(56, 189, 248, 0.45) !important;
 }
 
 .wt-data-cell.loading { color: var(--text-muted); }
@@ -1565,6 +1996,61 @@ html, body {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-primary);
+}
+
+/* Export Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.modal-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  min-width: 280px;
+  max-width: 360px;
+  width: 90%;
+  box-shadow: var(--shadow-lg);
+}
+.modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px;
+}
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.export-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.export-option input[type="radio"] {
+  margin-top: 2px;
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+}
+.export-option small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 /* Utils styles */
