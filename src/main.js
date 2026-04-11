@@ -11,7 +11,7 @@ import { GpxExporter } from './modules/gpxExporter.js';
 import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
@@ -440,10 +440,14 @@ function updateWaypointList(waypoints) {
       else if (i === waypoints.length - 1 && waypoints.length > 1) cls = 'end';
       const placeName = getPlaceName(wp[0], wp[1]);
       const coords = formatCoords(wp[0], wp[1]);
+      // Color matching the map marker: start=green, end=red, middle=teal
+      const nameColor = (i === 0 && waypoints.length > 1) ? 'var(--success)'
+                      : (i === waypoints.length - 1 && waypoints.length > 1) ? 'var(--danger)'
+                      : 'var(--accent-primary)';
       return `
         <div class="waypoint-item">
           <span class="wp-index ${cls}">${i + 1}</span>
-          <span class="wp-coords" title="${coords}">
+          <span class="wp-coords" title="${coords}" style="color:${nameColor}">
             ${placeName ? `<span class="wp-place-name">${placeName}</span>` : coords}
           </span>
           <div class="wp-actions">
@@ -907,10 +911,13 @@ function startLabelEdit(labelEl, pt) {
     ? labelEl.childNodes[0].textContent
     : labelEl.textContent).trim();
 
+  const labelColor = labelEl.style.color || 'var(--accent-primary)';
   const input = document.createElement('input');
   input.type = 'text';
   input.value = getEffectiveName(pt.lat, pt.lng) || currentText;
   input.className = 'wt-label-edit-input';
+  input.style.color = labelColor;
+  input.style.borderColor = labelColor;
   labelEl.innerHTML = '';
   labelEl.appendChild(input);
   if (badge) labelEl.appendChild(badge);
@@ -1342,6 +1349,9 @@ function renderWeatherPanel() {
   // Index of the first return column (for separator styling)
   const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
 
+  // Route-gradient color per column (same formula as elevation chart)
+  const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+
   weatherPoints.forEach((pt, i) => {
     const sv = getSavedCol(pt, i, saved);
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
@@ -1351,13 +1361,26 @@ function renderWeatherPanel() {
       ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
       : '';
 
+    // Gradient position fraction (mirrors elevation chart logic)
+    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
+    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+    const gradColor = interpolateRouteColor(t);
+
     let thClass = 'wt-col-head wt-th';
-    if (pt.isReturn) thClass += ' wt-return-col';
+    if (pt.isReturn)     thClass += ' wt-return-col';
+    if (!pt.isWaypoint)  thClass += ' wt-interval-col';
     if (i === firstReturnIdx) thClass += ' wt-return-start';
 
+    const labelStyle = pt.isWaypoint
+      ? `style="color:${gradColor}"`
+      : '';
+    const thStyle = pt.isWaypoint
+      ? `style="border-top:2px solid ${gradColor}40"`
+      : '';
+
     html += `
-      <th class="${thClass}" data-idx="${i}"${pt.isReturn ? ' data-return="true"' : ''}>
-        <div class="wt-col-label">${pt.label}${elapsedBadge}</div>
+      <th class="${thClass}" data-idx="${i}"${pt.isReturn ? ' data-return="true"' : ''} ${thStyle}>
+        <div class="wt-col-label" ${labelStyle}>${pt.label}${elapsedBadge}</div>
         <input type="date" class="wt-date-input" value="${date}">
         <div class="wt-time-row">
           <span class="wt-time-label">時:</span>
