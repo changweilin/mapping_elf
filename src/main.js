@@ -640,9 +640,19 @@ function enforceTimeOrdering() {
   };
 
   for (let i = 1; i < heads.length; i++) {
-    if (toMs(heads[i]) < toMs(heads[i - 1])) {
-      setColToMs(heads[i], toMs(heads[i - 1]));
+    const prevMs  = toMs(heads[i - 1]);
+    const curMs   = toMs(heads[i]);
+    if (curMs >= prevMs) continue;
+
+    // Only snap when both columns are on the same date.
+    // If the previous column is already on a later date, skip — the user
+    // intentionally set different dates and snapping would cause an unexpected date jump.
+    const prevDate = heads[i - 1].querySelector('.wt-date-input')?.value || '';
+    const curDate  = heads[i].querySelector('.wt-date-input')?.value || '';
+    if (prevDate === curDate) {
+      setColToMs(heads[i], prevMs); // same day: clamp hour forward
     }
+    // cross-day violations: leave as-is
   }
 }
 
