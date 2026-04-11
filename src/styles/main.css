@@ -1676,6 +1676,30 @@ html, body {
   cursor: pointer;
   user-select: none;
 }
+.wt-label-edit-input {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+  min-width: 0;
+}
+.wp-name-edit-input {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+  min-width: 0;
+}
 
 .wt-date-input {
   width: 100%;

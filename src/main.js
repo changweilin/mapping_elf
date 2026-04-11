@@ -490,6 +490,38 @@ function updateWaypointList(waypoints) {
       if (idx < waypoints.length - 1) mapManager.moveWaypoint(idx, 1);
     });
   });
+
+  // Double-click on place name in sidebar → inline edit
+  waypointList.querySelectorAll('.wp-place-name').forEach((nameEl) => {
+    const item = nameEl.closest('.waypoint-item');
+    const wpIndex = Array.from(waypointList.querySelectorAll('.waypoint-item')).indexOf(item);
+    const wp = waypoints[wpIndex];
+    if (!wp) return;
+    nameEl.title = '雙擊編輯名稱';
+    nameEl.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      if (nameEl.querySelector('input')) return;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = getEffectiveName(wp[0], wp[1]) || nameEl.textContent.trim();
+      input.className = 'wp-name-edit-input';
+      nameEl.innerHTML = '';
+      nameEl.appendChild(input);
+      input.focus();
+      input.select();
+      let saved = false;
+      const commit = () => {
+        if (saved) return;
+        saved = true;
+        saveCustomName(wp[0], wp[1], input.value.trim());
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (e2) => {
+        if (e2.key === 'Enter')  { e2.preventDefault(); input.blur(); }
+        if (e2.key === 'Escape') { saved = true; input.removeEventListener('blur', commit); _applyPlaceNameToDOM(); }
+      });
+    });
+  });
 }
 
 function resetStats() {
@@ -770,18 +802,44 @@ let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
 
 // =========== Reverse Geocoding (place name labels) ===========
-const LS_GEOCODE_KEY = 'mappingElf_geocode';
-/** "lat4,lng4" → place name string | null (null means "fetched, no name found") */
+const LS_GEOCODE_KEY      = 'mappingElf_geocode';
+const LS_CUSTOM_NAMES_KEY = 'mappingElf_customNames';
+/** "lat4,lng4" → geocoded place name | null */
 const waypointPlaceNames = (() => {
   try { return JSON.parse(localStorage.getItem(LS_GEOCODE_KEY) || '{}'); }
+  catch { return {}; }
+})();
+/** "lat4,lng4" → user-set name (overrides geocoded) */
+const waypointCustomNames = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_CUSTOM_NAMES_KEY) || '{}'); }
   catch { return {}; }
 })();
 
 function _geocodeKey(lat, lng) {
   return `${lat.toFixed(4)},${lng.toFixed(4)}`;
 }
-function getPlaceName(lat, lng) {
-  return waypointPlaceNames[_geocodeKey(lat, lng)] ?? null;
+/** Returns user custom name > geocoded name > null */
+function getEffectiveName(lat, lng) {
+  const k = _geocodeKey(lat, lng);
+  return waypointCustomNames[k] ?? waypointPlaceNames[k] ?? null;
+}
+/** Backward-compat alias */
+function getPlaceName(lat, lng) { return getEffectiveName(lat, lng); }
+
+/**
+ * Deduplicate labels in-place: if two items share a label the second becomes
+ * "Name (2)", the third "Name (3)", etc.
+ */
+function deduplicateLabels(pts) {
+  const count = {};
+  pts.forEach(p => { count[p.label] = (count[p.label] || 0) + 1; });
+  const used = {};
+  pts.forEach(p => {
+    if (count[p.label] > 1) {
+      used[p.label] = (used[p.label] || 0) + 1;
+      if (used[p.label] > 1) p.label = `${p.label} (${used[p.label]})`;
+    }
+  });
 }
 async function fetchPlaceName(lat, lng) {
   const k = _geocodeKey(lat, lng);
@@ -809,29 +867,72 @@ async function geocodeWaypoints(waypoints) {
     const k = _geocodeKey(lat, lng);
     if (k in waypointPlaceNames) continue; // already known
     const name = await fetchPlaceName(lat, lng);
-    if (name) _applyPlaceNameToDOM(i, name, waypoints.length);
+    if (name) _applyPlaceNameToDOM();
     // Nominatim rate limit: max 1 req/s
     if (i < waypoints.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
 }
-/** Patch the weather table column label in place (avoids full re-render). */
-function _applyPlaceNameToDOM(wpIndex, name, totalWaypoints) {
-  const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIndex);
-  if (colIdx < 0) return;
-  const container = document.getElementById('weather-table-container');
-  const th = container?.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
-  const labelEl = th?.querySelector('.wt-col-label');
-  if (!labelEl) return;
-  const badge = labelEl.querySelector('.wt-elapsed-badge');
-  labelEl.textContent = name;
-  if (badge) labelEl.appendChild(badge);
-  // Also update waypoint list sidebar
-  const items = document.getElementById('waypoint-list')?.querySelectorAll('.waypoint-item');
-  const item = items?.[wpIndex];
-  if (item) {
-    const nameEl = item.querySelector('.wp-place-name');
-    if (nameEl) nameEl.textContent = name;
+/** Re-render labels after a geocode result or custom name save. */
+function _applyPlaceNameToDOM() {
+  if (weatherPoints.length > 0) renderWeatherPanel();
+  else updateWaypointList(mapManager.waypoints);
+}
+
+/**
+ * Save a user-edited name for a waypoint, then refresh all labels.
+ * @param {number} lat
+ * @param {number} lng
+ * @param {string} name  Empty string = clear custom name (fall back to geocoded / default)
+ */
+function saveCustomName(lat, lng, name) {
+  const k = _geocodeKey(lat, lng);
+  if (name) {
+    waypointCustomNames[k] = name;
+  } else {
+    delete waypointCustomNames[k];
   }
+  try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch(_) {}
+  _applyPlaceNameToDOM();
+}
+
+/**
+ * Start inline label editing inside a weather-table column header.
+ * Double-click on .wt-col-label triggers this.
+ */
+function startLabelEdit(labelEl, pt) {
+  if (labelEl.querySelector('input')) return; // already editing
+  const badge = labelEl.querySelector('.wt-elapsed-badge');
+  // Current display text (strip badge text)
+  const currentText = (labelEl.childNodes[0]?.nodeType === Node.TEXT_NODE
+    ? labelEl.childNodes[0].textContent
+    : labelEl.textContent).trim();
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = getEffectiveName(pt.lat, pt.lng) || currentText;
+  input.className = 'wt-label-edit-input';
+  labelEl.innerHTML = '';
+  labelEl.appendChild(input);
+  if (badge) labelEl.appendChild(badge);
+  input.focus();
+  input.select();
+
+  let saved = false;
+  const commit = () => {
+    if (saved) return;
+    saved = true;
+    saveCustomName(pt.lat, pt.lng, input.value.trim());
+  };
+  const cancel = () => {
+    if (saved) return;
+    saved = true;
+    _applyPlaceNameToDOM(); // restore
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { saved = true; input.removeEventListener('blur', commit); cancel(); }
+  });
 }
 
 // Persist fetched weather data across route edits and page refreshes
@@ -1173,6 +1274,10 @@ function buildWeatherPoints() {
 
   // Sort by position along route
   all.sort((a, b) => a._cum - b._cum);
+
+  // Deduplicate: same label → append (2), (3), …
+  deduplicateLabels(all);
+
   return all;
 }
 
@@ -1327,13 +1432,23 @@ function renderWeatherPanel() {
     }
   });
 
-  // Click on column header (but not date/time inputs) or any data cell → cross-view highlight
+  // Click on column header (but not date/time inputs/label) or any data cell → highlight
+  // Double-click on column label → edit name
   container.querySelectorAll('.wt-col-head').forEach(th => {
     th.style.cursor = 'pointer';
+    const colIdx = parseInt(th.dataset.idx);
+    const pt = weatherPoints[colIdx];
     th.addEventListener('click', (e) => {
-      if (e.target.closest('.wt-date-input, .wt-time-select')) return;
-      highlightPoint(parseInt(th.dataset.idx));
+      if (e.target.closest('.wt-date-input, .wt-time-select, .wt-col-label')) return;
+      highlightPoint(colIdx);
     });
+    const labelEl = th.querySelector('.wt-col-label');
+    if (labelEl) {
+      labelEl.style.cursor = 'pointer';
+      labelEl.title = '單擊高亮 · 雙擊編輯名稱';
+      labelEl.addEventListener('click',    () => highlightPoint(colIdx));
+      labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startLabelEdit(labelEl, pt); });
+    }
   });
   container.querySelectorAll('.wt-data-cell').forEach(td => {
     td.style.cursor = 'pointer';
