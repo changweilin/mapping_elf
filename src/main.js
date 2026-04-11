@@ -723,8 +723,17 @@ function collectSegmentDates() {
 
 function doExport(fmt) {
   const name = 'Mapping Elf Track';
-  const ts   = new Date().toISOString().slice(0, 10);
-  const filename = `mapping_elf_${ts}`;
+
+  // Build filename: 起點名稱_座標_時間戳
+  const startWp = mapManager.waypoints[0];
+  const startName = startWp ? (getEffectiveName(startWp[0], startWp[1]) || null) : null;
+  const startCoords = startWp
+    ? `${startWp[0].toFixed(4)},${startWp[1].toFixed(4)}`
+    : '';
+  const now = new Date();
+  const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+  const namePart = startName ? startName.replace(/[\\/:*?"<>|]/g, '_') : '起點';
+  const filename = `${namePart}_${startCoords}_${ts}`;
 
   if (fmt === 'gpx' || fmt === 'both') {
     const segDates = collectSegmentDates();
