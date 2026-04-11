@@ -1666,6 +1666,15 @@ html, body {
   font-size: 10.5px;
   font-weight: 500;
 }
+/* Locked (auto-calculated) date/time inputs in interval columns */
+.wt-interval-col .wt-date-input:disabled,
+.wt-interval-col .wt-time-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+  border-color: rgba(255,255,255,0.06);
+  background: transparent;
+}
 
 .wt-label-cell.wt-th {
   position: sticky;

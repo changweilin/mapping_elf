@@ -622,9 +622,35 @@ function cascadeWeatherTimes() {
 }
 
 /**
- * Enforce non-decreasing time order across all editable columns.
- * If column i is earlier than column i-1, snap it forward to match column i-1.
- * Skips auto-cascade columns (speed mode cols 1..N).
+ * Cascade interval (non-waypoint) column times from col-0's date/hour + each
+ * point's _elapsedH.  Interval inputs are disabled so this is the only way
+ * their displayed time can change.
+ */
+function cascadeIntervalTimes() {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
+  if (!th0) return;
+  const startDate = th0.querySelector('.wt-date-input')?.value || '';
+  const startHour = parseInt(th0.querySelector('.wt-time-select')?.value ?? '8');
+  if (!startDate) return;
+  weatherPoints.forEach((pt, i) => {
+    if (pt.isWaypoint) return;
+    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
+    if (!th) return;
+    const { date, hour } = addHoursToDateTime(startDate, startHour, pt._elapsedH || 0);
+    const dateInput  = th.querySelector('.wt-date-input');
+    const hourSelect = th.querySelector('.wt-time-select');
+    if (dateInput)  dateInput.value  = date;
+    if (hourSelect) hourSelect.value = String(hour);
+  });
+}
+
+/**
+ * Enforce non-decreasing time order across waypoint columns only.
+ * Interval points are managed by cascadeIntervalTimes() and skipped here.
+ * When a waypoint column is earlier than its predecessor, keep the user's
+ * chosen hour but add +1 day so the trip stays chronologically consistent.
  */
 function enforceTimeOrdering() {
   const container = document.getElementById('weather-table-container');
@@ -640,19 +666,21 @@ function enforceTimeOrdering() {
   };
 
   for (let i = 1; i < heads.length; i++) {
-    const prevMs  = toMs(heads[i - 1]);
-    const curMs   = toMs(heads[i]);
+    const pt = weatherPoints[i];
+    if (!pt?.isWaypoint) continue; // Interval points are handled by cascade
+
+    const prevMs = toMs(heads[i - 1]);
+    const curMs  = toMs(heads[i]);
     if (curMs >= prevMs) continue;
 
-    // Only snap when both columns are on the same date.
-    // If the previous column is already on a later date, skip — the user
-    // intentionally set different dates and snapping would cause an unexpected date jump.
-    const prevDate = heads[i - 1].querySelector('.wt-date-input')?.value || '';
-    const curDate  = heads[i].querySelector('.wt-date-input')?.value || '';
-    if (prevDate === curDate) {
-      setColToMs(heads[i], prevMs); // same day: clamp hour forward
+    // Violation: waypoint is earlier than the previous column.
+    // Keep the user's chosen hour, but bump the date forward by one day.
+    const di = heads[i].querySelector('.wt-date-input');
+    if (di && di.value) {
+      const d = new Date(di.value + 'T12:00:00');
+      d.setDate(d.getDate() + 1);
+      di.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     }
-    // cross-day violations: leave as-is
   }
 }
 
@@ -1041,11 +1069,10 @@ function saveWeatherSettings() {
       date: th.querySelector('.wt-date-input')?.value || '',
       hour: th.querySelector('.wt-time-select')?.value ?? '8',
     };
-    const key = pt.isWaypoint
-      ? (pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`)
-      : `int:${Math.round((pt._cum ?? i * 1000) / 10) * 10}`;
+    cols.push(entry); // keep legacy array for backwards compat
+    if (!pt.isWaypoint) return; // Interval times are recalculated — no need to persist
+    const key = pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`;
     byKey[key] = entry;
-    cols.push(entry);          // keep legacy array for backwards compat
   });
   localStorage.setItem(LS_WEATHER_KEY, JSON.stringify({ byKey, cols }));
 }
@@ -1058,10 +1085,9 @@ function loadWeatherSettings() {
 /** Look up a weatherPoint's saved date/hour from persisted settings. */
 function getSavedCol(pt, i, saved) {
   if (!saved) return null;
+  if (!pt.isWaypoint) return null; // Interval points are always recalculated from col-0
   if (saved.byKey) {
-    const key = pt.isWaypoint
-      ? (pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`)
-      : `int:${Math.round((pt._cum ?? i * 1000) / 10) * 10}`;
+    const key = pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`;
     if (saved.byKey[key]) return saved.byKey[key];
   }
   // Legacy fallback: index-based
@@ -1073,10 +1099,12 @@ function shiftAllDates(deltaDays, deltaHours) {
   if (!container) return;
 
   const deltaMs = deltaDays * 86400000 + deltaHours * 3600000;
-  Array.from(container.querySelectorAll('.wt-col-head')).forEach(th => {
+  Array.from(container.querySelectorAll('.wt-col-head')).forEach((th, i) => {
+    if (!weatherPoints[i]?.isWaypoint) return; // skip interval cols — recalculated below
     setColToMs(th, colToMs(th) + deltaMs);
   });
 
+  cascadeIntervalTimes();
   enforceTimeOrdering();
   saveWeatherSettings();
 }
@@ -1423,13 +1451,14 @@ function renderWeatherPanel() {
       ? `style="border-top:2px solid ${gradColor}40"`
       : '';
 
+    const locked = !pt.isWaypoint;
     html += `
       <th class="${thClass}" data-idx="${i}"${pt.isReturn ? ' data-return="true"' : ''} ${thStyle}>
         <div class="wt-col-label" ${labelStyle}>${pt.label}${elapsedBadge}</div>
-        <input type="date" class="wt-date-input" value="${date}">
+        <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}>
         <div class="wt-time-row">
           <span class="wt-time-label">時:</span>
-          <select class="wt-time-select">${timeOpts(hour)}</select>
+          <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
         </div>
       </th>`;
   });
@@ -1458,7 +1487,8 @@ function renderWeatherPanel() {
     hs?.addEventListener('focus',     snapshot(th));
   });
 
-  // On change: speed mode → delta-shift subsequent columns; all modes → enforce order → save
+  // On change: speed mode → delta-shift subsequent columns; otherwise → cascade interval
+  // times from col-0; all modes → enforce waypoint ordering → save
   const onTimeChange = (e) => {
     const th = e.target.closest('.wt-col-head');
     if (speedIntervalMode && th) {
@@ -1470,6 +1500,8 @@ function renderWeatherPanel() {
           setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
         }
       }
+    } else {
+      cascadeIntervalTimes();
     }
     enforceTimeOrdering();
     saveWeatherSettings();
@@ -1478,8 +1510,9 @@ function renderWeatherPanel() {
     el.addEventListener('change', onTimeChange)
   );
 
-  // Initial cascade (speed mode) + enforce on first render
+  // Initial cascade + enforce on first render
   if (speedIntervalMode) cascadeWeatherTimes();
+  else cascadeIntervalTimes();
   enforceTimeOrdering();
 
   // Restore previously fetched weather data — read actual date/hour from DOM
