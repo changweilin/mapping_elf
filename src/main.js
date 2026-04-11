@@ -265,6 +265,8 @@ async function onWaypointsChanged(waypoints) {
   clearAllHighlights();
   // Update UI list immediately for responsive feel
   updateWaypointList(waypoints);
+  // Geocode any waypoints not yet named (fire-and-forget)
+  geocodeWaypoints(waypoints);
 
   if (waypoints.length < 2) {
     mapManager.clearRoute();
@@ -436,10 +438,14 @@ function updateWaypointList(waypoints) {
       let cls = '';
       if (i === 0 && waypoints.length > 1) cls = 'start';
       else if (i === waypoints.length - 1 && waypoints.length > 1) cls = 'end';
+      const placeName = getPlaceName(wp[0], wp[1]);
+      const coords = formatCoords(wp[0], wp[1]);
       return `
         <div class="waypoint-item">
           <span class="wp-index ${cls}">${i + 1}</span>
-          <span class="wp-coords">${formatCoords(wp[0], wp[1])}</span>
+          <span class="wp-coords" title="${coords}">
+            ${placeName ? `<span class="wp-place-name">${placeName}</span>` : coords}
+          </span>
           <div class="wp-actions">
             <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
             <button class="wp-action wp-down" data-index="${i}" title="向下移" ${i === waypoints.length - 1 ? 'disabled' : ''}>↓</button>
@@ -686,8 +692,9 @@ function doExport(fmt) {
 
   if (fmt === 'gpx' || fmt === 'both') {
     const segDates = collectSegmentDates();
+    const wpNames = mapManager.waypoints.map(wp => getPlaceName(wp[0], wp[1]));
     const gpx = GpxExporter.generate(
-      mapManager.waypoints, currentRouteCoords, currentElevations, name, segDates
+      mapManager.waypoints, currentRouteCoords, currentElevations, name, segDates, wpNames
     );
     GpxExporter.download(gpx, `${filename}.gpx`);
   }
@@ -761,6 +768,71 @@ const WEATHER_ROWS = [
 
 let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
+
+// =========== Reverse Geocoding (place name labels) ===========
+const LS_GEOCODE_KEY = 'mappingElf_geocode';
+/** "lat4,lng4" → place name string | null (null means "fetched, no name found") */
+const waypointPlaceNames = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_GEOCODE_KEY) || '{}'); }
+  catch { return {}; }
+})();
+
+function _geocodeKey(lat, lng) {
+  return `${lat.toFixed(4)},${lng.toFixed(4)}`;
+}
+function getPlaceName(lat, lng) {
+  return waypointPlaceNames[_geocodeKey(lat, lng)] ?? null;
+}
+async function fetchPlaceName(lat, lng) {
+  const k = _geocodeKey(lat, lng);
+  if (k in waypointPlaceNames) return waypointPlaceNames[k];
+  try {
+    const resp = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+      { headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' } }
+    );
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    const name = data.name || null;
+    waypointPlaceNames[k] = name;
+    try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch(_) {}
+    return name;
+  } catch(_) {
+    waypointPlaceNames[k] = null;
+    return null;
+  }
+}
+/** Geocode waypoints in background; update column labels as results arrive. */
+async function geocodeWaypoints(waypoints) {
+  for (let i = 0; i < waypoints.length; i++) {
+    const [lat, lng] = waypoints[i];
+    const k = _geocodeKey(lat, lng);
+    if (k in waypointPlaceNames) continue; // already known
+    const name = await fetchPlaceName(lat, lng);
+    if (name) _applyPlaceNameToDOM(i, name, waypoints.length);
+    // Nominatim rate limit: max 1 req/s
+    if (i < waypoints.length - 1) await new Promise(r => setTimeout(r, 1100));
+  }
+}
+/** Patch the weather table column label in place (avoids full re-render). */
+function _applyPlaceNameToDOM(wpIndex, name, totalWaypoints) {
+  const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIndex);
+  if (colIdx < 0) return;
+  const container = document.getElementById('weather-table-container');
+  const th = container?.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
+  const labelEl = th?.querySelector('.wt-col-label');
+  if (!labelEl) return;
+  const badge = labelEl.querySelector('.wt-elapsed-badge');
+  labelEl.textContent = name;
+  if (badge) labelEl.appendChild(badge);
+  // Also update waypoint list sidebar
+  const items = document.getElementById('waypoint-list')?.querySelectorAll('.waypoint-item');
+  const item = items?.[wpIndex];
+  if (item) {
+    const nameEl = item.querySelector('.wp-place-name');
+    if (nameEl) nameEl.textContent = name;
+  }
+}
 
 // Persist fetched weather data across route edits and page refreshes
 let cachedWeatherData = (() => {
@@ -1024,7 +1096,10 @@ function buildWeatherPoints() {
 
   // Add actual waypoints
   for (let i = 0; i < wps.length; i++) {
-    const label = i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`;
+    const placeName = getPlaceName(wps[i][0], wps[i][1]);
+    const label = placeName
+      ? placeName
+      : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
     all.push({ label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i,
                _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i]) });
   }
@@ -1079,7 +1154,8 @@ function buildWeatherPoints() {
   // Each return wp shares lat/lng with its outgoing counterpart (same location, different time).
   if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
     for (let i = wps.length - 2; i >= 0; i--) {
-      const outLabel = i === 0 ? '起點' : `航點 ${i + 1}`;
+      const placeName = getPlaceName(wps[i][0], wps[i][1]);
+      const outLabel = placeName || (i === 0 ? '起點' : `航點 ${i + 1}`);
       // Mirror cumDist: return position = totalRouteDist − outgoingCum
       const returnCum = totalDistM - wpCumDist[i];
       all.push({

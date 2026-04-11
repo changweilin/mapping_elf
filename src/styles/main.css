@@ -563,6 +563,18 @@ html, body {
   font-size: 12px;
   color: var(--text-secondary);
   font-family: 'SF Mono', 'Cascadia Code', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.waypoint-item .wp-place-name {
+  font-family: var(--font-sans, sans-serif);
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .waypoint-item .wp-actions {
   display: flex;

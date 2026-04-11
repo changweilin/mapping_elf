@@ -7,7 +7,7 @@ export class GpxExporter {
    * Generate GPX XML string from route data.
    * @param {Array}  segmentDates - [{date, time, weather:{key:{label,value}}}|null, …] indexed by waypoint
    */
-  static generate(waypoints, routeCoords, elevations = [], name = 'Mapping Elf Track', segmentDates = []) {
+  static generate(waypoints, routeCoords, elevations = [], name = 'Mapping Elf Track', segmentDates = [], waypointNames = []) {
     const now = new Date().toISOString();
     let gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Mapping Elf"
@@ -24,8 +24,9 @@ export class GpxExporter {
     // Waypoints with optional segment date/time extensions
     waypoints.forEach((wp, i) => {
       const seg = segmentDates[i];
+      const wptName = waypointNames[i] || `航點 ${i + 1}`;
       gpx += `  <wpt lat="${wp[0].toFixed(6)}" lon="${wp[1].toFixed(6)}">
-    <name>航點 ${i + 1}</name>`;
+    <name>${this._escapeXml(wptName)}</name>`;
       if (seg && (seg.date || seg.time || seg.weather)) {
         gpx += `\n    <extensions>`;
         if (seg.date) gpx += `\n      <mel:date>${this._escapeXml(seg.date)}</mel:date>`;
