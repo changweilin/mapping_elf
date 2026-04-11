@@ -703,6 +703,15 @@ function collectExportData() {
         const val = getCellValue(cached, row.key);
         if (val && val !== '—') weather[row.key] = { label: row.label, value: val };
       });
+    } else {
+      // Fallback: use saved display-cell values (survives date/coord changes and page reload)
+      const savedCells = savedWeatherCells[getSemanticKey(pt, colIdx)];
+      if (savedCells) {
+        WEATHER_ROWS.forEach(row => {
+          const val = savedCells[row.key];
+          if (val && val !== '—') weather[row.key] = { label: row.label, value: val };
+        });
+      }
     }
     return {
       lat:        pt.lat,
@@ -745,17 +754,14 @@ function doExport(fmt) {
   const namePart = startName ? startName.replace(/[\\/:*?"<>|]/g, '_') : '起點';
   const filename = `${namePart}_${startCoords}_${ts}`;
 
+  const wpData = collectExportData();
+
   if (fmt === 'gpx' || fmt === 'both') {
-    const segDates = collectSegmentDates();
-    const wpNames = mapManager.waypoints.map(wp => getPlaceName(wp[0], wp[1]));
-    const gpx = GpxExporter.generate(
-      mapManager.waypoints, currentRouteCoords, currentElevations, name, segDates, wpNames
-    );
+    const gpx = GpxExporter.generate(wpData, currentRouteCoords, currentElevations, name);
     GpxExporter.download(gpx, `${filename}.gpx`);
   }
 
   if (fmt === 'kml' || fmt === 'both') {
-    const wpData = collectExportData();
     const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, name);
     KmlExporter.download(kml, `${filename}.kml`);
   }
@@ -822,7 +828,27 @@ const WEATHER_ROWS = [
 ];
 
 let weatherPoints = [];
-const LS_WEATHER_KEY = 'mappingElf_weather';
+const LS_WEATHER_KEY       = 'mappingElf_weather';
+const LS_WEATHER_CELLS_KEY = 'mappingElf_weatherCells';
+
+/** Persisted display-cell values keyed by semantic column key */
+let savedWeatherCells = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_WEATHER_CELLS_KEY) || '{}'); }
+  catch { return {}; }
+})();
+
+/** Stable semantic key for a weather column point */
+function getSemanticKey(pt, i) {
+  return pt.isWaypoint
+    ? (pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`)
+    : `int:${Math.round((pt._cum ?? i * 1000) / 10) * 10}`;
+}
+
+/** Persist display-cell values for one column */
+function saveWeatherCells(semKey, cells) {
+  savedWeatherCells[semKey] = cells;
+  try { localStorage.setItem(LS_WEATHER_CELLS_KEY, JSON.stringify(savedWeatherCells)); } catch (_) {}
+}
 
 // =========== Reverse Geocoding (place name labels) ===========
 const LS_GEOCODE_KEY      = 'mappingElf_geocode';
@@ -1464,13 +1490,27 @@ function renderWeatherPanel() {
     const hour    = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
     if (!dateStr) return;
     const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
-    if (!cached) return;
-    WEATHER_ROWS.forEach(row => {
-      const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
-      if (cell) cell.textContent = getCellValue(cached, row.key);
-    });
-    if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && cached.weatherIcon) {
-      mapManager.setWaypointWeather(pt.wpIndex, cached.weatherIcon);
+    if (cached) {
+      const cells = {};
+      WEATHER_ROWS.forEach(row => {
+        const val = getCellValue(cached, row.key);
+        cells[row.key] = val;
+        const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
+        if (cell) cell.textContent = val;
+      });
+      saveWeatherCells(getSemanticKey(pt, colIdx), cells);
+      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && cached.weatherIcon) {
+        mapManager.setWaypointWeather(pt.wpIndex, cached.weatherIcon);
+      }
+    } else {
+      // Fallback: restore display values saved from a previous fetch
+      const saved = savedWeatherCells[getSemanticKey(pt, colIdx)];
+      if (saved) {
+        WEATHER_ROWS.forEach(row => {
+          const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
+          if (cell && saved[row.key]) cell.textContent = saved[row.key];
+        });
+      }
     }
   });
 
@@ -1550,10 +1590,14 @@ async function fetchAllWeatherData() {
       cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] = data;
       // Save after each point so partial data survives a mid-fetch page close
       localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
+      const cells = {};
       WEATHER_ROWS.forEach(row => {
+        const val = getCellValue(data, row.key);
+        cells[row.key] = val;
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) { cell.textContent = getCellValue(data, row.key); cell.className = 'wt-data-cell wt-td'; }
+        if (cell) { cell.textContent = val; cell.className = 'wt-data-cell wt-td'; }
       });
+      saveWeatherCells(getSemanticKey(pt, i), cells);
       // Map weather icon only on outgoing waypoints (return shares the same marker)
       if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
