@@ -9,7 +9,11 @@
       "WebFetch(domain:melissalin510.pixnet.net)",
       "WebFetch(domain:www.moonskyedu.com)",
       "WebFetch(domain:www.sunriver.com.tw)",
-      "WebFetch(domain:hiking.biji.co)"
+      "WebFetch(domain:hiking.biji.co)",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-pace-engine/references\")",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-weather-table\")",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-deploy\")",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-review\")"
     ]
   }
 }
