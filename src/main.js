@@ -796,22 +796,51 @@ function getCellValue(data, key) {
   }
 }
 
+/**
+ * Persist weather column dates/hours keyed by column identity (not DOM index).
+ * Keys:
+ *   wp:<wpIndex>       — outgoing waypoint
+ *   ret:<wpIndex>      — return waypoint
+ *   int:<cumDistM_m>   — interval point (cumulative distance, rounded to nearest 10 m)
+ * Fallback cols[] (old index-based) kept for migration compatibility.
+ */
 function saveWeatherSettings() {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  const cols = [];
-  container.querySelectorAll('.wt-col-head').forEach(th => {
-    cols.push({
+  const byKey = {};
+  const cols  = [];
+  weatherPoints.forEach((pt, i) => {
+    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
+    if (!th) return;
+    const entry = {
       date: th.querySelector('.wt-date-input')?.value || '',
       hour: th.querySelector('.wt-time-select')?.value ?? '8',
-    });
+    };
+    const key = pt.isWaypoint
+      ? (pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`)
+      : `int:${Math.round((pt._cum ?? i * 1000) / 10) * 10}`;
+    byKey[key] = entry;
+    cols.push(entry);          // keep legacy array for backwards compat
   });
-  localStorage.setItem(LS_WEATHER_KEY, JSON.stringify({ cols }));
+  localStorage.setItem(LS_WEATHER_KEY, JSON.stringify({ byKey, cols }));
 }
 
 function loadWeatherSettings() {
   try { return JSON.parse(localStorage.getItem(LS_WEATHER_KEY) || 'null'); }
   catch { return null; }
+}
+
+/** Look up a weatherPoint's saved date/hour from persisted settings. */
+function getSavedCol(pt, i, saved) {
+  if (!saved) return null;
+  if (saved.byKey) {
+    const key = pt.isWaypoint
+      ? (pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`)
+      : `int:${Math.round((pt._cum ?? i * 1000) / 10) * 10}`;
+    if (saved.byKey[key]) return saved.byKey[key];
+  }
+  // Legacy fallback: index-based
+  return saved.cols?.[i] ?? null;
 }
 
 function shiftAllDates(deltaDays, deltaHours) {
@@ -1133,7 +1162,7 @@ function renderWeatherPanel() {
   const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
 
   weatherPoints.forEach((pt, i) => {
-    const sv = saved?.cols?.[i];
+    const sv = getSavedCol(pt, i, saved);
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
@@ -1248,8 +1277,11 @@ function renderWeatherPanel() {
       }
     });
     window._pendingGpxDates = null;
-    saveWeatherSettings();
   }
+
+  // Always persist the rendered state so page reload restores it correctly
+  // (covers the case where user never manually changes any date/time input)
+  saveWeatherSettings();
 }
 
 async function fetchAllWeatherData() {
