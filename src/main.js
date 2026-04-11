@@ -42,12 +42,21 @@ const LS_SPEED_MODE_KEY    = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY= 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY   = 'mappingElf_paceParams';
 const LS_PER_SEGMENT_KEY   = 'mappingElf_perSegment';
+const LS_PACE_UNIT_KEY     = 'mappingElf_paceUnit';
+
+/**
+ * 上河速度 base: S=1.0 corresponds to 3.0 km/h on flat terrain.
+ * Based on Taiwan mountain hiking convention (five-person heavy-pack group).
+ * Conversion: V_km_h = SHANHE_BASE / S  ↔  S = SHANHE_BASE / V_km_h
+ */
+const SHANHE_BASE = 3.0;
 
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 let roundTripMode     = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let speedIntervalMode  = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
 let speedActivity      = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode     = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
+let paceUnit           = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'shanhe'
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -1918,21 +1927,26 @@ async function init() {
       const mode        = Array.from(intervalModeEls).find(r => r.checked)?.value || 'off';
       const newActivity = speedActivityEl?.value || 'hiking';
 
-      // Convert custom flat pace proportionally on activity switch
+      // Convert custom flat pace proportionally on activity switch.
+      // Always work in km/h internally; convert display value to/from current unit.
       if (newActivity !== prevActivity) {
         const flatEl = document.getElementById('pace-flat-input');
         const bodyEl = document.getElementById('pace-body-weight');
         const packEl = document.getElementById('pace-pack-weight');
-        const rawFlat = parseFloat(flatEl?.value);
-        if (flatEl && !isNaN(rawFlat) && flatEl.value !== '') {
+        const rawDisplay = parseFloat(flatEl?.value);
+        if (flatEl && !isNaN(rawDisplay) && flatEl.value !== '') {
+          const currentKmh = paceUnit === 'shanhe' ? SHANHE_BASE / rawDisplay : rawDisplay;
           const body = parseFloat(bodyEl?.value) || 70;
           const pack = parseFloat(packEl?.value) || 0;
           const prevDefault = defaultSpeed(prevActivity, body, pack);
           const newDefault  = defaultSpeed(newActivity,  body, pack);
           if (prevDefault > 0) {
-            const converted = +(rawFlat / prevDefault * newDefault).toFixed(2);
-            flatEl.value = converted;
-            paceParams = { ...paceParams, flatPaceKmH: converted };
+            const newKmh = +(currentKmh / prevDefault * newDefault).toFixed(2);
+            const newDisplay = paceUnit === 'shanhe'
+              ? (SHANHE_BASE / newKmh).toFixed(2)
+              : newKmh.toFixed(2);
+            flatEl.value = newDisplay;
+            paceParams = { ...paceParams, flatPaceKmH: newKmh };
             localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
           }
         }
@@ -1960,13 +1974,15 @@ async function init() {
       if (statKcalCard)   statKcalCard.style.display   = active ? '' : 'none';
       if (statIntakeCard) statIntakeCard.style.display = active ? '' : 'none';
 
-      // Update flat-pace placeholder for new activity
+      // Update flat-pace placeholder for new activity (in current unit)
       const flatEl = document.getElementById('pace-flat-input');
       const bodyEl = document.getElementById('pace-body-weight');
       const packEl = document.getElementById('pace-pack-weight');
       if (flatEl) {
         const spd = defaultSpeed(speedActivity, parseFloat(bodyEl?.value) || 70, parseFloat(packEl?.value) || 0);
-        flatEl.placeholder = spd.toFixed(1);
+        flatEl.placeholder = paceUnit === 'shanhe'
+          ? (SHANHE_BASE / spd).toFixed(2)
+          : spd.toFixed(1);
       }
 
       localStorage.setItem(LS_SEGMENT_KEY,       String(segmentIntervalKm));
@@ -1993,17 +2009,41 @@ async function init() {
   const paceRestEvery     = document.getElementById('pace-rest-every');
   const paceRestMinutes   = document.getElementById('pace-rest-minutes');
 
-  // Sync flat pace placeholder based on activity + weights
+  const paceUnitSelect = document.getElementById('pace-unit-select');
+
+  /** Convert km/h → displayed value in current unit */
+  const kmhToDisplay = (v) => paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2) : +v.toFixed(2);
+  /** Convert displayed value → km/h */
+  const displayToKmh = (v) => paceUnit === 'shanhe' ? SHANHE_BASE / v : v;
+
+  /** Sync placeholder and input constraints to current unit */
   const updateFlatPlaceholder = () => {
     if (!paceFlatInput) return;
     const body = parseFloat(paceBodyWeight?.value) || 70;
     const pack = parseFloat(pacePackWeight?.value) || 0;
-    const spd  = defaultSpeed(speedActivity, body, pack);
-    paceFlatInput.placeholder = spd.toFixed(1);
+    const spdKmh = defaultSpeed(speedActivity, body, pack);
+    if (paceUnit === 'shanhe') {
+      paceFlatInput.min       = '0.1';
+      paceFlatInput.max       = '10';
+      paceFlatInput.step      = '0.05';
+      paceFlatInput.placeholder = (SHANHE_BASE / spdKmh).toFixed(2);
+    } else {
+      paceFlatInput.min       = '0.5';
+      paceFlatInput.max       = '80';
+      paceFlatInput.step      = '0.5';
+      paceFlatInput.placeholder = spdKmh.toFixed(1);
+    }
   };
 
   // Restore saved paceParams to UI inputs
-  if (paceFlatInput)     paceFlatInput.value     = paceParams.flatPaceKmH ?? '';
+  const paceUnitSelectRestored = paceUnitSelect;
+  if (paceUnitSelectRestored) paceUnitSelectRestored.value = paceUnit;
+
+  // Restore flat pace in the current unit
+  if (paceFlatInput) {
+    const storedKmh = paceParams.flatPaceKmH;
+    paceFlatInput.value = storedKmh != null ? String(kmhToDisplay(storedKmh)) : '';
+  }
   if (paceBodyWeight)    paceBodyWeight.value     = paceParams.bodyWeightKg ?? 70;
   if (pacePackWeight)    pacePackWeight.value     = paceParams.packWeightKg ?? 0;
   if (paceFatigueEnable) paceFatigueEnable.checked = paceParams.fatigue ?? true;
@@ -2019,11 +2059,14 @@ async function init() {
   // Show/hide panel based on current speed mode state
   if (paceParamsPanel) paceParamsPanel.style.display = speedIntervalMode ? '' : 'none';
 
-  // Read all pace inputs → paceParams → save → recalc
+  // Read all pace inputs → paceParams (always in km/h internally) → save → recalc
   const onPaceParamChange = () => {
-    const rawFlat = parseFloat(paceFlatInput?.value);
+    const rawDisplay = parseFloat(paceFlatInput?.value);
+    const flatKmh = (!isNaN(rawDisplay) && paceFlatInput?.value !== '')
+      ? displayToKmh(rawDisplay)
+      : null;
     paceParams = {
-      flatPaceKmH:  isNaN(rawFlat) || paceFlatInput?.value === '' ? null : rawFlat,
+      flatPaceKmH:  flatKmh,
       bodyWeightKg: parseFloat(paceBodyWeight?.value)  || 70,
       packWeightKg: parseFloat(pacePackWeight?.value)  || 0,
       fatigue:      paceFatigueEnable?.checked ?? true,
@@ -2043,6 +2086,27 @@ async function init() {
   });
   if (paceFatigueEnable) {
     paceFatigueEnable.addEventListener('change', onPaceParamChange);
+  }
+
+  // --- Pace unit toggle (km/h ↔ 上河速度) ---
+  if (paceUnitSelect) {
+    paceUnitSelect.addEventListener('change', () => {
+      const prevUnit = paceUnit;
+      paceUnit = paceUnitSelect.value;
+      localStorage.setItem(LS_PACE_UNIT_KEY, paceUnit);
+
+      // Convert the currently displayed value to the new unit
+      const rawDisplay = parseFloat(paceFlatInput?.value);
+      if (!isNaN(rawDisplay) && paceFlatInput?.value !== '') {
+        const kmh = prevUnit === 'shanhe' ? SHANHE_BASE / rawDisplay : rawDisplay;
+        const newDisplay = paceUnit === 'shanhe'
+          ? (SHANHE_BASE / kmh).toFixed(2)
+          : kmh.toFixed(2);
+        if (paceFlatInput) paceFlatInput.value = newDisplay;
+      }
+
+      updateFlatPlaceholder();
+    });
   }
 
   // --- Per-segment mode checkbox ---
