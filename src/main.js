@@ -1327,13 +1327,17 @@ function renderWeatherPanel() {
     }
   });
 
-  // Click on column label → cross-view highlight
-  container.querySelectorAll('.wt-col-label').forEach(label => {
-    label.style.cursor = 'pointer';
-    label.addEventListener('click', () => {
-      const th = label.closest('.wt-col-head');
-      if (th) highlightPoint(parseInt(th.dataset.idx));
+  // Click on column header (but not date/time inputs) or any data cell → cross-view highlight
+  container.querySelectorAll('.wt-col-head').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', (e) => {
+      if (e.target.closest('.wt-date-input, .wt-time-select')) return;
+      highlightPoint(parseInt(th.dataset.idx));
     });
+  });
+  container.querySelectorAll('.wt-data-cell').forEach(td => {
+    td.style.cursor = 'pointer';
+    td.addEventListener('click', () => highlightPoint(parseInt(td.dataset.col)));
   });
 
   // Sync elevation chart markers with weather columns
