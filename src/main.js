@@ -119,9 +119,6 @@ const btnUndo = document.getElementById('btn-undo');
 const btnClearCache = document.getElementById('btn-clear-cache');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
-const segmentIntervalEnable = document.getElementById('segment-interval-enable');
-const segmentIntervalInput  = document.getElementById('segment-interval-input');
-
 const btnDownloadMap = document.getElementById('btn-download-map');
 const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
@@ -542,7 +539,7 @@ function resetStats() {
 
 /** Compute total travel time and calorie stats for the current route. */
 function updateTimeStat() {
-  if (!speedIntervalMode || !statTime || !statTimeCard) return;
+  if ((!speedIntervalMode && segmentIntervalKm === 0) || !statTime || !statTimeCard) return;
   const pts   = elevationProfile.points;
   const elevs = elevationProfile.elevations;
   const dists = elevationProfile.distances;
@@ -1253,13 +1250,14 @@ function buildWeatherPoints() {
     wps.forEach((_, i) => wpCumDist.push(i));
   }
 
-  // Prepare pace cumulative times if speed mode is ON
+  // Compute pace cumulative times whenever any interval mode is active so that
+  // distance-mode interval points also get meaningful _elapsedH values.
   const sampledPts   = elevationProfile.points;
   const sampledElevs = elevationProfile.elevations;
   const sampledDists = elevationProfile.distances;
   let cumTimes = null;
   let fullTotalDistBuild = 0;
-  if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
+  if ((speedIntervalMode || segmentIntervalKm > 0) && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
     for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
   }
@@ -1430,7 +1428,7 @@ function renderWeatherPanel() {
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
-    const elapsedBadge = speedIntervalMode && pt._elapsedH > 0
+    const elapsedBadge = (speedIntervalMode || segmentIntervalKm > 0) && pt._elapsedH > 0
       ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
       : '';
 
@@ -1813,58 +1811,38 @@ async function init() {
     });
   }
 
-  // Restore + wire segment interval controls
-  if (segmentIntervalEnable && segmentIntervalInput) {
-    // Restore saved state: value > 0 means enabled
-    if (segmentIntervalKm > 0) {
-      segmentIntervalEnable.checked = true;
-      segmentIntervalInput.value = String(segmentIntervalKm);
-    } else {
-      segmentIntervalEnable.checked = false;
-      segmentIntervalInput.disabled = true;
+  // --- Unified interval mode (off / distance / pace) + activity wiring ---
+  {
+    const intervalModeEls    = document.querySelectorAll('input[name="interval-mode"]');
+    const segmentInputEl     = document.getElementById('segment-interval-input');
+    const speedActivityEl    = document.getElementById('speed-activity-select');
+    const activityRow        = document.getElementById('interval-activity-row');
+    const pacePanel          = document.getElementById('pace-params-panel');
+
+    // Derive initial mode from saved state
+    const initMode = speedIntervalMode ? 'pace' : (segmentIntervalKm > 0 ? 'distance' : 'off');
+    const initRadio = document.getElementById(`interval-mode-${initMode}`);
+    if (initRadio) initRadio.checked = true;
+    if (segmentInputEl) {
+      segmentInputEl.value    = String(segmentIntervalKm || 5);
+      segmentInputEl.disabled = initMode !== 'distance';
     }
+    if (speedActivityEl) speedActivityEl.value = speedActivity;
 
-    const applySegmentInterval = () => {
-      if (!segmentIntervalEnable.checked) {
-        segmentIntervalKm = 0;
-      } else {
-        const v = Math.min(100, Math.max(1, parseInt(segmentIntervalInput.value) || 5));
-        segmentIntervalInput.value = String(v);
-        segmentIntervalKm = v;
-      }
-      localStorage.setItem(LS_SEGMENT_KEY, String(segmentIntervalKm));
-      updateIntermediateMarkers();
-      renderWeatherPanel();
-    };
+    const anyActive = initMode !== 'off';
+    if (activityRow)    activityRow.style.display    = anyActive ? '' : 'none';
+    if (pacePanel)      pacePanel.style.display      = anyActive ? '' : 'none';
+    if (statTimeCard)   statTimeCard.style.display   = anyActive ? '' : 'none';
+    if (statKcalCard)   statKcalCard.style.display   = anyActive ? '' : 'none';
+    if (statIntakeCard) statIntakeCard.style.display = anyActive ? '' : 'none';
 
-    segmentIntervalEnable.addEventListener('change', () => {
-      segmentIntervalInput.disabled = !segmentIntervalEnable.checked;
-      applySegmentInterval();
-    });
-
-    segmentIntervalInput.addEventListener('change', applySegmentInterval);
-  }
-
-  // Restore + wire speed-interval controls
-  const speedIntervalEnableEl = document.getElementById('speed-interval-enable');
-  const speedActivitySelectEl = document.getElementById('speed-activity-select');
-  if (speedIntervalEnableEl && speedActivitySelectEl) {
-    // Restore saved state
-    speedIntervalEnableEl.checked = speedIntervalMode;
-    speedActivitySelectEl.value   = speedActivity;
-    speedActivitySelectEl.disabled = !speedIntervalMode;
-    if (statTimeCard)    statTimeCard.style.display    = speedIntervalMode ? '' : 'none';
-    if (statKcalCard)    statKcalCard.style.display    = speedIntervalMode ? '' : 'none';
-    if (statIntakeCard)  statIntakeCard.style.display  = speedIntervalMode ? '' : 'none';
-
-    // Track previous activity for pace conversion
     let prevActivity = speedActivity;
 
-    const applySpeedInterval = () => {
-      const newActivity = speedActivitySelectEl.value;
-      speedIntervalMode = speedIntervalEnableEl.checked;
+    const applyIntervalMode = () => {
+      const mode        = Array.from(intervalModeEls).find(r => r.checked)?.value || 'off';
+      const newActivity = speedActivityEl?.value || 'hiking';
 
-      // Convert custom flat pace proportionally when activity switches
+      // Convert custom flat pace proportionally on activity switch
       if (newActivity !== prevActivity) {
         const flatEl = document.getElementById('pace-flat-input');
         const bodyEl = document.getElementById('pace-body-weight');
@@ -1885,30 +1863,48 @@ async function init() {
         prevActivity = newActivity;
       }
 
-      speedActivity = newActivity;
-      speedActivitySelectEl.disabled = !speedIntervalMode;
-      if (statTimeCard)   statTimeCard.style.display   = speedIntervalMode ? '' : 'none';
-      if (statKcalCard)   statKcalCard.style.display   = speedIntervalMode ? '' : 'none';
-      if (statIntakeCard) statIntakeCard.style.display = speedIntervalMode ? '' : 'none';
-      const panel = document.getElementById('pace-params-panel');
-      if (panel) panel.style.display = speedIntervalMode ? '' : 'none';
-      localStorage.setItem(LS_SPEED_MODE_KEY, speedIntervalMode ? '1' : '0');
-      localStorage.setItem(LS_SPEED_ACTIVITY_KEY, speedActivity);
-      // Update flat pace placeholder when activity changes
+      // Update mode state
+      speedIntervalMode = mode === 'pace';
+      speedActivity     = newActivity;
+
+      if (mode === 'distance') {
+        const v = Math.min(100, Math.max(1, parseInt(segmentInputEl?.value) || 5));
+        if (segmentInputEl) segmentInputEl.value = String(v);
+        segmentIntervalKm = v;
+      } else {
+        segmentIntervalKm = 0;
+      }
+
+      if (segmentInputEl) segmentInputEl.disabled = mode !== 'distance';
+
+      const active = mode !== 'off';
+      if (activityRow)    activityRow.style.display    = active ? '' : 'none';
+      if (pacePanel)      pacePanel.style.display      = active ? '' : 'none';
+      if (statTimeCard)   statTimeCard.style.display   = active ? '' : 'none';
+      if (statKcalCard)   statKcalCard.style.display   = active ? '' : 'none';
+      if (statIntakeCard) statIntakeCard.style.display = active ? '' : 'none';
+
+      // Update flat-pace placeholder for new activity
+      const flatEl = document.getElementById('pace-flat-input');
       const bodyEl = document.getElementById('pace-body-weight');
       const packEl = document.getElementById('pace-pack-weight');
-      const flatEl = document.getElementById('pace-flat-input');
       if (flatEl) {
         const spd = defaultSpeed(speedActivity, parseFloat(bodyEl?.value) || 70, parseFloat(packEl?.value) || 0);
         flatEl.placeholder = spd.toFixed(1);
       }
+
+      localStorage.setItem(LS_SEGMENT_KEY,       String(segmentIntervalKm));
+      localStorage.setItem(LS_SPEED_MODE_KEY,    speedIntervalMode ? '1' : '0');
+      localStorage.setItem(LS_SPEED_ACTIVITY_KEY, speedActivity);
+
       updateTimeStat();
       updateIntermediateMarkers();
       renderWeatherPanel();
     };
 
-    speedIntervalEnableEl.addEventListener('change', applySpeedInterval);
-    speedActivitySelectEl.addEventListener('change', applySpeedInterval);
+    intervalModeEls.forEach(r  => r.addEventListener('change',  applyIntervalMode));
+    if (speedActivityEl) speedActivityEl.addEventListener('change', applyIntervalMode);
+    if (segmentInputEl)  segmentInputEl.addEventListener('change',  applyIntervalMode);
   }
 
   // --- Pace params panel wiring ---

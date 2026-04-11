@@ -678,6 +678,31 @@ html, body {
   color: var(--text-muted);
 }
 
+/* Interval mode radio group */
+.interval-mode-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.imode-opt {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.imode-opt input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+}
+
 /* Speed activity dropdown */
 .speed-activity-select {
   padding: 3px 6px;
