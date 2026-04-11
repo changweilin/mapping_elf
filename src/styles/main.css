@@ -358,6 +358,12 @@ html, body {
   z-index: 1000 !important;
   cursor: grabbing;
 }
+.custom-waypoint-icon.is-selected {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 5px rgba(251,191,36,0.35), var(--shadow-glow);
+  transform: scale(1.25);
+  z-index: 900 !important;
+}
 
 .wp-weather-badge {
   position: absolute;
@@ -524,9 +530,14 @@ html, body {
   margin-bottom: 6px;
   transition: background var(--transition-fast);
   animation: fadeSlideIn 0.3s ease;
+  cursor: pointer;
 }
 .waypoint-item:hover {
   background: rgba(255,255,255,0.06);
+}
+.waypoint-item.wp-highlight {
+  background: rgba(251,191,36,0.12);
+  outline: 1px solid rgba(251,191,36,0.35);
 }
 .waypoint-item .wp-index {
   display: flex;

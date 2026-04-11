@@ -61,11 +61,27 @@ const elevationProfile = new ElevationProfile(
   'elevation-chart',
   'chart-empty',
   (lat, lng) => mapManager.showHoverMarker(lat, lng),
-  (colIdx) => highlightWeatherColumn(colIdx)
+  (colIdx) => highlightPoint(colIdx)
 );
 
 // When user clicks an alternative route on the map
 mapManager.onRouteSelect = (idx) => selectAlternative(idx);
+
+// When user clicks a waypoint marker on the map → cross-view highlight
+mapManager.onWaypointSelect = (wpIndex) => {
+  const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIndex);
+  if (colIdx >= 0) {
+    highlightPoint(colIdx);
+  } else {
+    mapManager.highlightWaypoint(wpIndex);
+    waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
+    const item = waypointList.querySelectorAll('.waypoint-item')[wpIndex];
+    if (item) {
+      item.classList.add('wp-highlight');
+      item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+};
 
 // Bidirectional: hovering the map route highlights the elevation chart
 mapManager.onRouteHover = (lat, lng) => {
@@ -245,6 +261,7 @@ routeModeRadios.forEach((radio) => {
 
 async function onWaypointsChanged(waypoints) {
   localStorage.setItem(LS_WAYPOINTS_KEY, JSON.stringify(waypoints));
+  clearAllHighlights();
   // Update UI list immediately for responsive feel
   updateWaypointList(waypoints);
 
@@ -430,6 +447,22 @@ function updateWaypointList(waypoints) {
         </div>`;
     })
     .join('');
+
+  // Click on waypoint row (not on action buttons) → cross-view highlight
+  waypointList.querySelectorAll('.waypoint-item').forEach((item, wpIndex) => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.wp-actions')) return;
+      const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIndex);
+      if (colIdx >= 0) {
+        highlightPoint(colIdx);
+      } else {
+        // Route not yet calculated — still highlight map + panel
+        mapManager.highlightWaypoint(wpIndex);
+        waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
+        item.classList.add('wp-highlight');
+      }
+    });
+  });
 
   waypointList.querySelectorAll('.wp-remove').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -1127,6 +1160,14 @@ function renderWeatherPanel() {
     }
   });
 
+  // Click on column header (outside date/time inputs) → cross-view highlight
+  container.querySelectorAll('.wt-col-head').forEach(th => {
+    th.addEventListener('click', (e) => {
+      if (e.target.closest('.wt-date-input, .wt-time-select, .wt-time-row, .wt-time-label')) return;
+      highlightPoint(parseInt(th.dataset.idx));
+    });
+  });
+
   // Sync elevation chart markers with weather columns
   updateElevationMarkers();
 
@@ -1205,11 +1246,9 @@ function highlightWeatherColumn(colIdx) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
-  // Clear previous highlight
   container.querySelectorAll('.wt-col-highlight')
     .forEach(el => el.classList.remove('wt-col-highlight'));
 
-  // Highlight header + data cells for this column
   const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
   if (th) {
     th.classList.add('wt-col-highlight');
@@ -1217,6 +1256,75 @@ function highlightWeatherColumn(colIdx) {
   }
   container.querySelectorAll(`[data-col="${colIdx}"]`)
     .forEach(td => td.classList.add('wt-col-highlight'));
+}
+
+/**
+ * Unified highlight: sync weather table, elevation chart, map marker,
+ * and side-panel waypoint item for the given weather-column index.
+ * All columns that share the same coordinate are highlighted together.
+ */
+function highlightPoint(colIdx) {
+  if (colIdx < 0 || colIdx >= weatherPoints.length) return;
+  const pt = weatherPoints[colIdx];
+
+  // 1. Weather table — highlight every column at the same lat/lng
+  const container = document.getElementById('weather-table-container');
+  if (container) {
+    container.querySelectorAll('.wt-col-highlight')
+      .forEach(el => el.classList.remove('wt-col-highlight'));
+    weatherPoints.forEach((p, i) => {
+      if (Math.abs(p.lat - pt.lat) < 0.0002 && Math.abs(p.lng - pt.lng) < 0.0002) {
+        const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
+        if (th) {
+          th.classList.add('wt-col-highlight');
+          if (i === colIdx) th.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+        container.querySelectorAll(`[data-col="${i}"]`)
+          .forEach(td => td.classList.add('wt-col-highlight'));
+      }
+    });
+  }
+
+  // 2. Elevation chart — crosshair at this column's route position
+  const sampledPts   = elevationProfile.points;
+  const sampledDists = elevationProfile.distances;
+  if (sampledPts && sampledPts.length > 1 && currentRouteCoords.length > 1) {
+    let fullDist = 0;
+    for (let j = 1; j < currentRouteCoords.length; j++)
+      fullDist += haversineDistance(currentRouteCoords[j - 1], currentRouteCoords[j]);
+    if (fullDist > 0) {
+      const frac = Math.max(0, Math.min(1, (pt._cum || 0) / fullDist));
+      const idx  = Math.round(frac * (sampledPts.length - 1));
+      elevationProfile.showCrosshairAtIndex(idx);
+    }
+  }
+
+  // 3. Map — highlight the physical waypoint marker (only one per wpIndex)
+  if (pt.isWaypoint && pt.wpIndex !== undefined) {
+    mapManager.highlightWaypoint(pt.wpIndex);
+  } else {
+    mapManager.clearWaypointHighlight();
+    mapManager.showHoverMarker(pt.lat, pt.lng);
+  }
+
+  // 4. Side panel — highlight the outgoing waypoint item row
+  const items = waypointList.querySelectorAll('.waypoint-item');
+  items.forEach(el => el.classList.remove('wp-highlight'));
+  if (pt.isWaypoint && pt.wpIndex !== undefined) {
+    const item = items[pt.wpIndex];
+    if (item) {
+      item.classList.add('wp-highlight');
+      item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+}
+
+/** Remove all cross-view highlights. */
+function clearAllHighlights() {
+  document.querySelectorAll('.wt-col-highlight').forEach(el => el.classList.remove('wt-col-highlight'));
+  document.querySelectorAll('.waypoint-item.wp-highlight').forEach(el => el.classList.remove('wp-highlight'));
+  mapManager.clearWaypointHighlight();
+  elevationProfile.hideCrosshair();
 }
 
 function updateElevationMarkers() {

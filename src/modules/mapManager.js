@@ -43,8 +43,9 @@ const GRADIENT_CHUNKS = 80;
 export class MapManager {
   constructor(containerId, onWaypointChange) {
     this.onWaypointChange = onWaypointChange;
-    this.onRouteSelect = null; // callback(index)
-    this.onRouteHover = null;  // callback(lat, lng) | callback(null, null)
+    this.onRouteSelect    = null; // callback(index)
+    this.onRouteHover     = null; // callback(lat, lng) | callback(null, null)
+    this.onWaypointSelect = null; // callback(wpIndex)
     this.isRoundTrip = false;
     this.waypoints = [];
     this.waypointMarkers = [];
@@ -191,12 +192,15 @@ export class MapManager {
       _longPressTimer = null;
     });
 
-    // Click/tap: cancel drag mode; suppress map click after manual drag
+    // Click/tap: cancel drag mode; on normal click → notify selection
     marker.on('click', (e) => {
       if (_dragModeActive || _justDragged) {
         L.DomEvent.stopPropagation(e);
         if (_dragModeActive) _disableDrag();
+        return;
       }
+      const idx = this.waypointMarkers.indexOf(marker);
+      if (idx >= 0) this.onWaypointSelect?.(idx);
     });
 
     marker.on('dragend', (e) => {
@@ -525,5 +529,17 @@ export class MapManager {
       };
     }
     return null;
+  }
+
+  /** Highlight a waypoint marker by index (adds .is-selected class). */
+  highlightWaypoint(wpIndex) {
+    this.waypointMarkers.forEach(m => m.getElement()?.classList.remove('is-selected'));
+    const m = this.waypointMarkers[wpIndex];
+    if (m) m.getElement()?.classList.add('is-selected');
+  }
+
+  /** Remove all waypoint selection highlights. */
+  clearWaypointHighlight() {
+    this.waypointMarkers.forEach(m => m.getElement()?.classList.remove('is-selected'));
   }
 }
