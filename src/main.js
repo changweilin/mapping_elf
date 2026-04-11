@@ -1160,11 +1160,12 @@ function renderWeatherPanel() {
     }
   });
 
-  // Click on column header (outside date/time inputs) → cross-view highlight
-  container.querySelectorAll('.wt-col-head').forEach(th => {
-    th.addEventListener('click', (e) => {
-      if (e.target.closest('.wt-date-input, .wt-time-select, .wt-time-row, .wt-time-label')) return;
-      highlightPoint(parseInt(th.dataset.idx));
+  // Click on column label → cross-view highlight
+  container.querySelectorAll('.wt-col-label').forEach(label => {
+    label.style.cursor = 'pointer';
+    label.addEventListener('click', () => {
+      const th = label.closest('.wt-col-head');
+      if (th) highlightPoint(parseInt(th.dataset.idx));
     });
   });
 

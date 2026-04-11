@@ -264,12 +264,12 @@ html, body {
   z-index: 1;
 }
 
-/* Floating map action buttons */
+/* Floating map action buttons — left side to stay clear of the side panel */
 .map-action-btns {
   position: fixed;
-  right: 10px;
-  bottom: calc(var(--bottom-panel-height) + 80px);
-  z-index: 500;
+  left: 10px;
+  bottom: calc(var(--bottom-panel-height) + 10px);
+  z-index: 600;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1660,6 +1660,9 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding: 4px 2px;
+  cursor: pointer;
+  user-select: none;
 }
 
 .wt-date-input {
