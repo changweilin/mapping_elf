@@ -1711,6 +1711,18 @@ html, body {
   transition: background 0.2s;
 }
 
+/* Return-trip columns: subtle sky-blue tint */
+.wt-return-col {
+  background: rgba(56, 189, 248, 0.06) !important;
+}
+.wt-return-col .wt-col-label {
+  color: rgb(56, 189, 248);
+}
+/* Left border separator at the start of the return section */
+.wt-return-start {
+  border-left: 2px solid rgba(56, 189, 248, 0.45) !important;
+}
+
 .wt-data-cell.loading { color: var(--text-muted); }
 .wt-data-cell.error   { color: var(--danger); }
 

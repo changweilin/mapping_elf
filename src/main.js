@@ -949,6 +949,26 @@ function buildWeatherPoints() {
     }
   }
 
+  // Round-trip: add return waypoints (reversed, excluding turning point)
+  // Each return wp shares lat/lng with its outgoing counterpart (same location, different time).
+  if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
+    for (let i = wps.length - 2; i >= 0; i--) {
+      const outLabel = i === 0 ? '起點' : `航點 ${i + 1}`;
+      // Mirror cumDist: return position = totalRouteDist − outgoingCum
+      const returnCum = totalDistM - wpCumDist[i];
+      all.push({
+        label: `↩ ${outLabel}`,
+        lat: wps[i][0],
+        lng: wps[i][1],
+        isWaypoint: true,
+        isReturn: true,
+        wpIndex: i,
+        _cum: returnCum,
+        _elapsedH: getElapsedH(returnCum),
+      });
+    }
+  }
+
   // Sort by position along route
   all.sort((a, b) => a._cum - b._cum);
   return all;
@@ -1012,6 +1032,9 @@ function renderWeatherPanel() {
   colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
   html += '</colgroup><thead><tr class="wt-header-row"><th class="wt-label-cell wt-th"></th>';
 
+  // Index of the first return column (for separator styling)
+  const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
+
   weatherPoints.forEach((pt, i) => {
     const sv = saved?.cols?.[i];
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
@@ -1020,8 +1043,13 @@ function renderWeatherPanel() {
     const elapsedBadge = speedIntervalMode && pt._elapsedH > 0
       ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
       : '';
+
+    let thClass = 'wt-col-head wt-th';
+    if (pt.isReturn) thClass += ' wt-return-col';
+    if (i === firstReturnIdx) thClass += ' wt-return-start';
+
     html += `
-      <th class="wt-col-head wt-th" data-idx="${i}">
+      <th class="${thClass}" data-idx="${i}"${pt.isReturn ? ' data-return="true"' : ''}>
         <div class="wt-col-label">${pt.label}${elapsedBadge}</div>
         <input type="date" class="wt-date-input" value="${date}">
         <div class="wt-time-row">
@@ -1034,7 +1062,11 @@ function renderWeatherPanel() {
   html += '</tr></thead><tbody>';
   WEATHER_ROWS.forEach(row => {
     html += `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
-    weatherPoints.forEach((_, i) => html += `<td class="wt-data-cell wt-td" data-col="${i}" data-key="${row.key}">—</td>`);
+    weatherPoints.forEach((pt, i) => {
+      const returnClass = pt.isReturn ? ' wt-return-col' : '';
+      const startClass  = i === firstReturnIdx ? ' wt-return-start' : '';
+      html += `<td class="wt-data-cell wt-td${returnClass}${startClass}" data-col="${i}" data-key="${row.key}">—</td>`;
+    });
     html += '</tr>';
   });
   html += '</tbody></table>';
@@ -1123,6 +1155,19 @@ async function fetchAllWeatherData() {
     const pt = weatherPoints[i];
     if (btnFetchWeather) btnFetchWeather.textContent = `${i + 1} / ${weatherPoints.length}`;
 
+    // Return waypoints share coordinates with their outgoing counterpart.
+    // Reuse already-cached data for the same location instead of making a duplicate API call.
+    if (pt.isReturn) {
+      const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng)];
+      if (cached) {
+        WEATHER_ROWS.forEach(row => {
+          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+          if (cell) { cell.textContent = getCellValue(cached, row.key); cell.className = 'wt-data-cell wt-td wt-return-col'; }
+        });
+        continue;
+      }
+    }
+
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     const dateStr = th?.querySelector('.wt-date-input')?.value;
     const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '8');
@@ -1142,7 +1187,7 @@ async function fetchAllWeatherData() {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
         if (cell) { cell.textContent = getCellValue(data, row.key); cell.className = 'wt-data-cell wt-td'; }
       });
-      if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
+      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
     } catch (err) {
       console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
