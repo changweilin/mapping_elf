@@ -672,7 +672,9 @@ let cachedWeatherData = (() => {
   try { return JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}'); }
   catch { return {}; }
 })();
-const weatherCoordKey = (lat, lng) => `${lat.toFixed(4)},${lng.toFixed(4)}`;
+/** Cache key includes date+hour so going/return at the same location can differ. */
+const weatherCoordKey = (lat, lng, date, hour) =>
+  `${lat.toFixed(4)},${lng.toFixed(4)},${date},${hour}`;
 
 function getCellValue(data, key) {
   if (!data) return '—';
@@ -1107,15 +1109,20 @@ function renderWeatherPanel() {
   if (speedIntervalMode) cascadeWeatherTimes();
   enforceTimeOrdering();
 
-  // Restore previously fetched weather data for matching coordinates
+  // Restore previously fetched weather data — read actual date/hour from DOM
+  // (after cascade/enforce so keys match what was stored during the original fetch)
   weatherPoints.forEach((pt, colIdx) => {
-    const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng)];
+    const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
+    const dateStr = th?.querySelector('.wt-date-input')?.value;
+    const hour    = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
+    if (!dateStr) return;
+    const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
     if (!cached) return;
     WEATHER_ROWS.forEach(row => {
       const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
       if (cell) cell.textContent = getCellValue(cached, row.key);
     });
-    if (pt.isWaypoint && pt.wpIndex !== undefined && cached.weatherIcon) {
+    if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && cached.weatherIcon) {
       mapManager.setWaypointWeather(pt.wpIndex, cached.weatherIcon);
     }
   });
@@ -1155,19 +1162,6 @@ async function fetchAllWeatherData() {
     const pt = weatherPoints[i];
     if (btnFetchWeather) btnFetchWeather.textContent = `${i + 1} / ${weatherPoints.length}`;
 
-    // Return waypoints share coordinates with their outgoing counterpart.
-    // Reuse already-cached data for the same location instead of making a duplicate API call.
-    if (pt.isReturn) {
-      const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng)];
-      if (cached) {
-        WEATHER_ROWS.forEach(row => {
-          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-          if (cell) { cell.textContent = getCellValue(cached, row.key); cell.className = 'wt-data-cell wt-td wt-return-col'; }
-        });
-        continue;
-      }
-    }
-
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     const dateStr = th?.querySelector('.wt-date-input')?.value;
     const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '8');
@@ -1180,13 +1174,14 @@ async function fetchAllWeatherData() {
 
     try {
       const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
-      cachedWeatherData[weatherCoordKey(pt.lat, pt.lng)] = data;
+      cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] = data;
       // Save after each point so partial data survives a mid-fetch page close
       localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
       WEATHER_ROWS.forEach(row => {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
         if (cell) { cell.textContent = getCellValue(data, row.key); cell.className = 'wt-data-cell wt-td'; }
       });
+      // Map weather icon only on outgoing waypoints (return shares the same marker)
       if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
     } catch (err) {
