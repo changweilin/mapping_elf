@@ -681,26 +681,26 @@ html, body {
 }
 
 /* Pace parameters panel */
-.pace-params-panel {
-  padding: 6px 12px 8px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+.pace-section-header {
+  margin-bottom: 10px;
 }
 
-.pace-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.pace-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+/* Full-width field */
+.pace-field-full {
+  grid-column: 1 / -1;
 }
 
 .pace-field {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1;
   min-width: 0;
 }
 
@@ -712,8 +712,10 @@ html, body {
 }
 
 .pace-input {
-  width: 52px;
-  padding: 3px 5px;
+  flex: 1;
+  min-width: 0;
+  max-width: 58px;
+  padding: 4px 5px;
   border-radius: 5px;
   border: 1px solid var(--border);
   background: var(--bg-tertiary);
@@ -731,10 +733,7 @@ html, body {
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
-}
-
-.pace-fatigue-row {
-  padding-top: 2px;
+  flex-shrink: 0;
 }
 
 .pace-fatigue-label {
