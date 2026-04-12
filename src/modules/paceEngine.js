@@ -8,6 +8,7 @@ export const ACTIVITY_PROFILES = {
   walking:     { name: '步行',   speedKmH: 3.5, ascentMH: 400,  descentMH: 700,  fatigue: false, baseMET: 3.5  },
   hiking:      { name: '健行',   speedKmH: 4.0, ascentMH: 450,  descentMH: 600,  fatigue: true,  baseMET: 6.5  },
   'trail-run': { name: '越野跑', speedKmH: 8.0, ascentMH: 800,  descentMH: 1200, fatigue: true,  baseMET: 10.0 },
+  running:     { name: '跑步',   speedKmH: 10,  ascentMH: 600,  descentMH: 900,  fatigue: true,  baseMET: 11.0 },
   cycling:     { name: '自行車', speedKmH: 15,  ascentMH: 1200, descentMH: 0,    fatigue: false, baseMET: 8.0  },
   driving:     { name: '駕車',   speedKmH: 40,  ascentMH: 0,    descentMH: 0,    fatigue: false, baseMET: 2.0  },
 };
