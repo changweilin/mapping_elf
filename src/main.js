@@ -637,7 +637,13 @@ function cascadeWeatherTimes() {
  * point's _elapsedH.  Interval inputs are disabled so this is the only way
  * their displayed time can change.
  */
-function cascadeIntervalTimes() {
+/**
+ * @param {boolean} [fromWP] - true = anchor each interval from its closest
+ *   preceding waypoint (perSegmentMode ON, or any manual-edit cascade).
+ *   false (default when perSegmentMode OFF) = anchor from col-0 so all
+ *   times are continuous from trip start.
+ */
+function cascadeIntervalTimes(fromWP = perSegmentMode) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
   const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
@@ -650,14 +656,10 @@ function cascadeIntervalTimes() {
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     if (!th) return;
 
-    // perSegmentMode ON : anchor from closest preceding waypoint so each
-    //   segment's interval times are relative to that waypoint's departure.
-    // perSegmentMode OFF: anchor from col-0 so all times accumulate from
-    //   trip start (continuous).
     let anchorDate = startDate;
     let anchorHour = startHour;
     let anchorElapsedH = 0;
-    if (perSegmentMode) {
+    if (fromWP) {
       for (let j = i - 1; j >= 0; j--) {
         if (weatherPoints[j]?.isWaypoint) {
           const thj = container.querySelector(`.wt-col-head[data-idx="${j}"]`);
@@ -728,6 +730,18 @@ function syncIntervalTimes() {
   cascadeIntervalTimes();
   enforceTimeOrdering();
   cascadeIntervalTimes();
+}
+
+/**
+ * Like syncIntervalTimes but always anchors intervals from the preceding
+ * waypoint, regardless of perSegmentMode.  Used when the user manually
+ * edits a waypoint's date/time so that downstream interval points always
+ * follow the edited waypoint.
+ */
+function syncIntervalTimesFromWP() {
+  cascadeIntervalTimes(true);
+  enforceTimeOrdering();
+  cascadeIntervalTimes(true);
 }
 
 // =========== Export (GPX / KML) ===========
@@ -1564,7 +1578,7 @@ function renderWeatherPanel() {
         }
       }
     } else {
-      syncIntervalTimes();
+      syncIntervalTimesFromWP();
     }
     saveWeatherSettings();
   };
