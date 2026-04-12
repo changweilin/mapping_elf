@@ -12,7 +12,7 @@ import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeSegmentTimesFromState, applyWaypointRecovery, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -650,21 +650,24 @@ function cascadeIntervalTimes() {
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     if (!th) return;
 
-    // Anchor to the closest preceding waypoint so that user-adjusted waypoint
-    // departure times are respected — otherwise interval points after a
-    // rested waypoint would show times before that waypoint.
+    // perSegmentMode ON : anchor from closest preceding waypoint so each
+    //   segment's interval times are relative to that waypoint's departure.
+    // perSegmentMode OFF: anchor from col-0 so all times accumulate from
+    //   trip start (continuous).
     let anchorDate = startDate;
     let anchorHour = startHour;
     let anchorElapsedH = 0;
-    for (let j = i - 1; j >= 0; j--) {
-      if (weatherPoints[j]?.isWaypoint) {
-        const thj = container.querySelector(`.wt-col-head[data-idx="${j}"]`);
-        if (thj) {
-          anchorDate     = thj.querySelector('.wt-date-input')?.value || startDate;
-          anchorHour     = parseInt(thj.querySelector('.wt-time-select')?.value ?? String(startHour));
-          anchorElapsedH = weatherPoints[j]._elapsedH || 0;
+    if (perSegmentMode) {
+      for (let j = i - 1; j >= 0; j--) {
+        if (weatherPoints[j]?.isWaypoint) {
+          const thj = container.querySelector(`.wt-col-head[data-idx="${j}"]`);
+          if (thj) {
+            anchorDate     = thj.querySelector('.wt-date-input')?.value || startDate;
+            anchorHour     = parseInt(thj.querySelector('.wt-time-select')?.value ?? String(startHour));
+            anchorElapsedH = weatherPoints[j]._elapsedH || 0;
+          }
+          break;
         }
-        break;
       }
     }
 
@@ -1305,77 +1308,6 @@ function buildWeatherPoints() {
   if ((speedIntervalMode || segmentIntervalKm > 0) && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
     for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
-
-    // ── Per-segment second pass ──────────────────────────────────────────────
-    // When perSegmentMode is on, recalculate cumTimes segment by segment so
-    // that fatigue carries over correctly and waypoint rest/recovery is applied.
-    // Rest time at each waypoint = scheduledDepartureH − estimatedArrivalH
-    // (negative rest = traveller is already behind schedule → no rest).
-    if (perSegmentMode && wps.length >= 2 && fullTotalDistBuild > 0) {
-      const saved   = loadWeatherSettings();
-      const wp0sv   = getSavedCol({ isWaypoint: true, isReturn: false, wpIndex: 0 }, 0, saved);
-      const startMs = wp0sv?.date
-        ? new Date(wp0sv.date + 'T00:00:00').getTime() + (parseInt(wp0sv.hour) || 0) * 3600000
-        : null;
-
-      // Map each outgoing waypoint to its sampled-array index
-      const wpSampIdx = wps.map((_, k) => {
-        const frac = Math.max(0, Math.min(1, wpCumDist[k] / fullTotalDistBuild));
-        return Math.round(frac * (sampledPts.length - 1));
-      });
-
-      // Get each waypoint's scheduled departure in hours relative to WP0 departure
-      const wpScheduledH = wps.map((_, k) => {
-        if (!startMs) return null;
-        const sv = getSavedCol({ isWaypoint: true, isReturn: false, wpIndex: k }, k, saved);
-        if (!sv?.date || sv?.hour == null) return null;
-        const wpMs = new Date(sv.date + 'T00:00:00').getTime() + (parseInt(sv.hour) || 0) * 3600000;
-        return (wpMs - startMs) / 3600000;
-      });
-
-      // Initial fatigue state (fresh start at WP0)
-      const { fatigue = true, restEveryH = 1.0 } = { ...DEFAULT_PACE_PARAMS, ...paceParams };
-      let state = {
-        movingH:   0,
-        fatH:      0,
-        nextRestH: (fatigue && restEveryH > 0) ? restEveryH : Infinity,
-      };
-      let globalElapsedH = 0;
-      const segTimes = [...cumTimes]; // copy; overwrite outgoing portion below
-
-      for (let seg = 0; seg < wps.length - 1; seg++) {
-        const si = wpSampIdx[seg];
-        const ei = wpSampIdx[seg + 1];
-        if (si >= ei) continue;
-
-        const segElevs     = sampledElevs.slice(si, ei + 1);
-        const segDistsBase = sampledDists[si];
-        const segDists     = sampledDists.slice(si, ei + 1).map(d => d - segDistsBase);
-
-        const { times: tSeg, finalState } =
-          computeSegmentTimesFromState(segElevs, segDists, speedActivity, paceParams, state);
-
-        for (let j = 0; j < tSeg.length; j++) {
-          segTimes[si + j] = globalElapsedH + tSeg[j];
-        }
-
-        const arrivalH        = globalElapsedH + tSeg[tSeg.length - 1];
-        const scheduledDepart = wpScheduledH[seg + 1];
-        const restH           = (scheduledDepart != null) ? Math.max(0, scheduledDepart - arrivalH) : 0;
-
-        if (restH > 0) {
-          state          = applyWaypointRecovery(finalState, restH, paceParams);
-          globalElapsedH = scheduledDepart;
-        } else {
-          state          = finalState;
-          globalElapsedH = arrivalH;
-        }
-      }
-      // Last outgoing waypoint
-      segTimes[wpSampIdx[wps.length - 1]] = globalElapsedH;
-      cumTimes = segTimes;
-    }
-    // ────────────────────────────────────────────────────────────────────────
   }
 
   /** Get elapsed hours for a given cumDistM (full-route metres). */
@@ -1635,9 +1567,6 @@ function renderWeatherPanel() {
       syncIntervalTimes();
     }
     saveWeatherSettings();
-    // In per-segment mode, waypoint time changes affect _elapsedH of interval
-    // points → rebuild weather points with updated rest/recovery times.
-    if (perSegmentMode) renderWeatherPanel();
   };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', onTimeChange)
