@@ -1509,8 +1509,20 @@ function renderWeatherPanel() {
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
-    const elapsedBadge = (speedIntervalMode || segmentIntervalKm > 0) && pt._elapsedH > 0
-      ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
+    let displayElapsedH = pt._elapsedH || 0;
+    if (perSegmentMode && displayElapsedH > 0) {
+      // Find the preceding waypoint's _elapsedH and show segment-relative time
+      let prevWpElapsed = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        if (weatherPoints[j]?.isWaypoint) {
+          prevWpElapsed = weatherPoints[j]._elapsedH || 0;
+          break;
+        }
+      }
+      displayElapsedH = displayElapsedH - prevWpElapsed;
+    }
+    const elapsedBadge = (speedIntervalMode || segmentIntervalKm > 0) && displayElapsedH > 0
+      ? `<span class="wt-elapsed-badge">${formatDuration(displayElapsedH)}</span>`
       : '';
 
     // Gradient position fraction (mirrors elevation chart logic)
