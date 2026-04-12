@@ -1421,6 +1421,32 @@ function buildWeatherPoints() {
   // Sort by position along route
   all.sort((a, b) => a._cum - b._cum);
 
+  // Relabel interval points as "n-t"
+  // n = preceding waypoint's wpIndex (0-based); t = elapsed time (segment or cumulative)
+  {
+    const fmtT = (h) => {
+      if (h <= 0) return '0m';
+      const hrs = Math.floor(h);
+      const min = Math.round((h - hrs) * 60);
+      if (hrs === 0) return `${min}m`;
+      if (min === 0) return `${hrs}h`;
+      return `${hrs}h${min}m`;
+    };
+    let prevWpIdx      = 0;
+    let prevWpElapsedH = 0;
+    all.forEach(pt => {
+      if (pt.isWaypoint) {
+        prevWpIdx      = pt.wpIndex ?? 0;
+        prevWpElapsedH = pt._elapsedH || 0;
+      } else {
+        const displayH = perSegmentMode
+          ? (pt._elapsedH || 0) - prevWpElapsedH
+          : (pt._elapsedH || 0);
+        pt.label = `${prevWpIdx}-${fmtT(displayH)}`;
+      }
+    });
+  }
+
   // Deduplicate: same label → append (2), (3), …
   deduplicateLabels(all);
 
