@@ -42,6 +42,7 @@ const LS_SPEED_MODE_KEY    = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY= 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY   = 'mappingElf_paceParams';
 const LS_PER_SEGMENT_KEY   = 'mappingElf_perSegment';
+const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_PACE_UNIT_KEY     = 'mappingElf_paceUnit';
 
 /**
@@ -56,6 +57,7 @@ let roundTripMode     = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let speedIntervalMode  = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
 let speedActivity      = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode     = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
+let strictLinearMode   = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
 let paceUnit           = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
@@ -689,6 +691,7 @@ function cascadeIntervalTimes(fromWP = perSegmentMode) {
  * chosen hour but add +1 day so the trip stays chronologically consistent.
  */
 function enforceTimeOrdering() {
+  if (!strictLinearMode) return;
   const container = document.getElementById('weather-table-container');
   if (!container) return;
   const heads = Array.from(container.querySelectorAll('.wt-col-head'));
@@ -2137,6 +2140,16 @@ async function init() {
       perSegmentMode = perSegmentEl.checked;
       localStorage.setItem(LS_PER_SEGMENT_KEY, perSegmentMode ? '1' : '0');
       renderWeatherPanel();
+    });
+  }
+
+  // --- Strict linear time checkbox ---
+  const strictLinearEl = document.getElementById('strict-linear-enable');
+  if (strictLinearEl) {
+    strictLinearEl.checked = strictLinearMode;
+    strictLinearEl.addEventListener('change', () => {
+      strictLinearMode = strictLinearEl.checked;
+      localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
     });
   }
 
