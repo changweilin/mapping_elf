@@ -457,11 +457,14 @@ function updateWaypointList(waypoints) {
       const n = waypoints.length;
       const gradColor = waypointGradColors[i]
         || interpolateRouteColor(n > 1 ? i / (n - 1) : 0);
+      // Fallback label matches weather card: 起點 / 終點 / 航點 N
+      const fallbackLabel = i === 0 ? '起點' : (i === n - 1 ? '終點' : `航點 ${i + 1}`);
+      const displayName = placeName || fallbackLabel;
       return `
         <div class="waypoint-item">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
           <span class="wp-coords" title="${coords}" style="color:${gradColor}">
-            ${placeName ? `<span class="wp-place-name">${placeName}</span>` : coords}
+            <span class="wp-place-name">${displayName}</span>
           </span>
           <div class="wp-actions">
             <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -997,13 +1000,35 @@ async function fetchPlaceName(lat, lng) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     const addr = data.address || {};
-    const name = data.name ||
-                 addr.suburb || addr.village || addr.town ||
-                 addr.city_district || addr.district ||
-                 addr.city || addr.county || null;
-    waypointPlaceNames[k] = name;
+
+    // Priority 1: named POI/feature directly at the location
+    const poiName = data.name || null;
+
+    // Priority 2: natural geographic features (peaks, waterfalls, ridges, springs…)
+    const geoName = addr.peak || addr.volcano || addr.waterway ||
+                    addr.ridge || addr.cliff || addr.saddle ||
+                    addr.spring || addr.cave_entrance || null;
+
+    // Priority 3: cultural / tourism / recreation
+    const cultureName = addr.tourism || addr.historic || addr.leisure ||
+                        addr.amenity || null;
+
+    // Priority 4: built structures
+    const builtName = addr.building || addr.man_made || addr.shop || addr.office || null;
+
+    // Priority 5: road / path (more descriptive than admin area)
+    const roadName = addr.road || null;
+
+    // Priority 6: administrative — from fine-grained to coarse
+    const adminName = addr.neighbourhood || addr.quarter || addr.suburb ||
+                      addr.village || addr.hamlet || addr.town ||
+                      addr.municipality || addr.city_district || addr.district ||
+                      addr.city || addr.county || null;
+
+    const name = poiName || geoName || cultureName || builtName || roadName || adminName;
+    waypointPlaceNames[k] = name ?? null;
     try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch(_) {}
-    return name;
+    return waypointPlaceNames[k];
   } catch(_) {
     waypointPlaceNames[k] = null;
     return null;
