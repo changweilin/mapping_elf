@@ -337,6 +337,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;   /* border included in the 36/40px iconSize */
   width: 36px;
   height: 36px;
   border-radius: 50%;
