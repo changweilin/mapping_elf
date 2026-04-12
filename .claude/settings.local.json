@@ -10,10 +10,10 @@
       "WebFetch(domain:www.moonskyedu.com)",
       "WebFetch(domain:www.sunriver.com.tw)",
       "WebFetch(domain:hiking.biji.co)",
-      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-pace-engine/references\")",
-      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-weather-table\")",
-      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-deploy\")",
-      "Bash(mkdir -p \"C:/Users/user/.claude/skills/mapping-elf-review\")",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/pace-engine/references\")",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/weather-table\")",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/deploy\")",
+      "Bash(mkdir -p \"C:/Users/user/.claude/skills/review\")",
       "Bash(grep -rn \"custom-waypoint-icon\\\\|wp-weather-badge\\\\|intermediate-point-icon\" C:/Users/user/Documents/app/mapping_elf/src/ C:/Users/user/Documents/app/mapping_elf/*.css)"
     ]
   }
