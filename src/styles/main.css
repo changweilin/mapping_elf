@@ -334,9 +334,6 @@ html, body {
 /* Custom marker styles */
 .custom-waypoint-icon {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   box-sizing: border-box;   /* border included in the 36/40px iconSize */
   width: 36px;
   height: 36px;
@@ -349,6 +346,15 @@ html, body {
   font-weight: 700;
   transition: transform var(--transition-fast);
   overflow: visible;
+}
+.custom-waypoint-icon > span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
 }
 .custom-waypoint-icon:hover {
   transform: scale(1.2);
