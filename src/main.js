@@ -62,6 +62,10 @@ let paceParams = (() => {
   catch { return { ...DEFAULT_PACE_PARAMS }; }
 })();
 
+// Gradient colors per waypoint index (teal→sky→amber→red), updated after each route build.
+// Used by the sidebar list and map waypoint icons to match the elevation chart.
+let waypointGradColors = [];
+
 
 // =========== Initialize Modules ===========
 const routeEngine = new RouteEngine();
@@ -448,14 +452,13 @@ function updateWaypointList(waypoints) {
       else if (i === waypoints.length - 1 && waypoints.length > 1) cls = 'end';
       const placeName = getPlaceName(wp[0], wp[1]);
       const coords = formatCoords(wp[0], wp[1]);
-      // Color matching the map marker: start=green, end=red, middle=teal
-      const nameColor = (i === 0 && waypoints.length > 1) ? 'var(--success)'
-                      : (i === waypoints.length - 1 && waypoints.length > 1) ? 'var(--danger)'
-                      : 'var(--accent-primary)';
+      const n = waypoints.length;
+      const gradColor = waypointGradColors[i]
+        || interpolateRouteColor(n > 1 ? i / (n - 1) : 0);
       return `
         <div class="waypoint-item">
-          <span class="wp-index ${cls}">${i + 1}</span>
-          <span class="wp-coords" title="${coords}" style="color:${nameColor}">
+          <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
+          <span class="wp-coords" title="${coords}" style="color:${gradColor}">
             ${placeName ? `<span class="wp-place-name">${placeName}</span>` : coords}
           </span>
           <div class="wp-actions">
@@ -1492,6 +1495,25 @@ function renderWeatherPanel() {
     return;
   }
 
+  // Compute per-waypoint gradient colors (matching elevation chart) and apply
+  // to map markers + sidebar list so all views share the same teal→red palette.
+  {
+    const maxCumWp = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+    const colorById = {};
+    weatherPoints.forEach(p => {
+      if (!p.isWaypoint || p.isReturn) return;
+      const xFrac = Math.max(0, Math.min(1, (p._cum ?? 0) / maxCumWp));
+      const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+      colorById[p.wpIndex] = interpolateRouteColor(t);
+    });
+    const newColors = mapManager.waypoints.map((_, i) => colorById[i] || null);
+    if (newColors.every(c => c !== null) && newColors.length > 0) {
+      waypointGradColors = newColors;
+      mapManager.setWaypointColors(waypointGradColors);
+      updateWaypointList(mapManager.waypoints);
+    }
+  }
+
   const saved = loadWeatherSettings();
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
@@ -1544,12 +1566,10 @@ function renderWeatherPanel() {
     if (!pt.isWaypoint)  thClass += ' wt-interval-col';
     if (i === firstReturnIdx) thClass += ' wt-return-start';
 
-    const labelStyle = pt.isWaypoint
-      ? `style="color:${gradColor}"`
-      : '';
+    const labelStyle = `style="color:${gradColor}"`;
     const thStyle = pt.isWaypoint
       ? `style="border-top:2px solid ${gradColor}40"`
-      : '';
+      : `style="border-top:2px solid ${gradColor}20"`;
 
     const locked = !pt.isWaypoint;
     html += `

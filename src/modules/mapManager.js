@@ -50,6 +50,7 @@ export class MapManager {
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
+    this.waypointColors = [];  // Gradient color strings per waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
     this.gradientPolylines = []; // Gradient chunks for selected route
     this.selectedRouteIndex = 0;
@@ -260,11 +261,18 @@ export class MapManager {
     if (index < 0 || index >= this.waypointMarkers.length) return;
     this.waypointWeather[index] = emoji;
     this.waypointMarkers[index].setIcon(this._createIcon(index));
+    this._applyColorToMarker(this.waypointMarkers[index], index);
   }
 
   clearWaypointWeather() {
     this.waypointWeather = [];
-    this.waypointMarkers.forEach((marker, i) => marker.setIcon(this._createIcon(i)));
+    this._updateMarkerIcons();
+  }
+
+  /** Set gradient colors (one per waypoint) so icons match the elevation profile. */
+  setWaypointColors(colors) {
+    this.waypointColors = colors || [];
+    this._updateMarkerIcons();
   }
 
   /**
@@ -508,7 +516,19 @@ export class MapManager {
   _updateMarkerIcons() {
     this.waypointMarkers.forEach((marker, i) => {
       marker.setIcon(this._createIcon(i));
+      this._applyColorToMarker(marker, i);
     });
+  }
+
+  /** Apply the stored gradient color to a marker's DOM element. */
+  _applyColorToMarker(marker, index) {
+    const color = this.waypointColors[index];
+    if (!color) return;
+    const el = marker.getElement();
+    if (el) {
+      el.style.background = color;
+      el.style.setProperty('box-shadow', `0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${color}55`);
+    }
   }
 
   _bindRouteHoverEvents(polyline) {
