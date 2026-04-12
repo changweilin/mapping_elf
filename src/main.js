@@ -715,6 +715,18 @@ function enforceTimeOrdering() {
   }
 }
 
+/**
+ * One-stop sync: cascade interval times → enforce waypoint ordering →
+ * cascade again.  The second cascade is needed because enforceTimeOrdering
+ * may bump a waypoint to the next day, leaving the interval points that come
+ * after it showing stale (pre-bump) times.
+ */
+function syncIntervalTimes() {
+  cascadeIntervalTimes();
+  enforceTimeOrdering();
+  cascadeIntervalTimes();
+}
+
 // =========== Export (GPX / KML) ===========
 
 const exportModal   = document.getElementById('export-modal');
@@ -1135,8 +1147,7 @@ function shiftAllDates(deltaDays, deltaHours) {
     setColToMs(th, colToMs(th) + deltaMs);
   });
 
-  cascadeIntervalTimes();
-  enforceTimeOrdering();
+  syncIntervalTimes();
   saveWeatherSettings();
 }
 
@@ -1621,9 +1632,8 @@ function renderWeatherPanel() {
         }
       }
     } else {
-      cascadeIntervalTimes();
+      syncIntervalTimes();
     }
-    enforceTimeOrdering();
     saveWeatherSettings();
     // In per-segment mode, waypoint time changes affect _elapsedH of interval
     // points → rebuild weather points with updated rest/recovery times.
@@ -1635,8 +1645,7 @@ function renderWeatherPanel() {
 
   // Initial cascade + enforce on first render
   if (speedIntervalMode) cascadeWeatherTimes();
-  else cascadeIntervalTimes();
-  enforceTimeOrdering();
+  else syncIntervalTimes();
 
   // Restore previously fetched weather data — read actual date/hour from DOM
   // (after cascade/enforce so keys match what was stored during the original fetch)
