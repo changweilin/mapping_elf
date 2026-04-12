@@ -989,50 +989,119 @@ function deduplicateLabels(pts) {
     }
   });
 }
+/** Priority score for an Overpass POI element (lower = higher priority). */
+function _poiScore(tags) {
+  const n = tags.natural, w = tags.waterway;
+  if (n === 'peak' || n === 'volcano')             return 0;
+  if (w === 'waterfall')                            return 1;
+  if (n === 'spring' || n === 'cave_entrance')      return 2;
+  if (n)                                            return 3;
+  if (tags.tourism)                                 return 4;
+  if (tags.historic)                                return 5;
+  if (tags.leisure)                                 return 6;
+  if (tags.amenity)                                 return 7;
+  if (tags.shop)                                    return 8;
+  return 9;
+}
+
+/** Priority score for the Nominatim result's own data.name (roads/boundaries get 99). */
+function _nominatimScore(data) {
+  const cat = data.category || '', typ = data.type || '';
+  if (cat === 'natural') return (typ === 'peak' || typ === 'volcano') ? 0 : typ === 'waterfall' ? 1 : 2;
+  if (cat === 'waterway') return 1;
+  if (cat === 'tourism')  return 4;
+  if (cat === 'historic') return 5;
+  if (cat === 'leisure')  return 6;
+  if (cat === 'amenity')  return 7;
+  if (cat === 'building') return 7;
+  if (cat === 'shop')     return 8;
+  return 99; // highway, boundary, place, etc. — don't use data.name
+}
+
+const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
+
 async function fetchPlaceName(lat, lng) {
   const k = _geocodeKey(lat, lng);
   if (k in waypointPlaceNames) return waypointPlaceNames[k];
-  try {
-    const resp = await fetch(
+
+  const latS = lat.toFixed(5), lngS = lng.toFixed(5);
+
+  // Overpass query: search for named POIs with widened radii by feature type
+  const ovpQuery = `[out:json][timeout:10];
+(
+  node["natural"~"peak|volcano"]["name"](around:3000,${latS},${lngS});
+  node["waterway"="waterfall"]["name"](around:1000,${latS},${lngS});
+  node["natural"~"spring|cave_entrance"]["name"](around:500,${latS},${lngS});
+  node["tourism"]["name"](around:500,${latS},${lngS});
+  way["tourism"]["name"](around:500,${latS},${lngS});
+  node["historic"]["name"](around:500,${latS},${lngS});
+  way["historic"]["name"](around:500,${latS},${lngS});
+  node["leisure"~"park|nature_reserve|garden"]["name"](around:300,${latS},${lngS});
+  way["leisure"~"park|nature_reserve|garden"]["name"](around:300,${latS},${lngS});
+  node["amenity"]["name"](around:200,${latS},${lngS});
+  way["amenity"]["name"](around:200,${latS},${lngS});
+  node["shop"]["name"](around:100,${latS},${lngS});
+);
+out center 20;`;
+
+  // Run Nominatim (address / road / admin) and Overpass (nearby POIs) in parallel
+  const [nomRes, ovpRes] = await Promise.allSettled([
+    fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
       { headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' } }
-    );
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
-    const addr = data.address || {};
+    ).then(r => r.ok ? r.json() : null),
 
-    // Priority 1: named POI/feature directly at the location
-    const poiName = data.name || null;
+    fetch(OVERPASS_API, {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(ovpQuery),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }).then(r => r.ok ? r.json() : null),
+  ]);
 
-    // Priority 2: natural geographic features (peaks, waterfalls, ridges, springs…)
-    const geoName = addr.peak || addr.volcano || addr.waterway ||
-                    addr.ridge || addr.cliff || addr.saddle ||
-                    addr.spring || addr.cave_entrance || null;
+  const nomData = nomRes.status === 'fulfilled' ? nomRes.value : null;
+  const ovpData = ovpRes.status === 'fulfilled' ? ovpRes.value : null;
 
-    // Priority 3: cultural / tourism / recreation
-    const cultureName = addr.tourism || addr.historic || addr.leisure ||
-                        addr.amenity || null;
-
-    // Priority 4: built structures
-    const builtName = addr.building || addr.man_made || addr.shop || addr.office || null;
-
-    // Priority 5: road / path (more descriptive than admin area)
-    const roadName = addr.road || null;
-
-    // Priority 6: administrative — from fine-grained to coarse
-    const adminName = addr.neighbourhood || addr.quarter || addr.suburb ||
-                      addr.village || addr.hamlet || addr.town ||
-                      addr.municipality || addr.city_district || addr.district ||
-                      addr.city || addr.county || null;
-
-    const name = poiName || geoName || cultureName || builtName || roadName || adminName;
-    waypointPlaceNames[k] = name ?? null;
-    try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch(_) {}
-    return waypointPlaceNames[k];
-  } catch(_) {
-    waypointPlaceNames[k] = null;
-    return null;
+  // --- Best Overpass candidate (sorted by priority score, then distance) ---
+  let ovpName = null, ovpScore = 99;
+  if (ovpData?.elements) {
+    const ranked = ovpData.elements
+      .filter(e => e.tags?.name)
+      .map(e => ({
+        name: e.tags.name,
+        score: _poiScore(e.tags),
+        dist: haversineDistance([lat, lng], [e.lat ?? e.center?.lat ?? lat, e.lon ?? e.center?.lon ?? lng]),
+      }))
+      .sort((a, b) => a.score !== b.score ? a.score - b.score : a.dist - b.dist);
+    if (ranked.length) { ovpName = ranked[0].name; ovpScore = ranked[0].score; }
   }
+
+  // --- Best Nominatim POI name (only if data.name is a landmark, not a road/boundary) ---
+  let nomPOI = null, nomPOIScore = 99;
+  if (nomData?.name) {
+    nomPOIScore = _nominatimScore(nomData);
+    if (nomPOIScore < 99) nomPOI = nomData.name;
+  }
+
+  // --- Select final name ---
+  // 1. Best landmark from Overpass or Nominatim POI (whichever has lower score)
+  let name = null;
+  if (ovpScore <= nomPOIScore && ovpName) name = ovpName;
+  else if (nomPOI) name = nomPOI;
+  else if (ovpName) name = ovpName; // Overpass fallback (score 9)
+
+  // 2. Fallback: road name, then administrative area
+  if (!name && nomData) {
+    const addr = nomData.address || {};
+    name = addr.road ||
+           addr.neighbourhood || addr.quarter || addr.suburb ||
+           addr.village || addr.hamlet || addr.town ||
+           addr.municipality || addr.city_district || addr.district ||
+           addr.city || addr.county || null;
+  }
+
+  waypointPlaceNames[k] = name ?? null;
+  try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch(_) {}
+  return waypointPlaceNames[k];
 }
 /** Geocode waypoints in background; update column labels as results arrive. */
 async function geocodeWaypoints(waypoints) {
