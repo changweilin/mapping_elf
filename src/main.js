@@ -709,15 +709,18 @@ function enforceTimeOrdering() {
     if (!pt?.isWaypoint) continue; // Interval points are handled by cascade
 
     const prevMs = toMs(heads[i - 1]);
-    const curMs  = toMs(heads[i]);
+    let   curMs  = toMs(heads[i]);
     if (curMs >= prevMs) continue;
 
     // Violation: waypoint is earlier than the previous column.
-    // Keep the user's chosen hour, but bump the date forward by one day.
+    // Keep the user's chosen hour; bump the date forward until it is ≥ prev.
     const di = heads[i].querySelector('.wt-date-input');
     if (di && di.value) {
       const d = new Date(di.value + 'T12:00:00');
-      d.setDate(d.getDate() + 1);
+      while (curMs < prevMs) {
+        d.setDate(d.getDate() + 1);
+        curMs += 86400000;
+      }
       di.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     }
   }
