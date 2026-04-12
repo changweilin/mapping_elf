@@ -218,14 +218,17 @@
           配速參數
         </h3>
       </div>
-      <div class="pace-per-segment-row">
-        <label class="pace-per-segment-label">
-          <input type="checkbox" id="pace-fatigue-enable" checked>
-          <span>
-            <svg viewBox="0 0 24 24" width="12" height="12"><path d="M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 3.21-1.81 6-4.72 7.28L13 17v5h5l-1.22-1.22C19.91 19.07 22 15.76 22 12c0-5.18-3.95-9.45-9-9.95zM11 2.05C5.95 2.55 2 6.82 2 12c0 3.76 2.09 7.07 5.22 8.78L6 22h5V2.05z" fill="currentColor"/></svg>
-            啟用疲勞修正
-          </span>
+      <div class="pace-fatigue-row">
+        <label class="pace-fatigue-row-label">
+          <svg viewBox="0 0 24 24" width="12" height="12"><path d="M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 3.21-1.81 6-4.72 7.28L13 17v5h5l-1.22-1.22C19.91 19.07 22 15.76 22 12c0-5.18-3.95-9.45-9-9.95zM11 2.05C5.95 2.55 2 6.82 2 12c0 3.76 2.09 7.07 5.22 8.78L6 22h5V2.05z" fill="currentColor"/></svg>
+          疲勞程度
         </label>
+        <select id="pace-fatigue-level" class="pace-fatigue-select">
+          <option value="none">完全無疲勞</option>
+          <option value="casual">非耐力運動員</option>
+          <option value="general" selected>非專項運動員</option>
+          <option value="trained">專項運動員</option>
+        </select>
       </div>
       <div class="pace-per-segment-row">
         <label class="pace-per-segment-label">

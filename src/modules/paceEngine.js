@@ -17,13 +17,25 @@ const REST_MET = 1.5;
 /** Suggested carbohydrate/fuel intake per moving hour (kcal) */
 const KCAL_PER_MOVING_H = 250;
 
+/**
+ * Fatigue presets: onset (h before fatigue kicks in), decay (exp rate),
+ * floor (minimum efficiency multiplier).
+ * 'none' means fatigue is disabled entirely.
+ */
+export const FATIGUE_PRESETS = {
+  none:    { fatigue: false, fatigueOnset: 0,   fatigueDecay: 0,    fatigueFloor: 1.0  },
+  casual:  { fatigue: true,  fatigueOnset: 1.0, fatigueDecay: 0.12, fatigueFloor: 0.50 },
+  general: { fatigue: true,  fatigueOnset: 2.0, fatigueDecay: 0.06, fatigueFloor: 0.60 },
+  trained: { fatigue: true,  fatigueOnset: 3.5, fatigueDecay: 0.03, fatigueFloor: 0.75 },
+};
+
 export const DEFAULT_PACE_PARAMS = {
-  flatPaceKmH:  null,   // null = use activity default (adjusted by load)
-  bodyWeightKg: 70,
-  packWeightKg: 0,
-  fatigue:      true,   // enable fatigue + rest model
-  restEveryH:   1.0,    // rest every N moving-hours
-  restMinutes:  10,     // minutes per rest break
+  flatPaceKmH:   null,      // null = use activity default (adjusted by load)
+  bodyWeightKg:  70,
+  packWeightKg:  0,
+  fatigueLevel:  'general', // key in FATIGUE_PRESETS
+  restEveryH:    1.0,       // rest every N moving-hours
+  restMinutes:   10,        // minutes per rest break
 };
 
 export function formatDuration(hours) {
@@ -66,14 +78,23 @@ export function defaultSpeed(activity, bodyWeightKg = 70, packWeightKg = 0) {
  */
 export function computeCumulativeTimes(elevations, distances, activity, params = {}) {
   const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
+  const merged = { ...DEFAULT_PACE_PARAMS, ...params };
   const {
     flatPaceKmH  = null,
     bodyWeightKg = 70,
     packWeightKg = 0,
-    fatigue      = prof.fatigue,
+    fatigueLevel = 'general',
     restEveryH   = 1.0,
     restMinutes  = 10,
-  } = { ...DEFAULT_PACE_PARAMS, ...params };
+  } = merged;
+
+  const preset = FATIGUE_PRESETS[fatigueLevel] ?? FATIGUE_PRESETS.general;
+  // Activity profiles that are inherently non-fatiguing (cycling, driving) stay off
+  // unless the user explicitly picks a fatigue level with fatigue: true.
+  const fatigue      = prof.fatigue ? preset.fatigue : false;
+  const fatigueOnset = preset.fatigueOnset;
+  const fatigueDecay = preset.fatigueDecay;
+  const fatigueFloor = preset.fatigueFloor;
 
   // Load penalty: heavier pack relative to body weight slows ascent/descent rates
   const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
@@ -103,8 +124,8 @@ export function computeCumulativeTimes(elevations, distances, activity, params =
 
     // Current fatigue multiplier
     let fm = 1.0;
-    if (fatigue && fatH > 2.0) {
-      fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+    if (fatigue && fatH > fatigueOnset) {
+      fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
     }
 
     // Segment moving time (with current fatigue)
@@ -128,8 +149,8 @@ export function computeCumulativeTimes(elevations, distances, activity, params =
 
       // Re-compute fm for the remaining segment after rest
       fm = 1.0;
-      if (fatigue && fatH > 2.0) {
-        fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+      if (fatigue && fatH > fatigueOnset) {
+        fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
       }
     }
 
@@ -174,14 +195,21 @@ export function interpolateTimeAtDist(cumDistM, distances, cumulativeTimes) {
  */
 export function computeSegmentTimesFromState(elevations, distances, activity, params = {}, state = null) {
   const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
+  const merged = { ...DEFAULT_PACE_PARAMS, ...params };
   const {
     flatPaceKmH  = null,
     bodyWeightKg = 70,
     packWeightKg = 0,
-    fatigue      = prof.fatigue,
+    fatigueLevel = 'general',
     restEveryH   = 1.0,
     restMinutes  = 10,
-  } = { ...DEFAULT_PACE_PARAMS, ...params };
+  } = merged;
+
+  const preset = FATIGUE_PRESETS[fatigueLevel] ?? FATIGUE_PRESETS.general;
+  const fatigue      = prof.fatigue ? preset.fatigue : false;
+  const fatigueOnset = preset.fatigueOnset;
+  const fatigueDecay = preset.fatigueDecay;
+  const fatigueFloor = preset.fatigueFloor;
 
   const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
   const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
@@ -204,7 +232,7 @@ export function computeSegmentTimesFromState(elevations, distances, activity, pa
     const descM  = Math.max(0, -dElev);
 
     let fm = 1.0;
-    if (fatigue && fatH > 2.0) fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+    if (fatigue && fatH > fatigueOnset) fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
 
     let rem = distKm / Math.max(0.01, baseSpeed * fm);
     if (prof.ascentMH  > 0) rem += ascM  / Math.max(1, ascentRate  * fm);
@@ -220,7 +248,7 @@ export function computeSegmentTimesFromState(elevations, distances, activity, pa
       fatH        = Math.max(0, fatH - restMinutes / 20.0);
       nextRestH  += restEveryH;
       fm = 1.0;
-      if (fatigue && fatH > 2.0) fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+      if (fatigue && fatH > fatigueOnset) fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
     }
 
     movingH    += rem;
@@ -309,14 +337,21 @@ export function computeHourlyPoints(sampledCoords, elevations, distances, activi
  */
 export function computeTripStats(elevations, distances, activity, params = {}) {
   const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
+  const merged = { ...DEFAULT_PACE_PARAMS, ...params };
   const {
     flatPaceKmH  = null,
     bodyWeightKg = 70,
     packWeightKg = 0,
-    fatigue      = prof.fatigue,
+    fatigueLevel = 'general',
     restEveryH   = 1.0,
     restMinutes  = 10,
-  } = { ...DEFAULT_PACE_PARAMS, ...params };
+  } = merged;
+
+  const preset = FATIGUE_PRESETS[fatigueLevel] ?? FATIGUE_PRESETS.general;
+  const fatigue      = prof.fatigue ? preset.fatigue : false;
+  const fatigueOnset = preset.fatigueOnset;
+  const fatigueDecay = preset.fatigueDecay;
+  const fatigueFloor = preset.fatigueFloor;
 
   const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
   const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
@@ -341,8 +376,8 @@ export function computeTripStats(elevations, distances, activity, params = {}) {
     const descM  = Math.max(0, -dElev);
 
     let fm = 1.0;
-    if (fatigue && fatH > 2.0) {
-      fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+    if (fatigue && fatH > fatigueOnset) {
+      fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
     }
 
     let segH = distKm / Math.max(0.01, baseSpeed * fm);
@@ -364,8 +399,8 @@ export function computeTripStats(elevations, distances, activity, params = {}) {
       nextRestH += restEveryH;
 
       fm = 1.0;
-      if (fatigue && fatH > 2.0) {
-        fm = Math.max(0.6, Math.exp(-0.06 * (fatH - 2.0)));
+      if (fatigue && fatH > fatigueOnset) {
+        fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
       }
     }
 

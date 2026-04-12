@@ -1986,7 +1986,7 @@ async function init() {
   const paceFlatInput     = document.getElementById('pace-flat-input');
   const paceBodyWeight    = document.getElementById('pace-body-weight');
   const pacePackWeight    = document.getElementById('pace-pack-weight');
-  const paceFatigueEnable = document.getElementById('pace-fatigue-enable');
+  const paceFatigueLevelEl = document.getElementById('pace-fatigue-level');
   const paceRestRow       = document.getElementById('pace-rest-row');
   const paceRestEvery     = document.getElementById('pace-rest-every');
   const paceRestMinutes   = document.getElementById('pace-rest-minutes');
@@ -2037,15 +2037,15 @@ async function init() {
     const storedKmh = paceParams.flatPaceKmH;
     paceFlatInput.value = storedKmh != null ? String(kmhToDisplay(storedKmh)) : '';
   }
-  if (paceBodyWeight)    paceBodyWeight.value     = paceParams.bodyWeightKg ?? 70;
-  if (pacePackWeight)    pacePackWeight.value     = paceParams.packWeightKg ?? 0;
-  if (paceFatigueEnable) paceFatigueEnable.checked = paceParams.fatigue ?? true;
-  if (paceRestEvery)     paceRestEvery.value      = paceParams.restEveryH ?? 1.0;
-  if (paceRestMinutes)   paceRestMinutes.value    = paceParams.restMinutes ?? 10;
+  if (paceBodyWeight)      paceBodyWeight.value      = paceParams.bodyWeightKg ?? 70;
+  if (pacePackWeight)      pacePackWeight.value      = paceParams.packWeightKg ?? 0;
+  if (paceFatigueLevelEl)  paceFatigueLevelEl.value  = paceParams.fatigueLevel ?? 'general';
+  if (paceRestEvery)       paceRestEvery.value       = paceParams.restEveryH ?? 1.0;
+  if (paceRestMinutes)     paceRestMinutes.value     = paceParams.restMinutes ?? 10;
 
-  // Show/hide pace-rest-row based on fatigue checkbox
+  // Show/hide pace-rest-row: hide only when fatigue is fully disabled
   const applyFatigueToggle = () => {
-    if (paceRestRow) paceRestRow.style.display = paceFatigueEnable?.checked ? '' : 'none';
+    if (paceRestRow) paceRestRow.style.display = (paceFatigueLevelEl?.value === 'none') ? 'none' : '';
   };
   applyFatigueToggle();
 
@@ -2060,11 +2060,11 @@ async function init() {
       : null;
     paceParams = {
       flatPaceKmH:  flatKmh,
-      bodyWeightKg: parseFloat(paceBodyWeight?.value)  || 70,
-      packWeightKg: parseFloat(pacePackWeight?.value)  || 0,
-      fatigue:      paceFatigueEnable?.checked ?? true,
-      restEveryH:   parseFloat(paceRestEvery?.value)   || 1.0,
-      restMinutes:  parseFloat(paceRestMinutes?.value) || 10,
+      bodyWeightKg: parseFloat(paceBodyWeight?.value)    || 70,
+      packWeightKg: parseFloat(pacePackWeight?.value)    || 0,
+      fatigueLevel: paceFatigueLevelEl?.value            || 'general',
+      restEveryH:   parseFloat(paceRestEvery?.value)     || 1.0,
+      restMinutes:  parseFloat(paceRestMinutes?.value)   || 10,
     };
     localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
     updateFlatPlaceholder();
@@ -2074,12 +2074,9 @@ async function init() {
     renderWeatherPanel();
   };
 
-  [paceFlatInput, paceBodyWeight, pacePackWeight, paceRestEvery, paceRestMinutes].forEach(el => {
+  [paceFlatInput, paceBodyWeight, pacePackWeight, paceRestEvery, paceRestMinutes, paceFatigueLevelEl].forEach(el => {
     if (el) el.addEventListener('change', onPaceParamChange);
   });
-  if (paceFatigueEnable) {
-    paceFatigueEnable.addEventListener('change', onPaceParamChange);
-  }
 
   // --- Pace unit toggle (km/h ↔ 上河速度) ---
   if (paceUnitSelect) {

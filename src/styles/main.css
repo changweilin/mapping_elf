@@ -804,21 +804,39 @@ html, body {
   border-color: var(--accent-primary);
 }
 
-.pace-fatigue-label {
+/* Fatigue level row */
+.pace-fatigue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  gap: 8px;
+}
+.pace-fatigue-row-label {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   color: var(--text-secondary);
-  cursor: pointer;
-  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-
-.pace-fatigue-label input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent-primary);
+.pace-fatigue-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
   cursor: pointer;
+}
+.pace-fatigue-select:focus {
+  border-color: var(--accent-primary);
+  outline: none;
 }
 
 /* Per-segment recalculation row */
