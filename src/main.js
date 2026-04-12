@@ -736,6 +736,7 @@ function syncIntervalTimes() {
   cascadeIntervalTimes();
   enforceTimeOrdering();
   cascadeIntervalTimes();
+  enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
 /**
@@ -748,6 +749,7 @@ function syncIntervalTimesFromWP() {
   cascadeIntervalTimes(true);
   enforceTimeOrdering();
   cascadeIntervalTimes(true);
+  enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
 // =========== Export (GPX / KML) ===========
@@ -1061,6 +1063,8 @@ function startLabelEdit(labelEl, pt) {
   input.className = 'wt-label-edit-input';
   input.style.color = labelColor;
   input.style.borderColor = labelColor;
+  // Stop clicks inside the input from bubbling to labelEl's highlight handler
+  input.addEventListener('click', (e) => e.stopPropagation());
   labelEl.innerHTML = '';
   labelEl.appendChild(input);
   if (badge) labelEl.appendChild(badge);
@@ -1073,15 +1077,14 @@ function startLabelEdit(labelEl, pt) {
     saved = true;
     saveCustomName(pt.lat, pt.lng, input.value.trim());
   };
-  const cancel = () => {
-    if (saved) return;
-    saved = true;
-    _applyPlaceNameToDOM(); // restore
-  };
   input.addEventListener('blur', commit);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { saved = true; input.removeEventListener('blur', commit); cancel(); }
+    if (e.key === 'Escape') {
+      saved = true;
+      input.removeEventListener('blur', commit);
+      _applyPlaceNameToDOM(); // restore original label
+    }
   });
 }
 
@@ -1680,9 +1683,17 @@ function renderWeatherPanel() {
     const labelEl = th.querySelector('.wt-col-label');
     if (labelEl) {
       labelEl.style.cursor = 'pointer';
-      labelEl.title = '單擊高亮 · 雙擊編輯名稱';
-      labelEl.addEventListener('click',    () => highlightPoint(colIdx));
-      labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startLabelEdit(labelEl, pt); });
+      // Guard: ignore clicks that originate from the inline edit input
+      labelEl.addEventListener('click', (e) => {
+        if (e.target.tagName === 'INPUT') return;
+        highlightPoint(colIdx);
+      });
+      if (pt.isWaypoint) {
+        labelEl.title = '單擊高亮 · 雙擊編輯名稱';
+        labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startLabelEdit(labelEl, pt); });
+      } else {
+        labelEl.title = '單擊高亮';
+      }
     }
   });
   container.querySelectorAll('.wt-data-cell').forEach(td => {
