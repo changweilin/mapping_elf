@@ -1878,14 +1878,15 @@ function updateElevationMarkers() {
   weatherPoints.forEach((pt, colIdx) => {
     if (pt.isWaypoint || segmentIntervalKm > 0 || speedIntervalMode) {
       let cumDistM = pt._cum || 0;
+      let dataIdx = null;
       if (sampledPts && sampledPts.length > 1 && fullTotalDist > 0) {
         // Map pt._cum fraction → sampled index (handles round-trip correctly since
         // fraction is monotonic and sampled indices match route order)
         const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDist));
-        const idx = Math.round(fraction * (sampledPts.length - 1));
-        cumDistM = sampledDists[idx] || 0;
+        dataIdx = Math.round(fraction * (sampledPts.length - 1));
+        cumDistM = sampledDists[dataIdx] || 0;
       }
-      markers.push({ cumDistM, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
+      markers.push({ cumDistM, dataIdx, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
     }
   });
   elevationProfile.setWaypointMarkers(markers);
