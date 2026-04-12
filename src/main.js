@@ -56,7 +56,7 @@ let roundTripMode     = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let speedIntervalMode  = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
 let speedActivity      = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode     = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
-let paceUnit           = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'shanhe'
+let paceUnit           = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -646,7 +646,27 @@ function cascadeIntervalTimes() {
     if (pt.isWaypoint) return;
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     if (!th) return;
-    const { date, hour } = addHoursToDateTime(startDate, startHour, pt._elapsedH || 0);
+
+    // Anchor to the closest preceding waypoint so that user-adjusted waypoint
+    // departure times are respected — otherwise interval points after a
+    // rested waypoint would show times before that waypoint.
+    let anchorDate = startDate;
+    let anchorHour = startHour;
+    let anchorElapsedH = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      if (weatherPoints[j]?.isWaypoint) {
+        const thj = container.querySelector(`.wt-col-head[data-idx="${j}"]`);
+        if (thj) {
+          anchorDate     = thj.querySelector('.wt-date-input')?.value || startDate;
+          anchorHour     = parseInt(thj.querySelector('.wt-time-select')?.value ?? String(startHour));
+          anchorElapsedH = weatherPoints[j]._elapsedH || 0;
+        }
+        break;
+      }
+    }
+
+    const deltaH = (pt._elapsedH || 0) - anchorElapsedH;
+    const { date, hour } = addHoursToDateTime(anchorDate, anchorHour, deltaH);
     const dateInput  = th.querySelector('.wt-date-input');
     const hourSelect = th.querySelector('.wt-time-select');
     if (dateInput)  dateInput.value  = date;
@@ -1935,7 +1955,9 @@ async function init() {
         const packEl = document.getElementById('pace-pack-weight');
         const rawDisplay = parseFloat(flatEl?.value);
         if (flatEl && !isNaN(rawDisplay) && flatEl.value !== '') {
-          const currentKmh = paceUnit === 'shanhe' ? SHANHE_BASE / rawDisplay : rawDisplay;
+          const currentKmh = paceUnit === 'shanhe' ? SHANHE_BASE / rawDisplay
+            : paceUnit === 'minkm' ? 60 / rawDisplay
+            : rawDisplay;
           const body = parseFloat(bodyEl?.value) || 70;
           const pack = parseFloat(packEl?.value) || 0;
           const prevDefault = defaultSpeed(prevActivity, body, pack);
@@ -1944,6 +1966,8 @@ async function init() {
             const newKmh = +(currentKmh / prevDefault * newDefault).toFixed(2);
             const newDisplay = paceUnit === 'shanhe'
               ? (SHANHE_BASE / newKmh).toFixed(2)
+              : paceUnit === 'minkm'
+              ? (60 / newKmh).toFixed(1)
               : newKmh.toFixed(2);
             flatEl.value = newDisplay;
             paceParams = { ...paceParams, flatPaceKmH: newKmh };
@@ -2012,9 +2036,15 @@ async function init() {
   const paceUnitSelect = document.getElementById('pace-unit-select');
 
   /** Convert km/h → displayed value in current unit */
-  const kmhToDisplay = (v) => paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2) : +v.toFixed(2);
+  const kmhToDisplay = (v) =>
+    paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2)
+    : paceUnit === 'minkm' ? +(60 / v).toFixed(1)
+    : +v.toFixed(2);
   /** Convert displayed value → km/h */
-  const displayToKmh = (v) => paceUnit === 'shanhe' ? SHANHE_BASE / v : v;
+  const displayToKmh = (v) =>
+    paceUnit === 'shanhe' ? SHANHE_BASE / v
+    : paceUnit === 'minkm' ? 60 / v
+    : v;
 
   /** Sync placeholder and input constraints to current unit */
   const updateFlatPlaceholder = () => {
@@ -2027,6 +2057,11 @@ async function init() {
       paceFlatInput.max       = '10';
       paceFlatInput.step      = '0.05';
       paceFlatInput.placeholder = (SHANHE_BASE / spdKmh).toFixed(2);
+    } else if (paceUnit === 'minkm') {
+      paceFlatInput.min       = '1';
+      paceFlatInput.max       = '120';
+      paceFlatInput.step      = '0.5';
+      paceFlatInput.placeholder = (60 / spdKmh).toFixed(1);
     } else {
       paceFlatInput.min       = '0.5';
       paceFlatInput.max       = '80';
@@ -2098,9 +2133,13 @@ async function init() {
       // Convert the currently displayed value to the new unit
       const rawDisplay = parseFloat(paceFlatInput?.value);
       if (!isNaN(rawDisplay) && paceFlatInput?.value !== '') {
-        const kmh = prevUnit === 'shanhe' ? SHANHE_BASE / rawDisplay : rawDisplay;
+        const kmh = prevUnit === 'shanhe' ? SHANHE_BASE / rawDisplay
+          : prevUnit === 'minkm' ? 60 / rawDisplay
+          : rawDisplay;
         const newDisplay = paceUnit === 'shanhe'
           ? (SHANHE_BASE / kmh).toFixed(2)
+          : paceUnit === 'minkm'
+          ? (60 / kmh).toFixed(1)
           : kmh.toFixed(2);
         if (paceFlatInput) paceFlatInput.value = newDisplay;
       }
