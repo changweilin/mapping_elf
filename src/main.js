@@ -994,7 +994,11 @@ async function fetchPlaceName(lat, lng) {
     );
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
-    const name = data.name || null;
+    const addr = data.address || {};
+    const name = data.name ||
+                 addr.suburb || addr.village || addr.town ||
+                 addr.city_district || addr.district ||
+                 addr.city || addr.county || null;
     waypointPlaceNames[k] = name;
     try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch(_) {}
     return name;
@@ -1009,16 +1013,16 @@ async function geocodeWaypoints(waypoints) {
     const [lat, lng] = waypoints[i];
     const k = _geocodeKey(lat, lng);
     if (k in waypointPlaceNames) continue; // already known
-    const name = await fetchPlaceName(lat, lng);
-    if (name) _applyPlaceNameToDOM();
+    await fetchPlaceName(lat, lng);
+    _applyPlaceNameToDOM();
     // Nominatim rate limit: max 1 req/s
     if (i < waypoints.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
 }
 /** Re-render labels after a geocode result or custom name save. */
 function _applyPlaceNameToDOM() {
+  updateWaypointList(mapManager.waypoints);
   if (weatherPoints.length > 0) renderWeatherPanel();
-  else updateWaypointList(mapManager.waypoints);
 }
 
 /**
