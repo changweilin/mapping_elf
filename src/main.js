@@ -1429,12 +1429,9 @@ function buildWeatherPoints() {
   // n = preceding waypoint's wpIndex (0-based); t = elapsed time (segment or cumulative)
   {
     const fmtT = (h) => {
-      if (h <= 0) return '0m';
-      const hrs = Math.floor(h);
-      const min = Math.round((h - hrs) * 60);
-      if (hrs === 0) return `${min}m`;
-      if (min === 0) return `${hrs}h`;
-      return `${hrs}h${min}m`;
+      if (h <= 0) return '0';
+      const v = Math.round(h * 10) / 10;
+      return v % 1 === 0 ? String(v | 0) : v.toFixed(1);
     };
     let prevWpIdx      = 0;
     let prevWpElapsedH = 0;
