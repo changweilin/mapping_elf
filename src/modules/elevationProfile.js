@@ -186,15 +186,16 @@ export class ElevationProfile {
         markers.forEach((m) => {
           // Use Chart.js-rendered pixel coordinates so the dot sits exactly
           // on the elevation curve (avoids category-scale vs distance mismatch).
-          let xPx, yPx;
+          let xPx, yPx, xFrac;
           const meta = chart.getDatasetMeta(0);
           const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
           if (ptMeta) {
             xPx = ptMeta.x;
             yPx = ptMeta.y;
+            xFrac = (right > left) ? (xPx - left) / (right - left) : 0;
           } else {
             // Fallback: distance-fraction positioning
-            const xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
+            xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
             xPx = left + xFrac * (right - left);
             const elev = self._interpolateElevAtCumM(m.cumDistM);
             yPx = scales.y.getPixelForValue(elev);
