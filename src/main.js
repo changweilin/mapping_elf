@@ -12,7 +12,7 @@ import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -1465,12 +1465,12 @@ function buildWeatherPoints() {
   }
 
   /** Get elapsed hours for a given cumDistM (full-route metres). */
+  const sampledTotalDistM = sampledDists[sampledDists.length - 1] || 0;
   const getElapsedH = (cumDistM) => {
     if (!cumTimes || !sampledDists.length || fullTotalDistBuild === 0) return 0;
-    // Map full-route fraction → sampled index → cumulative time
-    const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDistBuild));
-    const idx = Math.round(fraction * (sampledPts.length - 1));
-    return cumTimes[idx] ?? 0;
+    // Account for distance scale difference (raw route vs sampled route)
+    const scaledDistM = cumDistM * (sampledTotalDistM / fullTotalDistBuild);
+    return interpolateTimeAtDist(scaledDistM, sampledDists, cumTimes);
   };
 
   const all = [];
@@ -1991,8 +1991,12 @@ function highlightPoint(colIdx) {
     for (let j = 1; j < currentRouteCoords.length; j++)
       fullDist += haversineDistance(currentRouteCoords[j - 1], currentRouteCoords[j]);
     if (fullDist > 0) {
-      const frac = Math.max(0, Math.min(1, (pt._cum || 0) / fullDist));
-      const idx  = Math.round(frac * (sampledPts.length - 1));
+      const targetDistM = (pt._cum || 0) * (sampledDists[sampledDists.length - 1] / fullDist);
+      let minErr = Infinity, idx = 0;
+      for (let j = 0; j < sampledDists.length; j++) {
+        const err = Math.abs(sampledDists[j] - targetDistM);
+        if (err < minErr) { minErr = err; idx = j; }
+      }
       elevationProfile.showCrosshairAtIndex(idx);
     }
   }
@@ -2046,10 +2050,14 @@ function updateElevationMarkers() {
       let cumDistM = pt._cum || 0;
       let dataIdx = null;
       if (sampledPts && sampledPts.length > 1 && fullTotalDist > 0) {
-        // Map pt._cum fraction → sampled index (handles round-trip correctly since
-        // fraction is monotonic and sampled indices match route order)
-        const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDist));
-        dataIdx = Math.round(fraction * (sampledPts.length - 1));
+        // Map pt._cum fraction -> distance in sampled route -> closest sampled index.
+        // This ensures the marker sits on the correct elevation point.
+        const targetDistM = (pt._cum || 0) * (sampledDists[sampledDists.length - 1] / fullTotalDist);
+        let minErr = Infinity;
+        for (let j = 0; j < sampledDists.length; j++) {
+          const err = Math.abs(sampledDists[j] - targetDistM);
+          if (err < minErr) { minErr = err; dataIdx = j; }
+        }
         cumDistM = sampledDists[dataIdx] || 0;
       }
       markers.push({ cumDistM, dataIdx, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
