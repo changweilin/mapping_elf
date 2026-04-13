@@ -1800,7 +1800,30 @@ function renderWeatherPanel() {
   // times from col-0; all modes → enforce waypoint ordering → save
   const onTimeChange = (e) => {
     const th = e.target.closest('.wt-col-head');
-    if (speedIntervalMode && th) {
+    if (!th) return;
+
+    if (strictLinearMode) {
+      const idx = parseInt(th.dataset.idx);
+      if (idx > 0) {
+        const prevTh = heads[idx - 1];
+        const prevDate = prevTh.querySelector('.wt-date-input')?.value;
+        const curDate = th.querySelector('.wt-date-input')?.value;
+        const prevH = parseInt(prevTh.querySelector('.wt-time-select')?.value ?? '0');
+        const curH = parseInt(th.querySelector('.wt-time-select')?.value ?? '0');
+
+        if (prevDate && curDate && prevDate === curDate && curH < prevH) {
+          const d = new Date(curDate + 'T12:00:00');
+          d.setDate(d.getDate() + 1);
+          const y = d.getFullYear();
+          const mo = String(d.getMonth() + 1).padStart(2, '0');
+          const dy = String(d.getDate()).padStart(2, '0');
+          const di = th.querySelector('.wt-date-input');
+          if (di) di.value = `${y}-${mo}-${dy}`;
+        }
+      }
+    }
+
+    if (speedIntervalMode) {
       const idx = parseInt(th.dataset.idx);
       const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
       const deltaMs = colToMs(th) - prevMs;
@@ -1814,6 +1837,7 @@ function renderWeatherPanel() {
     }
     updateDateConstraints();
     saveWeatherSettings();
+    th.dataset.prevMs = String(colToMs(th));
   };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', onTimeChange)
