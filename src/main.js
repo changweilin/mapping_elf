@@ -708,6 +708,9 @@ function enforceTimeOrdering() {
     return new Date(d + 'T00:00:00').getTime() + h * 3600000;
   };
 
+  const col0Date = heads[0].querySelector('.wt-date-input')?.value || '';
+  const col0Hour = parseInt(heads[0].querySelector('.wt-time-select')?.value ?? '0');
+
   for (let i = 1; i < heads.length; i++) {
     const pt = weatherPoints[i];
     if (!pt?.isWaypoint) continue; // Interval points are handled by cascade
@@ -716,12 +719,26 @@ function enforceTimeOrdering() {
     const curMs  = toMs(heads[i]);
     if (curMs >= prevMs) continue;
 
-    // Violation: reset this waypoint to the predecessor's date+time.
     const di     = heads[i].querySelector('.wt-date-input');
     const hs     = heads[i].querySelector('.wt-time-select');
+
+    // Violation: try the pace-derived time first (col-0 + _elapsedH).
+    // This keeps the waypoint aligned with the actual route timing.
+    if (col0Date && pt._elapsedH) {
+      const { date: paceDate, hour: paceHour } = addHoursToDateTime(col0Date, col0Hour, pt._elapsedH);
+      const paceMs = new Date(paceDate + 'T00:00:00').getTime() + paceHour * 3600000;
+      if (paceMs >= prevMs) {
+        if (di) di.value = paceDate;
+        if (hs) hs.value = String(paceHour);
+        continue;
+      }
+    }
+
+    // Fallback: pace time itself is too early (waypoints out of order) —
+    // reset to predecessor's date+time as the minimum valid state.
     const prevDi = heads[i - 1].querySelector('.wt-date-input');
     const prevHs = heads[i - 1].querySelector('.wt-time-select');
-    if (di && prevDi?.value)    di.value = prevDi.value;
+    if (di && prevDi?.value)         di.value = prevDi.value;
     if (hs && prevHs?.value != null) hs.value = prevHs.value;
   }
 }

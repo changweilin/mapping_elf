@@ -82,8 +82,9 @@ Call after `renderWeatherPanel()` and after any change to col-0's date/time.
 Enforces non-decreasing date/time across columns, **waypoint columns only**.
 
 On violation (user moved a waypoint's time earlier than predecessor):
-- Reset the column to the predecessor's date **and** time (minimum valid state)
-- The date is never bumped to +1 day — that would change the date unexpectedly
+1. **Pace-derived time first**: compute `addHoursToDateTime(col0Date, col0Hour, pt._elapsedH)`. If that time ≥ predecessor, apply it — this realigns the waypoint with actual route timing.
+2. **Fallback**: if even the pace time is earlier than the predecessor (waypoints placed out of order), reset to the predecessor's date+time (minimum valid state).
+- The date is never bumped to +1 day.
 
 Interval columns are excluded — their ordering is guaranteed by the cascade.
 
