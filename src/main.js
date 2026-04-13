@@ -12,7 +12,7 @@ import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed, interpolateTimeAtDist, computeSegmentTimesFromState, applyWaypointRecovery } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -1430,13 +1430,21 @@ function buildWeatherPoints() {
   const coords = currentRouteCoords;
   if (wps.length === 0) return [];
 
-  // --- Compute cumulative distances for waypoints along the route ---
+  // --- Compute cumulative distances and sampled indices for waypoints ---
   let totalDistM = 0;
   const wpCumDist = [];
+  const wpSampledIdx = [];
+  const sampledPts = elevationProfile.points;
+  const sampledElevs = elevationProfile.elevations;
+  const sampledDists = elevationProfile.distances;
+
   if (coords.length > 1) {
     for (let j = 1; j < coords.length; j++) totalDistM += haversineDistance(coords[j - 1], coords[j]);
+    
     let searchStart = 0;
+    let sSearchStart = 0;
     for (let i = 0; i < wps.length; i++) {
+      // Find index in raw coords
       let minDist = Infinity, minIdx = searchStart;
       const end = Math.min(coords.length, searchStart + 600);
       for (let j = searchStart; j < end; j++) {
@@ -1447,28 +1455,77 @@ function buildWeatherPoints() {
       for (let j = 1; j <= minIdx; j++) cum += haversineDistance(coords[j - 1], coords[j]);
       wpCumDist.push(cum);
       searchStart = minIdx;
+
+      // Find index in sampled points
+      let sMinDist = Infinity, sMinIdx = sSearchStart;
+      for (let j = sSearchStart; j < sampledPts.length; j++) {
+        const d = haversineDistance(wps[i], sampledPts[j]);
+        if (d < sMinDist) { sMinDist = d; sMinIdx = j; }
+      }
+      wpSampledIdx.push(sMinIdx);
+      sSearchStart = sMinIdx;
     }
   } else {
-    wps.forEach((_, i) => wpCumDist.push(i));
+    wps.forEach((_, i) => { wpCumDist.push(i); wpSampledIdx.push(i); });
   }
 
-  // Compute pace cumulative times whenever any interval mode is active so that
-  // distance-mode interval points also get meaningful _elapsedH values.
-  const sampledPts   = elevationProfile.points;
-  const sampledElevs = elevationProfile.elevations;
-  const sampledDists = elevationProfile.distances;
-  let cumTimes = null;
+  // Pre-calculate fullTotalDistBuild for distance scaling later
   let fullTotalDistBuild = 0;
-  if ((speedIntervalMode || segmentIntervalKm > 0) && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
-    cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
+  if (coords.length > 1) {
     for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
   }
 
-  /** Get elapsed hours for a given cumDistM (full-route metres). */
+  // --- Compute Pace Times (Segmented vs Cumulative) ---
+  let cumTimes = null;
+  const hourlyPts = [];
+  const waypointElapsedTimes = new Array(wps.length).fill(0);
+  const usePace = speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1;
+
+  if (usePace && perSegmentMode) {
+    // Per-segment reset mode
+    let state = null;
+    let totalElapsedH = 0;
+    for (let i = 0; i < wps.length; i++) {
+      waypointElapsedTimes[i] = totalElapsedH;
+
+      if (i < wps.length - 1) {
+        const s = wpSampledIdx[i];
+        const e = wpSampledIdx[i + 1];
+        if (e > s) {
+          const segElevs = sampledElevs.slice(s, e + 1);
+          const segDists = sampledDists.slice(s, e + 1).map(d => d - sampledDists[s]);
+          const { times, finalState } = computeSegmentTimesFromState(segElevs, segDists, speedActivity, paceParams, state);
+          
+          // Generate 1-hour interval points relative to this waypoint
+          let nextSegH = 1.0;
+          while (nextSegH < times[times.length - 1] - 0.05) {
+            for (let j = 1; j < times.length; j++) {
+              if (times[j] >= nextSegH) {
+                const span = times[j] - times[j-1];
+                const f = span > 0 ? (nextSegH - times[j-1]) / span : 0;
+                const lat = sampledPts[s + j - 1][0] + f * (sampledPts[s + j][0] - sampledPts[s + j - 1][0]);
+                const lng = sampledPts[s + j - 1][1] + f * (sampledPts[s + j][1] - sampledPts[s + j - 1][1]);
+                const cumM = sampledDists[s + j - 1] + f * (sampledDists[s + j] - sampledDists[s + j - 1]);
+                hourlyPts.push({ lat, lng, cumDistM: cumM, estTimeH: totalElapsedH + nextSegH, segmentH: nextSegH });
+                break;
+              }
+            }
+            nextSegH += 1.0;
+          }
+          totalElapsedH += times[times.length - 1];
+          state = applyWaypointRecovery(finalState, 0, paceParams);
+        }
+      }
+    }
+  } else if (usePace || (segmentIntervalKm > 0 && sampledPts && sampledPts.length > 1)) {
+    // Cumulative mode or distance-interval mode (base times)
+    cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
+  }
+
   const sampledTotalDistM = sampledDists[sampledDists.length - 1] || 0;
-  const getElapsedH = (cumDistM) => {
+  const getElapsedH = (cumDistM, wpIdx = -1) => {
+    if (perSegmentMode && usePace && wpIdx >= 0) return waypointElapsedTimes[wpIdx];
     if (!cumTimes || !sampledDists.length || fullTotalDistBuild === 0) return 0;
-    // Account for distance scale difference (raw route vs sampled route)
     const scaledDistM = cumDistM * (sampledTotalDistM / fullTotalDistBuild);
     return interpolateTimeAtDist(scaledDistM, sampledDists, cumTimes);
   };
@@ -1478,51 +1535,38 @@ function buildWeatherPoints() {
   // Add actual waypoints
   for (let i = 0; i < wps.length; i++) {
     const placeName = getPlaceName(wps[i][0], wps[i][1]);
-    const label = placeName
-      ? placeName
-      : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
+    const label = placeName ? placeName : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
     all.push({ label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i,
-               _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i]) });
+               _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i], i) });
   }
 
-  if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
-    // Speed mode: intermediate points every 1 hour of travel time
-    const hourlyPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0, paceParams);
-    hourlyPts.forEach((pt) => {
-      const hLabel = Number.isInteger(pt.estTimeH)
-        ? `第 ${pt.estTimeH} 小時`
-        : `${pt.estTimeH.toFixed(1)} 小時`;
+  if (usePace && perSegmentMode) {
+    hourlyPts.forEach(pt => {
+      const hLabel = pt.segmentH % 1 === 0 ? `第 ${pt.segmentH} 小時` : `${pt.segmentH.toFixed(1)} 小時`;
+      all.push({ label: hLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
+                 _cum: pt.cumDistM, _elapsedH: pt.estTimeH, _segmentH: pt.segmentH });
+    });
+  } else if (usePace) {
+    const hPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0, paceParams);
+    hPts.forEach(pt => {
+      const hLabel = Number.isInteger(pt.estTimeH) ? `第 ${pt.estTimeH} 小時` : `${pt.estTimeH.toFixed(1)} 小時`;
       all.push({ label: hLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
                  _cum: pt.cumDistM, _elapsedH: pt.estTimeH });
     });
   } else if (segmentIntervalKm > 0 && coords.length > 1) {
-    // km-interval intermediate points
     const intermediates = computeIntermediatePoints(coords, segmentIntervalKm);
     intermediates.forEach((pt) => {
-      const kmLabel = (pt.cumDistM / 1000 % 1 === 0)
-        ? `${pt.cumDistM / 1000 | 0} km`
-        : `${(pt.cumDistM / 1000).toFixed(1)} km`;
+      const kmLabel = (pt.cumDistM / 1000 % 1 === 0) ? `${pt.cumDistM / 1000 | 0} km` : `${(pt.cumDistM / 1000).toFixed(1)} km`;
       all.push({ label: kmLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
                  _cum: pt.cumDistM, _elapsedH: getElapsedH(pt.cumDistM) });
     });
   } else if (coords.length > 0) {
-    // Fallback: auto-midpoints between each waypoint pair
-    const wpIndices = [];
-    let searchStart = 0;
-    for (let i = 0; i < wps.length; i++) {
-      let minDist = Infinity, minIdx = searchStart;
-      const end = Math.min(coords.length, searchStart + 600);
-      for (let j = searchStart; j < end; j++) {
-        const d = haversineDistance(wps[i], coords[j]);
-        if (d < minDist) { minDist = d; minIdx = j; }
-      }
-      wpIndices.push(minIdx);
-      searchStart = minIdx;
-    }
+    // Auto-midpoints
     for (let i = 0; i < wps.length - 1; i++) {
-      const si = wpIndices[i];
-      const ei = wpIndices[i + 1] ?? coords.length - 1;
-      const mc = coords[Math.max(0, Math.min(Math.floor((si + ei) / 2), coords.length - 1))];
+      const s = wpSampledIdx[i];
+      const e = wpSampledIdx[i + 1] ?? sampledPts.length - 1;
+      const midIdx = Math.floor((s + e) / 2);
+      const mc = sampledPts[midIdx];
       const labelA = i === 0 ? '起點' : `航點 ${i + 1}`;
       const labelB = (i + 1 === wps.length - 1) ? '終點' : `航點 ${i + 2}`;
       const midCum = (wpCumDist[i] + wpCumDist[i + 1]) / 2;
@@ -1531,81 +1575,55 @@ function buildWeatherPoints() {
     }
   }
 
-  // Round-trip: mark return-leg interval points, add missing fallback midpoints,
-  // then add return waypoints (reversed, excluding turning point).
-  if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
-    // Distance to the turnaround point (last outbound waypoint).
+  // Round-trip handling (mirrors outbound points)
+  if (roundTripMode && wps.length >= 2 && totalDistM > 0) {
     const oneWayDistM = wpCumDist[wps.length - 1];
+    all.forEach(pt => { if (!pt.isWaypoint && (pt._cum ?? 0) > oneWayDistM) pt.isReturn = true; });
 
-    // Speed/km modes: computeHourlyPoints / computeIntermediatePoints already
-    // produced return-leg interval points (they process the full round-trip
-    // route). Mark them so firstReturnIdx resolves at the turnaround, not at
-    // the first return waypoint further along the return leg.
-    all.forEach(pt => {
-      if (!pt.isWaypoint && (pt._cum ?? 0) > oneWayDistM) pt.isReturn = true;
-    });
-
-    // Fallback mode: outbound midpoints only span 0 → oneWayDistM. Mirror
-    // each one onto the return leg so both sides have equal interval density.
     if (!speedIntervalMode && segmentIntervalKm === 0) {
-      const outboundMidpoints = all.filter(pt => !pt.isWaypoint);
+      const outboundMidpoints = all.filter(pt => !pt.isWaypoint && !pt.isReturn);
       outboundMidpoints.forEach(pt => {
         const returnCumMid = totalDistM - pt._cum;
-        all.push({
-          label:      `↩ ${pt.label}`,
-          lat:        pt.lat,
-          lng:        pt.lng,
-          isWaypoint: false,
-          isReturn:   true,
-          _cum:       returnCumMid,
-          _elapsedH:  getElapsedH(returnCumMid),
-        });
+        all.push({ label: `↩ ${pt.label}`, lat: pt.lat, lng: pt.lng, isWaypoint: false, isReturn: true,
+                   _cum: returnCumMid, _elapsedH: getElapsedH(returnCumMid) });
       });
     }
 
-    // Return waypoints (reversed, excluding turning point).
     for (let i = wps.length - 2; i >= 0; i--) {
       const placeName = getPlaceName(wps[i][0], wps[i][1]);
       const outLabel = placeName || (i === 0 ? '起點' : `航點 ${i + 1}`);
       const returnCum = totalDistM - wpCumDist[i];
-      all.push({
-        label:      `↩ ${outLabel}`,
-        lat:        wps[i][0],
-        lng:        wps[i][1],
-        isWaypoint: true,
-        isReturn:   true,
-        wpIndex:    i,
-        _cum:       returnCum,
-        _elapsedH:  getElapsedH(returnCum),
-      });
+      all.push({ label: `↩ ${outLabel}`, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, isReturn: true, wpIndex: i,
+                 _cum: returnCum, _elapsedH: getElapsedH(returnCum) });
     }
   }
 
-  // Sort by position along route
   all.sort((a, b) => a._cum - b._cum);
 
   // Relabel interval points as "n-t"
-  // n = preceding waypoint's wpIndex (0-based); t = elapsed time (segment or cumulative)
   {
     const fmtT = (h) => {
       if (h <= 0) return '0';
       const v = Math.round(h * 10) / 10;
       return v % 1 === 0 ? String(v | 0) : v.toFixed(1);
     };
-    let prevWpIdx      = 0;
+    let prevWpIdx = 0;
     let prevWpElapsedH = 0;
     all.forEach(pt => {
       if (pt.isWaypoint) {
-        prevWpIdx      = pt.wpIndex ?? 0;
+        prevWpIdx = pt.wpIndex ?? 0;
         prevWpElapsedH = pt._elapsedH || 0;
       } else {
-        const displayH = perSegmentMode
-          ? (pt._elapsedH || 0) - prevWpElapsedH
-          : (pt._elapsedH || 0);
-        pt.label = `${prevWpIdx}-${fmtT(displayH)}`;
+        const dispH = (perSegmentMode && usePace && pt._segmentH !== undefined) ? pt._segmentH :
+                      (perSegmentMode ? (pt._elapsedH || 0) - prevWpElapsedH : (pt._elapsedH || 0));
+        pt.label = `${prevWpIdx}-${fmtT(dispH)}`;
       }
     });
   }
+
+  deduplicateLabels(all);
+  return all;
+}
 
   // Deduplicate: same label → append (2), (3), …
   deduplicateLabels(all);
