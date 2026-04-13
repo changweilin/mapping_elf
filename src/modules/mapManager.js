@@ -57,6 +57,9 @@ export class MapManager {
     this.hoverMarker = null;
     this.currentLayerName = 'streets';
     this.intermediateMarkers = [];
+    this.ignoreMapClick = false;
+    this.dragLine = null;
+    this._dragWpIndex = undefined;
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -71,8 +74,49 @@ export class MapManager {
     this.tileLayers.streets.addTo(this.map);
 
     this.map.on('click', (e) => {
+      if (this.ignoreMapClick) return;
       this.addWaypoint(e.latlng.lat, e.latlng.lng);
     });
+  }
+
+  _blockMapClick() {
+    this.ignoreMapClick = true;
+    setTimeout(() => { this.ignoreMapClick = false; }, 300);
+  }
+
+  _startRubberBand(marker) {
+    const idx = this.waypointMarkers.indexOf(marker);
+    if (idx < 0) return;
+    this._dragWpIndex = idx;
+    if (this.dragLine) {
+      this.map.removeLayer(this.dragLine);
+    }
+    this.dragLine = L.polyline([], {
+      color: '#f59e0b', // 使用琥珀色(Amber)強調虛線
+      weight: 3,
+      dashArray: '6 6',
+      opacity: 0.9,
+      interactive: false,
+    }).addTo(this.map);
+    this._updateRubberBand(marker.getLatLng());
+  }
+
+  _updateRubberBand(latlng) {
+    if (!this.dragLine || this._dragWpIndex === undefined) return;
+    const idx = this._dragWpIndex;
+    const pts = [];
+    if (idx > 0) pts.push(this.waypoints[idx - 1]);
+    pts.push([latlng.lat, latlng.lng]);
+    if (idx < this.waypoints.length - 1) pts.push(this.waypoints[idx + 1]);
+    this.dragLine.setLatLngs(pts);
+  }
+
+  _stopRubberBand() {
+    if (this.dragLine) {
+      this.map.removeLayer(this.dragLine);
+      this.dragLine = null;
+    }
+    this._dragWpIndex = undefined;
   }
 
   switchLayer(layerName) {
@@ -93,6 +137,7 @@ export class MapManager {
 
     let _dragModeActive = false;
     let _justDragged = false;
+    let _isTouchActive = false;
 
     const _enableDrag = () => {
       _dragModeActive = true;
@@ -115,7 +160,7 @@ export class MapManager {
     // handler below). The manual touch-drag handler will activate at 500ms.
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
-      if (_longPressTimer !== null || _dragModeActive) return;
+      if (_isTouchActive || _longPressTimer !== null || _dragModeActive) return;
       _enableDrag();
     });
 
@@ -152,6 +197,7 @@ export class MapManager {
         const onUp = () => {
           _dragModeActive = false;
           _justDragged = true;
+          this._blockMapClick();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           this.map.dragging.enable();
@@ -180,6 +226,7 @@ export class MapManager {
     let _longPressTimer = null;
     let _touchStartX = 0, _touchStartY = 0;
     marker.on('touchstart', (e) => {
+      _isTouchActive = true;
       if (_dragModeActive) return;
       const touch = e.originalEvent.touches[0];
       _touchStartX = touch.clientX;
@@ -192,16 +239,25 @@ export class MapManager {
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
 
+        this._startRubberBand(marker);
+
         const onTouchMove = (ev) => {
           ev.preventDefault();
           const t = ev.touches[0];
-          // touch objects expose clientX/clientY, same as mouse events,
-          // so mouseEventToLatLng works here too.
-          marker.setLatLng(this.map.mouseEventToLatLng(t));
+          // 在手機版加入 Y 軸負偏移(-40px)，讓圖標浮在手指上方避免被遮擋
+          const rect = this.map.getContainer().getBoundingClientRect();
+          const x = t.clientX - rect.left;
+          const y = t.clientY - rect.top - 40;
+          const latlng = this.map.containerPointToLatLng([x, y]);
+          marker.setLatLng(latlng);
+          this._updateRubberBand(latlng);
         };
         const onTouchEnd = () => {
           _dragModeActive = false;
+          _isTouchActive = false;
           _justDragged = true;
+          this._blockMapClick();
+          this._stopRubberBand();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           this.map.dragging.enable();
@@ -230,6 +286,7 @@ export class MapManager {
       }
     });
     marker.on('touchend', () => {
+      _isTouchActive = false;
       if (_longPressTimer) {
         clearTimeout(_longPressTimer);
         _longPressTimer = null;
@@ -248,6 +305,7 @@ export class MapManager {
     });
 
     marker.on('dragend', (e) => {
+      this._blockMapClick();
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
       this.waypoints[idx] = [pos.lat, pos.lng];
