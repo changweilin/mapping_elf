@@ -637,7 +637,7 @@ export class MapManager {
       className: `custom-waypoint-icon ${cls}`,
       html: `${weatherHtml}<span>${index + 1}</span>`,
       iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
+      iconAnchor: [size / 2, size],
     });
   }
 
