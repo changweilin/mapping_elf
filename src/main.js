@@ -12,7 +12,7 @@ import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeSegmentTimesFromState, applyWaypointRecovery, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -42,6 +42,7 @@ const LS_SPEED_MODE_KEY    = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY= 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY   = 'mappingElf_paceParams';
 const LS_PER_SEGMENT_KEY   = 'mappingElf_perSegment';
+const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_PACE_UNIT_KEY     = 'mappingElf_paceUnit';
 
 /**
@@ -56,11 +57,16 @@ let roundTripMode     = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let speedIntervalMode  = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
 let speedActivity      = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode     = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
-let paceUnit           = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'shanhe'
+let strictLinearMode   = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
+let paceUnit           = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
 })();
+
+// Gradient colors per waypoint index (teal→sky→amber→red), updated after each route build.
+// Used by the sidebar list and map waypoint icons to match the elevation chart.
+let waypointGradColors = [];
 
 
 // =========== Initialize Modules ===========
@@ -448,15 +454,17 @@ function updateWaypointList(waypoints) {
       else if (i === waypoints.length - 1 && waypoints.length > 1) cls = 'end';
       const placeName = getPlaceName(wp[0], wp[1]);
       const coords = formatCoords(wp[0], wp[1]);
-      // Color matching the map marker: start=green, end=red, middle=teal
-      const nameColor = (i === 0 && waypoints.length > 1) ? 'var(--success)'
-                      : (i === waypoints.length - 1 && waypoints.length > 1) ? 'var(--danger)'
-                      : 'var(--accent-primary)';
+      const n = waypoints.length;
+      const gradColor = waypointGradColors[i]
+        || interpolateRouteColor(n > 1 ? i / (n - 1) : 0);
+      // Fallback label matches weather card: 起點 / 終點 / 航點 N
+      const fallbackLabel = i === 0 ? '起點' : (i === n - 1 ? '終點' : `航點 ${i + 1}`);
+      const displayName = placeName || fallbackLabel;
       return `
         <div class="waypoint-item">
-          <span class="wp-index ${cls}">${i + 1}</span>
-          <span class="wp-coords" title="${coords}" style="color:${nameColor}">
-            ${placeName ? `<span class="wp-place-name">${placeName}</span>` : coords}
+          <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
+          <span class="wp-coords" title="${coords}" style="color:${gradColor}">
+            <span class="wp-place-name">${displayName}</span>
           </span>
           <div class="wp-actions">
             <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -634,7 +642,13 @@ function cascadeWeatherTimes() {
  * point's _elapsedH.  Interval inputs are disabled so this is the only way
  * their displayed time can change.
  */
-function cascadeIntervalTimes() {
+/**
+ * @param {boolean} [fromWP] - true = anchor each interval from its closest
+ *   preceding waypoint (perSegmentMode ON, or any manual-edit cascade).
+ *   false (default when perSegmentMode OFF) = anchor from col-0 so all
+ *   times are continuous from trip start.
+ */
+function cascadeIntervalTimes(fromWP = perSegmentMode) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
   const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
@@ -646,7 +660,26 @@ function cascadeIntervalTimes() {
     if (pt.isWaypoint) return;
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     if (!th) return;
-    const { date, hour } = addHoursToDateTime(startDate, startHour, pt._elapsedH || 0);
+
+    let anchorDate = startDate;
+    let anchorHour = startHour;
+    let anchorElapsedH = 0;
+    if (fromWP) {
+      for (let j = i - 1; j >= 0; j--) {
+        if (weatherPoints[j]?.isWaypoint) {
+          const thj = container.querySelector(`.wt-col-head[data-idx="${j}"]`);
+          if (thj) {
+            anchorDate     = thj.querySelector('.wt-date-input')?.value || startDate;
+            anchorHour     = parseInt(thj.querySelector('.wt-time-select')?.value ?? String(startHour));
+            anchorElapsedH = weatherPoints[j]._elapsedH || 0;
+          }
+          break;
+        }
+      }
+    }
+
+    const deltaH = (pt._elapsedH || 0) - anchorElapsedH;
+    const { date, hour } = addHoursToDateTime(anchorDate, anchorHour, deltaH);
     const dateInput  = th.querySelector('.wt-date-input');
     const hourSelect = th.querySelector('.wt-time-select');
     if (dateInput)  dateInput.value  = date;
@@ -657,10 +690,12 @@ function cascadeIntervalTimes() {
 /**
  * Enforce non-decreasing time order across waypoint columns only.
  * Interval points are managed by cascadeIntervalTimes() and skipped here.
- * When a waypoint column is earlier than its predecessor, keep the user's
- * chosen hour but add +1 day so the trip stays chronologically consistent.
+ * When a waypoint column is earlier than its predecessor, reset it to the
+ * predecessor's date+time (the minimum valid state) so the date never
+ * jumps unexpectedly.
  */
 function enforceTimeOrdering() {
+  if (!strictLinearMode) return;
   const container = document.getElementById('weather-table-container');
   if (!container) return;
   const heads = Array.from(container.querySelectorAll('.wt-col-head'));
@@ -673,6 +708,9 @@ function enforceTimeOrdering() {
     return new Date(d + 'T00:00:00').getTime() + h * 3600000;
   };
 
+  const col0Date = heads[0].querySelector('.wt-date-input')?.value || '';
+  const col0Hour = parseInt(heads[0].querySelector('.wt-time-select')?.value ?? '0');
+
   for (let i = 1; i < heads.length; i++) {
     const pt = weatherPoints[i];
     if (!pt?.isWaypoint) continue; // Interval points are handled by cascade
@@ -681,15 +719,73 @@ function enforceTimeOrdering() {
     const curMs  = toMs(heads[i]);
     if (curMs >= prevMs) continue;
 
-    // Violation: waypoint is earlier than the previous column.
-    // Keep the user's chosen hour, but bump the date forward by one day.
-    const di = heads[i].querySelector('.wt-date-input');
-    if (di && di.value) {
-      const d = new Date(di.value + 'T12:00:00');
-      d.setDate(d.getDate() + 1);
-      di.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const di     = heads[i].querySelector('.wt-date-input');
+    const hs     = heads[i].querySelector('.wt-time-select');
+
+    // Violation: try the pace-derived time first (col-0 + _elapsedH).
+    // This keeps the waypoint aligned with the actual route timing.
+    if (col0Date && pt._elapsedH) {
+      const { date: paceDate, hour: paceHour } = addHoursToDateTime(col0Date, col0Hour, pt._elapsedH);
+      const paceMs = new Date(paceDate + 'T00:00:00').getTime() + paceHour * 3600000;
+      if (paceMs >= prevMs) {
+        if (di) di.value = paceDate;
+        if (hs) hs.value = String(paceHour);
+        continue;
+      }
     }
+
+    // Fallback: pace time itself is too early (waypoints out of order) —
+    // reset to predecessor's date+time as the minimum valid state.
+    const prevDi = heads[i - 1].querySelector('.wt-date-input');
+    const prevHs = heads[i - 1].querySelector('.wt-time-select');
+    if (di && prevDi?.value)         di.value = prevDi.value;
+    if (hs && prevHs?.value != null) hs.value = prevHs.value;
   }
+}
+
+/**
+ * Set the `min` attribute on each waypoint date input so the browser's
+ * date picker grays out dates that would violate strict linear ordering.
+ * No-op when strictLinearMode is off.
+ */
+function updateDateConstraints() {
+  if (!strictLinearMode) return;
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const heads = Array.from(container.querySelectorAll('.wt-col-head'));
+  for (let i = 1; i < heads.length; i++) {
+    const pt = weatherPoints[i];
+    if (!pt?.isWaypoint) continue;
+    const prevDi = heads[i - 1].querySelector('.wt-date-input');
+    const di     = heads[i].querySelector('.wt-date-input');
+    if (di && prevDi?.value) di.min = prevDi.value;
+  }
+}
+
+/**
+ * One-stop sync: cascade interval times → enforce waypoint ordering →
+ * cascade again.  The second cascade is needed because enforceTimeOrdering
+ * may bump a waypoint to the next day, leaving the interval points that come
+ * after it showing stale (pre-bump) times.
+ */
+function syncIntervalTimes() {
+  cascadeIntervalTimes();
+  enforceTimeOrdering();
+  cascadeIntervalTimes();
+  enforceTimeOrdering(); // re-check: cascade may have exposed new violations
+}
+
+/**
+ * Like syncIntervalTimes but always anchors intervals from the preceding
+ * waypoint, regardless of perSegmentMode.  Used when the user manually
+ * edits a waypoint's date/time so that downstream interval points always
+ * follow the edited waypoint.
+ */
+function syncIntervalTimesFromWP() {
+  cascadeIntervalTimes(true);
+  enforceTimeOrdering();
+  cascadeIntervalTimes(true);
+  enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
 // =========== Export (GPX / KML) ===========
@@ -926,24 +1022,119 @@ function deduplicateLabels(pts) {
     }
   });
 }
+/** Priority score for an Overpass POI element (lower = higher priority). */
+function _poiScore(tags) {
+  const n = tags.natural, w = tags.waterway;
+  if (n === 'peak' || n === 'volcano')             return 0;
+  if (w === 'waterfall')                            return 1;
+  if (n === 'spring' || n === 'cave_entrance')      return 2;
+  if (n)                                            return 3;
+  if (tags.tourism)                                 return 4;
+  if (tags.historic)                                return 5;
+  if (tags.leisure)                                 return 6;
+  if (tags.amenity)                                 return 7;
+  if (tags.shop)                                    return 8;
+  return 9;
+}
+
+/** Priority score for the Nominatim result's own data.name (roads/boundaries get 99). */
+function _nominatimScore(data) {
+  const cat = data.category || '', typ = data.type || '';
+  if (cat === 'natural') return (typ === 'peak' || typ === 'volcano') ? 0 : typ === 'waterfall' ? 1 : 2;
+  if (cat === 'waterway') return 1;
+  if (cat === 'tourism')  return 4;
+  if (cat === 'historic') return 5;
+  if (cat === 'leisure')  return 6;
+  if (cat === 'amenity')  return 7;
+  if (cat === 'building') return 7;
+  if (cat === 'shop')     return 8;
+  return 99; // highway, boundary, place, etc. — don't use data.name
+}
+
+const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
+
 async function fetchPlaceName(lat, lng) {
   const k = _geocodeKey(lat, lng);
   if (k in waypointPlaceNames) return waypointPlaceNames[k];
-  try {
-    const resp = await fetch(
+
+  const latS = lat.toFixed(5), lngS = lng.toFixed(5);
+
+  // Overpass query: search for named POIs with widened radii by feature type
+  const ovpQuery = `[out:json][timeout:10];
+(
+  node["natural"~"peak|volcano"]["name"](around:3000,${latS},${lngS});
+  node["waterway"="waterfall"]["name"](around:1000,${latS},${lngS});
+  node["natural"~"spring|cave_entrance"]["name"](around:500,${latS},${lngS});
+  node["tourism"]["name"](around:500,${latS},${lngS});
+  way["tourism"]["name"](around:500,${latS},${lngS});
+  node["historic"]["name"](around:500,${latS},${lngS});
+  way["historic"]["name"](around:500,${latS},${lngS});
+  node["leisure"~"park|nature_reserve|garden"]["name"](around:300,${latS},${lngS});
+  way["leisure"~"park|nature_reserve|garden"]["name"](around:300,${latS},${lngS});
+  node["amenity"]["name"](around:200,${latS},${lngS});
+  way["amenity"]["name"](around:200,${latS},${lngS});
+  node["shop"]["name"](around:100,${latS},${lngS});
+);
+out center 20;`;
+
+  // Run Nominatim (address / road / admin) and Overpass (nearby POIs) in parallel
+  const [nomRes, ovpRes] = await Promise.allSettled([
+    fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
       { headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' } }
-    );
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
-    const name = data.name || null;
-    waypointPlaceNames[k] = name;
-    try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch(_) {}
-    return name;
-  } catch(_) {
-    waypointPlaceNames[k] = null;
-    return null;
+    ).then(r => r.ok ? r.json() : null),
+
+    fetch(OVERPASS_API, {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(ovpQuery),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }).then(r => r.ok ? r.json() : null),
+  ]);
+
+  const nomData = nomRes.status === 'fulfilled' ? nomRes.value : null;
+  const ovpData = ovpRes.status === 'fulfilled' ? ovpRes.value : null;
+
+  // --- Best Overpass candidate (sorted by priority score, then distance) ---
+  let ovpName = null, ovpScore = 99;
+  if (ovpData?.elements) {
+    const ranked = ovpData.elements
+      .filter(e => e.tags?.name)
+      .map(e => ({
+        name: e.tags.name,
+        score: _poiScore(e.tags),
+        dist: haversineDistance([lat, lng], [e.lat ?? e.center?.lat ?? lat, e.lon ?? e.center?.lon ?? lng]),
+      }))
+      .sort((a, b) => a.score !== b.score ? a.score - b.score : a.dist - b.dist);
+    if (ranked.length) { ovpName = ranked[0].name; ovpScore = ranked[0].score; }
   }
+
+  // --- Best Nominatim POI name (only if data.name is a landmark, not a road/boundary) ---
+  let nomPOI = null, nomPOIScore = 99;
+  if (nomData?.name) {
+    nomPOIScore = _nominatimScore(nomData);
+    if (nomPOIScore < 99) nomPOI = nomData.name;
+  }
+
+  // --- Select final name ---
+  // 1. Best landmark from Overpass or Nominatim POI (whichever has lower score)
+  let name = null;
+  if (ovpScore <= nomPOIScore && ovpName) name = ovpName;
+  else if (nomPOI) name = nomPOI;
+  else if (ovpName) name = ovpName; // Overpass fallback (score 9)
+
+  // 2. Fallback: road name, then administrative area
+  if (!name && nomData) {
+    const addr = nomData.address || {};
+    name = addr.road ||
+           addr.neighbourhood || addr.quarter || addr.suburb ||
+           addr.village || addr.hamlet || addr.town ||
+           addr.municipality || addr.city_district || addr.district ||
+           addr.city || addr.county || null;
+  }
+
+  waypointPlaceNames[k] = name ?? null;
+  try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch(_) {}
+  return waypointPlaceNames[k];
 }
 /** Geocode waypoints in background; update column labels as results arrive. */
 async function geocodeWaypoints(waypoints) {
@@ -951,16 +1142,16 @@ async function geocodeWaypoints(waypoints) {
     const [lat, lng] = waypoints[i];
     const k = _geocodeKey(lat, lng);
     if (k in waypointPlaceNames) continue; // already known
-    const name = await fetchPlaceName(lat, lng);
-    if (name) _applyPlaceNameToDOM();
+    await fetchPlaceName(lat, lng);
+    _applyPlaceNameToDOM();
     // Nominatim rate limit: max 1 req/s
     if (i < waypoints.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
 }
 /** Re-render labels after a geocode result or custom name save. */
 function _applyPlaceNameToDOM() {
+  updateWaypointList(mapManager.waypoints);
   if (weatherPoints.length > 0) renderWeatherPanel();
-  else updateWaypointList(mapManager.waypoints);
 }
 
 /**
@@ -999,6 +1190,8 @@ function startLabelEdit(labelEl, pt) {
   input.className = 'wt-label-edit-input';
   input.style.color = labelColor;
   input.style.borderColor = labelColor;
+  // Stop clicks inside the input from bubbling to labelEl's highlight handler
+  input.addEventListener('click', (e) => e.stopPropagation());
   labelEl.innerHTML = '';
   labelEl.appendChild(input);
   if (badge) labelEl.appendChild(badge);
@@ -1011,15 +1204,14 @@ function startLabelEdit(labelEl, pt) {
     saved = true;
     saveCustomName(pt.lat, pt.lng, input.value.trim());
   };
-  const cancel = () => {
-    if (saved) return;
-    saved = true;
-    _applyPlaceNameToDOM(); // restore
-  };
   input.addEventListener('blur', commit);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { saved = true; input.removeEventListener('blur', commit); cancel(); }
+    if (e.key === 'Escape') {
+      saved = true;
+      input.removeEventListener('blur', commit);
+      _applyPlaceNameToDOM(); // restore original label
+    }
   });
 }
 
@@ -1112,8 +1304,7 @@ function shiftAllDates(deltaDays, deltaHours) {
     setColToMs(th, colToMs(th) + deltaMs);
   });
 
-  cascadeIntervalTimes();
-  enforceTimeOrdering();
+  syncIntervalTimes();
   saveWeatherSettings();
 }
 
@@ -1271,77 +1462,6 @@ function buildWeatherPoints() {
   if ((speedIntervalMode || segmentIntervalKm > 0) && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
     for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
-
-    // ── Per-segment second pass ──────────────────────────────────────────────
-    // When perSegmentMode is on, recalculate cumTimes segment by segment so
-    // that fatigue carries over correctly and waypoint rest/recovery is applied.
-    // Rest time at each waypoint = scheduledDepartureH − estimatedArrivalH
-    // (negative rest = traveller is already behind schedule → no rest).
-    if (perSegmentMode && wps.length >= 2 && fullTotalDistBuild > 0) {
-      const saved   = loadWeatherSettings();
-      const wp0sv   = getSavedCol({ isWaypoint: true, isReturn: false, wpIndex: 0 }, 0, saved);
-      const startMs = wp0sv?.date
-        ? new Date(wp0sv.date + 'T00:00:00').getTime() + (parseInt(wp0sv.hour) || 0) * 3600000
-        : null;
-
-      // Map each outgoing waypoint to its sampled-array index
-      const wpSampIdx = wps.map((_, k) => {
-        const frac = Math.max(0, Math.min(1, wpCumDist[k] / fullTotalDistBuild));
-        return Math.round(frac * (sampledPts.length - 1));
-      });
-
-      // Get each waypoint's scheduled departure in hours relative to WP0 departure
-      const wpScheduledH = wps.map((_, k) => {
-        if (!startMs) return null;
-        const sv = getSavedCol({ isWaypoint: true, isReturn: false, wpIndex: k }, k, saved);
-        if (!sv?.date || sv?.hour == null) return null;
-        const wpMs = new Date(sv.date + 'T00:00:00').getTime() + (parseInt(sv.hour) || 0) * 3600000;
-        return (wpMs - startMs) / 3600000;
-      });
-
-      // Initial fatigue state (fresh start at WP0)
-      const { fatigue = true, restEveryH = 1.0 } = { ...DEFAULT_PACE_PARAMS, ...paceParams };
-      let state = {
-        movingH:   0,
-        fatH:      0,
-        nextRestH: (fatigue && restEveryH > 0) ? restEveryH : Infinity,
-      };
-      let globalElapsedH = 0;
-      const segTimes = [...cumTimes]; // copy; overwrite outgoing portion below
-
-      for (let seg = 0; seg < wps.length - 1; seg++) {
-        const si = wpSampIdx[seg];
-        const ei = wpSampIdx[seg + 1];
-        if (si >= ei) continue;
-
-        const segElevs     = sampledElevs.slice(si, ei + 1);
-        const segDistsBase = sampledDists[si];
-        const segDists     = sampledDists.slice(si, ei + 1).map(d => d - segDistsBase);
-
-        const { times: tSeg, finalState } =
-          computeSegmentTimesFromState(segElevs, segDists, speedActivity, paceParams, state);
-
-        for (let j = 0; j < tSeg.length; j++) {
-          segTimes[si + j] = globalElapsedH + tSeg[j];
-        }
-
-        const arrivalH        = globalElapsedH + tSeg[tSeg.length - 1];
-        const scheduledDepart = wpScheduledH[seg + 1];
-        const restH           = (scheduledDepart != null) ? Math.max(0, scheduledDepart - arrivalH) : 0;
-
-        if (restH > 0) {
-          state          = applyWaypointRecovery(finalState, restH, paceParams);
-          globalElapsedH = scheduledDepart;
-        } else {
-          state          = finalState;
-          globalElapsedH = arrivalH;
-        }
-      }
-      // Last outgoing waypoint
-      segTimes[wpSampIdx[wps.length - 1]] = globalElapsedH;
-      cumTimes = segTimes;
-    }
-    // ────────────────────────────────────────────────────────────────────────
   }
 
   /** Get elapsed hours for a given cumDistM (full-route metres). */
@@ -1411,29 +1531,81 @@ function buildWeatherPoints() {
     }
   }
 
-  // Round-trip: add return waypoints (reversed, excluding turning point)
-  // Each return wp shares lat/lng with its outgoing counterpart (same location, different time).
+  // Round-trip: mark return-leg interval points, add missing fallback midpoints,
+  // then add return waypoints (reversed, excluding turning point).
   if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
+    // Distance to the turnaround point (last outbound waypoint).
+    const oneWayDistM = wpCumDist[wps.length - 1];
+
+    // Speed/km modes: computeHourlyPoints / computeIntermediatePoints already
+    // produced return-leg interval points (they process the full round-trip
+    // route). Mark them so firstReturnIdx resolves at the turnaround, not at
+    // the first return waypoint further along the return leg.
+    all.forEach(pt => {
+      if (!pt.isWaypoint && (pt._cum ?? 0) > oneWayDistM) pt.isReturn = true;
+    });
+
+    // Fallback mode: outbound midpoints only span 0 → oneWayDistM. Mirror
+    // each one onto the return leg so both sides have equal interval density.
+    if (!speedIntervalMode && segmentIntervalKm === 0) {
+      const outboundMidpoints = all.filter(pt => !pt.isWaypoint);
+      outboundMidpoints.forEach(pt => {
+        const returnCumMid = totalDistM - pt._cum;
+        all.push({
+          label:      `↩ ${pt.label}`,
+          lat:        pt.lat,
+          lng:        pt.lng,
+          isWaypoint: false,
+          isReturn:   true,
+          _cum:       returnCumMid,
+          _elapsedH:  getElapsedH(returnCumMid),
+        });
+      });
+    }
+
+    // Return waypoints (reversed, excluding turning point).
     for (let i = wps.length - 2; i >= 0; i--) {
       const placeName = getPlaceName(wps[i][0], wps[i][1]);
       const outLabel = placeName || (i === 0 ? '起點' : `航點 ${i + 1}`);
-      // Mirror cumDist: return position = totalRouteDist − outgoingCum
       const returnCum = totalDistM - wpCumDist[i];
       all.push({
-        label: `↩ ${outLabel}`,
-        lat: wps[i][0],
-        lng: wps[i][1],
+        label:      `↩ ${outLabel}`,
+        lat:        wps[i][0],
+        lng:        wps[i][1],
         isWaypoint: true,
-        isReturn: true,
-        wpIndex: i,
-        _cum: returnCum,
-        _elapsedH: getElapsedH(returnCum),
+        isReturn:   true,
+        wpIndex:    i,
+        _cum:       returnCum,
+        _elapsedH:  getElapsedH(returnCum),
       });
     }
   }
 
   // Sort by position along route
   all.sort((a, b) => a._cum - b._cum);
+
+  // Relabel interval points as "n-t"
+  // n = preceding waypoint's wpIndex (0-based); t = elapsed time (segment or cumulative)
+  {
+    const fmtT = (h) => {
+      if (h <= 0) return '0';
+      const v = Math.round(h * 10) / 10;
+      return v % 1 === 0 ? String(v | 0) : v.toFixed(1);
+    };
+    let prevWpIdx      = 0;
+    let prevWpElapsedH = 0;
+    all.forEach(pt => {
+      if (pt.isWaypoint) {
+        prevWpIdx      = pt.wpIndex ?? 0;
+        prevWpElapsedH = pt._elapsedH || 0;
+      } else {
+        const displayH = perSegmentMode
+          ? (pt._elapsedH || 0) - prevWpElapsedH
+          : (pt._elapsedH || 0);
+        pt.label = `${prevWpIdx}-${fmtT(displayH)}`;
+      }
+    });
+  }
 
   // Deduplicate: same label → append (2), (3), …
   deduplicateLabels(all);
@@ -1470,6 +1642,25 @@ function renderWeatherPanel() {
   if (weatherPoints.length === 0) {
     container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
     return;
+  }
+
+  // Compute per-waypoint gradient colors (matching elevation chart) and apply
+  // to map markers + sidebar list so all views share the same teal→red palette.
+  {
+    const maxCumWp = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+    const colorById = {};
+    weatherPoints.forEach(p => {
+      if (!p.isWaypoint || p.isReturn) return;
+      const xFrac = Math.max(0, Math.min(1, (p._cum ?? 0) / maxCumWp));
+      const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+      colorById[p.wpIndex] = interpolateRouteColor(t);
+    });
+    const newColors = mapManager.waypoints.map((_, i) => colorById[i] || null);
+    if (newColors.every(c => c !== null) && newColors.length > 0) {
+      waypointGradColors = newColors;
+      mapManager.setWaypointColors(waypointGradColors);
+      updateWaypointList(mapManager.waypoints);
+    }
   }
 
   const saved = loadWeatherSettings();
@@ -1510,8 +1701,20 @@ function renderWeatherPanel() {
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
-    const elapsedBadge = (speedIntervalMode || segmentIntervalKm > 0) && pt._elapsedH > 0
-      ? `<span class="wt-elapsed-badge">${formatDuration(pt._elapsedH)}</span>`
+    let displayElapsedH = pt._elapsedH || 0;
+    if (perSegmentMode && displayElapsedH > 0) {
+      // Find the preceding waypoint's _elapsedH and show segment-relative time
+      let prevWpElapsed = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        if (weatherPoints[j]?.isWaypoint) {
+          prevWpElapsed = weatherPoints[j]._elapsedH || 0;
+          break;
+        }
+      }
+      displayElapsedH = displayElapsedH - prevWpElapsed;
+    }
+    const elapsedBadge = (speedIntervalMode || segmentIntervalKm > 0) && displayElapsedH > 0
+      ? `<span class="wt-elapsed-badge">${formatDuration(displayElapsedH)}</span>`
       : '';
 
     // Gradient position fraction (mirrors elevation chart logic)
@@ -1524,12 +1727,10 @@ function renderWeatherPanel() {
     if (!pt.isWaypoint)  thClass += ' wt-interval-col';
     if (i === firstReturnIdx) thClass += ' wt-return-start';
 
-    const labelStyle = pt.isWaypoint
-      ? `style="color:${gradColor}"`
-      : '';
+    const labelStyle = `style="color:${gradColor}"`;
     const thStyle = pt.isWaypoint
       ? `style="border-top:2px solid ${gradColor}40"`
-      : '';
+      : `style="border-top:2px solid ${gradColor}20"`;
 
     const locked = !pt.isWaypoint;
     html += `
@@ -1581,13 +1782,10 @@ function renderWeatherPanel() {
         }
       }
     } else {
-      cascadeIntervalTimes();
+      syncIntervalTimesFromWP();
     }
-    enforceTimeOrdering();
+    updateDateConstraints();
     saveWeatherSettings();
-    // In per-segment mode, waypoint time changes affect _elapsedH of interval
-    // points → rebuild weather points with updated rest/recovery times.
-    if (perSegmentMode) renderWeatherPanel();
   };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', onTimeChange)
@@ -1595,8 +1793,8 @@ function renderWeatherPanel() {
 
   // Initial cascade + enforce on first render
   if (speedIntervalMode) cascadeWeatherTimes();
-  else cascadeIntervalTimes();
-  enforceTimeOrdering();
+  else syncIntervalTimes();
+  updateDateConstraints();
 
   // Restore previously fetched weather data — read actual date/hour from DOM
   // (after cascade/enforce so keys match what was stored during the original fetch)
@@ -1643,9 +1841,17 @@ function renderWeatherPanel() {
     const labelEl = th.querySelector('.wt-col-label');
     if (labelEl) {
       labelEl.style.cursor = 'pointer';
-      labelEl.title = '單擊高亮 · 雙擊編輯名稱';
-      labelEl.addEventListener('click',    () => highlightPoint(colIdx));
-      labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startLabelEdit(labelEl, pt); });
+      // Guard: ignore clicks that originate from the inline edit input
+      labelEl.addEventListener('click', (e) => {
+        if (e.target.tagName === 'INPUT') return;
+        highlightPoint(colIdx);
+      });
+      if (pt.isWaypoint) {
+        labelEl.title = '單擊高亮 · 雙擊編輯名稱';
+        labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startLabelEdit(labelEl, pt); });
+      } else {
+        labelEl.title = '單擊高亮';
+      }
     }
   });
   container.querySelectorAll('.wt-data-cell').forEach(td => {
@@ -1838,14 +2044,15 @@ function updateElevationMarkers() {
   weatherPoints.forEach((pt, colIdx) => {
     if (pt.isWaypoint || segmentIntervalKm > 0 || speedIntervalMode) {
       let cumDistM = pt._cum || 0;
+      let dataIdx = null;
       if (sampledPts && sampledPts.length > 1 && fullTotalDist > 0) {
         // Map pt._cum fraction → sampled index (handles round-trip correctly since
         // fraction is monotonic and sampled indices match route order)
         const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDist));
-        const idx = Math.round(fraction * (sampledPts.length - 1));
-        cumDistM = sampledDists[idx] || 0;
+        dataIdx = Math.round(fraction * (sampledPts.length - 1));
+        cumDistM = sampledDists[dataIdx] || 0;
       }
-      markers.push({ cumDistM, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
+      markers.push({ cumDistM, dataIdx, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
     }
   });
   elevationProfile.setWaypointMarkers(markers);
@@ -1935,7 +2142,9 @@ async function init() {
         const packEl = document.getElementById('pace-pack-weight');
         const rawDisplay = parseFloat(flatEl?.value);
         if (flatEl && !isNaN(rawDisplay) && flatEl.value !== '') {
-          const currentKmh = paceUnit === 'shanhe' ? SHANHE_BASE / rawDisplay : rawDisplay;
+          const currentKmh = paceUnit === 'shanhe' ? SHANHE_BASE / rawDisplay
+            : paceUnit === 'minkm' ? 60 / rawDisplay
+            : rawDisplay;
           const body = parseFloat(bodyEl?.value) || 70;
           const pack = parseFloat(packEl?.value) || 0;
           const prevDefault = defaultSpeed(prevActivity, body, pack);
@@ -1944,6 +2153,8 @@ async function init() {
             const newKmh = +(currentKmh / prevDefault * newDefault).toFixed(2);
             const newDisplay = paceUnit === 'shanhe'
               ? (SHANHE_BASE / newKmh).toFixed(2)
+              : paceUnit === 'minkm'
+              ? (60 / newKmh).toFixed(1)
               : newKmh.toFixed(2);
             flatEl.value = newDisplay;
             paceParams = { ...paceParams, flatPaceKmH: newKmh };
@@ -2004,7 +2215,7 @@ async function init() {
   const paceFlatInput     = document.getElementById('pace-flat-input');
   const paceBodyWeight    = document.getElementById('pace-body-weight');
   const pacePackWeight    = document.getElementById('pace-pack-weight');
-  const paceFatigueEnable = document.getElementById('pace-fatigue-enable');
+  const paceFatigueLevelEl = document.getElementById('pace-fatigue-level');
   const paceRestRow       = document.getElementById('pace-rest-row');
   const paceRestEvery     = document.getElementById('pace-rest-every');
   const paceRestMinutes   = document.getElementById('pace-rest-minutes');
@@ -2012,9 +2223,15 @@ async function init() {
   const paceUnitSelect = document.getElementById('pace-unit-select');
 
   /** Convert km/h → displayed value in current unit */
-  const kmhToDisplay = (v) => paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2) : +v.toFixed(2);
+  const kmhToDisplay = (v) =>
+    paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2)
+    : paceUnit === 'minkm' ? +(60 / v).toFixed(1)
+    : +v.toFixed(2);
   /** Convert displayed value → km/h */
-  const displayToKmh = (v) => paceUnit === 'shanhe' ? SHANHE_BASE / v : v;
+  const displayToKmh = (v) =>
+    paceUnit === 'shanhe' ? SHANHE_BASE / v
+    : paceUnit === 'minkm' ? 60 / v
+    : v;
 
   /** Sync placeholder and input constraints to current unit */
   const updateFlatPlaceholder = () => {
@@ -2027,6 +2244,11 @@ async function init() {
       paceFlatInput.max       = '10';
       paceFlatInput.step      = '0.05';
       paceFlatInput.placeholder = (SHANHE_BASE / spdKmh).toFixed(2);
+    } else if (paceUnit === 'minkm') {
+      paceFlatInput.min       = '1';
+      paceFlatInput.max       = '120';
+      paceFlatInput.step      = '0.5';
+      paceFlatInput.placeholder = (60 / spdKmh).toFixed(1);
     } else {
       paceFlatInput.min       = '0.5';
       paceFlatInput.max       = '80';
@@ -2044,15 +2266,15 @@ async function init() {
     const storedKmh = paceParams.flatPaceKmH;
     paceFlatInput.value = storedKmh != null ? String(kmhToDisplay(storedKmh)) : '';
   }
-  if (paceBodyWeight)    paceBodyWeight.value     = paceParams.bodyWeightKg ?? 70;
-  if (pacePackWeight)    pacePackWeight.value     = paceParams.packWeightKg ?? 0;
-  if (paceFatigueEnable) paceFatigueEnable.checked = paceParams.fatigue ?? true;
-  if (paceRestEvery)     paceRestEvery.value      = paceParams.restEveryH ?? 1.0;
-  if (paceRestMinutes)   paceRestMinutes.value    = paceParams.restMinutes ?? 10;
+  if (paceBodyWeight)      paceBodyWeight.value      = paceParams.bodyWeightKg ?? 70;
+  if (pacePackWeight)      pacePackWeight.value      = paceParams.packWeightKg ?? 0;
+  if (paceFatigueLevelEl)  paceFatigueLevelEl.value  = paceParams.fatigueLevel ?? 'general';
+  if (paceRestEvery)       paceRestEvery.value       = paceParams.restEveryH ?? 1.0;
+  if (paceRestMinutes)     paceRestMinutes.value     = paceParams.restMinutes ?? 10;
 
-  // Show/hide pace-rest-row based on fatigue checkbox
+  // Show/hide pace-rest-row: hide only when fatigue is fully disabled
   const applyFatigueToggle = () => {
-    if (paceRestRow) paceRestRow.style.display = paceFatigueEnable?.checked ? '' : 'none';
+    if (paceRestRow) paceRestRow.style.display = (paceFatigueLevelEl?.value === 'none') ? 'none' : '';
   };
   applyFatigueToggle();
 
@@ -2067,11 +2289,11 @@ async function init() {
       : null;
     paceParams = {
       flatPaceKmH:  flatKmh,
-      bodyWeightKg: parseFloat(paceBodyWeight?.value)  || 70,
-      packWeightKg: parseFloat(pacePackWeight?.value)  || 0,
-      fatigue:      paceFatigueEnable?.checked ?? true,
-      restEveryH:   parseFloat(paceRestEvery?.value)   || 1.0,
-      restMinutes:  parseFloat(paceRestMinutes?.value) || 10,
+      bodyWeightKg: parseFloat(paceBodyWeight?.value)    || 70,
+      packWeightKg: parseFloat(pacePackWeight?.value)    || 0,
+      fatigueLevel: paceFatigueLevelEl?.value            || 'general',
+      restEveryH:   parseFloat(paceRestEvery?.value)     || 1.0,
+      restMinutes:  parseFloat(paceRestMinutes?.value)   || 10,
     };
     localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
     updateFlatPlaceholder();
@@ -2081,12 +2303,9 @@ async function init() {
     renderWeatherPanel();
   };
 
-  [paceFlatInput, paceBodyWeight, pacePackWeight, paceRestEvery, paceRestMinutes].forEach(el => {
+  [paceFlatInput, paceBodyWeight, pacePackWeight, paceRestEvery, paceRestMinutes, paceFatigueLevelEl].forEach(el => {
     if (el) el.addEventListener('change', onPaceParamChange);
   });
-  if (paceFatigueEnable) {
-    paceFatigueEnable.addEventListener('change', onPaceParamChange);
-  }
 
   // --- Pace unit toggle (km/h ↔ 上河速度) ---
   if (paceUnitSelect) {
@@ -2098,9 +2317,13 @@ async function init() {
       // Convert the currently displayed value to the new unit
       const rawDisplay = parseFloat(paceFlatInput?.value);
       if (!isNaN(rawDisplay) && paceFlatInput?.value !== '') {
-        const kmh = prevUnit === 'shanhe' ? SHANHE_BASE / rawDisplay : rawDisplay;
+        const kmh = prevUnit === 'shanhe' ? SHANHE_BASE / rawDisplay
+          : prevUnit === 'minkm' ? 60 / rawDisplay
+          : rawDisplay;
         const newDisplay = paceUnit === 'shanhe'
           ? (SHANHE_BASE / kmh).toFixed(2)
+          : paceUnit === 'minkm'
+          ? (60 / kmh).toFixed(1)
           : kmh.toFixed(2);
         if (paceFlatInput) paceFlatInput.value = newDisplay;
       }
@@ -2117,6 +2340,16 @@ async function init() {
       perSegmentMode = perSegmentEl.checked;
       localStorage.setItem(LS_PER_SEGMENT_KEY, perSegmentMode ? '1' : '0');
       renderWeatherPanel();
+    });
+  }
+
+  // --- Strict linear time checkbox ---
+  const strictLinearEl = document.getElementById('strict-linear-enable');
+  if (strictLinearEl) {
+    strictLinearEl.checked = strictLinearMode;
+    strictLinearEl.addEventListener('change', () => {
+      strictLinearMode = strictLinearEl.checked;
+      localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
     });
   }
 

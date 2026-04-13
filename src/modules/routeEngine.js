@@ -62,6 +62,9 @@ export class RouteEngine {
         const feature = data.features[0];
         // BRouter geojson coordinates are [lng, lat, elevation?]
         const coords = feature.geometry.coordinates.map((c) => [c[1], c[0]]);
+        // Anchor route endpoints exactly at the original waypoints (BRouter snaps to roads)
+        if (coords.length > 0) coords[0] = [...waypoints[0]];
+        if (coords.length > 1) coords[coords.length - 1] = [...waypoints[waypoints.length - 1]];
         const distance = feature.properties['track-length'] || 0;
         const duration = feature.properties['total-time'] || 0;
 
@@ -89,11 +92,13 @@ export class RouteEngine {
           throw new Error('No route found');
         }
 
-        rawRoutes = data.routes.map((r) => ({
-          coords: r.geometry.coordinates.map((c) => [c[1], c[0]]),
-          osrmDistance: r.distance,
-          osrmDuration: r.duration,
-        }));
+        rawRoutes = data.routes.map((r) => {
+          const coords = r.geometry.coordinates.map((c) => [c[1], c[0]]);
+          // Anchor route endpoints exactly at the original waypoints (OSRM snaps to roads)
+          if (coords.length > 0) coords[0] = [...waypoints[0]];
+          if (coords.length > 1) coords[coords.length - 1] = [...waypoints[waypoints.length - 1]];
+          return { coords, osrmDistance: r.distance, osrmDuration: r.duration };
+        });
       } catch (err) {
         console.warn('OSRM routing failed, using fallback:', err.message);
         rawRoutes = [{ coords: [...waypoints], osrmDistance: 0, osrmDuration: 0 }];

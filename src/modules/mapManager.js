@@ -50,6 +50,7 @@ export class MapManager {
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
+    this.waypointColors = [];  // Gradient color strings per waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
     this.gradientPolylines = []; // Gradient chunks for selected route
     this.selectedRouteIndex = 0;
@@ -106,9 +107,15 @@ export class MapManager {
       marker.getElement()?.classList.remove('is-dragging');
     };
 
-    // Desktop: right-click / context menu → Leaflet built-in drag
+    // Desktop: right-click / context menu → Leaflet built-in drag.
+    // Guard: on mobile Leaflet fires a synthetic contextmenu during a long-press
+    // (before our 500ms timer). Do NOT call _enableDrag() then — enabling
+    // Leaflet's built-in drag mid-touch leaves the start position undefined and
+    // causes the marker to jump off-screen (same problem described in the touch
+    // handler below). The manual touch-drag handler will activate at 500ms.
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
+      if (_longPressTimer !== null || _dragModeActive) return;
       _enableDrag();
     });
 
@@ -165,22 +172,57 @@ export class MapManager {
       document.addEventListener('mouseup', cancelLP);
     });
 
-    // Touch: long-press (500ms) → Leaflet built-in drag
+    // Touch: long-press (500ms) → manual drag (mirrors desktop handler).
+    // We do NOT use marker.dragging.enable() here because Leaflet's built-in
+    // drag needs a touchstart to anchor its start point; enabling it mid-touch
+    // (500ms after the original touchstart) leaves the start position undefined,
+    // causing the marker to jump off-screen on the first touchmove.
     let _longPressTimer = null;
     let _touchStartX = 0, _touchStartY = 0;
     marker.on('touchstart', (e) => {
-      const t = e.originalEvent.touches[0];
-      _touchStartX = t.clientX;
-      _touchStartY = t.clientY;
+      if (_dragModeActive) return;
+      const touch = e.originalEvent.touches[0];
+      _touchStartX = touch.clientX;
+      _touchStartY = touch.clientY;
+
       _longPressTimer = setTimeout(() => {
-        if (!_dragModeActive) _enableDrag();
+        _longPressTimer = null;
+        _dragModeActive = true;
+        marker.getElement()?.classList.add('is-dragging');
+        if (navigator.vibrate) navigator.vibrate(40);
+        this.map.dragging.disable();
+
+        const onTouchMove = (ev) => {
+          ev.preventDefault();
+          const t = ev.touches[0];
+          // touch objects expose clientX/clientY, same as mouse events,
+          // so mouseEventToLatLng works here too.
+          marker.setLatLng(this.map.mouseEventToLatLng(t));
+        };
+        const onTouchEnd = () => {
+          _dragModeActive = false;
+          _justDragged = true;
+          setTimeout(() => { _justDragged = false; }, 150);
+          marker.getElement()?.classList.remove('is-dragging');
+          this.map.dragging.enable();
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', onTouchEnd);
+          const pos = marker.getLatLng();
+          const idx = this.waypointMarkers.indexOf(marker);
+          if (idx >= 0) {
+            this.waypoints[idx] = [pos.lat, pos.lng];
+            this.onWaypointChange(this.waypoints);
+          }
+        };
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        document.addEventListener('touchend', onTouchEnd);
       }, 500);
     });
     marker.on('touchmove', (e) => {
       if (_longPressTimer) {
-        const t = e.originalEvent.touches[0];
-        const dx = t.clientX - _touchStartX;
-        const dy = t.clientY - _touchStartY;
+        const touch = e.originalEvent.touches[0];
+        const dx = touch.clientX - _touchStartX;
+        const dy = touch.clientY - _touchStartY;
         if (dx * dx + dy * dy > 64) {
           clearTimeout(_longPressTimer);
           _longPressTimer = null;
@@ -188,8 +230,10 @@ export class MapManager {
       }
     });
     marker.on('touchend', () => {
-      clearTimeout(_longPressTimer);
-      _longPressTimer = null;
+      if (_longPressTimer) {
+        clearTimeout(_longPressTimer);
+        _longPressTimer = null;
+      }
     });
 
     // Click/tap: cancel drag mode; on normal click → notify selection
@@ -260,11 +304,18 @@ export class MapManager {
     if (index < 0 || index >= this.waypointMarkers.length) return;
     this.waypointWeather[index] = emoji;
     this.waypointMarkers[index].setIcon(this._createIcon(index));
+    this._applyColorToMarker(this.waypointMarkers[index], index);
   }
 
   clearWaypointWeather() {
     this.waypointWeather = [];
-    this.waypointMarkers.forEach((marker, i) => marker.setIcon(this._createIcon(i)));
+    this._updateMarkerIcons();
+  }
+
+  /** Set gradient colors (one per waypoint) so icons match the elevation profile. */
+  setWaypointColors(colors) {
+    this.waypointColors = colors || [];
+    this._updateMarkerIcons();
   }
 
   /**
@@ -508,7 +559,19 @@ export class MapManager {
   _updateMarkerIcons() {
     this.waypointMarkers.forEach((marker, i) => {
       marker.setIcon(this._createIcon(i));
+      this._applyColorToMarker(marker, i);
     });
+  }
+
+  /** Apply the stored gradient color to a marker's DOM element. */
+  _applyColorToMarker(marker, index) {
+    const color = this.waypointColors[index];
+    if (!color) return;
+    const el = marker.getElement();
+    if (el) {
+      el.style.background = color;
+      el.style.setProperty('box-shadow', `0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${color}55`);
+    }
   }
 
   _bindRouteHoverEvents(polyline) {

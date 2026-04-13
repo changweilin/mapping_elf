@@ -184,10 +184,22 @@ export class ElevationProfile {
         const totalM = self.distances[self.distances.length - 1] || 1;
 
         markers.forEach((m) => {
-          const xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
-          const xPx = left + xFrac * (right - left);
-          const elev = self._interpolateElevAtCumM(m.cumDistM);
-          const yPx = scales.y.getPixelForValue(elev);
+          // Use Chart.js-rendered pixel coordinates so the dot sits exactly
+          // on the elevation curve (avoids category-scale vs distance mismatch).
+          let xPx, yPx, xFrac;
+          const meta = chart.getDatasetMeta(0);
+          const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
+          if (ptMeta) {
+            xPx = ptMeta.x;
+            yPx = ptMeta.y;
+            xFrac = (right > left) ? (xPx - left) / (right - left) : 0;
+          } else {
+            // Fallback: distance-fraction positioning
+            xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
+            xPx = left + xFrac * (right - left);
+            const elev = self._interpolateElevAtCumM(m.cumDistM);
+            yPx = scales.y.getPixelForValue(elev);
+          }
 
           const tColor = self.isRoundTrip ? 1 - Math.abs(2 * xFrac - 1) : xFrac;
           const rgb = interpolateRouteColorRgb(tColor);
