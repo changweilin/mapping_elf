@@ -1761,10 +1761,15 @@ function renderWeatherPanel() {
     if (!pt.isWaypoint) thClass += ' wt-interval-col';
     if (i === firstReturnIdx) thClass += ' wt-return-start';
 
-    const labelStyle = `style="color:${gradColor}"`;
+    const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
+
+    const labelStyle = pt.isWaypoint
+      ? `style="color:${gradColor}; font-weight: bold;"`
+      : `style="color:${rgba(0.7)};"`;
+
     const thStyle = pt.isWaypoint
-      ? `style="border-top:2px solid ${gradColor}40"`
-      : `style="border-top:2px solid ${gradColor}20"`;
+      ? `style="border-top: 3px solid ${rgba(0.8)}; background: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
+      : `style="border-top: 2px solid ${rgba(0.2)};"`;
 
     const locked = !pt.isWaypoint;
     html += `
@@ -1784,7 +1789,8 @@ function renderWeatherPanel() {
     weatherPoints.forEach((pt, i) => {
       const returnClass = pt.isReturn ? ' wt-return-col' : '';
       const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
-      html += `<td class="wt-data-cell wt-td${returnClass}${startClass}" data-col="${i}" data-key="${row.key}">—</td>`;
+      const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
+      html += `<td class="wt-data-cell wt-td${returnClass}${startClass}" data-col="${i}" data-key="${row.key}"${cellStyle}>—</td>`;
     });
     html += '</tr>';
   });
@@ -1962,7 +1968,7 @@ async function fetchAllWeatherData() {
 
     WEATHER_ROWS.forEach(row => {
       const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-      if (cell) { cell.textContent = '...'; cell.className = 'wt-data-cell wt-td loading'; }
+      if (cell) { cell.textContent = '...'; cell.classList.remove('error'); cell.classList.add('loading'); }
     });
 
     try {
@@ -1975,7 +1981,7 @@ async function fetchAllWeatherData() {
         const val = getCellValue(data, row.key);
         cells[row.key] = val;
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) { cell.textContent = val; cell.className = 'wt-data-cell wt-td'; }
+        if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
       });
       saveWeatherCells(getSemanticKey(pt, i), cells);
       // Map weather icon only on outgoing waypoints (return shares the same marker)
@@ -1985,7 +1991,7 @@ async function fetchAllWeatherData() {
       console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
       WEATHER_ROWS.forEach(row => {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) { cell.textContent = '—'; cell.className = 'wt-data-cell wt-td error'; }
+        if (cell) { cell.textContent = '—'; cell.classList.remove('loading'); cell.classList.add('error'); }
       });
     }
 
