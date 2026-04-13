@@ -43,8 +43,8 @@ const GRADIENT_CHUNKS = 80;
 export class MapManager {
   constructor(containerId, onWaypointChange) {
     this.onWaypointChange = onWaypointChange;
-    this.onRouteSelect    = null; // callback(index)
-    this.onRouteHover     = null; // callback(lat, lng) | callback(null, null)
+    this.onRouteSelect = null; // callback(index)
+    this.onRouteHover = null; // callback(lat, lng) | callback(null, null)
     this.onWaypointSelect = null; // callback(wpIndex)
     this.isRoundTrip = false;
     this.waypoints = [];
@@ -85,7 +85,7 @@ export class MapManager {
   addWaypoint(lat, lng) {
     this.waypoints.push([lat, lng]);
     const icon = this._createIcon(this.waypoints.length - 1);
-    
+
     const marker = L.marker([lat, lng], {
       icon,
       draggable: false,
@@ -490,16 +490,27 @@ export class MapManager {
     this.clearAllRoutes();
   }
 
-  showHoverMarker(lat, lng) {
+  showHoverMarker(lat, lng, color = null) {
+    const styleStr = color ? `background-color: ${color}; box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 8px ${color};` : '';
+    const html = color ? `<div style="width:100%; height:100%; border-radius:50%; ${styleStr}"></div>` : '';
     if (!this.hoverMarker) {
       const icon = L.divIcon({
-        className: 'elevation-hover-marker',
+        className: color ? '' : 'elevation-hover-marker',
+        html: html,
         iconSize: [14, 14],
         iconAnchor: [7, 7],
       });
       this.hoverMarker = L.marker([lat, lng], { icon, interactive: false }).addTo(this.map);
     } else {
       this.hoverMarker.setLatLng([lat, lng]);
+      if (color) {
+        this.hoverMarker.setIcon(L.divIcon({
+          className: '',
+          html: html,
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+        }));
+      }
     }
   }
 
@@ -528,7 +539,7 @@ export class MapManager {
       (pos) => {
         this.map.setView([pos.coords.latitude, pos.coords.longitude], 14);
       },
-      () => {}
+      () => { }
     );
   }
 

@@ -78,7 +78,7 @@ const mapManager = new MapManager('map', onWaypointsChanged);
 const elevationProfile = new ElevationProfile(
   'elevation-chart',
   'chart-empty',
-  (lat, lng) => mapManager.showHoverMarker(lat, lng),
+  (lat, lng, color) => mapManager.showHoverMarker(lat, lng, color),
   (colIdx) => highlightPoint(colIdx)
 );
 
@@ -116,7 +116,13 @@ mapManager.onRouteHover = (lat, lng) => {
     if (d < minD) { minD = d; closestIdx = i; }
   }
   elevationProfile.showCrosshairAtIndex(closestIdx);
-  mapManager.showHoverMarker(lat, lng);
+
+  const maxM = elevationProfile.distances[elevationProfile.distances.length - 1] || 1;
+  const cumM = elevationProfile.distances[closestIdx] || 0;
+  const xFrac = Math.max(0, Math.min(1, cumM / maxM));
+  const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+  const color = interpolateRouteColor(t);
+  mapManager.showHoverMarker(lat, lng, color);
 };
 
 // =========== DOM Elements ===========
@@ -1997,15 +2003,31 @@ function highlightWeatherColumn(colIdx) {
   if (!container) return;
 
   container.querySelectorAll('.wt-col-highlight')
-    .forEach(el => el.classList.remove('wt-col-highlight'));
+    .forEach(el => {
+      el.classList.remove('wt-col-highlight');
+      el.style.removeProperty('background-color');
+    });
+
+  const pt = weatherPoints[colIdx];
+  let bgStr = '';
+  if (pt) {
+    const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
+    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+    bgStr = interpolateRouteColor(t).replace('rgb', 'rgba').replace(')', ', 0.15)');
+  }
 
   const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
   if (th) {
     th.classList.add('wt-col-highlight');
+    if (bgStr) th.style.setProperty('background-color', bgStr, 'important');
     th.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
   }
   container.querySelectorAll(`[data-col="${colIdx}"]`)
-    .forEach(td => td.classList.add('wt-col-highlight'));
+    .forEach(td => {
+      td.classList.add('wt-col-highlight');
+      if (bgStr) td.style.setProperty('background-color', bgStr, 'important');
+    });
 }
 
 /**
@@ -2017,23 +2039,8 @@ function highlightPoint(colIdx) {
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
   const pt = weatherPoints[colIdx];
 
-  // 1. Weather table — highlight every column at the same lat/lng
-  const container = document.getElementById('weather-table-container');
-  if (container) {
-    container.querySelectorAll('.wt-col-highlight')
-      .forEach(el => el.classList.remove('wt-col-highlight'));
-    weatherPoints.forEach((p, i) => {
-      if (Math.abs(p.lat - pt.lat) < 0.0002 && Math.abs(p.lng - pt.lng) < 0.0002) {
-        const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
-        if (th) {
-          th.classList.add('wt-col-highlight');
-          if (i === colIdx) th.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-        }
-        container.querySelectorAll(`[data-col="${i}"]`)
-          .forEach(td => td.classList.add('wt-col-highlight'));
-      }
-    });
-  }
+  // 1. Weather table — highlight exactly the clicked column
+  highlightWeatherColumn(colIdx);
 
   // 2. Elevation chart — crosshair at this column's route position
   const sampledPts = elevationProfile.points;
@@ -2050,11 +2057,16 @@ function highlightPoint(colIdx) {
   }
 
   // 3. Map — highlight the physical waypoint marker (only one per wpIndex)
-  if (pt.isWaypoint && pt.wpIndex !== undefined) {
+  if (pt.isWaypoint && pt.wpIndex !== undefined && !pt.isReturn) {
     mapManager.highlightWaypoint(pt.wpIndex);
+    mapManager.clearHoverMarker();
   } else {
     mapManager.clearWaypointHighlight();
-    mapManager.showHoverMarker(pt.lat, pt.lng);
+    const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
+    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+    const color = interpolateRouteColor(t);
+    mapManager.showHoverMarker(pt.lat, pt.lng, color);
   }
 
   // 4. Side panel — highlight the outgoing waypoint item row
@@ -2071,7 +2083,10 @@ function highlightPoint(colIdx) {
 
 /** Remove all cross-view highlights. */
 function clearAllHighlights() {
-  document.querySelectorAll('.wt-col-highlight').forEach(el => el.classList.remove('wt-col-highlight'));
+  document.querySelectorAll('.wt-col-highlight').forEach(el => {
+    el.classList.remove('wt-col-highlight');
+    el.style.removeProperty('background-color');
+  });
   document.querySelectorAll('.waypoint-item.wp-highlight').forEach(el => el.classList.remove('wp-highlight'));
   mapManager.clearWaypointHighlight();
   elevationProfile.hideCrosshair();
