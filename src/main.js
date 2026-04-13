@@ -722,6 +722,20 @@ function enforceTimeOrdering() {
     const di     = heads[i].querySelector('.wt-date-input');
     const hs     = heads[i].querySelector('.wt-time-select');
 
+    // UX Improvement: If the user manually chooses a time that is earlier than
+    // the previous point on the SAME day, automatically bump the date by 1
+    // to maintain order without overriding their chosen time.
+    const prevDi = heads[i - 1].querySelector('.wt-date-input');
+    const prevDateVal = prevDi?.value || '';
+    const curDateVal  = di?.value || '';
+    if (prevDateVal && curDateVal === prevDateVal) {
+      const { date: nextDay } = addHoursToDateTime(curDateVal, 0, 24);
+      if (di) {
+        di.value = nextDay;
+        if (toMs(heads[i]) >= prevMs) continue;
+      }
+    }
+
     // Violation: try the pace-derived time first (col-0 + _elapsedH).
     // This keeps the waypoint aligned with the actual route timing.
     if (col0Date && pt._elapsedH) {
