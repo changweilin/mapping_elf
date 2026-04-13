@@ -193,11 +193,18 @@ export class MapManager {
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
 
-        const onMove = (ev) => marker.setLatLng(this.map.mouseEventToLatLng(ev));
+        this._startRubberBand(marker);
+
+        const onMove = (ev) => {
+          const latlng = this.map.mouseEventToLatLng(ev);
+          marker.setLatLng(latlng);
+          this._updateRubberBand(latlng);
+        };
         const onUp = () => {
           _dragModeActive = false;
           _justDragged = true;
           this._blockMapClick();
+          this._stopRubberBand();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           this.map.dragging.enable();
@@ -304,8 +311,17 @@ export class MapManager {
       if (idx >= 0) this.onWaypointSelect?.(idx);
     });
 
+    // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
+    marker.on('dragstart', () => {
+      this._startRubberBand(marker);
+    });
+    marker.on('drag', (e) => {
+      this._updateRubberBand(e.target.getLatLng());
+    });
+
     marker.on('dragend', (e) => {
       this._blockMapClick();
+      this._stopRubberBand();
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
       this.waypoints[idx] = [pos.lat, pos.lng];
