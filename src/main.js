@@ -726,34 +726,30 @@ function enforceTimeOrdering() {
     // the previous point on the SAME day, automatically bump the date by 1
     // to maintain order without overriding their chosen time.
     const prevDi = heads[i - 1].querySelector('.wt-date-input');
+    const prevHs = heads[i - 1].querySelector('.wt-time-select');
     const prevDateVal = prevDi?.value || '';
     const curDateVal  = di?.value || '';
     if (prevDateVal && curDateVal === prevDateVal) {
       const { date: nextDay } = addHoursToDateTime(curDateVal, 0, 24);
       if (di) {
         di.value = nextDay;
+        // Re-check: if bumping fixed it, we're done with this column.
         if (toMs(heads[i]) >= prevMs) continue;
       }
     }
 
-    // Violation: try the pace-derived time first (col-0 + _elapsedH).
-    // This keeps the waypoint aligned with the actual route timing.
-    if (col0Date && pt._elapsedH) {
-      const { date: paceDate, hour: paceHour } = addHoursToDateTime(col0Date, col0Hour, pt._elapsedH);
-      const paceMs = new Date(paceDate + 'T00:00:00').getTime() + paceHour * 3600000;
-      if (paceMs >= prevMs) {
-        if (di) di.value = paceDate;
-        if (hs) hs.value = String(paceHour);
-        continue;
-      }
-    }
+    // Violation: fix the time to be at least (Predecessor + Pace Duration).
+    // This ensures physical realism and strict chronological order.
+    const prevPt = weatherPoints[i - 1];
+    const prevHour = parseInt(prevHs?.value ?? '0');
+    const deltaH   = (pt._elapsedH || 0) - (prevPt._elapsedH || 0);
 
-    // Fallback: pace time itself is too early (waypoints out of order) —
-    // reset to predecessor's date+time as the minimum valid state.
-    const prevDi = heads[i - 1].querySelector('.wt-date-input');
-    const prevHs = heads[i - 1].querySelector('.wt-time-select');
-    if (di && prevDi?.value)         di.value = prevDi.value;
-    if (hs && prevHs?.value != null) hs.value = prevHs.value;
+    // If deltaH < 0 (should not happen with sorted _cum), use 0.
+    const safeDeltaH = Math.max(0, deltaH);
+    const { date: fixDate, hour: fixHour } = addHoursToDateTime(prevDateVal, prevHour, safeDeltaH);
+
+    if (di) di.value = fixDate;
+    if (hs) hs.value = String(fixHour);
   }
 }
 
