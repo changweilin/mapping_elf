@@ -1531,23 +1531,52 @@ function buildWeatherPoints() {
     }
   }
 
-  // Round-trip: add return waypoints (reversed, excluding turning point)
-  // Each return wp shares lat/lng with its outgoing counterpart (same location, different time).
+  // Round-trip: mark return-leg interval points, add missing fallback midpoints,
+  // then add return waypoints (reversed, excluding turning point).
   if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
+    // Distance to the turnaround point (last outbound waypoint).
+    const oneWayDistM = wpCumDist[wps.length - 1];
+
+    // Speed/km modes: computeHourlyPoints / computeIntermediatePoints already
+    // produced return-leg interval points (they process the full round-trip
+    // route). Mark them so firstReturnIdx resolves at the turnaround, not at
+    // the first return waypoint further along the return leg.
+    all.forEach(pt => {
+      if (!pt.isWaypoint && (pt._cum ?? 0) > oneWayDistM) pt.isReturn = true;
+    });
+
+    // Fallback mode: outbound midpoints only span 0 → oneWayDistM. Mirror
+    // each one onto the return leg so both sides have equal interval density.
+    if (!speedIntervalMode && segmentIntervalKm === 0) {
+      const outboundMidpoints = all.filter(pt => !pt.isWaypoint);
+      outboundMidpoints.forEach(pt => {
+        const returnCumMid = totalDistM - pt._cum;
+        all.push({
+          label:      `↩ ${pt.label}`,
+          lat:        pt.lat,
+          lng:        pt.lng,
+          isWaypoint: false,
+          isReturn:   true,
+          _cum:       returnCumMid,
+          _elapsedH:  getElapsedH(returnCumMid),
+        });
+      });
+    }
+
+    // Return waypoints (reversed, excluding turning point).
     for (let i = wps.length - 2; i >= 0; i--) {
       const placeName = getPlaceName(wps[i][0], wps[i][1]);
       const outLabel = placeName || (i === 0 ? '起點' : `航點 ${i + 1}`);
-      // Mirror cumDist: return position = totalRouteDist − outgoingCum
       const returnCum = totalDistM - wpCumDist[i];
       all.push({
-        label: `↩ ${outLabel}`,
-        lat: wps[i][0],
-        lng: wps[i][1],
+        label:      `↩ ${outLabel}`,
+        lat:        wps[i][0],
+        lng:        wps[i][1],
         isWaypoint: true,
-        isReturn: true,
-        wpIndex: i,
-        _cum: returnCum,
-        _elapsedH: getElapsedH(returnCum),
+        isReturn:   true,
+        wpIndex:    i,
+        _cum:       returnCum,
+        _elapsedH:  getElapsedH(returnCum),
       });
     }
   }
