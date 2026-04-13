@@ -107,9 +107,15 @@ export class MapManager {
       marker.getElement()?.classList.remove('is-dragging');
     };
 
-    // Desktop: right-click / context menu → Leaflet built-in drag
+    // Desktop: right-click / context menu → Leaflet built-in drag.
+    // Guard: on mobile Leaflet fires a synthetic contextmenu during a long-press
+    // (before our 500ms timer). Do NOT call _enableDrag() then — enabling
+    // Leaflet's built-in drag mid-touch leaves the start position undefined and
+    // causes the marker to jump off-screen (same problem described in the touch
+    // handler below). The manual touch-drag handler will activate at 500ms.
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
+      if (_longPressTimer !== null || _dragModeActive) return;
       _enableDrag();
     });
 
