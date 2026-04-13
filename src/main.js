@@ -1749,29 +1749,20 @@ function buildWeatherPoints() {
     sampledPts.length > 1 &&
     sampledElevs.length > 1;
 
-  if (
-    usePace ||
-    (segmentIntervalKm > 0 && sampledPts && sampledPts.length > 1)
-  ) {
-    // Cumulative mode or distance-interval mode (base times)
-    cumTimes = computeCumulativeTimes(
-      sampledElevs,
-      sampledDists,
-      speedActivity,
-      paceParams,
-    );
-  }
-
   if (usePace && perSegmentMode) {
     // Per-segment reset mode
     let state = null;
     let totalElapsedH = 0;
+
+    // 【修正重點】建立統一的時間表陣列，讓中繼點能對齊分段模式的時間
+    cumTimes = new Array(sampledDists.length).fill(0);
+
     for (let i = 0; i < wps.length; i++) {
       waypointElapsedTimes[i] = totalElapsedH;
 
       if (i < wps.length - 1) {
         const s = wpSampledIdx[i];
-        const e = wpSampledIdx[i + 1];
+        const e = wpSampledIdx[i + 1] ?? sampledPts.length - 1; // 防呆保護
         if (e > s) {
           const segElevs = sampledElevs.slice(s, e + 1);
           const segDists = sampledDists
@@ -1784,6 +1775,11 @@ function buildWeatherPoints() {
             paceParams,
             state,
           );
+
+          // 將分段計算出的時間縫合進全局的 cumTimes 中，解決時間倒流問題
+          for (let k = 0; k < times.length; k++) {
+            cumTimes[s + k] = totalElapsedH + times[k];
+          }
 
           // Generate 1-hour interval points relative to this waypoint
           let nextSegH = 1.0;
@@ -1818,6 +1814,20 @@ function buildWeatherPoints() {
         }
       }
     }
+    // 確保最後一個點的時間有被正確寫入
+    const lastS = wpSampledIdx[wps.length - 1];
+    if (lastS !== undefined) cumTimes[lastS] = totalElapsedH;
+  } else if (
+    usePace ||
+    (segmentIntervalKm > 0 && sampledPts && sampledPts.length > 1)
+  ) {
+    // Cumulative mode or distance-interval mode (base times)
+    cumTimes = computeCumulativeTimes(
+      sampledElevs,
+      sampledDists,
+      speedActivity,
+      paceParams,
+    );
   }
 
   const sampledTotalDistM = sampledDists[sampledDists.length - 1] || 0;
