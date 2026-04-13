@@ -82,10 +82,16 @@ Call after `renderWeatherPanel()` and after any change to col-0's date/time.
 Enforces non-decreasing date/time across columns, **waypoint columns only**.
 
 On violation (user moved a waypoint's time earlier than predecessor):
-- Keep the user's hour as-is
-- Add **+1 day** to the date (do NOT silently revert the time)
+- Reset the column to the predecessor's date **and** time (minimum valid state)
+- The date is never bumped to +1 day — that would change the date unexpectedly
 
 Interval columns are excluded — their ordering is guaranteed by the cascade.
+
+## `updateDateConstraints()`
+
+Sets the `min` attribute on each waypoint date input so the browser's date picker grays out dates that would violate strict linear ordering. No-op when `strictLinearMode` is off.
+
+Call after `syncIntervalTimes()` on first render and after every `onTimeChange`.
 
 ## `shiftAllDates()`
 

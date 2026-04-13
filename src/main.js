@@ -690,8 +690,9 @@ function cascadeIntervalTimes(fromWP = perSegmentMode) {
 /**
  * Enforce non-decreasing time order across waypoint columns only.
  * Interval points are managed by cascadeIntervalTimes() and skipped here.
- * When a waypoint column is earlier than its predecessor, keep the user's
- * chosen hour but add +1 day so the trip stays chronologically consistent.
+ * When a waypoint column is earlier than its predecessor, reset it to the
+ * predecessor's date+time (the minimum valid state) so the date never
+ * jumps unexpectedly.
  */
 function enforceTimeOrdering() {
   if (!strictLinearMode) return;
@@ -712,20 +713,35 @@ function enforceTimeOrdering() {
     if (!pt?.isWaypoint) continue; // Interval points are handled by cascade
 
     const prevMs = toMs(heads[i - 1]);
-    let   curMs  = toMs(heads[i]);
+    const curMs  = toMs(heads[i]);
     if (curMs >= prevMs) continue;
 
-    // Violation: waypoint is earlier than the previous column.
-    // Keep the user's chosen hour; bump the date forward until it is ≥ prev.
-    const di = heads[i].querySelector('.wt-date-input');
-    if (di && di.value) {
-      const d = new Date(di.value + 'T12:00:00');
-      while (curMs < prevMs) {
-        d.setDate(d.getDate() + 1);
-        curMs += 86400000;
-      }
-      di.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    }
+    // Violation: reset this waypoint to the predecessor's date+time.
+    const di     = heads[i].querySelector('.wt-date-input');
+    const hs     = heads[i].querySelector('.wt-time-select');
+    const prevDi = heads[i - 1].querySelector('.wt-date-input');
+    const prevHs = heads[i - 1].querySelector('.wt-time-select');
+    if (di && prevDi?.value)    di.value = prevDi.value;
+    if (hs && prevHs?.value != null) hs.value = prevHs.value;
+  }
+}
+
+/**
+ * Set the `min` attribute on each waypoint date input so the browser's
+ * date picker grays out dates that would violate strict linear ordering.
+ * No-op when strictLinearMode is off.
+ */
+function updateDateConstraints() {
+  if (!strictLinearMode) return;
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const heads = Array.from(container.querySelectorAll('.wt-col-head'));
+  for (let i = 1; i < heads.length; i++) {
+    const pt = weatherPoints[i];
+    if (!pt?.isWaypoint) continue;
+    const prevDi = heads[i - 1].querySelector('.wt-date-input');
+    const di     = heads[i].querySelector('.wt-date-input');
+    if (di && prevDi?.value) di.min = prevDi.value;
   }
 }
 
@@ -1722,6 +1738,7 @@ function renderWeatherPanel() {
     } else {
       syncIntervalTimesFromWP();
     }
+    updateDateConstraints();
     saveWeatherSettings();
   };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
@@ -1731,6 +1748,7 @@ function renderWeatherPanel() {
   // Initial cascade + enforce on first render
   if (speedIntervalMode) cascadeWeatherTimes();
   else syncIntervalTimes();
+  updateDateConstraints();
 
   // Restore previously fetched weather data — read actual date/hour from DOM
   // (after cascade/enforce so keys match what was stored during the original fetch)
