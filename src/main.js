@@ -1488,7 +1488,18 @@ function buildWeatherPoints() {
 
   if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     // Speed mode: intermediate points every 1 hour of travel time
-    const hourlyPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0, paceParams);
+    let wpTimes = null;
+    if (perSegmentMode) {
+      const allWpCumDists = [...wpCumDist];
+      if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
+        for (let i = wps.length - 2; i >= 0; i--) {
+          allWpCumDists.push(totalDistM - wpCumDist[i]);
+        }
+      }
+      wpTimes = allWpCumDists.map(cum => getElapsedH(cum));
+    }
+
+    const hourlyPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0, paceParams, wpTimes);
     hourlyPts.forEach((pt) => {
       const fraction = pt.cumDistM / (sampledDists[sampledDists.length - 1] || 1);
       const mappedCum = fraction * fullTotalDistBuild;
@@ -1618,7 +1629,8 @@ function buildWeatherPoints() {
         const displayH = perSegmentMode
           ? (pt._elapsedH || 0) - prevWpElapsedH
           : (pt._elapsedH || 0);
-        pt.label = `${prevWpIdx}-${fmtT(displayH)}`;
+        const prefix = pt.isReturn ? `r${prevWpIdx}` : `${prevWpIdx}`;
+        pt.label = `${prefix}-${fmtT(displayH)}`;
       }
     });
   }
