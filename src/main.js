@@ -45,6 +45,7 @@ const LS_PACE_PARAMS_KEY = 'mappingElf_paceParams';
 const LS_PER_SEGMENT_KEY = 'mappingElf_perSegment';
 const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
+const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 
 /**
  * 上河速度 base: S=1.0 corresponds to 3.0 km/h on flat terrain.
@@ -62,6 +63,7 @@ let speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
 let strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
+let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'wind';
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -948,6 +950,35 @@ function importGpx(e) {
   gpxFileInput.value = '';
 }
 
+// =========== Windy URL Builder ===========
+
+function buildWindyUrl(lat, lng) {
+  const zoom = Math.round(mapManager.map.getZoom());
+  const latF = lat.toFixed(3);
+  const lngF = lng.toFixed(3);
+
+  const PATH_LAYERS = {
+    wind:       { path: '/wind',      query: 'satellite' },
+    meteogram:  { path: '/meteogram', query: 'satellite' },
+    airgram:    { path: '/airgram',   query: 'satellite' },
+    airq:       { path: '/cams/airq', query: 'satellite' },
+    gfs:        { path: '/gfs',       query: 'satellite' },
+    icon:       { path: '/icon',      query: 'satellite' },
+    mblue:      { path: '/mblue',     query: 'satellite' },
+    jmaMsm:     { path: '/jmaMsm',   query: 'satellite' },
+    clouds:     { path: '/meteogram', query: 'clouds'    },
+  };
+
+  if (windyLayer === 'multimodel') {
+    return `https://www.windy.com/multimodel/${latF}/${lngF}?satellite,${latF},${lngF},${zoom}`;
+  }
+  if (PATH_LAYERS[windyLayer]) {
+    const { path, query } = PATH_LAYERS[windyLayer];
+    return `https://www.windy.com/${latF}/${lngF}${path}?${query},${latF},${lngF},${zoom}`;
+  }
+  return `https://www.windy.com/${latF}/${lngF}?${windyLayer},${latF},${lngF},${zoom}`;
+}
+
 // =========== Weather Panel ===========
 
 const WEATHER_ROWS = [
@@ -1789,6 +1820,19 @@ function renderWeatherPanel() {
   });
 
   html += '</tr></thead><tbody>';
+
+  // Windy link row
+  html += '<tr class="wt-windy-row"><td class="wt-label-cell wt-td">Windy</td>';
+  weatherPoints.forEach((pt, i) => {
+    const returnClass = pt.isReturn ? ' wt-return-col' : '';
+    const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
+    html += `<td class="wt-data-cell wt-td wt-windy-cell${returnClass}${startClass}" data-col="${i}">` +
+      `<a class="wt-windy-link" href="${buildWindyUrl(pt.lat, pt.lng)}" target="_blank" rel="noopener" title="在 Windy 開啟">` +
+      `<svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg>` +
+      `</a></td>`;
+  });
+  html += '</tr>';
+
   WEATHER_ROWS.forEach(row => {
     html += `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
     weatherPoints.forEach((pt, i) => {
@@ -2447,6 +2491,22 @@ async function init() {
     strictLinearEl.addEventListener('change', () => {
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
+    });
+  }
+
+  // --- Windy layer setting ---
+  const windyLayerEl = document.getElementById('windy-layer-select');
+  if (windyLayerEl) {
+    windyLayerEl.value = windyLayer;
+    windyLayerEl.addEventListener('change', () => {
+      windyLayer = windyLayerEl.value;
+      localStorage.setItem(LS_WINDY_LAYER_KEY, windyLayer);
+      document.querySelectorAll('.wt-windy-link').forEach(a => {
+        const col = parseInt(a.closest('td')?.dataset.col);
+        if (!isNaN(col) && weatherPoints[col]) {
+          a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng);
+        }
+      });
     });
   }
 
