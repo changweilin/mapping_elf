@@ -46,6 +46,7 @@ const LS_PER_SEGMENT_KEY = 'mappingElf_perSegment';
 const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
+const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 
 /**
  * 上河速度 base: S=1.0 corresponds to 3.0 km/h on flat terrain.
@@ -64,6 +65,7 @@ let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
 let strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'wind';
+let windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -956,27 +958,42 @@ function buildWindyUrl(lat, lng) {
   const zoom = Math.round(mapManager.map.getZoom());
   const latF = lat.toFixed(3);
   const lngF = lng.toFixed(3);
+  const layer = windyLayer;
+  const model = windyModel;
 
-  const PATH_LAYERS = {
-    wind:       { path: '/wind',      query: 'satellite' },
-    meteogram:  { path: '/meteogram', query: 'satellite' },
-    airgram:    { path: '/airgram',   query: 'satellite' },
-    airq:       { path: '/cams/airq', query: 'satellite' },
-    gfs:        { path: '/gfs',       query: 'satellite' },
-    icon:       { path: '/icon',      query: 'satellite' },
-    mblue:      { path: '/mblue',     query: 'satellite' },
-    jmaMsm:     { path: '/jmaMsm',   query: 'satellite' },
-    clouds:     { path: '/meteogram', query: 'clouds'    },
-  };
-
-  if (windyLayer === 'multimodel') {
+  // multimodel: special URL regardless of layer
+  if (model === 'multimodel') {
     return `https://www.windy.com/multimodel/${latF}/${lngF}?satellite,${latF},${lngF},${zoom}`;
   }
-  if (PATH_LAYERS[windyLayer]) {
-    const { path, query } = PATH_LAYERS[windyLayer];
-    return `https://www.windy.com/${latF}/${lngF}${path}?${query},${latF},${lngF},${zoom}`;
+
+  // Layers with fixed paths — model does not change the path, only the view layer
+  // meteogram / airgram: always their own path, use model as query if non-ECMWF
+  if (layer === 'meteogram') {
+    const q = model === 'ecmwf' ? 'satellite' : model;
+    return `https://www.windy.com/${latF}/${lngF}/meteogram?${q},${latF},${lngF},${zoom}`;
   }
-  return `https://www.windy.com/${latF}/${lngF}?${windyLayer},${latF},${lngF},${zoom}`;
+  if (layer === 'airgram') {
+    const q = model === 'ecmwf' ? 'satellite' : model;
+    return `https://www.windy.com/${latF}/${lngF}/airgram?${q},${latF},${lngF},${zoom}`;
+  }
+  // airq (CAMS): always its own path, model not applicable
+  if (layer === 'airq') {
+    return `https://www.windy.com/${latF}/${lngF}/cams/airq?satellite,${latF},${lngF},${zoom}`;
+  }
+
+  // For non-ECMWF models: model path + layer as query parameter
+  if (model !== 'ecmwf') {
+    return `https://www.windy.com/${latF}/${lngF}/${model}?${layer},${latF},${lngF},${zoom}`;
+  }
+
+  // ECMWF model: wind and clouds use path segments; rest use query-only
+  if (layer === 'wind') {
+    return `https://www.windy.com/${latF}/${lngF}/wind?satellite,${latF},${lngF},${zoom}`;
+  }
+  if (layer === 'clouds') {
+    return `https://www.windy.com/${latF}/${lngF}/meteogram?clouds,${latF},${lngF},${zoom}`;
+  }
+  return `https://www.windy.com/${latF}/${lngF}?${layer},${latF},${lngF},${zoom}`;
 }
 
 // =========== Weather Panel ===========
@@ -2494,19 +2511,31 @@ async function init() {
     });
   }
 
-  // --- Windy layer setting ---
+  // --- Windy settings ---
+  const refreshWindyLinks = () => {
+    document.querySelectorAll('.wt-windy-link').forEach(a => {
+      const col = parseInt(a.closest('td')?.dataset.col);
+      if (!isNaN(col) && weatherPoints[col]) {
+        a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng);
+      }
+    });
+  };
   const windyLayerEl = document.getElementById('windy-layer-select');
   if (windyLayerEl) {
     windyLayerEl.value = windyLayer;
     windyLayerEl.addEventListener('change', () => {
       windyLayer = windyLayerEl.value;
       localStorage.setItem(LS_WINDY_LAYER_KEY, windyLayer);
-      document.querySelectorAll('.wt-windy-link').forEach(a => {
-        const col = parseInt(a.closest('td')?.dataset.col);
-        if (!isNaN(col) && weatherPoints[col]) {
-          a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng);
-        }
-      });
+      refreshWindyLinks();
+    });
+  }
+  const windyModelEl = document.getElementById('windy-model-select');
+  if (windyModelEl) {
+    windyModelEl.value = windyModel;
+    windyModelEl.addEventListener('change', () => {
+      windyModel = windyModelEl.value;
+      localStorage.setItem(LS_WINDY_MODEL_KEY, windyModel);
+      refreshWindyLinks();
     });
   }
 

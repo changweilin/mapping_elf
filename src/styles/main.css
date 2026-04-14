@@ -1902,26 +1902,20 @@ html, body {
 }
 .wt-windy-link:hover { opacity: 1; }
 
-/* Windy settings section in side panel */
-.windy-layer-row {
+/* Windy selects in weather header */
+.windy-selects {
   display: flex;
+  gap: 4px;
   align-items: center;
-  gap: 10px;
-  padding: 4px 0;
 }
-.windy-layer-row label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-#windy-layer-select {
-  flex: 1;
-  padding: 4px 6px;
+.windy-selects select {
+  padding: 3px 5px;
   border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
 }
 
 /* Weather Controls Bar */
