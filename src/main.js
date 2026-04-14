@@ -64,7 +64,7 @@ let speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
 let strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
-let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'wind';
+let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
 let windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
@@ -1845,7 +1845,8 @@ function renderWeatherPanel() {
     const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
     html += `<td class="wt-data-cell wt-td wt-windy-cell${returnClass}${startClass}" data-col="${i}">` +
       `<a class="wt-windy-link" href="${buildWindyUrl(pt.lat, pt.lng)}" target="_blank" rel="noopener" title="在 Windy 開啟">` +
-      `<svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg>` +
+      `<img src="https://www.windy.com/favicon.ico" width="13" height="13" alt="Windy" class="windy-favicon">` +
+      `<svg viewBox="0 0 24 24" width="11" height="11" style="opacity:0.7"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg>` +
       `</a></td>`;
   });
   html += '</tr>';

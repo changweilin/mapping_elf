@@ -1908,6 +1908,12 @@ html, body {
   gap: 4px;
   align-items: center;
 }
+.windy-favicon {
+  display: inline-block;
+  border-radius: 2px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
 .windy-selects select {
   padding: 3px 5px;
   border-radius: 4px;
