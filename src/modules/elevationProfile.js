@@ -243,18 +243,18 @@ export class ElevationProfile {
         const g = c.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
         if (self.isRoundTrip) {
           // Symmetric: teal→sky→amber→red→amber→sky→teal
-          g.addColorStop(0,    'rgb(110,231,183)');
-          g.addColorStop(0.165,'rgb(56,189,248)');
+          g.addColorStop(0, 'rgb(110,231,183)');
+          g.addColorStop(0.165, 'rgb(56,189,248)');
           g.addColorStop(0.33, 'rgb(251,191,36)');
-          g.addColorStop(0.5,  'rgb(248,113,113)');
+          g.addColorStop(0.5, 'rgb(248,113,113)');
           g.addColorStop(0.67, 'rgb(251,191,36)');
-          g.addColorStop(0.835,'rgb(56,189,248)');
-          g.addColorStop(1,    'rgb(110,231,183)');
+          g.addColorStop(0.835, 'rgb(56,189,248)');
+          g.addColorStop(1, 'rgb(110,231,183)');
         } else {
-          g.addColorStop(0,    'rgb(110,231,183)');
+          g.addColorStop(0, 'rgb(110,231,183)');
           g.addColorStop(0.33, 'rgb(56,189,248)');
           g.addColorStop(0.66, 'rgb(251,191,36)');
-          g.addColorStop(1,    'rgb(248,113,113)');
+          g.addColorStop(1, 'rgb(248,113,113)');
         }
         chart.data.datasets[0].borderColor = g;
       },
@@ -334,7 +334,12 @@ export class ElevationProfile {
           if (elements.length > 0 && self.onHover) {
             const idx = elements[0].index;
             if (idx < self.points.length) {
-              self.onHover(self.points[idx][0], self.points[idx][1]);
+              const maxDist = self.distances[self.distances.length - 1] || 1;
+              const cumM = self.distances[idx] || 0;
+              const xFrac = Math.max(0, Math.min(1, cumM / maxDist));
+              const t = self.isRoundTrip ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+              const color = interpolateRouteColor(t);
+              self.onHover(self.points[idx][0], self.points[idx][1], color);
             }
           }
           // Change cursor when hovering near a marker

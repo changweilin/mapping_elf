@@ -5,12 +5,12 @@
  */
 
 export const ACTIVITY_PROFILES = {
-  walking:     { name: '步行',   speedKmH: 3.5, ascentMH: 400,  descentMH: 700,  fatigue: false, baseMET: 3.5  },
-  hiking:      { name: '健行',   speedKmH: 4.0, ascentMH: 450,  descentMH: 600,  fatigue: true,  baseMET: 6.5  },
-  'trail-run': { name: '越野跑', speedKmH: 8.0, ascentMH: 800,  descentMH: 1200, fatigue: true,  baseMET: 10.0 },
-  running:     { name: '跑步',   speedKmH: 10,  ascentMH: 600,  descentMH: 900,  fatigue: true,  baseMET: 11.0 },
-  cycling:     { name: '自行車', speedKmH: 15,  ascentMH: 1200, descentMH: 0,    fatigue: false, baseMET: 8.0  },
-  driving:     { name: '駕車',   speedKmH: 40,  ascentMH: 0,    descentMH: 0,    fatigue: false, baseMET: 2.0  },
+  walking: { name: '步行', speedKmH: 3.5, ascentMH: 400, descentMH: 700, fatigue: false, baseMET: 3.5 },
+  hiking: { name: '健行', speedKmH: 4.0, ascentMH: 450, descentMH: 600, fatigue: true, baseMET: 6.5 },
+  'trail-run': { name: '越野跑', speedKmH: 8.0, ascentMH: 800, descentMH: 1200, fatigue: true, baseMET: 10.0 },
+  running: { name: '跑步', speedKmH: 10, ascentMH: 600, descentMH: 900, fatigue: true, baseMET: 11.0 },
+  cycling: { name: '自行車', speedKmH: 15, ascentMH: 1200, descentMH: 0, fatigue: false, baseMET: 8.0 },
+  driving: { name: '駕車', speedKmH: 40, ascentMH: 0, descentMH: 0, fatigue: false, baseMET: 2.0 },
 };
 
 /** MET during rest breaks */
@@ -24,19 +24,19 @@ const KCAL_PER_MOVING_H = 250;
  * 'none' means fatigue is disabled entirely.
  */
 export const FATIGUE_PRESETS = {
-  none:    { fatigue: false, fatigueOnset: 0,   fatigueDecay: 0,    fatigueFloor: 1.0  },
-  casual:  { fatigue: true,  fatigueOnset: 1.0, fatigueDecay: 0.12, fatigueFloor: 0.50 },
-  general: { fatigue: true,  fatigueOnset: 2.0, fatigueDecay: 0.06, fatigueFloor: 0.60 },
-  trained: { fatigue: true,  fatigueOnset: 3.5, fatigueDecay: 0.03, fatigueFloor: 0.75 },
+  none: { fatigue: false, fatigueOnset: 0, fatigueDecay: 0, fatigueFloor: 1.0 },
+  casual: { fatigue: true, fatigueOnset: 1.0, fatigueDecay: 0.12, fatigueFloor: 0.50 },
+  general: { fatigue: true, fatigueOnset: 2.0, fatigueDecay: 0.06, fatigueFloor: 0.60 },
+  trained: { fatigue: true, fatigueOnset: 3.5, fatigueDecay: 0.03, fatigueFloor: 0.75 },
 };
 
 export const DEFAULT_PACE_PARAMS = {
-  flatPaceKmH:   null,      // null = use activity default (adjusted by load)
-  bodyWeightKg:  70,
-  packWeightKg:  0,
-  fatigueLevel:  'general', // key in FATIGUE_PRESETS
-  restEveryH:    1.0,       // rest every N moving-hours
-  restMinutes:   10,        // minutes per rest break
+  flatPaceKmH: null,      // null = use activity default (adjusted by load)
+  bodyWeightKg: 70,
+  packWeightKg: 0,
+  fatigueLevel: 'general', // key in FATIGUE_PRESETS
+  restEveryH: 1.0,       // rest every N moving-hours
+  restMinutes: 10,        // minutes per rest break
 };
 
 export function formatDuration(hours) {
@@ -54,7 +54,7 @@ export function formatDuration(hours) {
  */
 export function defaultSpeed(activity, bodyWeightKg = 70, packWeightKg = 0) {
   const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
-  const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
+  const loadRatio = packWeightKg / Math.max(1, bodyWeightKg);
   const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
   return +(prof.speedKmH * loadPenalty).toFixed(2);
 }
@@ -81,47 +81,47 @@ export function computeCumulativeTimes(elevations, distances, activity, params =
   const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
   const merged = { ...DEFAULT_PACE_PARAMS, ...params };
   const {
-    flatPaceKmH  = null,
+    flatPaceKmH = null,
     bodyWeightKg = 70,
     packWeightKg = 0,
     fatigueLevel = 'general',
-    restEveryH   = 1.0,
-    restMinutes  = 10,
+    restEveryH = 1.0,
+    restMinutes = 10,
   } = merged;
 
   const preset = FATIGUE_PRESETS[fatigueLevel] ?? FATIGUE_PRESETS.general;
   // Activity profiles that are inherently non-fatiguing (cycling, driving) stay off
   // unless the user explicitly picks a fatigue level with fatigue: true.
-  const fatigue      = prof.fatigue ? preset.fatigue : false;
+  const fatigue = prof.fatigue ? preset.fatigue : false;
   const fatigueOnset = preset.fatigueOnset;
   const fatigueDecay = preset.fatigueDecay;
   const fatigueFloor = preset.fatigueFloor;
 
   // Load penalty: heavier pack relative to body weight slows ascent/descent rates
-  const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
+  const loadRatio = packWeightKg / Math.max(1, bodyWeightKg);
   const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
 
   // Effective rates
-  const baseSpeed  = flatPaceKmH != null
+  const baseSpeed = flatPaceKmH != null
     ? Math.max(0.1, flatPaceKmH)
     : prof.speedKmH * loadPenalty;
-  const ascentRate  = Math.max(1, prof.ascentMH  * loadPenalty);
+  const ascentRate = Math.max(1, prof.ascentMH * loadPenalty);
   const descentRate = Math.max(1, prof.descentMH * loadPenalty);
 
   const restH = restMinutes / 60;
   // fatH: effective moving-time for fatigue decay, partially reset on rest
-  let movingH   = 0;   // total moving time (triggers rest intervals)
-  let fatH      = 0;   // effective hours driving fatigue (resets on rest)
-  let elapsedH  = 0;   // total elapsed (moving + rests)
+  let movingH = 0;   // total moving time (triggers rest intervals)
+  let fatH = 0;   // effective hours driving fatigue (resets on rest)
+  let elapsedH = 0;   // total elapsed (moving + rests)
   let nextRestH = (fatigue && restEveryH > 0) ? restEveryH : Infinity;
 
   const times = [0];
 
   for (let i = 1; i < elevations.length; i++) {
     const distKm = (distances[i] - distances[i - 1]) / 1000;
-    const dElev  = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
-    const ascM   = Math.max(0, dElev);
-    const descM  = Math.max(0, -dElev);
+    const dElev = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
+    const ascM = Math.max(0, dElev);
+    const descM = Math.max(0, -dElev);
 
     // Current fatigue multiplier
     let fm = 1.0;
@@ -131,21 +131,21 @@ export function computeCumulativeTimes(elevations, distances, activity, params =
 
     // Segment moving time (with current fatigue)
     let segH = distKm / Math.max(0.01, baseSpeed * fm);
-    if (prof.ascentMH  > 0) segH += ascM  / Math.max(1, ascentRate  * fm);
+    if (prof.ascentMH > 0) segH += ascM / Math.max(1, ascentRate * fm);
     if (prof.descentMH > 0) segH += descM / Math.max(1, descentRate * fm);
 
     // Process rest breaks that fall within this segment
     let rem = segH;
     while (fatigue && restEveryH > 0 && movingH + rem >= nextRestH) {
       const toRest = nextRestH - movingH;
-      movingH  += toRest;
+      movingH += toRest;
       elapsedH += toRest;
-      fatH     += toRest;
-      rem      -= toRest;
+      fatH += toRest;
+      rem -= toRest;
 
       // Rest: add elapsed time, partial fatigue recovery
-      elapsedH  += restH;
-      fatH       = Math.max(0, fatH - restMinutes / 20.0); // 1 min rest ≈ 3 min fatigue recovery
+      elapsedH += restH;
+      fatH = Math.max(0, fatH - restMinutes / 20.0); // 1 min rest ≈ 3 min fatigue recovery
       nextRestH += restEveryH;
 
       // Re-compute fm for the remaining segment after rest
@@ -155,9 +155,9 @@ export function computeCumulativeTimes(elevations, distances, activity, params =
       }
     }
 
-    movingH  += rem;
+    movingH += rem;
     elapsedH += rem;
-    fatH     += rem;
+    fatH += rem;
     times.push(elapsedH);
   }
   return times;
@@ -198,29 +198,29 @@ export function computeSegmentTimesFromState(elevations, distances, activity, pa
   const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
   const merged = { ...DEFAULT_PACE_PARAMS, ...params };
   const {
-    flatPaceKmH  = null,
+    flatPaceKmH = null,
     bodyWeightKg = 70,
     packWeightKg = 0,
     fatigueLevel = 'general',
-    restEveryH   = 1.0,
-    restMinutes  = 10,
+    restEveryH = 1.0,
+    restMinutes = 10,
   } = merged;
 
   const preset = FATIGUE_PRESETS[fatigueLevel] ?? FATIGUE_PRESETS.general;
-  const fatigue      = prof.fatigue ? preset.fatigue : false;
+  const fatigue = prof.fatigue ? preset.fatigue : false;
   const fatigueOnset = preset.fatigueOnset;
   const fatigueDecay = preset.fatigueDecay;
   const fatigueFloor = preset.fatigueFloor;
 
-  const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
+  const loadRatio = packWeightKg / Math.max(1, bodyWeightKg);
   const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
-  const baseSpeed   = flatPaceKmH != null ? Math.max(0.1, flatPaceKmH) : prof.speedKmH * loadPenalty;
-  const ascentRate  = Math.max(1, prof.ascentMH  * loadPenalty);
+  const baseSpeed = flatPaceKmH != null ? Math.max(0.1, flatPaceKmH) : prof.speedKmH * loadPenalty;
+  const ascentRate = Math.max(1, prof.ascentMH * loadPenalty);
   const descentRate = Math.max(1, prof.descentMH * loadPenalty);
-  const restH       = restMinutes / 60;
+  const restH = restMinutes / 60;
 
-  let movingH   = state?.movingH  ?? 0;
-  let fatH      = state?.fatH     ?? 0;
+  let movingH = state?.movingH ?? 0;
+  let fatH = state?.fatH ?? 0;
   let nextRestH = state?.nextRestH ?? ((fatigue && restEveryH > 0) ? movingH + restEveryH : Infinity);
   let segElapsed = 0;
 
@@ -228,33 +228,33 @@ export function computeSegmentTimesFromState(elevations, distances, activity, pa
 
   for (let i = 1; i < elevations.length; i++) {
     const distKm = (distances[i] - distances[i - 1]) / 1000;
-    const dElev  = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
-    const ascM   = Math.max(0, dElev);
-    const descM  = Math.max(0, -dElev);
+    const dElev = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
+    const ascM = Math.max(0, dElev);
+    const descM = Math.max(0, -dElev);
 
     let fm = 1.0;
     if (fatigue && fatH > fatigueOnset) fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
 
     let rem = distKm / Math.max(0.01, baseSpeed * fm);
-    if (prof.ascentMH  > 0) rem += ascM  / Math.max(1, ascentRate  * fm);
+    if (prof.ascentMH > 0) rem += ascM / Math.max(1, ascentRate * fm);
     if (prof.descentMH > 0) rem += descM / Math.max(1, descentRate * fm);
 
     while (fatigue && restEveryH > 0 && movingH + rem >= nextRestH) {
       const toRest = nextRestH - movingH;
-      movingH    += toRest;
+      movingH += toRest;
       segElapsed += toRest;
-      fatH       += toRest;
-      rem        -= toRest;
+      fatH += toRest;
+      rem -= toRest;
       segElapsed += restH;
-      fatH        = Math.max(0, fatH - restMinutes / 20.0);
-      nextRestH  += restEveryH;
+      fatH = Math.max(0, fatH - restMinutes / 20.0);
+      nextRestH += restEveryH;
       fm = 1.0;
       if (fatigue && fatH > fatigueOnset) fm = Math.max(fatigueFloor, Math.exp(-fatigueDecay * (fatH - fatigueOnset)));
     }
 
-    movingH    += rem;
+    movingH += rem;
     segElapsed += rem;
-    fatH       += rem;
+    fatH += rem;
     times.push(segElapsed);
   }
 
@@ -280,8 +280,8 @@ export function applyWaypointRecovery(state, restH, params = {}) {
   const { restEveryH = 1.0, fatigue = true } = { ...DEFAULT_PACE_PARAMS, ...params };
   const newFatH = Math.max(0, state.fatH - restH * 3);
   return {
-    movingH:   state.movingH,
-    fatH:      newFatH,
+    movingH: state.movingH,
+    fatH: newFatH,
     nextRestH: (fatigue && restEveryH > 0) ? state.movingH + restEveryH : Infinity,
   };
 }
@@ -295,29 +295,54 @@ export function applyWaypointRecovery(state, restH, params = {}) {
  * @param {string}   activity
  * @param {number}   intervalH     hours between points (default 1)
  * @param {object}   params        pace parameters
+ * @param {number[]} [wpTimes]     elapsed times at waypoints (for per-segment mode)
  * @returns {Array<{lat, lng, cumDistM, estTimeH}>}
  */
-export function computeHourlyPoints(sampledCoords, elevations, distances, activity, intervalH = 1.0, params = {}) {
-  const times  = computeCumulativeTimes(elevations, distances, activity, params);
+export function computeHourlyPoints(sampledCoords, elevations, distances, activity, intervalH = 1.0, params = {}, wpTimes = null) {
+  const times = computeCumulativeTimes(elevations, distances, activity, params);
   const totalH = times[times.length - 1] ?? 0;
   const result = [];
 
-  let nextH = intervalH;
-  while (nextH < totalH - intervalH * 0.05) {
-    for (let i = 1; i < times.length; i++) {
-      if (times[i] >= nextH) {
-        const span = times[i] - times[i - 1];
-        const f = span > 0 ? (nextH - times[i - 1]) / span : 0;
-        result.push({
-          lat:      sampledCoords[i - 1][0] + f * (sampledCoords[i][0] - sampledCoords[i - 1][0]),
-          lng:      sampledCoords[i - 1][1] + f * (sampledCoords[i][1] - sampledCoords[i - 1][1]),
-          cumDistM: distances[i - 1] + f * (distances[i] - distances[i - 1]),
-          estTimeH: nextH,
-        });
-        break;
+  if (wpTimes && wpTimes.length > 0) {
+    for (let i = 0; i < wpTimes.length; i++) {
+      const startH = wpTimes[i];
+      const endH = wpTimes[i + 1] ?? totalH;
+      let nextH = startH + intervalH;
+      while (nextH < endH - intervalH * 0.05) {
+        for (let j = 1; j < times.length; j++) {
+          if (times[j] >= nextH) {
+            const span = times[j] - times[j - 1];
+            const f = span > 0 ? (nextH - times[j - 1]) / span : 0;
+            result.push({
+              lat: sampledCoords[j - 1][0] + f * (sampledCoords[j][0] - sampledCoords[j - 1][0]),
+              lng: sampledCoords[j - 1][1] + f * (sampledCoords[j][1] - sampledCoords[j - 1][1]),
+              cumDistM: distances[j - 1] + f * (distances[j] - distances[j - 1]),
+              estTimeH: nextH,
+            });
+            break;
+          }
+        }
+        nextH += intervalH;
       }
     }
-    nextH += intervalH;
+  } else {
+    let nextH = intervalH;
+    while (nextH < totalH - intervalH * 0.05) {
+      for (let i = 1; i < times.length; i++) {
+        if (times[i] >= nextH) {
+          const span = times[i] - times[i - 1];
+          const f = span > 0 ? (nextH - times[i - 1]) / span : 0;
+          result.push({
+            lat: sampledCoords[i - 1][0] + f * (sampledCoords[i][0] - sampledCoords[i - 1][0]),
+            lng: sampledCoords[i - 1][1] + f * (sampledCoords[i][1] - sampledCoords[i - 1][1]),
+            cumDistM: distances[i - 1] + f * (distances[i] - distances[i - 1]),
+            estTimeH: nextH,
+          });
+          break;
+        }
+      }
+      nextH += intervalH;
+    }
   }
   return result;
 }
@@ -340,41 +365,41 @@ export function computeTripStats(elevations, distances, activity, params = {}) {
   const prof = ACTIVITY_PROFILES[activity] || ACTIVITY_PROFILES.hiking;
   const merged = { ...DEFAULT_PACE_PARAMS, ...params };
   const {
-    flatPaceKmH  = null,
+    flatPaceKmH = null,
     bodyWeightKg = 70,
     packWeightKg = 0,
     fatigueLevel = 'general',
-    restEveryH   = 1.0,
-    restMinutes  = 10,
+    restEveryH = 1.0,
+    restMinutes = 10,
   } = merged;
 
   const preset = FATIGUE_PRESETS[fatigueLevel] ?? FATIGUE_PRESETS.general;
-  const fatigue      = prof.fatigue ? preset.fatigue : false;
+  const fatigue = prof.fatigue ? preset.fatigue : false;
   const fatigueOnset = preset.fatigueOnset;
   const fatigueDecay = preset.fatigueDecay;
   const fatigueFloor = preset.fatigueFloor;
 
-  const loadRatio   = packWeightKg / Math.max(1, bodyWeightKg);
+  const loadRatio = packWeightKg / Math.max(1, bodyWeightKg);
   const loadPenalty = Math.max(0.5, 1.0 - loadRatio * 1.1);
 
-  const baseSpeed   = flatPaceKmH != null ? Math.max(0.1, flatPaceKmH) : prof.speedKmH * loadPenalty;
-  const ascentRate  = Math.max(1, prof.ascentMH  * loadPenalty);
+  const baseSpeed = flatPaceKmH != null ? Math.max(0.1, flatPaceKmH) : prof.speedKmH * loadPenalty;
+  const ascentRate = Math.max(1, prof.ascentMH * loadPenalty);
   const descentRate = Math.max(1, prof.descentMH * loadPenalty);
-  const baseMET     = prof.baseMET;
+  const baseMET = prof.baseMET;
 
   const restH = restMinutes / 60;
-  let movingH   = 0;
-  let fatH      = 0;
-  let elapsedH  = 0;
+  let movingH = 0;
+  let fatH = 0;
+  let elapsedH = 0;
   let kcalMoving = 0;
-  let kcalRest   = 0;
-  let nextRestH  = (fatigue && restEveryH > 0) ? restEveryH : Infinity;
+  let kcalRest = 0;
+  let nextRestH = (fatigue && restEveryH > 0) ? restEveryH : Infinity;
 
   for (let i = 1; i < elevations.length; i++) {
     const distKm = (distances[i] - distances[i - 1]) / 1000;
-    const dElev  = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
-    const ascM   = Math.max(0, dElev);
-    const descM  = Math.max(0, -dElev);
+    const dElev = (elevations[i] ?? 0) - (elevations[i - 1] ?? 0);
+    const ascM = Math.max(0, dElev);
+    const descM = Math.max(0, -dElev);
 
     let fm = 1.0;
     if (fatigue && fatH > fatigueOnset) {
@@ -382,21 +407,21 @@ export function computeTripStats(elevations, distances, activity, params = {}) {
     }
 
     let segH = distKm / Math.max(0.01, baseSpeed * fm);
-    if (prof.ascentMH  > 0) segH += ascM  / Math.max(1, ascentRate  * fm);
+    if (prof.ascentMH > 0) segH += ascM / Math.max(1, ascentRate * fm);
     if (prof.descentMH > 0) segH += descM / Math.max(1, descentRate * fm);
 
     let rem = segH;
     while (fatigue && restEveryH > 0 && movingH + rem >= nextRestH) {
       const toRest = nextRestH - movingH;
-      movingH  += toRest;
+      movingH += toRest;
       elapsedH += toRest;
-      fatH     += toRest;
-      rem      -= toRest;
+      fatH += toRest;
+      rem -= toRest;
       kcalMoving += baseMET * bodyWeightKg * toRest * fm;
 
-      elapsedH  += restH;
-      kcalRest  += REST_MET * bodyWeightKg * restH;
-      fatH       = Math.max(0, fatH - restMinutes / 20.0);
+      elapsedH += restH;
+      kcalRest += REST_MET * bodyWeightKg * restH;
+      fatH = Math.max(0, fatH - restMinutes / 20.0);
       nextRestH += restEveryH;
 
       fm = 1.0;
@@ -406,16 +431,16 @@ export function computeTripStats(elevations, distances, activity, params = {}) {
     }
 
     kcalMoving += baseMET * bodyWeightKg * rem * fm;
-    movingH  += rem;
+    movingH += rem;
     elapsedH += rem;
-    fatH     += rem;
+    fatH += rem;
   }
 
   const totalRestH = elapsedH - movingH;
   return {
-    totalH:       elapsedH,
-    movingH:      movingH,
-    restH:        totalRestH,
+    totalH: elapsedH,
+    movingH: movingH,
+    restH: totalRestH,
     kcalExpended: Math.round(kcalMoving + kcalRest),
     kcalSuggested: Math.round(movingH * KCAL_PER_MOVING_H),
   };

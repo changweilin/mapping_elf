@@ -1891,6 +1891,39 @@ html, body {
 .wt-data-cell.loading { color: var(--text-muted); }
 .wt-data-cell.error   { color: var(--danger); }
 
+/* Windy link row in weather table */
+.wt-windy-row td { text-align: center; padding: 4px 6px; }
+.wt-windy-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-primary, #6ee7b7);
+  opacity: 0.65;
+  transition: opacity 0.15s;
+}
+.wt-windy-link:hover { opacity: 1; }
+
+/* Windy selects in weather header */
+.windy-selects {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.windy-favicon {
+  display: inline-block;
+  border-radius: 2px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.windy-selects select {
+  padding: 3px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
 /* Weather Controls Bar */
 .weather-controls-bar {
   display: flex;
