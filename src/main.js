@@ -182,7 +182,7 @@ btnMyLocation.addEventListener('click', () => {
 
 btnExportGpx.addEventListener('click', openExportModal);
 btnImportGpx.addEventListener('click', () => gpxFileInput.click());
-gpxFileInput.addEventListener('change', importGpx);
+gpxFileInput.addEventListener('change', importFile);
 
 btnClearRoute.addEventListener('click', () => {
   mapManager.clearWaypoints();
@@ -804,7 +804,7 @@ function syncIntervalTimesFromWP() {
   enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
-// =========== Export (GPX / KML) ===========
+// =========== Export / Import (GPX / KML / YAML) ===========
 
 const exportModal = document.getElementById('export-modal');
 const btnExportConfirm = document.getElementById('btn-export-confirm');
@@ -908,37 +908,47 @@ function doExport(fmt) {
 
   const wpData = collectExportData();
 
-  if (fmt === 'gpx' || fmt === 'both') {
+  if (fmt === 'gpx' || fmt === 'all') {
     const gpx = GpxExporter.generate(wpData, currentRouteCoords, currentElevations, name);
     GpxExporter.download(gpx, `${filename}.gpx`);
   }
 
-  if (fmt === 'kml' || fmt === 'both') {
+  if (fmt === 'kml' || fmt === 'all') {
     const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, name);
     KmlExporter.download(kml, `${filename}.kml`);
   }
 
-  if (fmt === 'yaml') {
+  if (fmt === 'yaml' || fmt === 'all') {
     const yaml = YamlExporter.generate(wpData, name);
     YamlExporter.download(yaml, `${filename}.yaml`);
   }
 
-  const label = fmt === 'both' ? 'GPX + KML' : fmt.toUpperCase();
+  const label = fmt === 'all' ? 'GPX + KML + YAML' : fmt.toUpperCase();
   showNotification(`${label} 檔案已匯出`, 'success');
 }
 
-function importGpx(e) {
+function importFile(e) {
   const file = e.target.files[0];
   if (!file) return;
 
+  const ext = file.name.split('.').pop().toLowerCase();
   const reader = new FileReader();
   reader.onload = (evt) => {
     try {
-      const result = GpxExporter.parse(evt.target.result);
+      let result;
+      if (ext === 'gpx') {
+        result = GpxExporter.parse(evt.target.result);
+      } else if (ext === 'kml') {
+        result = KmlExporter.parse(evt.target.result);
+      } else if (ext === 'yaml' || ext === 'yml') {
+        result = YamlExporter.parse(evt.target.result);
+      } else {
+        showNotification('不支援的檔案格式', 'error');
+        return;
+      }
 
       // Apply per-waypoint dates to table columns after panel renders
       if (result.segmentDates?.some(d => d?.date || d?.time)) {
-        // Store for application after renderWeatherPanel() is called
         window._pendingGpxDates = result.segmentDates;
       }
 
@@ -954,7 +964,7 @@ function importGpx(e) {
         elevationProfile.update(coords);
       }
     } catch (err) {
-      showNotification('GPX 檔案解析失敗', 'error');
+      showNotification('檔案解析失敗', 'error');
       console.error(err);
     }
   };

@@ -110,6 +110,67 @@ export class KmlExporter {
     return `<table style="border-collapse:collapse;font-size:13px;min-width:180px;">${rows.join('')}</table>`;
   }
 
+  /**
+   * Parse KML and extract waypoints + track points + segment dates.
+   * Skips Placemarks tagged with styleUrl #wpInterval.
+   * Returns same shape as GpxExporter.parse().
+   */
+  static parse(kmlString) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(kmlString, 'text/xml');
+
+    const waypoints = [];
+    const trackPoints = [];
+    const segmentDates = [];
+
+    doc.querySelectorAll('Placemark').forEach(pm => {
+      const styleUrl = pm.querySelector('styleUrl')?.textContent?.trim() || '';
+      const pointEl = pm.querySelector('Point');
+      const lineEl  = pm.querySelector('LineString');
+
+      if (pointEl) {
+        // Skip interval annotation points
+        if (styleUrl === '#wpInterval') return;
+
+        const coordsText = pointEl.querySelector('coordinates')?.textContent?.trim() || '';
+        // KML coordinates: lng,lat[,alt]
+        const [lngStr, latStr] = coordsText.split(',');
+        const lat = parseFloat(latStr);
+        const lng = parseFloat(lngStr);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          waypoints.push([lat, lng]);
+          segmentDates.push({ date: null, time: null });
+        }
+      } else if (lineEl) {
+        // Route LineString → track points
+        const coordsText = lineEl.querySelector('coordinates')?.textContent?.trim() || '';
+        coordsText.split(/\s+/).forEach(triplet => {
+          const parts = triplet.split(',');
+          const lon = parseFloat(parts[0]);
+          const lat = parseFloat(parts[1]);
+          const ele = parts[2] !== undefined ? parseFloat(parts[2]) : 0;
+          if (!isNaN(lat) && !isNaN(lon)) {
+            trackPoints.push({ lat, lon, ele: isNaN(ele) ? 0 : ele });
+          }
+        });
+      }
+    });
+
+    // Fallback: if no waypoints from Points but have track, sample some
+    if (waypoints.length === 0 && trackPoints.length > 0) {
+      const step = Math.max(1, Math.floor(trackPoints.length / 10));
+      for (let i = 0; i < trackPoints.length; i += step) {
+        waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
+        segmentDates.push({ date: null, time: null });
+      }
+      const last = trackPoints[trackPoints.length - 1];
+      waypoints.push([last.lat, last.lon]);
+      segmentDates.push({ date: null, time: null });
+    }
+
+    return { waypoints, trackPoints, segmentDates };
+  }
+
   static download(kmlString, filename = 'mapping_elf_track.kml') {
     const blob = new Blob([kmlString], { type: 'application/vnd.google-earth.kml+xml' });
     const url = URL.createObjectURL(blob);
