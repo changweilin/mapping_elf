@@ -139,7 +139,11 @@ export class KmlExporter {
         const lng = parseFloat(lngStr);
         if (!isNaN(lat) && !isNaN(lng)) {
           waypoints.push([lat, lng]);
-          segmentDates.push({ date: null, time: null });
+          segmentDates.push({
+            label: pm.querySelector('name')?.textContent?.trim() || null,
+            date: null,
+            time: null
+          });
         }
       } else if (lineEl) {
         // Route LineString → track points

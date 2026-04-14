@@ -83,7 +83,11 @@ export class YamlExporter {
       // Only import waypoints as map waypoints; intervals are skipped
       if (current.type !== 'interval') {
         waypoints.push([lat, lng]);
-        segmentDates.push({ date: current.date || null, time: current.time || null });
+        segmentDates.push({
+          label: current.label || null,
+          date: current.date || null,
+          time: current.time || null
+        });
       }
     };
 

@@ -178,9 +178,11 @@ export class GpxExporter {
 
       const lat = parseFloat(wpt.getAttribute('lat'));
       const lon = parseFloat(wpt.getAttribute('lon'));
+      const nameEl = wpt.querySelector('name');
       if (!isNaN(lat) && !isNaN(lon)) {
         waypoints.push([lat, lon]);
         segmentDates.push({
+          label: nameEl ? nameEl.textContent.trim() : null,
           date: this._getExtValue(wpt, 'date'),
           time: this._getExtValue(wpt, 'time'),
         });

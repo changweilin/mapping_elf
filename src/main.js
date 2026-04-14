@@ -953,6 +953,16 @@ function importFile(e) {
       }
 
       if (result.waypoints.length > 0) {
+        // Preserve imported names as custom names if present
+        if (result.segmentDates) {
+          result.waypoints.forEach((wp, i) => {
+            const sd = result.segmentDates[i];
+            if (sd?.label) {
+              waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
+            }
+          });
+          try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+        }
         mapManager.setWaypointsFromImport(result.waypoints);
         showNotification(`已匯入 ${result.waypoints.length} 個航點`, 'success');
       }
