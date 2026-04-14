@@ -960,7 +960,15 @@ function buildWindyUrl(lat, lng, date, hour) {
   const lngF = lng.toFixed(3);
   const layer = windyLayer;
   const model = windyModel;
-  const ts = (date && hour != null) ? `,${date}-${String(hour).padStart(2, '0')}` : '';
+  let ts = '';
+  if (date && hour != null) {
+    const localDt = new Date(`${date}T${String(hour).padStart(2, '0')}:00:00`);
+    const utcDate = localDt.getUTCFullYear() + '-' +
+      String(localDt.getUTCMonth() + 1).padStart(2, '0') + '-' +
+      String(localDt.getUTCDate()).padStart(2, '0');
+    const utcHour = String(localDt.getUTCHours()).padStart(2, '0');
+    ts = `,${utcDate}-${utcHour}`;
+  }
 
   // multimodel: special URL regardless of layer
   if (model === 'multimodel') {
