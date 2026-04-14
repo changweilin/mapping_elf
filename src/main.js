@@ -1123,6 +1123,17 @@ function deduplicateLabels(pts) {
     }
   });
 }
+/**
+ * Distance tier for sorting Overpass candidates (lower = closer).
+ * Near ≤ 100 m → 0 | Medium ≤ 250 m → 1 | Far ≤ 500 m → 2 | Beyond → 3
+ */
+function _distTier(dist) {
+  if (dist <= 100) return 0;
+  if (dist <= 250) return 1;
+  if (dist <= 500) return 2;
+  return 3;
+}
+
 /** Priority score for an Overpass POI element (lower = higher priority). */
 function _poiScore(tags) {
   const n = tags.natural, w = tags.waterway;
@@ -1205,7 +1216,11 @@ out center 20;`;
         score: _poiScore(e.tags),
         dist: haversineDistance([lat, lng], [e.lat ?? e.center?.lat ?? lat, e.lon ?? e.center?.lon ?? lng]),
       }))
-      .sort((a, b) => a.score !== b.score ? a.score - b.score : a.dist - b.dist);
+      .sort((a, b) => {
+        const ta = _distTier(a.dist), tb = _distTier(b.dist);
+        if (ta !== tb) return ta - tb;          // closer tier wins
+        return a.score - b.score;               // same tier → type priority
+      });
     if (ranked.length) { ovpName = ranked[0].name; ovpScore = ranked[0].score; }
   }
 
