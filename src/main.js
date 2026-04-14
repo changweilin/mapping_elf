@@ -33,6 +33,7 @@ let pendingUpdate = false;
 
 const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
+const LS_OLOOP_KEY = 'mappingElf_oLoop';
 const LS_WAYPOINTS_KEY = 'mappingElf_waypoints';
 const LS_ROUTE_MODE_KEY = 'mappingElf_routeMode';
 const LS_MAP_LAYER_KEY = 'mappingElf_mapLayer';
@@ -54,6 +55,8 @@ const SHANHE_BASE = 3.0;
 
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
+let oLoopMode = localStorage.getItem(LS_OLOOP_KEY) === '1';
+if (roundTripMode && oLoopMode) { oLoopMode = false; localStorage.setItem(LS_OLOOP_KEY, '0'); }
 let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
 let speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
@@ -321,7 +324,9 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     // Get all alternative routes (with elevation already fetched)
     const routeWaypoints = roundTripMode && waypoints.length >= 2
       ? [...waypoints, ...waypoints.slice(0, -1).reverse()]
-      : waypoints;
+      : oLoopMode && waypoints.length >= 2
+        ? [...waypoints, waypoints[0]]
+        : waypoints;
     allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
 
     if (allAlternatives.length > 0) {
@@ -2167,11 +2172,30 @@ async function init() {
 
   // Restore + wire round-trip toggle
   const toggleRoundtrip = document.getElementById('toggle-roundtrip');
+  const toggleOloop = document.getElementById('toggle-oloop');
   if (toggleRoundtrip) {
     toggleRoundtrip.checked = roundTripMode;
     toggleRoundtrip.addEventListener('change', () => {
       roundTripMode = toggleRoundtrip.checked;
       localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+      if (roundTripMode && oLoopMode) {
+        oLoopMode = false;
+        localStorage.setItem(LS_OLOOP_KEY, '0');
+        if (toggleOloop) toggleOloop.checked = false;
+      }
+      if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+    });
+  }
+  if (toggleOloop) {
+    toggleOloop.checked = oLoopMode;
+    toggleOloop.addEventListener('change', () => {
+      oLoopMode = toggleOloop.checked;
+      localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
+      if (oLoopMode && roundTripMode) {
+        roundTripMode = false;
+        localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
+        if (toggleRoundtrip) toggleRoundtrip.checked = false;
+      }
       if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
     });
   }
