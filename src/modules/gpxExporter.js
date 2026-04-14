@@ -41,7 +41,7 @@ export class GpxExporter {
         gpx += `    <type>mel:interval</type>\n`;
       }
 
-      const hasExt = pt.date || pt.time ||
+      const hasExt = pt.date || pt.time || pt.windyUrl ||
         (pt.weather && Object.values(pt.weather).some(v => v.value && v.value !== '—'));
       if (hasExt) {
         gpx += `    <extensions>\n`;
@@ -54,20 +54,54 @@ export class GpxExporter {
             }
           }
         }
+        if (pt.windyUrl) {
+          gpx += `      <mel:windyUrl>${this._escapeXml(pt.windyUrl)}</mel:windyUrl>\n`;
+        }
         gpx += `    </extensions>\n`;
       }
 
       gpx += `  </wpt>\n`;
     });
 
-    // Track
+    // Track — annotate each trkpt with the nearest weather-point data
     if (routeCoords.length > 0) {
+      // Build cumulative distance index for wpData points (metres along route)
+      const wpWithCum = wpData.filter(p => typeof p.cum === 'number');
+
+      // Compute cumulative distances for routeCoords
+      const trkCum = this._cumulativeDistances(routeCoords);
+
       gpx += `  <trk>\n    <name>${this._escapeXml(name)}</name>\n    <trkseg>\n`;
       routeCoords.forEach((coord, i) => {
         const ele = elevations[i] !== undefined ? elevations[i] : 0;
         gpx += `      <trkpt lat="${coord[0].toFixed(6)}" lon="${coord[1].toFixed(6)}">\n`;
         gpx += `        <ele>${ele.toFixed(1)}</ele>\n`;
         gpx += `        <time>${now}</time>\n`;
+
+        // Attach nearest weather-point data
+        if (wpWithCum.length > 0) {
+          const nearest = this._nearestByDist(wpWithCum, trkCum[i]);
+          const hasW = nearest && (nearest.date || nearest.windyUrl ||
+            (nearest.weather && Object.values(nearest.weather).some(v => v.value && v.value !== '—')));
+          if (hasW) {
+            gpx += `        <extensions>\n`;
+            if (nearest.label) gpx += `          <mel:weatherRef>${this._escapeXml(nearest.label)}</mel:weatherRef>\n`;
+            if (nearest.date)  gpx += `          <mel:date>${this._escapeXml(nearest.date)}</mel:date>\n`;
+            if (nearest.time)  gpx += `          <mel:time>${this._escapeXml(nearest.time)}</mel:time>\n`;
+            if (nearest.weather) {
+              for (const [key, { value }] of Object.entries(nearest.weather)) {
+                if (value && value !== '—') {
+                  gpx += `          <mel:${key}>${this._escapeXml(String(value))}</mel:${key}>\n`;
+                }
+              }
+            }
+            if (nearest.windyUrl) {
+              gpx += `          <mel:windyUrl>${this._escapeXml(nearest.windyUrl)}</mel:windyUrl>\n`;
+            }
+            gpx += `        </extensions>\n`;
+          }
+        }
+
         gpx += `      </trkpt>\n`;
       });
       gpx += `    </trkseg>\n  </trk>\n`;
@@ -75,6 +109,38 @@ export class GpxExporter {
 
     gpx += `</gpx>`;
     return gpx;
+  }
+
+  /**
+   * Compute cumulative distances (metres) along an array of [lat,lng] coords.
+   */
+  static _cumulativeDistances(coords) {
+    const R = 6371000;
+    const cum = [0];
+    for (let i = 1; i < coords.length; i++) {
+      const [lat1, lng1] = coords[i - 1];
+      const [lat2, lng2] = coords[i];
+      const φ1 = lat1 * Math.PI / 180;
+      const φ2 = lat2 * Math.PI / 180;
+      const Δφ = (lat2 - lat1) * Math.PI / 180;
+      const Δλ = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+      cum.push(cum[i - 1] + 2 * R * Math.asin(Math.sqrt(a)));
+    }
+    return cum;
+  }
+
+  /**
+   * Find the wpData point whose cum distance is closest to d.
+   */
+  static _nearestByDist(wpWithCum, d) {
+    let best = wpWithCum[0];
+    let bestDiff = Math.abs((best.cum || 0) - d);
+    for (let i = 1; i < wpWithCum.length; i++) {
+      const diff = Math.abs((wpWithCum[i].cum || 0) - d);
+      if (diff < bestDiff) { bestDiff = diff; best = wpWithCum[i]; }
+    }
+    return best;
   }
 
   /**

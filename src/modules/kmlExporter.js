@@ -102,6 +102,10 @@ export class KmlExporter {
       });
     }
 
+    if (pt.windyUrl) {
+      rows.push(`<tr><td colspan="2" style="padding:6px 8px 2px;border-top:1px solid #ddd;"><a href="${pt.windyUrl}" style="color:#0077cc;">🌬️ Windy</a></td></tr>`);
+    }
+
     if (rows.length === 0) return '';
     return `<table style="border-collapse:collapse;font-size:13px;min-width:180px;">${rows.join('')}</table>`;
   }

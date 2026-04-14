@@ -9,6 +9,7 @@ import { RouteEngine } from './modules/routeEngine.js';
 import { ElevationProfile } from './modules/elevationProfile.js';
 import { GpxExporter } from './modules/gpxExporter.js';
 import { KmlExporter } from './modules/kmlExporter.js';
+import { YamlExporter } from './modules/yamlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
@@ -860,6 +861,7 @@ function collectExportData() {
         });
       }
     }
+    const windyUrl = date ? buildWindyUrl(pt.lat, pt.lng, date, hour) : '';
     return {
       lat: pt.lat,
       lng: pt.lng,
@@ -867,9 +869,12 @@ function collectExportData() {
       isWaypoint: pt.isWaypoint || false,
       isReturn: pt.isReturn || false,
       wpIndex: pt.wpIndex,
+      cum: pt._cum || 0,
       date,
       time,
+      hour,
       weather,
+      windyUrl,
     };
   });
 }
@@ -911,6 +916,11 @@ function doExport(fmt) {
   if (fmt === 'kml' || fmt === 'both') {
     const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, name);
     KmlExporter.download(kml, `${filename}.kml`);
+  }
+
+  if (fmt === 'yaml') {
+    const yaml = YamlExporter.generate(wpData, name);
+    YamlExporter.download(yaml, `${filename}.yaml`);
   }
 
   const label = fmt === 'both' ? 'GPX + KML' : fmt.toUpperCase();
