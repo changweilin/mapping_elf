@@ -954,46 +954,60 @@ function importGpx(e) {
 
 // =========== Windy URL Builder ===========
 
-function buildWindyUrl(lat, lng) {
+function buildWindyUrl(lat, lng, date, hour) {
   const zoom = Math.round(mapManager.map.getZoom());
   const latF = lat.toFixed(3);
   const lngF = lng.toFixed(3);
   const layer = windyLayer;
   const model = windyModel;
+  const ts = (date && hour != null) ? `,${date}-${String(hour).padStart(2, '0')}` : '';
 
   // multimodel: special URL regardless of layer
   if (model === 'multimodel') {
-    return `https://www.windy.com/multimodel/${latF}/${lngF}?satellite,${latF},${lngF},${zoom}`;
+    return `https://www.windy.com/multimodel/${latF}/${lngF}?satellite${ts},${latF},${lngF},${zoom}`;
   }
 
   // Layers with fixed paths — model does not change the path, only the view layer
   // meteogram / airgram: always their own path, use model as query if non-ECMWF
   if (layer === 'meteogram') {
     const q = model === 'ecmwf' ? 'satellite' : model;
-    return `https://www.windy.com/${latF}/${lngF}/meteogram?${q},${latF},${lngF},${zoom}`;
+    return `https://www.windy.com/${latF}/${lngF}/meteogram?${q}${ts},${latF},${lngF},${zoom}`;
   }
   if (layer === 'airgram') {
     const q = model === 'ecmwf' ? 'satellite' : model;
-    return `https://www.windy.com/${latF}/${lngF}/airgram?${q},${latF},${lngF},${zoom}`;
+    return `https://www.windy.com/${latF}/${lngF}/airgram?${q}${ts},${latF},${lngF},${zoom}`;
   }
   // airq (CAMS): always its own path, model not applicable
   if (layer === 'airq') {
-    return `https://www.windy.com/${latF}/${lngF}/cams/airq?satellite,${latF},${lngF},${zoom}`;
+    return `https://www.windy.com/${latF}/${lngF}/cams/airq?satellite${ts},${latF},${lngF},${zoom}`;
   }
 
   // For non-ECMWF models: model path + layer as query parameter
   if (model !== 'ecmwf') {
-    return `https://www.windy.com/${latF}/${lngF}/${model}?${layer},${latF},${lngF},${zoom}`;
+    return `https://www.windy.com/${latF}/${lngF}/${model}?${layer}${ts},${latF},${lngF},${zoom}`;
   }
 
   // ECMWF model: wind and clouds use path segments; rest use query-only
   if (layer === 'wind') {
-    return `https://www.windy.com/${latF}/${lngF}/wind?satellite,${latF},${lngF},${zoom}`;
+    return `https://www.windy.com/${latF}/${lngF}/wind?satellite${ts},${latF},${lngF},${zoom}`;
   }
   if (layer === 'clouds') {
-    return `https://www.windy.com/${latF}/${lngF}/meteogram?clouds,${latF},${lngF},${zoom}`;
+    return `https://www.windy.com/${latF}/${lngF}/meteogram?clouds${ts},${latF},${lngF},${zoom}`;
   }
-  return `https://www.windy.com/${latF}/${lngF}?${layer},${latF},${lngF},${zoom}`;
+  return `https://www.windy.com/${latF}/${lngF}?${layer}${ts},${latF},${lngF},${zoom}`;
+}
+
+function refreshWindyLinks() {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  container.querySelectorAll('.wt-windy-link').forEach(a => {
+    const col = parseInt(a.closest('td')?.dataset.col);
+    if (isNaN(col) || !weatherPoints[col]) return;
+    const th = container.querySelector(`.wt-col-head[data-idx="${col}"]`);
+    const date = th?.querySelector('.wt-date-input')?.value || '';
+    const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
+    a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng, date, hour);
+  });
 }
 
 // =========== Weather Panel ===========
@@ -1783,11 +1797,13 @@ function renderWeatherPanel() {
   // Route-gradient color per column (same formula as elevation chart)
   const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
 
+  const colTimes = [];
   weatherPoints.forEach((pt, i) => {
     const sv = getSavedCol(pt, i, saved);
     // For speed mode: only col-0 uses saved/default; others are cascaded after render
     const date = sv?.date || todayStr;
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
+    colTimes.push({ date, hour });
     let displayElapsedH = pt._elapsedH || 0;
     if (perSegmentMode && displayElapsedH > 0) {
       // Find the preceding waypoint's _elapsedH and show segment-relative time
@@ -1844,7 +1860,7 @@ function renderWeatherPanel() {
     const returnClass = pt.isReturn ? ' wt-return-col' : '';
     const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
     html += `<td class="wt-data-cell wt-td wt-windy-cell${returnClass}${startClass}" data-col="${i}">` +
-      `<a class="wt-windy-link" href="${buildWindyUrl(pt.lat, pt.lng)}" target="_blank" rel="noopener" title="在 Windy 開啟">` +
+      `<a class="wt-windy-link" href="${buildWindyUrl(pt.lat, pt.lng, colTimes[i].date, colTimes[i].hour)}" target="_blank" rel="noopener" title="在 Windy 開啟">` +
       `<img src="https://www.windy.com/favicon.ico" width="13" height="13" alt="Windy" class="windy-favicon">` +
       `<svg viewBox="0 0 24 24" width="11" height="11" style="opacity:0.7"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg>` +
       `</a></td>`;
@@ -1917,6 +1933,7 @@ function renderWeatherPanel() {
     updateDateConstraints();
     saveWeatherSettings();
     th.dataset.prevMs = String(colToMs(th));
+    refreshWindyLinks();
   };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', onTimeChange)
@@ -1926,6 +1943,7 @@ function renderWeatherPanel() {
   if (speedIntervalMode) cascadeWeatherTimes();
   else syncIntervalTimes();
   updateDateConstraints();
+  refreshWindyLinks();
 
   // Restore previously fetched weather data — read actual date/hour from DOM
   // (after cascade/enforce so keys match what was stored during the original fetch)
@@ -2513,14 +2531,6 @@ async function init() {
   }
 
   // --- Windy settings ---
-  const refreshWindyLinks = () => {
-    document.querySelectorAll('.wt-windy-link').forEach(a => {
-      const col = parseInt(a.closest('td')?.dataset.col);
-      if (!isNaN(col) && weatherPoints[col]) {
-        a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng);
-      }
-    });
-  };
   const windyLayerEl = document.getElementById('windy-layer-select');
   if (windyLayerEl) {
     windyLayerEl.value = windyLayer;
