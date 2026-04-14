@@ -618,9 +618,15 @@ export class MapManager {
   }
 
   setWaypointsFromImport(coords) {
+    // Suppress per-waypoint callbacks — fire once at the end to avoid
+    // repeated route recalculations and weather panel re-renders during import.
+    const cb = this.onWaypointChange;
+    this.onWaypointChange = () => {};
     this.clearWaypoints();
     coords.forEach(([lat, lng]) => this.addWaypoint(lat, lng));
+    this.onWaypointChange = cb;
     this.fitToRoute();
+    cb(this.waypoints);
   }
 
   _createIcon(index) {
