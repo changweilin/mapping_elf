@@ -1467,11 +1467,18 @@ function shiftAllDates(deltaDays, deltaHours) {
 const LS_PANEL_HEIGHT_KEY = 'mappingElf_panelHeight';
 
 function initWeatherControls() {
-  if (btnFetchWeather) btnFetchWeather.addEventListener('click', fetchAllWeatherData);
-  document.getElementById('btn-date-minus-day')?.addEventListener('click', () => shiftAllDates(-1, 0));
-  document.getElementById('btn-date-plus-day')?.addEventListener('click', () => shiftAllDates(+1, 0));
-  document.getElementById('btn-date-minus-hour')?.addEventListener('click', () => shiftAllDates(0, -1));
-  document.getElementById('btn-date-plus-hour')?.addEventListener('click', () => shiftAllDates(0, +1));
+  // Event delegation: fetch + date/time adj buttons live inside the dynamic weather table
+  document.getElementById('weather-table-container')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    switch (btn.dataset.action) {
+      case 'fetch':      fetchAllWeatherData(); break;
+      case 'day-minus':  shiftAllDates(-1, 0);  break;
+      case 'day-plus':   shiftAllDates(+1, 0);  break;
+      case 'hour-minus': shiftAllDates(0, -1);  break;
+      case 'hour-plus':  shiftAllDates(0, +1);  break;
+    }
+  });
 
   const panel = document.getElementById('bottom-panel');
   const handle = document.getElementById('bp-resize-handle');
@@ -1896,7 +1903,7 @@ function renderWeatherPanel() {
     return left + right;
   });
   const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
-  const labelW = 58;
+  const labelW = 68;
   const minColW = 110;
   const dataW = Math.max(panelW - labelW, N * minColW);
   const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
@@ -1907,7 +1914,20 @@ function renderWeatherPanel() {
 
   let html = `<table class="weather-table"><colgroup><col style="width:${labelW}px">`;
   colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
-  html += '</colgroup><thead><tr class="wt-header-row"><th class="wt-label-cell wt-th"></th>';
+  html += `</colgroup><thead><tr class="wt-header-row">
+    <th class="wt-label-cell wt-th">
+      <button class="wt-ctrl-fetch" data-action="fetch" title="取得天氣">天氣</button>
+      <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
+        <button class="wt-ctrl-adj" data-action="day-minus">−</button>
+        <span class="wt-ctrl-unit">日</span>
+        <button class="wt-ctrl-adj" data-action="day-plus">+</button>
+      </div>
+      <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
+        <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
+        <span class="wt-ctrl-unit">時</span>
+        <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
+      </div>
+    </th>`;
 
   // Index of the first return column (for separator styling)
   const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
@@ -2158,11 +2178,12 @@ async function fetchAllWeatherData() {
 
   saveWeatherSettings();
   mapManager.clearWaypointWeather();
-  if (btnFetchWeather) btnFetchWeather.disabled = true;
+  const fetchBtn = document.querySelector('[data-action="fetch"]');
+  if (fetchBtn) fetchBtn.disabled = true;
 
   for (let i = 0; i < weatherPoints.length; i++) {
     const pt = weatherPoints[i];
-    if (btnFetchWeather) btnFetchWeather.textContent = `${i + 1} / ${weatherPoints.length}`;
+    if (fetchBtn) fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
 
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     const dateStr = th?.querySelector('.wt-date-input')?.value;
@@ -2201,7 +2222,7 @@ async function fetchAllWeatherData() {
     if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
   }
 
-  if (btnFetchWeather) { btnFetchWeather.disabled = false; btnFetchWeather.textContent = '取得天氣'; }
+  if (fetchBtn) { fetchBtn.disabled = false; fetchBtn.textContent = '天氣'; }
   showNotification('天氣資訊已更新', 'success', 2000);
 }
 

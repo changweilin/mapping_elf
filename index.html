@@ -138,58 +138,30 @@
       </div>
     </div>
     <div class="bp-weather-header">
-      <!-- 第一排：Windy 設置 -->
-      <div class="bp-wh-row">
-        <div class="windy-selects">
-          <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
-          <select id="windy-layer-select" title="天氣圖層">
-            <option value="wind">風速</option>
-            <option value="rain" selected>降雨</option>
-            <option value="temp">溫度</option>
-            <option value="clouds">雲</option>
-            <option value="radar">雷達</option>
-            <option value="satellite">衛星</option>
-            <option value="thunder">雷暴</option>
-            <option value="rainAccu">累積雨量</option>
-            <option value="waves">波浪</option>
-            <option value="meteogram">Meteogram</option>
-            <option value="airgram">Airgram</option>
-            <option value="airq">空氣品質</option>
-          </select>
-          <select id="windy-model-select" title="預報模式">
-            <option value="ecmwf">ECMWF</option>
-            <option value="gfs">GFS</option>
-            <option value="icon">ICON</option>
-            <option value="mblue">MBLUE</option>
-            <option value="jmaMsm">MSM</option>
-            <option value="multimodel">比較預報</option>
-          </select>
-        </div>
-      </div>
-      <!-- 第二排：標題 + 日期調整 + 取得天氣 -->
-      <div class="bp-wh-row">
-        <div class="bp-weather-title">
-          <svg viewBox="0 0 24 24" width="14" height="14">
-            <path
-              d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z"
-              fill="currentColor" />
-          </svg>
-          天氣資訊
-        </div>
-        <div class="bp-date-controls">
-          <button class="btn-date-adj" id="btn-date-minus-day" title="所有日期 -1 天">−日</button>
-          <button class="btn-date-adj" id="btn-date-plus-day" title="所有日期 +1 天">+日</button>
-          <button class="btn-date-adj" id="btn-date-minus-hour" title="所有時間 -1 小時">−時</button>
-          <button class="btn-date-adj" id="btn-date-plus-hour" title="所有時間 +1 小時">+時</button>
-        </div>
-        <button class="btn-primary" id="btn-fetch-weather">
-          <svg viewBox="0 0 24 24" width="14" height="14">
-            <path
-              d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
-              fill="currentColor" />
-          </svg>
-          取得天氣
-        </button>
+      <div class="windy-selects">
+        <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
+        <select id="windy-layer-select" title="天氣圖層">
+          <option value="wind">風速</option>
+          <option value="rain" selected>降雨</option>
+          <option value="temp">溫度</option>
+          <option value="clouds">雲</option>
+          <option value="radar">雷達</option>
+          <option value="satellite">衛星</option>
+          <option value="thunder">雷暴</option>
+          <option value="rainAccu">累積雨量</option>
+          <option value="waves">波浪</option>
+          <option value="meteogram">Meteogram</option>
+          <option value="airgram">Airgram</option>
+          <option value="airq">空氣品質</option>
+        </select>
+        <select id="windy-model-select" title="預報模式">
+          <option value="ecmwf">ECMWF</option>
+          <option value="gfs">GFS</option>
+          <option value="icon">ICON</option>
+          <option value="mblue">MBLUE</option>
+          <option value="jmaMsm">MSM</option>
+          <option value="multimodel">比較預報</option>
+        </select>
       </div>
     </div>
     <div class="bp-weather-scroll">

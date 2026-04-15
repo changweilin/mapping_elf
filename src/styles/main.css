@@ -1383,14 +1383,9 @@ html, body {
     height: 100px;
   }
 
-  /* Weather header: tighten padding on mobile (layout handled by HTML rows) */
+  /* Weather header: tighten padding on mobile */
   .bp-weather-header {
     padding: 5px 10px;
-  }
-  /* 第二排：title 填滿剩餘空間 */
-  .bp-wh-row .bp-weather-title {
-    flex: 1 1 auto;
-    min-width: 0;
   }
 
   .stats-grid {
@@ -1727,17 +1722,71 @@ html, body {
 
 .bp-weather-header {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: center;
+  gap: 8px;
   padding: 5px 16px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
 }
 
-.bp-wh-row {
+/* Corner cell (frozen top-left) — fetch + day/hour adj buttons */
+.wt-label-cell.wt-th {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  padding: 4px 4px;
+}
+
+.wt-ctrl-fetch {
+  font-size: 10px;
+  padding: 2px 3px;
+  border-radius: 3px;
+  border: 1px solid var(--accent-primary);
+  background: rgba(110, 231, 183, 0.08);
+  color: var(--accent-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  transition: background 0.15s;
+}
+.wt-ctrl-fetch:hover { background: rgba(110, 231, 183, 0.2); }
+.wt-ctrl-fetch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wt-ctrl-adj-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 1px;
+}
+
+.wt-ctrl-unit {
+  flex: 1;
+  text-align: center;
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.wt-ctrl-adj {
+  width: 18px;
+  height: 18px;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, color 0.15s;
+}
+.wt-ctrl-adj:hover {
+  background: var(--accent-primary);
+  color: #000;
+  border-color: var(--accent-primary);
 }
 
 .bp-date-controls {
