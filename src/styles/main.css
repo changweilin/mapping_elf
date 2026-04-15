@@ -1383,35 +1383,34 @@ html, body {
     height: 100px;
   }
 
-  /* Weather header: 2-row grid layout to prevent overflow */
+  /* Weather header: 2-row grid — Windy 設置獨占第一排，其他按鈕第二排 */
   .bp-weather-header {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
     grid-template-rows: auto auto;
     gap: 5px 6px;
     padding: 5px 10px;
     align-items: center;
   }
-  /* Row 1 col 1: 天氣資訊 title */
-  .bp-weather-title {
-    grid-column: 1;
-    grid-row: 1;
-    min-width: 0;
-  }
-  /* Row 1 col 2: 取得天氣 button */
-  #btn-fetch-weather {
-    grid-column: 2;
-    grid-row: 1;
-  }
-  /* Row 2 col 1: Windy selects */
+  /* 第一排：Windy 設置（跨全行） */
   .windy-selects {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  /* 第二排 col 1：天氣資訊 title（自動填滿） */
+  .bp-weather-title {
     grid-column: 1;
     grid-row: 2;
     min-width: 0;
   }
-  /* Row 2 col 2: date adj buttons */
+  /* 第二排 col 2：日期調整按鈕 */
   .bp-date-controls {
     grid-column: 2;
+    grid-row: 2;
+  }
+  /* 第二排 col 3：取得天氣 */
+  #btn-fetch-weather {
+    grid-column: 3;
     grid-row: 2;
   }
 
