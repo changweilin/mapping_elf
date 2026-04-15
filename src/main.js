@@ -2389,33 +2389,21 @@ async function init() {
     localStorage.setItem(LS_MAP_VIEW_KEY, JSON.stringify({ lat: c.lat, lng: c.lng, zoom: mapManager.map.getZoom() }));
   });
 
-  // Restore + wire round-trip toggle
-  const toggleRoundtrip = document.getElementById('toggle-roundtrip');
-  const toggleOloop = document.getElementById('toggle-oloop');
-  if (toggleRoundtrip) {
-    toggleRoundtrip.checked = roundTripMode;
-    toggleRoundtrip.addEventListener('change', () => {
-      roundTripMode = toggleRoundtrip.checked;
-      localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
-      if (roundTripMode && oLoopMode) {
-        oLoopMode = false;
-        localStorage.setItem(LS_OLOOP_KEY, '0');
-        if (toggleOloop) toggleOloop.checked = false;
-      }
-      if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
-    });
-  }
-  if (toggleOloop) {
-    toggleOloop.checked = oLoopMode;
-    toggleOloop.addEventListener('change', () => {
-      oLoopMode = toggleOloop.checked;
-      localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
-      if (oLoopMode && roundTripMode) {
-        roundTripMode = false;
-        localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
-        if (toggleRoundtrip) toggleRoundtrip.checked = false;
-      }
-      if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+  // Restore + wire nav-mode radio group (單程 / 來回 / O繞)
+  {
+    const navModeEls = document.querySelectorAll('input[name="nav-mode"]');
+    const initNavMode = roundTripMode ? 'roundtrip' : oLoopMode ? 'oloop' : 'single';
+    const initRadioEl = document.getElementById(`nav-mode-${initNavMode}`);
+    if (initRadioEl) initRadioEl.checked = true;
+    navModeEls.forEach(radio => {
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        roundTripMode = radio.value === 'roundtrip';
+        oLoopMode = radio.value === 'oloop';
+        localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+        localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
+        if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+      });
     });
   }
 
@@ -2667,6 +2655,18 @@ async function init() {
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
     });
+  }
+
+  // --- Settings section collapse toggle ---
+  {
+    const settingsHeader = document.getElementById('settings-toggle-header');
+    const settingsBody = document.getElementById('settings-body');
+    if (settingsHeader && settingsBody) {
+      settingsHeader.addEventListener('click', () => {
+        const collapsed = settingsBody.classList.toggle('collapsed');
+        settingsHeader.classList.toggle('collapsed', collapsed);
+      });
+    }
   }
 
   // --- Windy settings ---
