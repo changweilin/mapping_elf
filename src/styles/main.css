@@ -1383,35 +1383,14 @@ html, body {
     height: 100px;
   }
 
-  /* Weather header: 2-row grid — Windy 設置獨占第一排，其他按鈕第二排 */
+  /* Weather header: tighten padding on mobile (layout handled by HTML rows) */
   .bp-weather-header {
-    display: grid;
-    grid-template-columns: 1fr auto auto;
-    grid-template-rows: auto auto;
-    gap: 5px 6px;
     padding: 5px 10px;
-    align-items: center;
   }
-  /* 第一排：Windy 設置（跨全行） */
-  .windy-selects {
-    grid-column: 1 / -1;
-    grid-row: 1;
-  }
-  /* 第二排 col 1：天氣資訊 title（自動填滿） */
-  .bp-weather-title {
-    grid-column: 1;
-    grid-row: 2;
+  /* 第二排：title 填滿剩餘空間 */
+  .bp-wh-row .bp-weather-title {
+    flex: 1 1 auto;
     min-width: 0;
-  }
-  /* 第二排 col 2：日期調整按鈕 */
-  .bp-date-controls {
-    grid-column: 2;
-    grid-row: 2;
-  }
-  /* 第二排 col 3：取得天氣 */
-  #btn-fetch-weather {
-    grid-column: 3;
-    grid-row: 2;
   }
 
   .stats-grid {
@@ -1748,12 +1727,17 @@ html, body {
 
 .bp-weather-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 5px;
   padding: 5px 16px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
+}
+
+.bp-wh-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .bp-date-controls {
