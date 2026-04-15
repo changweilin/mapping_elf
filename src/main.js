@@ -1585,7 +1585,9 @@ function buildWeatherPoints() {
       for (let j = searchStart; j < coords.length; j++) {
         const d = haversineDistance(wps[i], coords[j]);
         if (d < minDist) { minDist = d; minIdx = j; }
-        else if (d > minDist + 1000) break;
+        // Only break when we have an exact match (anchored endpoint) to avoid
+        // a false-minimum from a curve that temporarily approaches then veers away.
+        if (minDist === 0) break;
       }
       let cum = 0;
       for (let j = 1; j <= minIdx; j++) cum += haversineDistance(coords[j - 1], coords[j]);
@@ -1679,7 +1681,7 @@ function buildWeatherPoints() {
       for (let j = searchStart; j < coords.length; j++) {
         const d = haversineDistance(wps[i], coords[j]);
         if (d < minDist) { minDist = d; minIdx = j; }
-        else if (d > minDist + 1000) break;
+        if (minDist === 0) break;
       }
       wpIndices.push(minIdx);
       searchStart = minIdx;
