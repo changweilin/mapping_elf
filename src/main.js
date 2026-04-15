@@ -295,6 +295,9 @@ routeModeRadios.forEach((radio) => {
 async function onWaypointsChanged(waypoints) {
   localStorage.setItem(LS_WAYPOINTS_KEY, JSON.stringify(waypoints));
   clearAllHighlights();
+  // Clear stale cumulative distances so the sidebar shows no labels until
+  // the new route is computed and buildWeatherPoints() populates fresh values.
+  waypointCumDistM = [];
   // Update UI list immediately for responsive feel
   updateWaypointList(waypoints);
   // Geocode any waypoints not yet named (fire-and-forget)
@@ -481,9 +484,7 @@ function updateWaypointList(waypoints) {
       const fallbackLabel = i === 0 ? '起點' : (i === n - 1 ? '終點' : `航點 ${i + 1}`);
       const displayName = placeName || fallbackLabel;
       const cumM = waypointCumDistM[i];
-      const distLabel = (cumM != null && cumM > 0)
-        ? (cumM >= 1000 ? `${(cumM / 1000).toFixed(1)} km` : `${Math.round(cumM)} m`)
-        : '';
+      const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
       return `
         <div class="waypoint-item">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
@@ -1592,7 +1593,8 @@ function buildWeatherPoints() {
       searchStart = minIdx;
     }
   } else {
-    wps.forEach((_, i) => wpCumDist.push(i));
+    // No route coords — suppress all distance labels
+    wps.forEach(() => wpCumDist.push(0));
   }
   // Expose for sidebar distance display
   waypointCumDistM = [...wpCumDist];
