@@ -1495,6 +1495,8 @@ function initWeatherControls() {
     const h = Math.round(entries[0]?.contentRect.height || 0);
     if (h > 0 && !panel._resizing)
       document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+    // Redraw chart so it fills the container correctly after layout changes
+    requestAnimationFrame(() => elevationProfile?.chart?.resize());
   }).observe(panel);
 
   if (!handle) return;
@@ -1540,6 +1542,18 @@ function initWeatherControls() {
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
   }, { passive: false });
+
+  // Re-clamp panel height when viewport changes (orientation change, keyboard, etc.)
+  window.addEventListener('resize', () => {
+    if (panel._resizing) return;
+    const maxH = Math.round(window.innerHeight * 0.85);
+    if (panel.offsetHeight > maxH) {
+      const clamped = Math.max(MIN_H, maxH);
+      panel.style.height = `${clamped}px`;
+      document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
+      localStorage.setItem(LS_PANEL_HEIGHT_KEY, clamped);
+    }
+  });
 }
 
 /**
@@ -1941,7 +1955,7 @@ function renderWeatherPanel() {
       : `style="color:${rgba(0.7)};"`;
 
     const thStyle = pt.isWaypoint
-      ? `style="border-top: 3px solid ${rgba(0.8)}; background: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
+      ? `style="border-top: 3px solid ${rgba(0.8)}; background-color: var(--bg-tertiary); background-image: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
       : `style="border-top: 2px solid ${rgba(0.2)};"`;
 
     const locked = !pt.isWaypoint;

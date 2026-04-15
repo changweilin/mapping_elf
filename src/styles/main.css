@@ -1373,9 +1373,42 @@ html, body {
     bottom: 0;
   }
 
+  /* 側邊欄展開時覆蓋浮動按鈕（side-panel z-index: 500） */
+  .map-action-btns {
+    z-index: 490;
+  }
+
   /* Adjust bottom-panel sizing for typical mobile displays */
   .bp-chart-row .elevation-chart-container {
     height: 100px;
+  }
+
+  /* Weather header: wrap into two rows to avoid overflow */
+  .bp-weather-header {
+    flex-wrap: wrap;
+    row-gap: 5px;
+    padding: 5px 10px;
+    gap: 6px;
+  }
+  /* Row 1: title (flex) + fetch button */
+  .bp-weather-title {
+    flex: 1 1 auto;
+    order: 1;
+    min-width: 0;
+  }
+  #btn-fetch-weather {
+    order: 2;
+    flex-shrink: 0;
+  }
+  /* Row 2: windy selects (flex) + date adj buttons */
+  .windy-selects {
+    order: 3;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .bp-date-controls {
+    order: 4;
+    flex-shrink: 0;
   }
 
   .stats-grid {
@@ -1412,6 +1445,11 @@ html, body {
   /* Lower the default elevation chart even further */
   .bp-chart-row .elevation-chart-container {
     height: 80px;
+  }
+
+  /* Bottom panel cannot exceed landscape viewport minus toolbar */
+  #bottom-panel {
+    max-height: calc(100vh - var(--toolbar-height) - 80px);
   }
 }
 
@@ -1699,6 +1737,9 @@ html, body {
 .bp-chart-row {
   padding: 10px 16px 6px;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .bp-chart-row .elevation-chart-container {
@@ -1789,6 +1830,7 @@ html, body {
   position: sticky;
   left: 0;
   z-index: 2;
+  isolation: isolate;
 }
 
 .wt-th.wt-label-cell {
@@ -1800,7 +1842,7 @@ html, body {
   text-align: center;
   vertical-align: top;
   padding: 5px 4px 4px;
-  background: rgba(30, 32, 48, 0.98);
+  background: var(--bg-tertiary);
   border-bottom: 2px solid rgba(110, 231, 183, 0.2);
   border-top: 2px solid transparent;
   position: sticky;
@@ -1809,7 +1851,7 @@ html, body {
 }
 /* Intermediate (non-waypoint) columns — subtle visual distinction */
 .wt-interval-col {
-  background: rgba(26, 28, 42, 0.98) !important;
+  background: rgb(26, 28, 42) !important;
   border-bottom-color: rgba(255,255,255,0.06) !important;
 }
 .wt-interval-col .wt-col-label {
@@ -1832,7 +1874,7 @@ html, body {
   top: 0;
   left: 0;
   z-index: 3;
-  background: rgba(30, 32, 48, 0.98);
+  background: var(--bg-tertiary);
 }
 
 .wt-col-label {
