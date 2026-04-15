@@ -1761,7 +1761,7 @@ function buildWeatherPoints() {
   });
 
   // Relabel interval points as "n-t"
-  // n = preceding waypoint's wpIndex (0-based); t = elapsed time (segment or cumulative)
+  // n = preceding waypoint's wpIndex (1-based); t = elapsed time (segment or cumulative)
   {
     const fmtT = (h) => {
       if (h <= 0) return '0';
@@ -1778,7 +1778,8 @@ function buildWeatherPoints() {
         const displayH = perSegmentMode
           ? (pt._elapsedH || 0) - prevWpElapsedH
           : (pt._elapsedH || 0);
-        const prefix = pt.isReturn ? `r${prevWpIdx}` : `${prevWpIdx}`;
+        const n = prevWpIdx + 1;
+        const prefix = pt.isReturn ? `r${n}` : `${n}`;
         pt.label = `${prefix}-${fmtT(displayH)}`;
       }
     });
