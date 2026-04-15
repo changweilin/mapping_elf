@@ -177,7 +177,19 @@ const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
 
 // =========== Event Listeners ===========
 
+// 在手機與平板預設收合側邊欄
+if (window.innerWidth <= 1024) {
+  sidePanel.classList.remove('open');
+}
+
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+// 手機平板螢幕下，點擊地圖自動收合側拉面板
+document.getElementById('map').addEventListener('click', () => {
+  if (window.innerWidth <= 1024 && sidePanel.classList.contains('open')) {
+    sidePanel.classList.remove('open');
+  }
+}, true);
 
 btnMyLocation.addEventListener('click', () => {
   mapManager.goToMyLocation();

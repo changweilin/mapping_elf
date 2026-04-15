@@ -1317,6 +1317,14 @@ html, body {
 
 /* ======== Responsive ======== */
 
+/* Tablet Portrait & Small Desktop (≤ 1024px) */
+@media (max-width: 1024px) {
+  :root {
+    --panel-width: 330px;
+  }
+}
+
+/* Mobile Devices (≤ 768px) */
 @media (max-width: 768px) {
   :root {
     --panel-width: 100%;
@@ -1337,24 +1345,37 @@ html, body {
     height: 34px;
   }
 
+  /* 滿版覆蓋：不再從下方，改由右側滑入，滿螢幕高度 */
   .side-panel {
-    top: auto;
+    top: var(--toolbar-height);
     bottom: 0;
     left: 0;
     right: 0;
     width: 100%;
-    max-height: 55vh;
+    max-height: none;
     border-left: none;
     border-top: 1px solid var(--border);
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-    transform: translateY(100%);
+    border-radius: 0;
+    transform: translateX(100%);
   }
   .side-panel.open {
-    transform: translateY(0);
+    transform: translateX(0);
   }
 
+  /* 滿版時放開航點列表高度限制 */
+  .waypoint-list {
+    max-height: none;
+    flex: 1;
+  }
+
+  /* Mobile map bottom to 0 to overlap */
   .map-container {
     bottom: 0;
+  }
+
+  /* Adjust bottom-panel sizing for typical mobile displays */
+  .bp-chart-row .elevation-chart-container {
+    height: 100px;
   }
 
   .stats-grid {
@@ -1363,6 +1384,34 @@ html, body {
   }
   .stat-card {
     padding: 10px;
+  }
+}
+
+/* Mobile Landscape specifically */
+@media (max-height: 500px) and (orientation: landscape) {
+  :root {
+    --panel-width: 320px;
+    --toolbar-height: 46px;
+  }
+  
+  .side-panel {
+    top: var(--toolbar-height);
+    bottom: 0;
+    right: 0;
+    left: auto;
+    width: var(--panel-width);
+    transform: translateX(100%);
+    border-left: 1px solid var(--border);
+    border-top: none;
+  }
+  
+  .side-panel.open {
+    transform: translateX(0);
+  }
+  
+  /* Lower the default elevation chart even further */
+  .bp-chart-row .elevation-chart-container {
+    height: 80px;
   }
 }
 
