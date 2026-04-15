@@ -1778,8 +1778,8 @@ function buildWeatherPoints() {
         const displayH = perSegmentMode
           ? (pt._elapsedH || 0) - prevWpElapsedH
           : (pt._elapsedH || 0);
-        const n = prevWpIdx + 1;
-        const prefix = pt.isReturn ? `r${n}` : `${n}`;
+        const n = prevWpIdx;
+        const prefix = pt.isReturn ? `r${n}` : `${n + 1}`;
         pt.label = `${prefix}-${fmtT(displayH)}`;
       }
     });
