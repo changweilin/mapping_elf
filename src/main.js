@@ -76,6 +76,10 @@ let paceParams = (() => {
 // Used by the sidebar list and map waypoint icons to match the elevation chart.
 let waypointGradColors = [];
 
+// Cumulative distance (metres) from start to each waypoint, populated by buildWeatherPoints().
+// Empty until the first route is calculated.
+let waypointCumDistM = [];
+
 
 // =========== Initialize Modules ===========
 const routeEngine = new RouteEngine();
@@ -476,11 +480,16 @@ function updateWaypointList(waypoints) {
       // Fallback label matches weather card: 起點 / 終點 / 航點 N
       const fallbackLabel = i === 0 ? '起點' : (i === n - 1 ? '終點' : `航點 ${i + 1}`);
       const displayName = placeName || fallbackLabel;
+      const cumM = waypointCumDistM[i];
+      const distLabel = (cumM != null && cumM > 0)
+        ? (cumM >= 1000 ? `${(cumM / 1000).toFixed(1)} km` : `${Math.round(cumM)} m`)
+        : '';
       return `
         <div class="waypoint-item">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
           <span class="wp-coords" title="${coords}" style="color:${gradColor}">
             <span class="wp-place-name">${displayName}</span>
+            ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
           <div class="wp-actions">
             <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -1577,6 +1586,8 @@ function buildWeatherPoints() {
   } else {
     wps.forEach((_, i) => wpCumDist.push(i));
   }
+  // Expose for sidebar distance display
+  waypointCumDistM = [...wpCumDist];
 
   // Compute pace cumulative times whenever any interval mode is active so that
   // distance-mode interval points also get meaningful _elapsedH values.
@@ -1813,8 +1824,9 @@ function renderWeatherPanel() {
     if (newColors.every(c => c !== null) && newColors.length > 0) {
       waypointGradColors = newColors;
       mapManager.setWaypointColors(waypointGradColors);
-      updateWaypointList(mapManager.waypoints);
     }
+    // Always re-render sidebar so cumulative distances are up-to-date
+    updateWaypointList(mapManager.waypoints);
   }
 
   const saved = loadWeatherSettings();

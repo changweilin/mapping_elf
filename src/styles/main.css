@@ -567,12 +567,11 @@ html, body {
 }
 .waypoint-item .wp-coords {
   flex: 1;
-  font-size: 12px;
-  color: var(--accent-primary); /* overridden per-item by inline style */
-  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .waypoint-item .wp-place-name {
   font-family: var(--font-sans, sans-serif);
@@ -582,6 +581,12 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.waypoint-item .wp-cum-dist {
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 10px;
+  color: var(--text-secondary, #888);
+  white-space: nowrap;
 }
 .waypoint-item .wp-actions {
   display: flex;
