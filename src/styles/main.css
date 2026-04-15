@@ -1383,32 +1383,36 @@ html, body {
     height: 100px;
   }
 
-  /* Weather header: wrap into two rows to avoid overflow */
+  /* Weather header: 2-row grid layout to prevent overflow */
   .bp-weather-header {
-    flex-wrap: wrap;
-    row-gap: 5px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 5px 6px;
     padding: 5px 10px;
-    gap: 6px;
+    align-items: center;
   }
-  /* Row 1: title (flex) + fetch button */
+  /* Row 1 col 1: 天氣資訊 title */
   .bp-weather-title {
-    flex: 1 1 auto;
-    order: 1;
+    grid-column: 1;
+    grid-row: 1;
     min-width: 0;
   }
+  /* Row 1 col 2: 取得天氣 button */
   #btn-fetch-weather {
-    order: 2;
-    flex-shrink: 0;
+    grid-column: 2;
+    grid-row: 1;
   }
-  /* Row 2: windy selects (flex) + date adj buttons */
+  /* Row 2 col 1: Windy selects */
   .windy-selects {
-    order: 3;
-    flex: 1 1 auto;
+    grid-column: 1;
+    grid-row: 2;
     min-width: 0;
   }
+  /* Row 2 col 2: date adj buttons */
   .bp-date-controls {
-    order: 4;
-    flex-shrink: 0;
+    grid-column: 2;
+    grid-row: 2;
   }
 
   .stats-grid {
@@ -1737,9 +1741,6 @@ html, body {
 .bp-chart-row {
   padding: 10px 16px 6px;
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
 }
 
 .bp-chart-row .elevation-chart-container {
