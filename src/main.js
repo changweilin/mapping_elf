@@ -862,7 +862,7 @@ function collectExportData() {
       });
     } else {
       // Fallback: use saved display-cell values (survives date/coord changes and page reload)
-      const savedCells = savedWeatherCells[getSemanticKey(pt, colIdx)];
+      const savedCells = savedWeatherCells[getSemanticKey(pt)];
       if (savedCells) {
         WEATHER_ROWS.forEach(row => {
           const val = savedCells[row.key];
@@ -1089,11 +1089,19 @@ let savedWeatherCells = (() => {
   catch { return {}; }
 })();
 
-/** Stable semantic key for a weather column point */
-function getSemanticKey(pt, i) {
-  return pt.isWaypoint
-    ? (pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`)
-    : `int:${Math.round((pt._cum ?? i * 1000) / 10) * 10}`;
+/**
+ * Stable semantic key for a weather column point, based on coordinates.
+ * Rounds lat/lng to 2 decimal places (~550 m threshold at equator):
+ *   - same location after minor adjustment → same key → cache preserved
+ *   - significantly moved → different key → cache miss (stale data not shown)
+ */
+function getSemanticKey(pt) {
+  const latK = pt.lat.toFixed(2);
+  const lngK = pt.lng.toFixed(2);
+  if (pt.isWaypoint) {
+    return pt.isReturn ? `ret:${latK},${lngK}` : `wp:${latK},${lngK}`;
+  }
+  return `int:${latK},${lngK}`;
 }
 
 /** Persist display-cell values for one column */
@@ -1809,6 +1817,20 @@ function renderWeatherPanel() {
     return;
   }
 
+  // Prune savedWeatherCells: remove entries whose coordinate key no longer matches
+  // any point in the current panel. This prevents stale data from accumulating in
+  // localStorage when waypoints are moved far or deleted.
+  {
+    const validKeys = new Set(weatherPoints.map(p => getSemanticKey(p)));
+    let pruned = false;
+    Object.keys(savedWeatherCells).forEach(k => {
+      if (!validKeys.has(k)) { delete savedWeatherCells[k]; pruned = true; }
+    });
+    if (pruned) {
+      try { localStorage.setItem(LS_WEATHER_CELLS_KEY, JSON.stringify(savedWeatherCells)); } catch (_) { }
+    }
+  }
+
   // Compute per-waypoint gradient colors (matching elevation chart) and apply
   // to map markers + sidebar list so all views share the same teal→red palette.
   {
@@ -2026,13 +2048,13 @@ function renderWeatherPanel() {
         const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
         if (cell) cell.textContent = val;
       });
-      saveWeatherCells(getSemanticKey(pt, colIdx), cells);
+      saveWeatherCells(getSemanticKey(pt), cells);
       if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && cached.weatherIcon) {
         mapManager.setWaypointWeather(pt.wpIndex, cached.weatherIcon);
       }
     } else {
       // Fallback: restore display values saved from a previous fetch
-      const saved = savedWeatherCells[getSemanticKey(pt, colIdx)];
+      const saved = savedWeatherCells[getSemanticKey(pt)];
       if (saved) {
         WEATHER_ROWS.forEach(row => {
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
@@ -2133,7 +2155,7 @@ async function fetchAllWeatherData() {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
         if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
       });
-      saveWeatherCells(getSemanticKey(pt, i), cells);
+      saveWeatherCells(getSemanticKey(pt), cells);
       // Map weather icon only on outgoing waypoints (return shares the same marker)
       if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
