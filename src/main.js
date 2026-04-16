@@ -1465,6 +1465,7 @@ function shiftAllDates(deltaDays, deltaHours) {
 }
 
 const LS_PANEL_HEIGHT_KEY = 'mappingElf_panelHeight';
+const LS_PANEL_HEIGHT_RATIO_KEY = 'mappingElf_panelHeightRatio';
 
 function initWeatherControls() {
   // Event delegation: fetch + date/time adj buttons live inside the dynamic weather table
@@ -1484,12 +1485,33 @@ function initWeatherControls() {
   const handle = document.getElementById('bp-resize-handle');
   if (!panel) return;
 
-  // Restore saved height
-  const savedH = parseInt(localStorage.getItem(LS_PANEL_HEIGHT_KEY));
-  if (savedH > 0) {
-    const clamped = Math.max(56, Math.min(Math.round(window.innerHeight * 0.85), savedH));
-    panel.style.height = `${clamped}px`;
-    document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
+  // Helpers: save/restore panel height as a viewport ratio so portrait↔landscape
+  // transitions maintain the same proportional split.
+  const MIN_H = 56;
+  const savePanelRatio = () => {
+    const ratio = panel.offsetHeight / window.innerHeight;
+    localStorage.setItem(LS_PANEL_HEIGHT_RATIO_KEY, ratio);
+  };
+  const applyPanelRatio = () => {
+    const savedRatio = parseFloat(localStorage.getItem(LS_PANEL_HEIGHT_RATIO_KEY));
+    // Fall back to legacy absolute-pixel key for existing installs
+    const legacyH = parseInt(localStorage.getItem(LS_PANEL_HEIGHT_KEY));
+    let h;
+    if (savedRatio > 0) {
+      h = Math.round(savedRatio * window.innerHeight);
+    } else if (legacyH > 0) {
+      h = legacyH;
+    }
+    if (h > 0) {
+      const clamped = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), h));
+      panel.style.height = `${clamped}px`;
+      document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
+    }
+  };
+
+  // Restore saved height (ratio-based)
+  if (localStorage.getItem(LS_PANEL_HEIGHT_RATIO_KEY) || localStorage.getItem(LS_PANEL_HEIGHT_KEY)) {
+    applyPanelRatio();
   } else {
     requestAnimationFrame(() => {
       const h = panel.offsetHeight;
@@ -1509,7 +1531,6 @@ function initWeatherControls() {
   if (!handle) return;
 
   // --- Drag-to-resize ---
-  const MIN_H = 56;
   const applyHeight = (clientY) => {
     const h = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - clientY));
     panel.style.height = `${h}px`;
@@ -1525,7 +1546,8 @@ function initWeatherControls() {
     const onUp = () => {
       panel._resizing = false;
       handle.classList.remove('dragging');
-      localStorage.setItem(LS_PANEL_HEIGHT_KEY, panel.offsetHeight);
+      savePanelRatio();
+      mapManager.map.invalidateSize({ animate: false });
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -1542,7 +1564,8 @@ function initWeatherControls() {
     const onEnd = () => {
       panel._resizing = false;
       handle.classList.remove('dragging');
-      localStorage.setItem(LS_PANEL_HEIGHT_KEY, panel.offsetHeight);
+      savePanelRatio();
+      mapManager.map.invalidateSize({ animate: false });
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
     };
@@ -1550,16 +1573,12 @@ function initWeatherControls() {
     document.addEventListener('touchend', onEnd);
   }, { passive: false });
 
-  // Re-clamp panel height when viewport changes (orientation change, keyboard, etc.)
+  // Re-apply saved ratio when viewport changes (orientation change, keyboard, etc.)
+  // so portrait↔landscape preserves the proportional split.
   window.addEventListener('resize', () => {
     if (panel._resizing) return;
-    const maxH = Math.round(window.innerHeight * 0.85);
-    if (panel.offsetHeight > maxH) {
-      const clamped = Math.max(MIN_H, maxH);
-      panel.style.height = `${clamped}px`;
-      document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
-      localStorage.setItem(LS_PANEL_HEIGHT_KEY, clamped);
-    }
+    applyPanelRatio();
+    mapManager.map.invalidateSize({ animate: false });
   });
 }
 
