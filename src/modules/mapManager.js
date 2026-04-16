@@ -599,8 +599,12 @@ export class MapManager {
     // Account for the side panel (right) and bottom weather panel overlaying the map
     const panelEl = document.querySelector('.side-panel.open');
     const rightPad = panelEl ? panelEl.offsetWidth + 50 : 50;
+    // Bottom panel overlays the map on mobile (map-container bottom: 0), but on
+    // desktop the map container is already clipped above it — avoid double-counting.
+    const mapContainer = document.querySelector('.map-container');
+    const mapBottomOffset = mapContainer ? parseInt(getComputedStyle(mapContainer).bottom) || 0 : 0;
     const bottomPanelEl = document.getElementById('bottom-panel');
-    const bottomPad = bottomPanelEl ? bottomPanelEl.offsetHeight + 50 : 50;
+    const bottomPad = (mapBottomOffset === 0 && bottomPanelEl) ? bottomPanelEl.offsetHeight + 50 : 50;
     const fitOpts = {
       paddingTopLeft: [50, 50],
       paddingBottomRight: [rightPad, bottomPad],
