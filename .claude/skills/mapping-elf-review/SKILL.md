@@ -6,6 +6,9 @@ type: review
 
 # Mapping Elf — Code Review Rules
 
+**ADVERSARIAL REVIEW REQUIRED:** 
+Before evaluating any code, you MUST actively execute `git diff` or `git diff --staged` to read the exact changes line-by-line. Do NOT rely purely on user descriptions. Evaluate the diff strictly against the Gotchas below. If you detect ANY violation, reject the change, explain the bug clearly, and propose the required fix.
+
 This skill captures patterns that have caused real bugs in this codebase. Apply these checks whenever reviewing changes.
 
 ## Pace Engine
