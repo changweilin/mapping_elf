@@ -596,12 +596,14 @@ export class MapManager {
   }
 
   fitToRoute() {
-    // Account for the side panel overlaying the right side of the map
+    // Account for the side panel (right) and bottom weather panel overlaying the map
     const panelEl = document.querySelector('.side-panel.open');
     const rightPad = panelEl ? panelEl.offsetWidth + 50 : 50;
+    const bottomPanelEl = document.getElementById('bottom-panel') || document.querySelector('.bottom-panel');
+    const bottomPad = bottomPanelEl ? bottomPanelEl.offsetHeight + 20 : 50;
     const fitOpts = {
       paddingTopLeft: [50, 50],
-      paddingBottomRight: [50, rightPad],
+      paddingBottomRight: [bottomPad, rightPad],
     };
 
     const allPl = [...this.routePolylines, ...this.gradientPolylines];
