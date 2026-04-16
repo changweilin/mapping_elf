@@ -31,6 +31,9 @@ let allAlternatives = []; // All route alternatives
 let selectedAltIndex = 0;
 let isProcessing = false;
 let pendingUpdate = false;
+// When a file with a recorded track is imported, this flag suppresses routing so
+// the track is displayed as-is until the user clears the route or imports again.
+let importedTrackMode = false;
 
 const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
@@ -201,6 +204,7 @@ btnImportGpx.addEventListener('click', () => gpxFileInput.click());
 gpxFileInput.addEventListener('change', importFile);
 
 btnClearRoute.addEventListener('click', () => {
+  importedTrackMode = false;
   mapManager.clearWaypoints();
   mapManager.clearIntermediateMarkers();
   elevationProfile.clear();
@@ -305,6 +309,18 @@ routeModeRadios.forEach((radio) => {
 // =========== Core Logic ===========
 
 async function onWaypointsChanged(waypoints) {
+  // In imported-track mode, update the sidebar list but skip routing entirely.
+  // The track polyline is managed directly; waypoints are decorative markers only.
+  if (importedTrackMode) {
+    updateWaypointList(waypoints);
+    geocodeWaypoints(waypoints);
+    // Re-render weather table and elevation chart markers when waypoints change
+    // (e.g. user adds a new point by clicking the map while in track mode).
+    renderWeatherPanel();
+    updateIntermediateMarkers();
+    return;
+  }
+
   localStorage.setItem(LS_WAYPOINTS_KEY, JSON.stringify(waypoints));
   clearAllHighlights();
   // Clear stale cumulative distances so the sidebar shows no labels until
@@ -969,6 +985,67 @@ function importFile(e) {
         return;
       }
 
+      // If the file contains a recorded track, load it directly without routing.
+      if (result.trackPoints.length > 0) {
+        const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
+        const elevations = result.trackPoints.map((p) => p.ele ?? 0);
+
+        // 1. Clear old state normally (importedTrackMode still false so
+        //    onWaypointsChanged([]) runs its usual clear path)
+        importedTrackMode = false;
+        mapManager.clearWaypoints();
+        mapManager.clearIntermediateMarkers();
+
+        // 2. Enter track mode — from here, onWaypointsChanged skips routing
+        importedTrackMode = true;
+
+        // 3. Draw the track polyline directly
+        mapManager.drawRoute(coords);
+        currentRouteCoords = coords;
+        currentElevations = elevations;
+
+        // 4. Load waypoints as decorative markers (no routing triggered)
+        if (result.waypoints.length > 0) {
+          if (result.segmentDates) {
+            result.waypoints.forEach((wp, i) => {
+              const sd = result.segmentDates[i];
+              if (sd?.label) waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
+            });
+            try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+          }
+          result.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+        }
+
+        // 5. Apply per-waypoint dates to table columns after panel renders
+        if (result.segmentDates?.some(d => d?.date || d?.time)) {
+          window._pendingGpxDates = result.segmentDates;
+        }
+
+        // 6. Load elevation profile from track data (no elevation API call)
+        elevationProfile.updateWithData(coords, elevations);
+
+        // 7. Update stats from track data
+        const totalDist = elevationProfile.distances.at(-1) || 0;
+        const epStats = elevationProfile._calcStats();
+        statDistance.textContent = formatDistance(totalDist);
+        statAscent.textContent = formatElevation(epStats.ascent);
+        statDescent.textContent = formatElevation(epStats.descent);
+        statMaxElev.textContent = formatElevation(epStats.maxElev);
+
+        mapManager.fitToRoute();
+        updateTimeStat();
+        updateIntermediateMarkers();
+        renderWeatherPanel();
+
+        const wpCount = result.waypoints.length;
+        showNotification(
+          `已匯入軌跡（${coords.length} 個點${wpCount > 0 ? `，${wpCount} 個航點` : ''}）`,
+          'success'
+        );
+        return;
+      }
+
+      // No track — fall back to waypoint-based routing.
       // Apply per-waypoint dates to table columns after panel renders
       if (result.segmentDates?.some(d => d?.date || d?.time)) {
         window._pendingGpxDates = result.segmentDates;
@@ -987,13 +1064,6 @@ function importFile(e) {
         }
         mapManager.setWaypointsFromImport(result.waypoints);
         showNotification(`已匯入 ${result.waypoints.length} 個航點`, 'success');
-      }
-      if (result.trackPoints.length > 0) {
-        const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
-        mapManager.drawRoute(coords);
-        currentRouteCoords = coords;
-        currentElevations = result.trackPoints.map((p) => p.ele);
-        elevationProfile.update(coords);
       }
     } catch (err) {
       showNotification('檔案解析失敗', 'error');
