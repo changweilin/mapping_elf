@@ -161,6 +161,10 @@ export class GpxExporter {
   /**
    * Parse GPX file and extract waypoints + track points + segment dates.
    * Skips <wpt> elements tagged with <type>mel:interval</type>.
+   *
+   * When a track is present, waypoints are projected onto the nearest track
+   * point and sorted in track order. The track start and end are prepended /
+   * appended when no existing waypoint lies within 100 m of them.
    */
   static parse(gpxString) {
     const parser = new DOMParser();
@@ -170,26 +174,7 @@ export class GpxExporter {
     const trackPoints = [];
     const segmentDates = [];
 
-    // Parse waypoints — skip interval annotations
-    const wpts = doc.querySelectorAll('wpt');
-    wpts.forEach((wpt) => {
-      const typeEl = wpt.querySelector('type');
-      if (typeEl && typeEl.textContent.trim() === 'mel:interval') return;
-
-      const lat = parseFloat(wpt.getAttribute('lat'));
-      const lon = parseFloat(wpt.getAttribute('lon'));
-      const nameEl = wpt.querySelector('name');
-      if (!isNaN(lat) && !isNaN(lon)) {
-        waypoints.push([lat, lon]);
-        segmentDates.push({
-          label: nameEl ? nameEl.textContent.trim() : null,
-          date: this._getExtValue(wpt, 'date'),
-          time: this._getExtValue(wpt, 'time'),
-        });
-      }
-    });
-
-    // Parse track points
+    // Parse track points first so we can project waypoints onto the track
     const trkpts = doc.querySelectorAll('trkpt');
     trkpts.forEach((pt) => {
       const lat = parseFloat(pt.getAttribute('lat'));
@@ -201,8 +186,61 @@ export class GpxExporter {
       }
     });
 
-    // If no waypoints but have track, sample some as waypoints
-    if (waypoints.length === 0 && trackPoints.length > 0) {
+    // Parse waypoints — skip interval annotations
+    const rawWpts = [];
+    const wpts = doc.querySelectorAll('wpt');
+    wpts.forEach((wpt) => {
+      const typeEl = wpt.querySelector('type');
+      if (typeEl && typeEl.textContent.trim() === 'mel:interval') return;
+
+      const lat = parseFloat(wpt.getAttribute('lat'));
+      const lon = parseFloat(wpt.getAttribute('lon'));
+      const nameEl = wpt.querySelector('name');
+      if (!isNaN(lat) && !isNaN(lon)) {
+        rawWpts.push({
+          latlon: [lat, lon],
+          meta: {
+            label: nameEl ? nameEl.textContent.trim() : null,
+            date: this._getExtValue(wpt, 'date'),
+            time: this._getExtValue(wpt, 'time'),
+          },
+        });
+      }
+    });
+
+    if (trackPoints.length > 0 && rawWpts.length > 0) {
+      // Project each waypoint onto the track and sort by ascending track index
+      const SNAP_M = 100;
+      const projected = rawWpts.map(wp => ({
+        ...wp,
+        trackIdx: this._nearestTrackIndex(wp.latlon[0], wp.latlon[1], trackPoints),
+      }));
+      projected.sort((a, b) => a.trackIdx - b.trackIdx);
+
+      // Prepend track start if the first waypoint is far from it
+      const trackStart = trackPoints[0];
+      if (this._distM(projected[0].latlon[0], projected[0].latlon[1], trackStart.lat, trackStart.lon) > SNAP_M) {
+        projected.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null }, trackIdx: 0 });
+      }
+
+      // Append track end if the last waypoint is far from it
+      const trackEnd = trackPoints[trackPoints.length - 1];
+      if (this._distM(projected[projected.length - 1].latlon[0], projected[projected.length - 1].latlon[1], trackEnd.lat, trackEnd.lon) > SNAP_M) {
+        projected.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null }, trackIdx: trackPoints.length - 1 });
+      }
+
+      projected.forEach(wp => {
+        waypoints.push(wp.latlon);
+        segmentDates.push(wp.meta);
+      });
+    } else if (rawWpts.length > 0) {
+      // No track — use waypoints as-is
+      rawWpts.forEach(wp => {
+        waypoints.push(wp.latlon);
+        segmentDates.push(wp.meta);
+      });
+    } else if (trackPoints.length > 0) {
+      // No waypoints — sample evenly from track
       const step = Math.max(1, Math.floor(trackPoints.length / 10));
       for (let i = 0; i < trackPoints.length; i += step) {
         waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
@@ -214,6 +252,27 @@ export class GpxExporter {
     }
 
     return { waypoints, trackPoints, segmentDates };
+  }
+
+  /** Index of the track point closest to (lat, lon). */
+  static _nearestTrackIndex(lat, lon, trackPoints) {
+    let minDist = Infinity;
+    let minIdx = 0;
+    for (let i = 0; i < trackPoints.length; i++) {
+      const d = this._distM(lat, lon, trackPoints[i].lat, trackPoints[i].lon);
+      if (d < minDist) { minDist = d; minIdx = i; }
+    }
+    return minIdx;
+  }
+
+  /** Haversine distance in metres between two lat/lon pairs. */
+  static _distM(lat1, lon1, lat2, lon2) {
+    const R = 6_371_000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   /**
