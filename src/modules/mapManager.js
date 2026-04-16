@@ -596,14 +596,22 @@ export class MapManager {
   }
 
   fitToRoute() {
+    // Account for the side panel overlaying the right side of the map
+    const panelEl = document.querySelector('.side-panel.open');
+    const rightPad = panelEl ? panelEl.offsetWidth + 50 : 50;
+    const fitOpts = {
+      paddingTopLeft: [50, 50],
+      paddingBottomRight: [50, rightPad],
+    };
+
     const allPl = [...this.routePolylines, ...this.gradientPolylines];
     if (allPl.length > 0) {
       const bounds = L.latLngBounds([]);
       allPl.forEach((pl) => bounds.extend(pl.getBounds()));
-      this.map.fitBounds(bounds, { padding: [50, 50] });
+      this.map.fitBounds(bounds, fitOpts);
     } else if (this.waypoints.length > 0) {
       const bounds = L.latLngBounds(this.waypoints.map((w) => [w[0], w[1]]));
-      this.map.fitBounds(bounds, { padding: [50, 50] });
+      this.map.fitBounds(bounds, fitOpts);
     }
   }
 
