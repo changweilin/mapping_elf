@@ -153,6 +153,7 @@ const btnMyLocation = document.getElementById('btn-my-location');
 const btnExportGpx = document.getElementById('btn-export-gpx');
 const btnImportGpx = document.getElementById('btn-import-gpx');
 const btnClearRoute = document.getElementById('btn-clear-route');
+const btnReplanRoute = document.getElementById('btn-replan-route');
 const btnUndo = document.getElementById('btn-undo');
 const btnClearCache = document.getElementById('btn-clear-cache');
 const gpxFileInput = document.getElementById('gpx-file-input');
@@ -203,8 +204,24 @@ btnExportGpx.addEventListener('click', openExportModal);
 btnImportGpx.addEventListener('click', () => gpxFileInput.click());
 gpxFileInput.addEventListener('change', importFile);
 
+/** Show/hide the re-plan button based on whether we are in imported-track mode. */
+function syncTrackModeUI() {
+  btnReplanRoute?.classList.toggle('hidden', !importedTrackMode);
+}
+
+btnReplanRoute?.addEventListener('click', () => {
+  importedTrackMode = false;
+  syncTrackModeUI();
+  // Clear the imported track polyline but keep waypoint markers
+  mapManager.clearRoute();
+  // Trigger normal routing with the retained waypoints
+  onWaypointsChanged(mapManager.waypoints);
+  showNotification('重新規劃路線中…', 'info', 1500);
+});
+
 btnClearRoute.addEventListener('click', () => {
   importedTrackMode = false;
+  syncTrackModeUI();
   mapManager.clearWaypoints();
   mapManager.clearIntermediateMarkers();
   elevationProfile.clear();
@@ -998,6 +1015,7 @@ function importFile(e) {
 
         // 2. Enter track mode — from here, onWaypointsChanged skips routing
         importedTrackMode = true;
+        syncTrackModeUI();
 
         // 3. Draw the track polyline directly
         mapManager.drawRoute(coords);
