@@ -9,6 +9,7 @@ import { RouteEngine } from './modules/routeEngine.js';
 import { ElevationProfile } from './modules/elevationProfile.js';
 import { GpxExporter } from './modules/gpxExporter.js';
 import { KmlExporter } from './modules/kmlExporter.js';
+import { YamlExporter } from './modules/yamlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
@@ -74,6 +75,10 @@ let paceParams = (() => {
 // Gradient colors per waypoint index (teal→sky→amber→red), updated after each route build.
 // Used by the sidebar list and map waypoint icons to match the elevation chart.
 let waypointGradColors = [];
+
+// Cumulative distance (metres) from start to each waypoint, populated by buildWeatherPoints().
+// Empty until the first route is calculated.
+let waypointCumDistM = [];
 
 
 // =========== Initialize Modules ===========
@@ -172,7 +177,19 @@ const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
 
 // =========== Event Listeners ===========
 
+// 在手機與平板預設收合側邊欄
+if (window.innerWidth <= 1024) {
+  sidePanel.classList.remove('open');
+}
+
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+// 手機平板螢幕下，點擊地圖自動收合側拉面板
+document.getElementById('map').addEventListener('click', () => {
+  if (window.innerWidth <= 1024 && sidePanel.classList.contains('open')) {
+    sidePanel.classList.remove('open');
+  }
+}, true);
 
 btnMyLocation.addEventListener('click', () => {
   mapManager.goToMyLocation();
@@ -181,7 +198,7 @@ btnMyLocation.addEventListener('click', () => {
 
 btnExportGpx.addEventListener('click', openExportModal);
 btnImportGpx.addEventListener('click', () => gpxFileInput.click());
-gpxFileInput.addEventListener('change', importGpx);
+gpxFileInput.addEventListener('change', importFile);
 
 btnClearRoute.addEventListener('click', () => {
   mapManager.clearWaypoints();
@@ -290,6 +307,9 @@ routeModeRadios.forEach((radio) => {
 async function onWaypointsChanged(waypoints) {
   localStorage.setItem(LS_WAYPOINTS_KEY, JSON.stringify(waypoints));
   clearAllHighlights();
+  // Clear stale cumulative distances so the sidebar shows no labels until
+  // the new route is computed and buildWeatherPoints() populates fresh values.
+  waypointCumDistM = [];
   // Update UI list immediately for responsive feel
   updateWaypointList(waypoints);
   // Geocode any waypoints not yet named (fire-and-forget)
@@ -475,11 +495,14 @@ function updateWaypointList(waypoints) {
       // Fallback label matches weather card: 起點 / 終點 / 航點 N
       const fallbackLabel = i === 0 ? '起點' : (i === n - 1 ? '終點' : `航點 ${i + 1}`);
       const displayName = placeName || fallbackLabel;
+      const cumM = waypointCumDistM[i];
+      const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
       return `
         <div class="waypoint-item">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
           <span class="wp-coords" title="${coords}" style="color:${gradColor}">
             <span class="wp-place-name">${displayName}</span>
+            ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
           <div class="wp-actions">
             <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -803,7 +826,7 @@ function syncIntervalTimesFromWP() {
   enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
-// =========== Export (GPX / KML) ===========
+// =========== Export / Import (GPX / KML / YAML) ===========
 
 const exportModal = document.getElementById('export-modal');
 const btnExportConfirm = document.getElementById('btn-export-confirm');
@@ -852,7 +875,7 @@ function collectExportData() {
       });
     } else {
       // Fallback: use saved display-cell values (survives date/coord changes and page reload)
-      const savedCells = savedWeatherCells[getSemanticKey(pt, colIdx)];
+      const savedCells = savedWeatherCells[getSemanticKey(pt)];
       if (savedCells) {
         WEATHER_ROWS.forEach(row => {
           const val = savedCells[row.key];
@@ -860,6 +883,7 @@ function collectExportData() {
         });
       }
     }
+    const windyUrl = date ? buildWindyUrl(pt.lat, pt.lng, date, hour) : '';
     return {
       lat: pt.lat,
       lng: pt.lng,
@@ -867,9 +891,12 @@ function collectExportData() {
       isWaypoint: pt.isWaypoint || false,
       isReturn: pt.isReturn || false,
       wpIndex: pt.wpIndex,
+      cum: pt._cum || 0,
       date,
       time,
+      hour,
       weather,
+      windyUrl,
     };
   });
 }
@@ -903,36 +930,61 @@ function doExport(fmt) {
 
   const wpData = collectExportData();
 
-  if (fmt === 'gpx' || fmt === 'both') {
+  if (fmt === 'gpx' || fmt === 'all') {
     const gpx = GpxExporter.generate(wpData, currentRouteCoords, currentElevations, name);
     GpxExporter.download(gpx, `${filename}.gpx`);
   }
 
-  if (fmt === 'kml' || fmt === 'both') {
+  if (fmt === 'kml' || fmt === 'all') {
     const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, name);
     KmlExporter.download(kml, `${filename}.kml`);
   }
 
-  const label = fmt === 'both' ? 'GPX + KML' : fmt.toUpperCase();
+  if (fmt === 'yaml' || fmt === 'all') {
+    const yaml = YamlExporter.generate(wpData, name);
+    YamlExporter.download(yaml, `${filename}.yaml`);
+  }
+
+  const label = fmt === 'all' ? 'GPX + KML + YAML' : fmt.toUpperCase();
   showNotification(`${label} 檔案已匯出`, 'success');
 }
 
-function importGpx(e) {
+function importFile(e) {
   const file = e.target.files[0];
   if (!file) return;
 
+  const ext = file.name.split('.').pop().toLowerCase();
   const reader = new FileReader();
   reader.onload = (evt) => {
     try {
-      const result = GpxExporter.parse(evt.target.result);
+      let result;
+      if (ext === 'gpx') {
+        result = GpxExporter.parse(evt.target.result);
+      } else if (ext === 'kml') {
+        result = KmlExporter.parse(evt.target.result);
+      } else if (ext === 'yaml' || ext === 'yml') {
+        result = YamlExporter.parse(evt.target.result);
+      } else {
+        showNotification('不支援的檔案格式', 'error');
+        return;
+      }
 
       // Apply per-waypoint dates to table columns after panel renders
       if (result.segmentDates?.some(d => d?.date || d?.time)) {
-        // Store for application after renderWeatherPanel() is called
         window._pendingGpxDates = result.segmentDates;
       }
 
       if (result.waypoints.length > 0) {
+        // Preserve imported names as custom names if present
+        if (result.segmentDates) {
+          result.waypoints.forEach((wp, i) => {
+            const sd = result.segmentDates[i];
+            if (sd?.label) {
+              waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
+            }
+          });
+          try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+        }
         mapManager.setWaypointsFromImport(result.waypoints);
         showNotification(`已匯入 ${result.waypoints.length} 個航點`, 'success');
       }
@@ -944,7 +996,7 @@ function importGpx(e) {
         elevationProfile.update(coords);
       }
     } catch (err) {
-      showNotification('GPX 檔案解析失敗', 'error');
+      showNotification('檔案解析失敗', 'error');
       console.error(err);
     }
   };
@@ -1050,11 +1102,19 @@ let savedWeatherCells = (() => {
   catch { return {}; }
 })();
 
-/** Stable semantic key for a weather column point */
-function getSemanticKey(pt, i) {
-  return pt.isWaypoint
-    ? (pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`)
-    : `int:${Math.round((pt._cum ?? i * 1000) / 10) * 10}`;
+/**
+ * Stable semantic key for a weather column point, based on coordinates.
+ * Rounds lat/lng to 2 decimal places (~550 m threshold at equator):
+ *   - same location after minor adjustment → same key → cache preserved
+ *   - significantly moved → different key → cache miss (stale data not shown)
+ */
+function getSemanticKey(pt) {
+  const latK = pt.lat.toFixed(2);
+  const lngK = pt.lng.toFixed(2);
+  if (pt.isWaypoint) {
+    return pt.isReturn ? `ret:${latK},${lngK}` : `wp:${latK},${lngK}`;
+  }
+  return `int:${latK},${lngK}`;
 }
 
 /** Persist display-cell values for one column */
@@ -1103,6 +1163,17 @@ function deduplicateLabels(pts) {
     }
   });
 }
+/**
+ * Distance tier for sorting Overpass candidates (lower = closer).
+ * Near ≤ 100 m → 0 | Medium ≤ 250 m → 1 | Far ≤ 500 m → 2 | Beyond → 3
+ */
+function _distTier(dist) {
+  if (dist <= 100) return 0;
+  if (dist <= 250) return 1;
+  if (dist <= 500) return 2;
+  return 3;
+}
+
 /** Priority score for an Overpass POI element (lower = higher priority). */
 function _poiScore(tags) {
   const n = tags.natural, w = tags.waterway;
@@ -1185,7 +1256,11 @@ out center 20;`;
         score: _poiScore(e.tags),
         dist: haversineDistance([lat, lng], [e.lat ?? e.center?.lat ?? lat, e.lon ?? e.center?.lon ?? lng]),
       }))
-      .sort((a, b) => a.score !== b.score ? a.score - b.score : a.dist - b.dist);
+      .sort((a, b) => {
+        const ta = _distTier(a.dist), tb = _distTier(b.dist);
+        if (ta !== tb) return ta - tb;          // closer tier wins
+        return a.score - b.score;               // same tier → type priority
+      });
     if (ranked.length) { ovpName = ranked[0].name; ovpScore = ranked[0].score; }
   }
 
@@ -1390,24 +1465,53 @@ function shiftAllDates(deltaDays, deltaHours) {
 }
 
 const LS_PANEL_HEIGHT_KEY = 'mappingElf_panelHeight';
+const LS_PANEL_HEIGHT_RATIO_KEY = 'mappingElf_panelHeightRatio';
 
 function initWeatherControls() {
-  if (btnFetchWeather) btnFetchWeather.addEventListener('click', fetchAllWeatherData);
-  document.getElementById('btn-date-minus-day')?.addEventListener('click', () => shiftAllDates(-1, 0));
-  document.getElementById('btn-date-plus-day')?.addEventListener('click', () => shiftAllDates(+1, 0));
-  document.getElementById('btn-date-minus-hour')?.addEventListener('click', () => shiftAllDates(0, -1));
-  document.getElementById('btn-date-plus-hour')?.addEventListener('click', () => shiftAllDates(0, +1));
+  // Event delegation: fetch + date/time adj buttons live inside the dynamic weather table
+  document.getElementById('weather-table-container')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    switch (btn.dataset.action) {
+      case 'fetch':      fetchAllWeatherData(); break;
+      case 'day-minus':  shiftAllDates(-1, 0);  break;
+      case 'day-plus':   shiftAllDates(+1, 0);  break;
+      case 'hour-minus': shiftAllDates(0, -1);  break;
+      case 'hour-plus':  shiftAllDates(0, +1);  break;
+    }
+  });
 
   const panel = document.getElementById('bottom-panel');
   const handle = document.getElementById('bp-resize-handle');
   if (!panel) return;
 
-  // Restore saved height
-  const savedH = parseInt(localStorage.getItem(LS_PANEL_HEIGHT_KEY));
-  if (savedH > 0) {
-    const clamped = Math.max(56, Math.min(Math.round(window.innerHeight * 0.85), savedH));
-    panel.style.height = `${clamped}px`;
-    document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
+  // Helpers: save/restore panel height as a viewport ratio so portrait↔landscape
+  // transitions maintain the same proportional split.
+  const MIN_H = 56;
+  const savePanelRatio = () => {
+    const ratio = panel.offsetHeight / window.innerHeight;
+    localStorage.setItem(LS_PANEL_HEIGHT_RATIO_KEY, ratio);
+  };
+  const applyPanelRatio = () => {
+    const savedRatio = parseFloat(localStorage.getItem(LS_PANEL_HEIGHT_RATIO_KEY));
+    // Fall back to legacy absolute-pixel key for existing installs
+    const legacyH = parseInt(localStorage.getItem(LS_PANEL_HEIGHT_KEY));
+    let h;
+    if (savedRatio > 0) {
+      h = Math.round(savedRatio * window.innerHeight);
+    } else if (legacyH > 0) {
+      h = legacyH;
+    }
+    if (h > 0) {
+      const clamped = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), h));
+      panel.style.height = `${clamped}px`;
+      document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
+    }
+  };
+
+  // Restore saved height (ratio-based)
+  if (localStorage.getItem(LS_PANEL_HEIGHT_RATIO_KEY) || localStorage.getItem(LS_PANEL_HEIGHT_KEY)) {
+    applyPanelRatio();
   } else {
     requestAnimationFrame(() => {
       const h = panel.offsetHeight;
@@ -1420,12 +1524,13 @@ function initWeatherControls() {
     const h = Math.round(entries[0]?.contentRect.height || 0);
     if (h > 0 && !panel._resizing)
       document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+    // Redraw chart so it fills the container correctly after layout changes
+    requestAnimationFrame(() => elevationProfile?.chart?.resize());
   }).observe(panel);
 
   if (!handle) return;
 
   // --- Drag-to-resize ---
-  const MIN_H = 56;
   const applyHeight = (clientY) => {
     const h = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - clientY));
     panel.style.height = `${h}px`;
@@ -1441,7 +1546,8 @@ function initWeatherControls() {
     const onUp = () => {
       panel._resizing = false;
       handle.classList.remove('dragging');
-      localStorage.setItem(LS_PANEL_HEIGHT_KEY, panel.offsetHeight);
+      savePanelRatio();
+      mapManager.map.invalidateSize({ animate: false });
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -1458,13 +1564,22 @@ function initWeatherControls() {
     const onEnd = () => {
       panel._resizing = false;
       handle.classList.remove('dragging');
-      localStorage.setItem(LS_PANEL_HEIGHT_KEY, panel.offsetHeight);
+      savePanelRatio();
+      mapManager.map.invalidateSize({ animate: false });
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
     };
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
   }, { passive: false });
+
+  // Re-apply saved ratio when viewport changes (orientation change, keyboard, etc.)
+  // so portrait↔landscape preserves the proportional split.
+  window.addEventListener('resize', () => {
+    if (panel._resizing) return;
+    applyPanelRatio();
+    mapManager.map.invalidateSize({ animate: false });
+  });
 }
 
 /**
@@ -1522,7 +1637,9 @@ function buildWeatherPoints() {
       for (let j = searchStart; j < coords.length; j++) {
         const d = haversineDistance(wps[i], coords[j]);
         if (d < minDist) { minDist = d; minIdx = j; }
-        else if (d > minDist + 1000) break;
+        // Only break when we have an exact match (anchored endpoint) to avoid
+        // a false-minimum from a curve that temporarily approaches then veers away.
+        if (minDist === 0) break;
       }
       let cum = 0;
       for (let j = 1; j <= minIdx; j++) cum += haversineDistance(coords[j - 1], coords[j]);
@@ -1530,8 +1647,11 @@ function buildWeatherPoints() {
       searchStart = minIdx;
     }
   } else {
-    wps.forEach((_, i) => wpCumDist.push(i));
+    // No route coords — suppress all distance labels
+    wps.forEach(() => wpCumDist.push(0));
   }
+  // Expose for sidebar distance display
+  waypointCumDistM = [...wpCumDist];
 
   // Compute pace cumulative times whenever any interval mode is active so that
   // distance-mode interval points also get meaningful _elapsedH values.
@@ -1613,7 +1733,7 @@ function buildWeatherPoints() {
       for (let j = searchStart; j < coords.length; j++) {
         const d = haversineDistance(wps[i], coords[j]);
         if (d < minDist) { minDist = d; minIdx = j; }
-        else if (d > minDist + 1000) break;
+        if (minDist === 0) break;
       }
       wpIndices.push(minIdx);
       searchStart = minIdx;
@@ -1693,7 +1813,7 @@ function buildWeatherPoints() {
   });
 
   // Relabel interval points as "n-t"
-  // n = preceding waypoint's wpIndex (0-based); t = elapsed time (segment or cumulative)
+  // n = preceding waypoint's wpIndex (1-based); t = elapsed time (segment or cumulative)
   {
     const fmtT = (h) => {
       if (h <= 0) return '0';
@@ -1710,7 +1830,8 @@ function buildWeatherPoints() {
         const displayH = perSegmentMode
           ? (pt._elapsedH || 0) - prevWpElapsedH
           : (pt._elapsedH || 0);
-        const prefix = pt.isReturn ? `r${prevWpIdx}` : `${prevWpIdx}`;
+        const n = prevWpIdx;
+        const prefix = pt.isReturn ? `r${n}` : `${n + 1}`;
         pt.label = `${prefix}-${fmtT(displayH)}`;
       }
     });
@@ -1753,6 +1874,20 @@ function renderWeatherPanel() {
     return;
   }
 
+  // Prune savedWeatherCells: remove entries whose coordinate key no longer matches
+  // any point in the current panel. This prevents stale data from accumulating in
+  // localStorage when waypoints are moved far or deleted.
+  {
+    const validKeys = new Set(weatherPoints.map(p => getSemanticKey(p)));
+    let pruned = false;
+    Object.keys(savedWeatherCells).forEach(k => {
+      if (!validKeys.has(k)) { delete savedWeatherCells[k]; pruned = true; }
+    });
+    if (pruned) {
+      try { localStorage.setItem(LS_WEATHER_CELLS_KEY, JSON.stringify(savedWeatherCells)); } catch (_) { }
+    }
+  }
+
   // Compute per-waypoint gradient colors (matching elevation chart) and apply
   // to map markers + sidebar list so all views share the same teal→red palette.
   {
@@ -1768,8 +1903,9 @@ function renderWeatherPanel() {
     if (newColors.every(c => c !== null) && newColors.length > 0) {
       waypointGradColors = newColors;
       mapManager.setWaypointColors(waypointGradColors);
-      updateWaypointList(mapManager.waypoints);
     }
+    // Always re-render sidebar so cumulative distances are up-to-date
+    updateWaypointList(mapManager.waypoints);
   }
 
   const saved = loadWeatherSettings();
@@ -1786,7 +1922,7 @@ function renderWeatherPanel() {
     return left + right;
   });
   const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
-  const labelW = 58;
+  const labelW = 68;
   const minColW = 110;
   const dataW = Math.max(panelW - labelW, N * minColW);
   const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
@@ -1797,7 +1933,20 @@ function renderWeatherPanel() {
 
   let html = `<table class="weather-table"><colgroup><col style="width:${labelW}px">`;
   colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
-  html += '</colgroup><thead><tr class="wt-header-row"><th class="wt-label-cell wt-th"></th>';
+  html += `</colgroup><thead><tr class="wt-header-row">
+    <th class="wt-label-cell wt-th">
+      <button class="wt-ctrl-fetch" data-action="fetch" title="取得天氣">天氣</button>
+      <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
+        <button class="wt-ctrl-adj" data-action="day-minus">−</button>
+        <span class="wt-ctrl-unit">日</span>
+        <button class="wt-ctrl-adj" data-action="day-plus">+</button>
+      </div>
+      <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
+        <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
+        <span class="wt-ctrl-unit">時</span>
+        <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
+      </div>
+    </th>`;
 
   // Index of the first return column (for separator styling)
   const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
@@ -1845,7 +1994,7 @@ function renderWeatherPanel() {
       : `style="color:${rgba(0.7)};"`;
 
     const thStyle = pt.isWaypoint
-      ? `style="border-top: 3px solid ${rgba(0.8)}; background: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
+      ? `style="border-top: 3px solid ${rgba(0.8)}; background-color: var(--bg-tertiary); background-image: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
       : `style="border-top: 2px solid ${rgba(0.2)};"`;
 
     const locked = !pt.isWaypoint;
@@ -1969,13 +2118,13 @@ function renderWeatherPanel() {
         const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
         if (cell) cell.textContent = val;
       });
-      saveWeatherCells(getSemanticKey(pt, colIdx), cells);
+      saveWeatherCells(getSemanticKey(pt), cells);
       if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && cached.weatherIcon) {
         mapManager.setWaypointWeather(pt.wpIndex, cached.weatherIcon);
       }
     } else {
       // Fallback: restore display values saved from a previous fetch
-      const saved = savedWeatherCells[getSemanticKey(pt, colIdx)];
+      const saved = savedWeatherCells[getSemanticKey(pt)];
       if (saved) {
         WEATHER_ROWS.forEach(row => {
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
@@ -2048,11 +2197,12 @@ async function fetchAllWeatherData() {
 
   saveWeatherSettings();
   mapManager.clearWaypointWeather();
-  if (btnFetchWeather) btnFetchWeather.disabled = true;
+  const fetchBtn = document.querySelector('[data-action="fetch"]');
+  if (fetchBtn) fetchBtn.disabled = true;
 
   for (let i = 0; i < weatherPoints.length; i++) {
     const pt = weatherPoints[i];
-    if (btnFetchWeather) btnFetchWeather.textContent = `${i + 1} / ${weatherPoints.length}`;
+    if (fetchBtn) fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
 
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     const dateStr = th?.querySelector('.wt-date-input')?.value;
@@ -2076,7 +2226,7 @@ async function fetchAllWeatherData() {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
         if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
       });
-      saveWeatherCells(getSemanticKey(pt, i), cells);
+      saveWeatherCells(getSemanticKey(pt), cells);
       // Map weather icon only on outgoing waypoints (return shares the same marker)
       if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
@@ -2091,7 +2241,7 @@ async function fetchAllWeatherData() {
     if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
   }
 
-  if (btnFetchWeather) { btnFetchWeather.disabled = false; btnFetchWeather.textContent = '取得天氣'; }
+  if (fetchBtn) { fetchBtn.disabled = false; fetchBtn.textContent = '天氣'; }
   showNotification('天氣資訊已更新', 'success', 2000);
 }
 
@@ -2258,33 +2408,21 @@ async function init() {
     localStorage.setItem(LS_MAP_VIEW_KEY, JSON.stringify({ lat: c.lat, lng: c.lng, zoom: mapManager.map.getZoom() }));
   });
 
-  // Restore + wire round-trip toggle
-  const toggleRoundtrip = document.getElementById('toggle-roundtrip');
-  const toggleOloop = document.getElementById('toggle-oloop');
-  if (toggleRoundtrip) {
-    toggleRoundtrip.checked = roundTripMode;
-    toggleRoundtrip.addEventListener('change', () => {
-      roundTripMode = toggleRoundtrip.checked;
-      localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
-      if (roundTripMode && oLoopMode) {
-        oLoopMode = false;
-        localStorage.setItem(LS_OLOOP_KEY, '0');
-        if (toggleOloop) toggleOloop.checked = false;
-      }
-      if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
-    });
-  }
-  if (toggleOloop) {
-    toggleOloop.checked = oLoopMode;
-    toggleOloop.addEventListener('change', () => {
-      oLoopMode = toggleOloop.checked;
-      localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
-      if (oLoopMode && roundTripMode) {
-        roundTripMode = false;
-        localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
-        if (toggleRoundtrip) toggleRoundtrip.checked = false;
-      }
-      if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+  // Restore + wire nav-mode radio group (單程 / 來回 / O繞)
+  {
+    const navModeEls = document.querySelectorAll('input[name="nav-mode"]');
+    const initNavMode = roundTripMode ? 'roundtrip' : oLoopMode ? 'oloop' : 'single';
+    const initRadioEl = document.getElementById(`nav-mode-${initNavMode}`);
+    if (initRadioEl) initRadioEl.checked = true;
+    navModeEls.forEach(radio => {
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        roundTripMode = radio.value === 'roundtrip';
+        oLoopMode = radio.value === 'oloop';
+        localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+        localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
+        if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+      });
     });
   }
 
@@ -2538,6 +2676,18 @@ async function init() {
     });
   }
 
+  // --- Settings section collapse toggle ---
+  {
+    const settingsHeader = document.getElementById('settings-toggle-header');
+    const settingsBody = document.getElementById('settings-body');
+    if (settingsHeader && settingsBody) {
+      settingsHeader.addEventListener('click', () => {
+        const collapsed = settingsBody.classList.toggle('collapsed');
+        settingsHeader.classList.toggle('collapsed', collapsed);
+      });
+    }
+  }
+
   // --- Windy settings ---
   const windyLayerEl = document.getElementById('windy-layer-select');
   if (windyLayerEl) {
@@ -2577,7 +2727,6 @@ async function init() {
 
   // Map action buttons
   document.getElementById('btn-fit-route')?.addEventListener('click', () => mapManager.fitToRoute());
-  document.getElementById('btn-my-location')?.addEventListener('click', () => mapManager.goToMyLocation());
 
   setTimeout(() => {
     loadingScreen.classList.add('hidden');

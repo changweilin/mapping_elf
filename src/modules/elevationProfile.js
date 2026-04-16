@@ -359,5 +359,9 @@ export class ElevationProfile {
       },
       plugins: [markerPlugin, lineGradientPlugin],
     });
+
+    // Resize on next frame so the chart fills the container correctly
+    // (the bottom panel may not have finished layout when _renderChart is called)
+    requestAnimationFrame(() => this.chart?.resize());
   }
 }

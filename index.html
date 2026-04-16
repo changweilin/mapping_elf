@@ -80,14 +80,7 @@
       </div>
     </div>
     <div class="toolbar-right">
-      <button class="tool-btn" id="btn-my-location" title="我的位置">
-        <svg viewBox="0 0 24 24" width="20" height="20">
-          <path
-            d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"
-            fill="currentColor" />
-        </svg>
-      </button>
-      <button class="tool-btn" id="btn-import-gpx" title="匯入 GPX">
+      <button class="tool-btn" id="btn-import-gpx" title="匯入路線（GPX / KML / YAML）">
         <svg viewBox="0 0 24 24" width="20" height="20">
           <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
         </svg>
@@ -137,55 +130,6 @@
         </div>
       </div>
     </div>
-    <div class="bp-weather-header">
-      <div class="bp-weather-title">
-        <svg viewBox="0 0 24 24" width="14" height="14">
-          <path
-            d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91l1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z"
-            fill="currentColor" />
-        </svg>
-        天氣資訊
-      </div>
-      <div class="windy-selects">
-        <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
-        <select id="windy-layer-select" title="天氣圖層">
-          <option value="wind">風速</option>
-          <option value="rain" selected>降雨</option>
-          <option value="temp">溫度</option>
-          <option value="clouds">雲</option>
-          <option value="radar">雷達</option>
-          <option value="satellite">衛星</option>
-          <option value="thunder">雷暴</option>
-          <option value="rainAccu">累積雨量</option>
-          <option value="waves">波浪</option>
-          <option value="meteogram">Meteogram</option>
-          <option value="airgram">Airgram</option>
-          <option value="airq">空氣品質</option>
-        </select>
-        <select id="windy-model-select" title="預報模式">
-          <option value="ecmwf">ECMWF</option>
-          <option value="gfs">GFS</option>
-          <option value="icon">ICON</option>
-          <option value="mblue">MBLUE</option>
-          <option value="jmaMsm">MSM</option>
-          <option value="multimodel">比較預報</option>
-        </select>
-      </div>
-      <div class="bp-date-controls">
-        <button class="btn-date-adj" id="btn-date-minus-day" title="所有日期 -1 天">−日</button>
-        <button class="btn-date-adj" id="btn-date-plus-day" title="所有日期 +1 天">+日</button>
-        <button class="btn-date-adj" id="btn-date-minus-hour" title="所有時間 -1 小時">−時</button>
-        <button class="btn-date-adj" id="btn-date-plus-hour" title="所有時間 +1 小時">+時</button>
-      </div>
-      <button class="btn-primary" id="btn-fetch-weather">
-        <svg viewBox="0 0 24 24" width="14" height="14">
-          <path
-            d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
-            fill="currentColor" />
-        </svg>
-        取得天氣
-      </button>
-    </div>
     <div class="bp-weather-scroll">
       <div id="weather-table-container">
         <div class="weather-empty-state">
@@ -234,33 +178,10 @@
           <span class="hint">點擊地圖任意位置開始規劃路線</span>
         </div>
       </div>
-      <div class="roundtrip-row">
-        <span class="roundtrip-label">
-          <svg viewBox="0 0 24 24" width="13" height="13">
-            <path
-              d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"
-              fill="currentColor" />
-          </svg>
-          來回導航
-        </span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="toggle-roundtrip">
-          <span class="toggle-track"></span>
-        </label>
-      </div>
-      <div class="roundtrip-row">
-        <span class="roundtrip-label">
-          <svg viewBox="0 0 24 24" width="13" height="13">
-            <path
-              d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"
-              fill="currentColor" />
-          </svg>
-          O繞導航
-        </span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="toggle-oloop">
-          <span class="toggle-track"></span>
-        </label>
+      <div class="nav-mode-row">
+        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="single" id="nav-mode-single"><span>單程</span></label>
+        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="roundtrip" id="nav-mode-roundtrip"><span>來回</span></label>
+        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="oloop" id="nav-mode-oloop"><span>O繞</span></label>
       </div>
       <div class="segment-interval-row">
         <label class="segment-interval-label">
@@ -358,50 +279,9 @@
           配速參數
         </h3>
       </div>
-      <div class="pace-fatigue-row">
-        <label class="pace-fatigue-row-label">
-          <svg viewBox="0 0 24 24" width="12" height="12">
-            <path
-              d="M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 3.21-1.81 6-4.72 7.28L13 17v5h5l-1.22-1.22C19.91 19.07 22 15.76 22 12c0-5.18-3.95-9.45-9-9.95zM11 2.05C5.95 2.55 2 6.82 2 12c0 3.76 2.09 7.07 5.22 8.78L6 22h5V2.05z"
-              fill="currentColor" />
-          </svg>
-          疲勞程度
-        </label>
-        <select id="pace-fatigue-level" class="pace-fatigue-select">
-          <option value="none">完全無疲勞</option>
-          <option value="casual">非耐力運動員</option>
-          <option value="general" selected>非專項運動員</option>
-          <option value="trained">專項運動員</option>
-        </select>
-      </div>
-      <div class="pace-per-segment-row">
-        <label class="pace-per-segment-label">
-          <input type="checkbox" id="pace-per-segment-enable">
-          <span>
-            <svg viewBox="0 0 24 24" width="12" height="12">
-              <path
-                d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"
-                fill="currentColor" />
-            </svg>
-            按段重算
-          </span>
-        </label>
-      </div>
-      <div class="pace-per-segment-row">
-        <label class="pace-per-segment-label">
-          <input type="checkbox" id="strict-linear-enable">
-          <span>
-            <svg viewBox="0 0 24 24" width="12" height="12">
-              <path
-                d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"
-                fill="currentColor" />
-            </svg>
-            嚴格線性時間
-          </span>
-        </label>
-      </div>
-      <div class="pace-grid">
-        <div class="pace-field pace-field-full">
+      <!-- 配速 + 疲勞程度 並排 -->
+      <div class="pace-top-grid">
+        <div class="pace-field">
           <label class="pace-label">平地配速</label>
           <input type="number" id="pace-flat-input" class="pace-input" min="0.5" max="80" step="0.5" placeholder="—">
           <select id="pace-unit-select" class="pace-unit-select">
@@ -410,6 +290,29 @@
             <option value="shanhe">上河</option>
           </select>
         </div>
+        <div class="pace-field">
+          <label class="pace-label">疲勞程度</label>
+          <select id="pace-fatigue-level" class="pace-fatigue-select">
+            <option value="none">無疲勞</option>
+            <option value="casual">非耐力</option>
+            <option value="general" selected>一般</option>
+            <option value="trained">專項</option>
+          </select>
+        </div>
+      </div>
+      <!-- 按段重算 + 嚴格線性時間 並排 -->
+      <div class="pace-checks-row">
+        <label class="pace-check-opt">
+          <input type="checkbox" id="pace-per-segment-enable">
+          <span>按段重算</span>
+        </label>
+        <label class="pace-check-opt">
+          <input type="checkbox" id="strict-linear-enable">
+          <span>嚴格線性</span>
+        </label>
+      </div>
+      <!-- 體重 + 負重 -->
+      <div class="pace-grid">
         <div class="pace-field">
           <label class="pace-label">體重</label>
           <input type="number" id="pace-body-weight" class="pace-input" min="30" max="200" step="1" value="70">
@@ -553,6 +456,48 @@
       </div>
     </section>
 
+    <!-- Settings Section -->
+    <section class="panel-section" id="settings-section">
+      <div class="section-header settings-section-header" id="settings-toggle-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/>
+          </svg>
+          設置
+        </h3>
+        <svg class="settings-chevron" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor"/>
+        </svg>
+      </div>
+      <div class="settings-body" id="settings-body">
+        <div class="settings-row">
+          <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
+          <select id="windy-layer-select" title="天氣圖層">
+            <option value="wind">風速</option>
+            <option value="rain" selected>降雨</option>
+            <option value="temp">溫度</option>
+            <option value="clouds">雲</option>
+            <option value="radar">雷達</option>
+            <option value="satellite">衛星</option>
+            <option value="thunder">雷暴</option>
+            <option value="rainAccu">累積雨量</option>
+            <option value="waves">波浪</option>
+            <option value="meteogram">Meteogram</option>
+            <option value="airgram">Airgram</option>
+            <option value="airq">空氣品質</option>
+          </select>
+          <select id="windy-model-select" title="預報模式">
+            <option value="ecmwf">ECMWF</option>
+            <option value="gfs">GFS</option>
+            <option value="icon">ICON</option>
+            <option value="mblue">MBLUE</option>
+            <option value="jmaMsm">MSM</option>
+            <option value="multimodel">比較預報</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
     <!-- Offline Section -->
     <section class="panel-section" id="offline-section">
       <div class="section-header">
@@ -605,8 +550,12 @@
           <span>KML <small>（Google Maps / Earth）</small></span>
         </label>
         <label class="export-option">
-          <input type="radio" name="export-fmt" value="both">
-          <span>GPX + KML <small>（同時匯出兩份）</small></span>
+          <input type="radio" name="export-fmt" value="all">
+          <span>GPX + KML + YAML <small>（同時匯出三份）</small></span>
+        </label>
+        <label class="export-option">
+          <input type="radio" name="export-fmt" value="yaml">
+          <span>YAML <small>（純文字天氣計畫，含 Windy 連結）</small></span>
         </label>
       </div>
       <div class="modal-actions">
@@ -620,7 +569,7 @@
   <div id="notifications" class="notifications"></div>
 
   <!-- Hidden file input for GPX import -->
-  <input type="file" id="gpx-file-input" accept=".gpx" style="display:none" />
+  <input type="file" id="gpx-file-input" accept=".gpx,.kml,.yaml,.yml" style="display:none" />
 
   <script type="module" src="./src/main.js"></script>
 </body>

@@ -596,14 +596,34 @@ export class MapManager {
   }
 
   fitToRoute() {
+    // Sync Leaflet's cached map size with the current DOM dimensions.
+    // The map container can be resized by CSS (e.g. bottom panel drag) without
+    // Leaflet knowing — invalidateSize must be called before fitBounds so the
+    // padding calculations use the correct canvas size.
+    this.map.invalidateSize({ animate: false });
+
+    // Account for the side panel (right) and bottom weather panel overlaying the map
+    const panelEl = document.querySelector('.side-panel.open');
+    const rightPad = panelEl ? panelEl.offsetWidth + 50 : 50;
+    // Bottom panel overlays the map on mobile (map-container bottom: 0), but on
+    // desktop the map container is already clipped above it — avoid double-counting.
+    const mapContainer = document.querySelector('.map-container');
+    const mapBottomOffset = mapContainer ? parseInt(getComputedStyle(mapContainer).bottom) || 0 : 0;
+    const bottomPanelEl = document.getElementById('bottom-panel');
+    const bottomPad = (mapBottomOffset === 0 && bottomPanelEl) ? bottomPanelEl.offsetHeight + 50 : 50;
+    const fitOpts = {
+      paddingTopLeft: [50, 50],
+      paddingBottomRight: [rightPad, bottomPad],
+    };
+
     const allPl = [...this.routePolylines, ...this.gradientPolylines];
     if (allPl.length > 0) {
       const bounds = L.latLngBounds([]);
       allPl.forEach((pl) => bounds.extend(pl.getBounds()));
-      this.map.fitBounds(bounds, { padding: [50, 50] });
+      this.map.fitBounds(bounds, fitOpts);
     } else if (this.waypoints.length > 0) {
       const bounds = L.latLngBounds(this.waypoints.map((w) => [w[0], w[1]]));
-      this.map.fitBounds(bounds, { padding: [50, 50] });
+      this.map.fitBounds(bounds, fitOpts);
     }
   }
 
@@ -618,9 +638,15 @@ export class MapManager {
   }
 
   setWaypointsFromImport(coords) {
+    // Suppress per-waypoint callbacks — fire once at the end to avoid
+    // repeated route recalculations and weather panel re-renders during import.
+    const cb = this.onWaypointChange;
+    this.onWaypointChange = () => {};
     this.clearWaypoints();
     coords.forEach(([lat, lng]) => this.addWaypoint(lat, lng));
+    this.onWaypointChange = cb;
     this.fitToRoute();
+    cb(this.waypoints);
   }
 
   _createIcon(index) {
