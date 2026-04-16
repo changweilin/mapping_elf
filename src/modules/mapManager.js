@@ -596,31 +596,23 @@ export class MapManager {
   }
 
   fitToRoute() {
-    // Measure how many pixels each overlay panel actually covers the Leaflet map
-    // container, and use that as padding. getBoundingClientRect() is reliable on
-    // both desktop (side panel overlays right) and mobile (bottom panel overlays
-    // bottom) without any media-query or CSS-variable heuristics.
-    const MARGIN = 30;
-    const mapRect = this.map.getContainer().getBoundingClientRect();
+    // Sync Leaflet's cached map size with the current DOM dimensions.
+    // The map container can be resized by CSS (e.g. bottom panel drag) without
+    // Leaflet knowing — invalidateSize must be called before fitBounds so the
+    // padding calculations use the correct canvas size.
+    this.map.invalidateSize({ animate: false });
 
-    // Right padding: side panel overlap with the map container
-    let rightPad = MARGIN;
-    const sidePanelEl = document.querySelector('.side-panel.open');
-    if (sidePanelEl) {
-      const overlap = mapRect.right - sidePanelEl.getBoundingClientRect().left;
-      if (overlap > 0) rightPad = Math.round(overlap) + MARGIN;
-    }
-
-    // Bottom padding: bottom panel overlap with the map container
-    let bottomPad = MARGIN;
+    // Account for the side panel (right) and bottom weather panel overlaying the map
+    const panelEl = document.querySelector('.side-panel.open');
+    const rightPad = panelEl ? panelEl.offsetWidth + 50 : 50;
+    // Bottom panel overlays the map on mobile (map-container bottom: 0), but on
+    // desktop the map container is already clipped above it — avoid double-counting.
+    const mapContainer = document.querySelector('.map-container');
+    const mapBottomOffset = mapContainer ? parseInt(getComputedStyle(mapContainer).bottom) || 0 : 0;
     const bottomPanelEl = document.getElementById('bottom-panel');
-    if (bottomPanelEl) {
-      const overlap = mapRect.bottom - bottomPanelEl.getBoundingClientRect().top;
-      if (overlap > 0) bottomPad = Math.round(overlap) + MARGIN;
-    }
-
+    const bottomPad = (mapBottomOffset === 0 && bottomPanelEl) ? bottomPanelEl.offsetHeight + 50 : 50;
     const fitOpts = {
-      paddingTopLeft: [MARGIN, MARGIN],
+      paddingTopLeft: [50, 50],
       paddingBottomRight: [rightPad, bottomPad],
     };
 
