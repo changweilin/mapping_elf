@@ -191,7 +191,7 @@
         <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="oloop" id="nav-mode-oloop"><span>O繞</span></label>
       </div>
       <div class="segment-interval-row">
-        <label class="segment-interval-label">
+        <label class="segment-interval-label" title="在路線中插入中繼點(依距離或配速間隔),用於檢視沿途天氣與時程">
           <svg viewBox="0 0 24 24" width="13" height="13">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm0-4h-2V7h2v8z"
               fill="currentColor" />
@@ -309,11 +309,11 @@
       </div>
       <!-- 按段重算 + 嚴格線性時間 並排 -->
       <div class="pace-checks-row">
-        <label class="pace-check-opt">
+        <label class="pace-check-opt" title="勾選後,各段中繼點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
           <input type="checkbox" id="pace-per-segment-enable">
           <span>按段重算</span>
         </label>
-        <label class="pace-check-opt">
+        <label class="pace-check-opt" title="強制航點時間沿路線單調遞增,避免後段時間早於前段">
           <input type="checkbox" id="strict-linear-enable">
           <span>嚴格線性</span>
         </label>
