@@ -80,6 +80,65 @@ export function sleep(ms) {
 }
 
 /**
+ * Reorder `points` (array of [lat, lng]) to approximately minimize total
+ * straight-line Haversine distance, keeping index 0 as a fixed start.
+ *
+ * Nearest-neighbor greedy construction, then 2-opt local improvement.
+ * Intended for ≲ a few hundred points; 2-opt is O(n²) per pass.
+ *
+ * Returns a new array with the same elements in a new order (by reference).
+ */
+export function tspOptimize(points) {
+  const n = points.length;
+  if (n <= 2) return [...points];
+
+  const dist = (a, b) => haversineDistance(a, b);
+
+  // --- 1. Nearest-neighbor greedy from fixed start (index 0) ---
+  const visited = new Array(n).fill(false);
+  const order = [0];
+  visited[0] = true;
+  for (let step = 1; step < n; step++) {
+    const last = points[order[order.length - 1]];
+    let bestIdx = -1;
+    let bestD = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (visited[i]) continue;
+      const d = dist(last, points[i]);
+      if (d < bestD) { bestD = d; bestIdx = i; }
+    }
+    order.push(bestIdx);
+    visited[bestIdx] = true;
+  }
+
+  // --- 2. 2-opt improvement (start fixed; never reverse segment starting at 0) ---
+  let improved = true;
+  let guard = 0;
+  const MAX_PASSES = 50;
+  while (improved && guard++ < MAX_PASSES) {
+    improved = false;
+    for (let i = 1; i < n - 1; i++) {
+      for (let k = i + 1; k < n; k++) {
+        const a = points[order[i - 1]];
+        const b = points[order[i]];
+        const c = points[order[k]];
+        const d = k + 1 < n ? points[order[k + 1]] : null;
+        const before = dist(a, b) + (d ? dist(c, d) : 0);
+        const after  = dist(a, c) + (d ? dist(b, d) : 0);
+        if (after + 1e-9 < before) {
+          // reverse order[i..k]
+          let lo = i, hi = k;
+          while (lo < hi) { const t = order[lo]; order[lo] = order[hi]; order[hi] = t; lo++; hi--; }
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return order.map((idx) => points[idx]);
+}
+
+/**
  * Interpolate the route gradient color at fraction t (0 = start, 1 = end).
  * Returns { r, g, b } integers.
  */

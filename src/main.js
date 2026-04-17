@@ -12,7 +12,7 @@ import { KmlExporter } from './modules/kmlExporter.js';
 import { YamlExporter } from './modules/yamlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
@@ -48,6 +48,7 @@ const LS_SPEED_ACTIVITY_KEY = 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY = 'mappingElf_paceParams';
 const LS_PER_SEGMENT_KEY = 'mappingElf_perSegment';
 const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
+const LS_IMPORT_AUTO_SORT_KEY = 'mappingElf_importAutoSort';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
@@ -67,6 +68,7 @@ let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
 let speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
 let strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
+let importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1';
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
 let windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
@@ -1080,8 +1082,15 @@ function importFile(e) {
           });
           try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
         }
-        mapManager.setWaypointsFromImport(result.waypoints);
-        showNotification(`已匯入 ${result.waypoints.length} 個航點`, 'success');
+
+        // Optional TSP reorder (greedy nearest-neighbor + 2-opt, start fixed).
+        const orderedWaypoints = (importAutoSortMode && result.waypoints.length >= 3)
+          ? tspOptimize(result.waypoints)
+          : result.waypoints;
+
+        mapManager.setWaypointsFromImport(orderedWaypoints);
+        const reorderedNote = orderedWaypoints !== result.waypoints ? '(自動排序)' : '';
+        showNotification(`已匯入 ${result.waypoints.length} 個航點 ${reorderedNote}`.trim(), 'success');
       }
     } catch (err) {
       showNotification('檔案解析失敗', 'error');
@@ -2761,6 +2770,16 @@ async function init() {
     strictLinearEl.addEventListener('change', () => {
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
+    });
+  }
+
+  // --- Import auto-sort (TSP) checkbox ---
+  const importAutoSortEl = document.getElementById('import-auto-sort-enable');
+  if (importAutoSortEl) {
+    importAutoSortEl.checked = importAutoSortMode;
+    importAutoSortEl.addEventListener('change', () => {
+      importAutoSortMode = importAutoSortEl.checked;
+      localStorage.setItem(LS_IMPORT_AUTO_SORT_KEY, importAutoSortMode ? '1' : '0');
     });
   }
 
