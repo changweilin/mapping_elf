@@ -2078,7 +2078,10 @@ function renderWeatherPanel() {
   colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
   html += `</colgroup><thead><tr class="wt-header-row">
     <th class="wt-label-cell wt-th">
-      <button class="wt-ctrl-fetch" data-action="fetch" title="取得天氣">天氣</button>
+      <button class="wt-ctrl-fetch" data-action="fetch" title="取得天氣">
+        <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg>
+        <span>取得天氣</span>
+      </button>
       <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
         <button class="wt-ctrl-adj" data-action="day-minus">−</button>
         <span class="wt-ctrl-unit">日</span>
@@ -2384,7 +2387,10 @@ async function fetchAllWeatherData() {
     if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
   }
 
-  if (fetchBtn) { fetchBtn.disabled = false; fetchBtn.textContent = '天氣'; }
+  if (fetchBtn) {
+    fetchBtn.disabled = false;
+    fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>取得天氣</span>`;
+  }
   showNotification('天氣資訊已更新', 'success', 2000);
 }
 

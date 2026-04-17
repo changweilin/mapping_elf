@@ -1876,18 +1876,29 @@ html, body {
   border-top: 1px solid var(--border);
 }
 
-/* Corner cell (frozen top-left) — fetch + day/hour adj buttons */
+/* Corner cell (frozen top-left) — fetch + day/hour adj buttons.
+   Heights / paddings mirror .wt-col-head so each row aligns with its
+   counterpart (label ↔ fetch, date input ↔ 日, time select ↔ 時). */
 .wt-label-cell.wt-th {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 3px;
-  padding: 4px 4px;
+  gap: 0;
+  padding: 5px 4px 4px;
 }
 
 .wt-ctrl-fetch {
-  font-size: 10px;
-  padding: 2px 3px;
+  flex: 0 0 auto;
+  height: 26px;
+  margin-bottom: 3px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 4px;
   border-radius: 3px;
   border: 1px solid var(--accent-primary);
   background: rgba(110, 231, 183, 0.08);
@@ -1896,6 +1907,12 @@ html, body {
   white-space: nowrap;
   text-align: center;
   transition: background 0.15s;
+}
+.wt-ctrl-fetch-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
 }
 .wt-ctrl-fetch:hover { background: rgba(110, 231, 183, 0.2); }
 .wt-ctrl-fetch:disabled {
@@ -1907,6 +1924,10 @@ html, body {
   display: flex;
   align-items: center;
   gap: 1px;
+  height: 22px;
+}
+.wt-ctrl-adj-row + .wt-ctrl-adj-row {
+  margin-top: 3px;
 }
 
 .wt-ctrl-unit {
