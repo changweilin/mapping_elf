@@ -22,7 +22,8 @@ export class YamlExporter {
     yaml += `points:\n`;
 
     wpData.forEach((pt) => {
-      yaml += `  - label: ${this._yamlStr(pt.label)}\n`;
+      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      yaml += `  - label: ${this._yamlStr(outLabel)}\n`;
       yaml += `    type: ${pt.isWaypoint ? 'waypoint' : 'interval'}\n`;
       if (pt.isReturn) yaml += `    return: true\n`;
       yaml += `    lat: ${pt.lat.toFixed(6)}\n`;
@@ -69,6 +70,7 @@ export class YamlExporter {
   static parse(yamlString) {
     const waypoints = [];
     const segmentDates = [];
+    const intermediatePoints = [];
 
     // Split into point blocks by the "  - label:" sentinel
     const lines = yamlString.split('\n');
@@ -80,15 +82,22 @@ export class YamlExporter {
       const lat = parseFloat(current.lat);
       const lng = parseFloat(current.lng);
       if (isNaN(lat) || isNaN(lng)) return;
-      // Only import waypoints as map waypoints; intervals are skipped
-      if (current.type !== 'interval') {
-        waypoints.push([lat, lng]);
-        segmentDates.push({
-          label: current.label || null,
-          date: current.date || null,
-          time: current.time || null
+      const rawLabel = current.label || '';
+      const hasIntervalPrefix = rawLabel.startsWith('*_');
+      const isInterval = current.type === 'interval' || hasIntervalPrefix;
+      if (isInterval) {
+        intermediatePoints.push({
+          lat, lng,
+          label: hasIntervalPrefix ? rawLabel.slice(2) : rawLabel,
         });
+        return;
       }
+      waypoints.push([lat, lng]);
+      segmentDates.push({
+        label: current.label || null,
+        date: current.date || null,
+        time: current.time || null
+      });
     };
 
     for (const raw of lines) {
@@ -116,7 +125,7 @@ export class YamlExporter {
     }
     commitPoint();
 
-    return { waypoints, trackPoints: [], segmentDates };
+    return { waypoints, trackPoints: [], segmentDates, intermediatePoints };
   }
 
   /** Strip surrounding quotes from a YAML scalar value */

@@ -34,9 +34,12 @@ export class GpxExporter {
 
     wpData.forEach((pt) => {
       gpx += `  <wpt lat="${pt.lat.toFixed(6)}" lon="${pt.lng.toFixed(6)}">\n`;
-      gpx += `    <name>${this._escapeXml(pt.label)}</name>\n`;
+      // Prefix intermediate labels with the `*_` marker so they survive
+      // round-trips even when the <type> extension is stripped by other tools.
+      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      gpx += `    <name>${this._escapeXml(outLabel)}</name>\n`;
 
-      // Mark non-waypoint columns so the importer can skip them
+      // Mark non-waypoint columns so the importer can identify them
       if (!pt.isWaypoint) {
         gpx += `    <type>mel:interval</type>\n`;
       }
@@ -173,6 +176,7 @@ export class GpxExporter {
     const waypoints = [];
     const trackPoints = [];
     const segmentDates = [];
+    const intermediatePoints = [];
 
     // Parse track points first so we can project waypoints onto the track
     const trkpts = doc.querySelectorAll('trkpt');
@@ -186,26 +190,32 @@ export class GpxExporter {
       }
     });
 
-    // Parse waypoints — skip interval annotations
+    // Parse waypoints — split intermediate (mel:interval or `*_` prefix) out
     const rawWpts = [];
     const wpts = doc.querySelectorAll('wpt');
     wpts.forEach((wpt) => {
-      const typeEl = wpt.querySelector('type');
-      if (typeEl && typeEl.textContent.trim() === 'mel:interval') return;
-
       const lat = parseFloat(wpt.getAttribute('lat'));
       const lon = parseFloat(wpt.getAttribute('lon'));
+      if (isNaN(lat) || isNaN(lon)) return;
       const nameEl = wpt.querySelector('name');
-      if (!isNaN(lat) && !isNaN(lon)) {
-        rawWpts.push({
-          latlon: [lat, lon],
-          meta: {
-            label: nameEl ? nameEl.textContent.trim() : null,
-            date: this._getExtValue(wpt, 'date'),
-            time: this._getExtValue(wpt, 'time'),
-          },
-        });
+      const rawName = nameEl ? nameEl.textContent.trim() : '';
+      const typeEl = wpt.querySelector('type');
+      const hasIntervalTag = typeEl && typeEl.textContent.trim() === 'mel:interval';
+      const hasIntervalPrefix = rawName.startsWith('*_');
+      if (hasIntervalTag || hasIntervalPrefix) {
+        const label = hasIntervalPrefix ? rawName.slice(2) : rawName;
+        intermediatePoints.push({ lat, lng: lon, label });
+        return;
       }
+
+      rawWpts.push({
+        latlon: [lat, lon],
+        meta: {
+          label: rawName || null,
+          date: this._getExtValue(wpt, 'date'),
+          time: this._getExtValue(wpt, 'time'),
+        },
+      });
     });
 
     if (trackPoints.length > 0 && rawWpts.length > 0) {
@@ -251,7 +261,7 @@ export class GpxExporter {
       segmentDates.push({ date: null, time: null });
     }
 
-    return { waypoints, trackPoints, segmentDates };
+    return { waypoints, trackPoints, segmentDates, intermediatePoints };
   }
 
   /** Index of the track point closest to (lat, lon). */

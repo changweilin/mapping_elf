@@ -54,8 +54,9 @@ export class KmlExporter {
         ? (pt.isReturn ? '#wpReturn' : '#wpGoing')
         : '#wpInterval';
       const desc = this._buildDescription(pt);
+      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
       kml += `    <Placemark>
-      <name>${this._esc(pt.label)}</name>
+      <name>${this._esc(outLabel)}</name>
       <description><![CDATA[${desc}]]></description>
       <styleUrl>${styleId}</styleUrl>
       <Point>
@@ -122,6 +123,7 @@ export class KmlExporter {
     const waypoints = [];
     const trackPoints = [];
     const segmentDates = [];
+    const intermediatePoints = [];
 
     doc.querySelectorAll('Placemark').forEach(pm => {
       const styleUrl = pm.querySelector('styleUrl')?.textContent?.trim() || '';
@@ -129,22 +131,25 @@ export class KmlExporter {
       const lineEl  = pm.querySelector('LineString');
 
       if (pointEl) {
-        // Skip interval annotation points
-        if (styleUrl === '#wpInterval') return;
-
         const coordsText = pointEl.querySelector('coordinates')?.textContent?.trim() || '';
-        // KML coordinates: lng,lat[,alt]
         const [lngStr, latStr] = coordsText.split(',');
         const lat = parseFloat(latStr);
         const lng = parseFloat(lngStr);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          waypoints.push([lat, lng]);
-          segmentDates.push({
-            label: pm.querySelector('name')?.textContent?.trim() || null,
-            date: null,
-            time: null
+        if (isNaN(lat) || isNaN(lng)) return;
+
+        const rawName = pm.querySelector('name')?.textContent?.trim() || '';
+        const hasIntervalStyle = styleUrl === '#wpInterval';
+        const hasIntervalPrefix = rawName.startsWith('*_');
+        if (hasIntervalStyle || hasIntervalPrefix) {
+          intermediatePoints.push({
+            lat, lng,
+            label: hasIntervalPrefix ? rawName.slice(2) : rawName,
           });
+          return;
         }
+
+        waypoints.push([lat, lng]);
+        segmentDates.push({ label: rawName || null, date: null, time: null });
       } else if (lineEl) {
         // Route LineString → track points
         const coordsText = lineEl.querySelector('coordinates')?.textContent?.trim() || '';
@@ -172,7 +177,7 @@ export class KmlExporter {
       segmentDates.push({ date: null, time: null });
     }
 
-    return { waypoints, trackPoints, segmentDates };
+    return { waypoints, trackPoints, segmentDates, intermediatePoints };
   }
 
   static download(kmlString, filename = 'mapping_elf_track.kml') {

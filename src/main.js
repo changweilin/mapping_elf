@@ -34,6 +34,10 @@ let pendingUpdate = false;
 // When a file with a recorded track is imported, this flag suppresses routing so
 // the track is displayed as-is until the user clears the route or imports again.
 let importedTrackMode = false;
+// Intermediate points (non-waypoint, tagged with `*_` prefix on export) restored
+// from an imported file. Used only while importedTrackMode is active; cleared on
+// re-plan / clear-route so the auto-computed markers take over.
+let importedIntermediatePoints = [];
 
 const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
@@ -213,6 +217,7 @@ function syncTrackModeUI() {
 
 btnReplanRoute?.addEventListener('click', () => {
   importedTrackMode = false;
+  importedIntermediatePoints = [];
   syncTrackModeUI();
   // Clear the imported track polyline but keep waypoint markers
   mapManager.clearRoute();
@@ -223,6 +228,7 @@ btnReplanRoute?.addEventListener('click', () => {
 
 btnClearRoute.addEventListener('click', () => {
   importedTrackMode = false;
+  importedIntermediatePoints = [];
   syncTrackModeUI();
   mapManager.clearWaypoints();
   mapManager.clearIntermediateMarkers();
@@ -1012,11 +1018,13 @@ function importFile(e) {
         // 1. Clear old state normally (importedTrackMode still false so
         //    onWaypointsChanged([]) runs its usual clear path)
         importedTrackMode = false;
+        importedIntermediatePoints = [];
         mapManager.clearWaypoints();
         mapManager.clearIntermediateMarkers();
 
         // 2. Enter track mode — from here, onWaypointsChanged skips routing
         importedTrackMode = true;
+        importedIntermediatePoints = result.intermediatePoints || [];
         syncTrackModeUI();
 
         // 3. Draw the track polyline directly
@@ -1705,8 +1713,34 @@ function computeIntermediatePoints(coords, intervalKm) {
   return result;
 }
 
+/**
+ * Project each imported intermediate point onto currentRouteCoords to derive
+ * `{lat, lng, cumDistM}`. Returns [pts, totalDistM].
+ */
+function _projectImportedIntermediates() {
+  const coords = currentRouteCoords;
+  if (coords.length < 2 || importedIntermediatePoints.length === 0) return [[], 0];
+  const cumByIdx = [0];
+  for (let i = 1; i < coords.length; i++) {
+    cumByIdx.push(cumByIdx[i - 1] + haversineDistance(coords[i - 1], coords[i]));
+  }
+  const totalDistM = cumByIdx[cumByIdx.length - 1];
+  const pts = importedIntermediatePoints.map((p) => {
+    let minD = Infinity, minI = 0;
+    for (let j = 0; j < coords.length; j++) {
+      const d = haversineDistance([p.lat, p.lng], coords[j]);
+      if (d < minD) { minD = d; minI = j; }
+    }
+    return { lat: p.lat, lng: p.lng, cumDistM: cumByIdx[minI] };
+  });
+  return [pts, totalDistM];
+}
+
 function updateIntermediateMarkers() {
-  if (segmentIntervalKm > 0 && currentRouteCoords.length > 1) {
+  if (importedTrackMode && importedIntermediatePoints.length > 0 && currentRouteCoords.length > 1) {
+    const [pts, totalDistM] = _projectImportedIntermediates();
+    mapManager.setIntermediateMarkers(pts, totalDistM);
+  } else if (segmentIntervalKm > 0 && currentRouteCoords.length > 1) {
     const pts = computeIntermediatePoints(currentRouteCoords, segmentIntervalKm);
     let totalDistM = 0;
     for (let i = 1; i < currentRouteCoords.length; i++) {
@@ -1784,7 +1818,19 @@ function buildWeatherPoints() {
     });
   }
 
-  if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
+  if (importedTrackMode && importedIntermediatePoints.length > 0 && coords.length > 1) {
+    // Imported intermediates take precedence — reuse labels and project onto
+    // the current track to derive cum distance.
+    const [projected] = _projectImportedIntermediates();
+    importedIntermediatePoints.forEach((p, i) => {
+      const cum = projected[i]?.cumDistM ?? 0;
+      all.push({
+        label: p.label || '—',
+        lat: p.lat, lng: p.lng, isWaypoint: false,
+        _cum: cum, _elapsedH: getElapsedH(cum),
+      });
+    });
+  } else if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     // Speed mode: intermediate points every 1 hour of travel time
     let wpTimes = null;
     if (perSegmentMode) {
