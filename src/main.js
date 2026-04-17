@@ -53,6 +53,7 @@ const LS_PACE_PARAMS_KEY = 'mappingElf_paceParams';
 const LS_PER_SEGMENT_KEY = 'mappingElf_perSegment';
 const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_IMPORT_AUTO_SORT_KEY = 'mappingElf_importAutoSort';
+const LS_IMPORT_AUTO_NAME_KEY = 'mappingElf_importAutoName';
 const LS_IMPORTED_TRACK_KEY = 'mappingElf_importedTrack';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
@@ -74,6 +75,8 @@ let speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
 let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
 let strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
 let importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1';
+let importAutoNameMode = localStorage.getItem(LS_IMPORT_AUTO_NAME_KEY) === '1';
+let skipAutoGeocode = false;
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
 let windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
@@ -242,6 +245,13 @@ btnClearRoute.addEventListener('click', () => {
   localStorage.removeItem(LS_WEATHER_CACHE_KEY);
   currentRouteCoords = [];
   currentElevations = [];
+  waypointCumDistM = [];
+  delete window._pendingGpxDates;
+  Object.keys(waypointCustomNames).forEach(k => delete waypointCustomNames[k]);
+  localStorage.removeItem(LS_CUSTOM_NAMES_KEY);
+  Object.keys(waypointPlaceNames).forEach(k => delete waypointPlaceNames[k]);
+  localStorage.removeItem(LS_GEOCODE_KEY);
+  localStorage.removeItem(LS_WAYPOINTS_KEY);
   const _wc = document.getElementById('weather-table-container');
   if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
   hideAlternatives();
@@ -341,7 +351,7 @@ async function onWaypointsChanged(waypoints) {
   // The track polyline is managed directly; waypoints are decorative markers only.
   if (importedTrackMode) {
     updateWaypointList(waypoints);
-    geocodeWaypoints(waypoints);
+    if (!skipAutoGeocode) geocodeWaypoints(waypoints);
     // Re-render weather table and elevation chart markers when waypoints change
     // (e.g. user adds a new point by clicking the map while in track mode).
     renderWeatherPanel();
@@ -358,7 +368,7 @@ async function onWaypointsChanged(waypoints) {
   // Update UI list immediately for responsive feel
   updateWaypointList(waypoints);
   // Geocode any waypoints not yet named (fire-and-forget)
-  geocodeWaypoints(waypoints);
+  if (!skipAutoGeocode) geocodeWaypoints(waypoints);
 
   if (waypoints.length < 2) {
     mapManager.clearRoute();
@@ -1035,7 +1045,9 @@ function restoreImportedTrack(session) {
   currentElevations = elevations;
 
   if (waypoints.length > 0) {
+    skipAutoGeocode = true;
     mapManager.setWaypointsFromImport(waypoints);
+    skipAutoGeocode = false;
   }
 
   elevationProfile.updateWithData(coords, elevations);
@@ -1104,7 +1116,10 @@ function importFile(e) {
             });
             try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
           }
+          skipAutoGeocode = !importAutoNameMode;
           result.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+          skipAutoGeocode = false;
+          if (importAutoNameMode) geocodeWaypoints(result.waypoints);
         }
 
         // 5. Apply per-waypoint dates to table columns after panel renders
@@ -1164,7 +1179,10 @@ function importFile(e) {
           ? tspOptimize(result.waypoints)
           : result.waypoints;
 
+        skipAutoGeocode = !importAutoNameMode;
         mapManager.setWaypointsFromImport(orderedWaypoints);
+        skipAutoGeocode = false;
+        if (importAutoNameMode) geocodeWaypoints(orderedWaypoints);
         const reorderedNote = orderedWaypoints !== result.waypoints ? '(自動排序)' : '';
         showNotification(`已匯入 ${result.waypoints.length} 個航點 ${reorderedNote}`.trim(), 'success');
       }
@@ -2946,6 +2964,17 @@ async function init() {
     });
   }
 
+  // --- Import auto-name checkbox ---
+  const importAutoNameEl = document.getElementById('import-auto-name-enable');
+  if (importAutoNameEl) {
+    importAutoNameEl.checked = importAutoNameMode;
+    importAutoNameEl.addEventListener('change', () => {
+      importAutoNameMode = importAutoNameEl.checked;
+      localStorage.setItem(LS_IMPORT_AUTO_NAME_KEY, importAutoNameMode ? '1' : '0');
+    });
+  }
+
+
   // --- Settings section collapse toggle ---
   {
     const settingsHeader = document.getElementById('settings-toggle-header');
@@ -2994,7 +3023,9 @@ async function init() {
     catch { return null; }
   })();
   if (savedWaypoints && savedWaypoints.length > 0) {
+    skipAutoGeocode = true;
     mapManager.setWaypointsFromImport(savedWaypoints);
+    skipAutoGeocode = false;
   } else if (!trackRestored && !savedView && navigator.geolocation) {
     // No saved state at all — pan to user's location
     navigator.geolocation.getCurrentPosition(
