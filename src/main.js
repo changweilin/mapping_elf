@@ -53,6 +53,7 @@ const LS_PACE_PARAMS_KEY = 'mappingElf_paceParams';
 const LS_PER_SEGMENT_KEY = 'mappingElf_perSegment';
 const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_IMPORT_AUTO_SORT_KEY = 'mappingElf_importAutoSort';
+const LS_IMPORTED_TRACK_KEY = 'mappingElf_importedTrack';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
@@ -218,6 +219,7 @@ function syncTrackModeUI() {
 btnReplanRoute?.addEventListener('click', () => {
   importedTrackMode = false;
   importedIntermediatePoints = [];
+  clearImportedTrackSession();
   syncTrackModeUI();
   // Clear the imported track polyline but keep waypoint markers
   mapManager.clearRoute();
@@ -229,6 +231,7 @@ btnReplanRoute?.addEventListener('click', () => {
 btnClearRoute.addEventListener('click', () => {
   importedTrackMode = false;
   importedIntermediatePoints = [];
+  clearImportedTrackSession();
   syncTrackModeUI();
   mapManager.clearWaypoints();
   mapManager.clearIntermediateMarkers();
@@ -343,6 +346,7 @@ async function onWaypointsChanged(waypoints) {
     // (e.g. user adds a new point by clicking the map while in track mode).
     renderWeatherPanel();
     updateIntermediateMarkers();
+    saveImportedTrackSession();
     return;
   }
 
@@ -990,6 +994,65 @@ function doExport(fmt) {
   showNotification(`${label} 檔案已匯出`, 'success');
 }
 
+/**
+ * Persist the current imported-track session so a page refresh can restore the
+ * track polyline, waypoints, and intermediate markers without re-routing.
+ * Only called while importedTrackMode is true.
+ */
+function saveImportedTrackSession() {
+  try {
+    const payload = {
+      coords: currentRouteCoords,
+      elevations: currentElevations,
+      waypoints: mapManager.waypoints,
+      intermediates: importedIntermediatePoints,
+    };
+    localStorage.setItem(LS_IMPORTED_TRACK_KEY, JSON.stringify(payload));
+  } catch (_) { }
+}
+
+function clearImportedTrackSession() {
+  try { localStorage.removeItem(LS_IMPORTED_TRACK_KEY); } catch (_) { }
+}
+
+/**
+ * Restore a previously saved imported-track session. Mirrors the track branch
+ * of importFile() without touching custom-name storage (already persisted).
+ */
+function restoreImportedTrack(session) {
+  const coords = Array.isArray(session.coords) ? session.coords : [];
+  const elevations = Array.isArray(session.elevations) ? session.elevations : [];
+  const waypoints = Array.isArray(session.waypoints) ? session.waypoints : [];
+  const intermediates = Array.isArray(session.intermediates) ? session.intermediates : [];
+  if (coords.length < 2) return false;
+
+  importedTrackMode = true;
+  importedIntermediatePoints = intermediates;
+  syncTrackModeUI();
+
+  mapManager.drawRoute(coords);
+  currentRouteCoords = coords;
+  currentElevations = elevations;
+
+  if (waypoints.length > 0) {
+    mapManager.setWaypointsFromImport(waypoints);
+  }
+
+  elevationProfile.updateWithData(coords, elevations);
+  const totalDist = elevationProfile.distances.at(-1) || 0;
+  const epStats = elevationProfile._calcStats();
+  statDistance.textContent = formatDistance(totalDist);
+  statAscent.textContent = formatElevation(epStats.ascent);
+  statDescent.textContent = formatElevation(epStats.descent);
+  statMaxElev.textContent = formatElevation(epStats.maxElev);
+
+  mapManager.fitToRoute();
+  updateTimeStat();
+  updateIntermediateMarkers();
+  renderWeatherPanel();
+  return true;
+}
+
 function importFile(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1065,6 +1128,8 @@ function importFile(e) {
         updateIntermediateMarkers();
         renderWeatherPanel();
 
+        saveImportedTrackSession();
+
         const wpCount = result.waypoints.length;
         showNotification(
           `已匯入軌跡（${coords.length} 個點${wpCount > 0 ? `，${wpCount} 個航點` : ''}）`,
@@ -1072,6 +1137,9 @@ function importFile(e) {
         );
         return;
       }
+
+      // Not a track import — any prior track session is now stale.
+      clearImportedTrackSession();
 
       // No track — fall back to waypoint-based routing.
       // Apply per-waypoint dates to table columns after panel renders
@@ -2869,14 +2937,22 @@ async function init() {
 
   updateFlatPlaceholder();
 
-  // Restore saved waypoints (triggers route recalculation + weather cache restore)
-  const savedWaypoints = (() => {
+  // Restore imported-track session first — if present, it fully reconstructs
+  // the track polyline + waypoints + intermediates without triggering routing.
+  const savedTrackSession = (() => {
+    try { return JSON.parse(localStorage.getItem(LS_IMPORTED_TRACK_KEY) || 'null'); }
+    catch { return null; }
+  })();
+  const trackRestored = savedTrackSession ? restoreImportedTrack(savedTrackSession) : false;
+
+  // Otherwise, fall back to normal waypoint-only restore (triggers route recalc).
+  const savedWaypoints = trackRestored ? null : (() => {
     try { return JSON.parse(localStorage.getItem(LS_WAYPOINTS_KEY) || 'null'); }
     catch { return null; }
   })();
   if (savedWaypoints && savedWaypoints.length > 0) {
     mapManager.setWaypointsFromImport(savedWaypoints);
-  } else if (!savedView && navigator.geolocation) {
+  } else if (!trackRestored && !savedView && navigator.geolocation) {
     // No saved state at all — pan to user's location
     navigator.geolocation.getCurrentPosition(
       (pos) => mapManager.map.setView([pos.coords.latitude, pos.coords.longitude], 13),
