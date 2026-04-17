@@ -2535,6 +2535,16 @@ function highlightWeatherColumn(colIdx) {
  */
 function highlightPoint(colIdx) {
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
+
+  // Toggle: clicking the already-highlighted column clears the highlight
+  const curTh = document.querySelector(
+    '#weather-table-container .wt-col-head.wt-col-highlight'
+  );
+  if (curTh && parseInt(curTh.dataset.idx) === colIdx) {
+    clearAllHighlights();
+    return;
+  }
+
   const pt = weatherPoints[colIdx];
 
   // 1. Weather table — highlight exactly the clicked column
@@ -2587,6 +2597,7 @@ function clearAllHighlights() {
   });
   document.querySelectorAll('.waypoint-item.wp-highlight').forEach(el => el.classList.remove('wp-highlight'));
   mapManager.clearWaypointHighlight();
+  mapManager.clearHoverMarker();
   elevationProfile.hideCrosshair();
 }
 
