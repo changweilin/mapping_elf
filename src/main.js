@@ -1637,6 +1637,36 @@ function shiftAllDates(deltaDays, deltaHours) {
   saveWeatherSettings();
 }
 
+/**
+ * Align the highlighted weather column to "now" and shift every other waypoint
+ * column by the same delta so their relative spacing stays intact.
+ * Falls back to column 0 when nothing is highlighted.
+ */
+function shiftToNow(mode /* 'day' | 'hour' */) {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+
+  const anchor =
+    container.querySelector('.wt-col-head.wt-col-highlight') ||
+    container.querySelector('.wt-col-head[data-idx="0"]');
+  if (!anchor) return;
+
+  const now = new Date();
+  if (mode === 'day') {
+    const curDate = anchor.querySelector('.wt-date-input')?.value;
+    if (!curDate) return;
+    const cur = new Date(curDate + 'T00:00:00');
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const deltaDays = Math.round((today - cur) / 86400000);
+    if (deltaDays !== 0) shiftAllDates(deltaDays, 0);
+  } else {
+    const curHour = parseInt(anchor.querySelector('.wt-time-select')?.value ?? '');
+    if (Number.isNaN(curHour)) return;
+    const deltaHours = now.getHours() - curHour;
+    if (deltaHours !== 0) shiftAllDates(0, deltaHours);
+  }
+}
+
 const LS_PANEL_HEIGHT_KEY = 'mappingElf_panelHeight';
 const LS_PANEL_HEIGHT_RATIO_KEY = 'mappingElf_panelHeightRatio';
 
@@ -1649,8 +1679,10 @@ function initWeatherControls() {
       case 'fetch':      fetchAllWeatherData(); break;
       case 'day-minus':  shiftAllDates(-1, 0);  break;
       case 'day-plus':   shiftAllDates(+1, 0);  break;
+      case 'day-now':    shiftToNow('day');     break;
       case 'hour-minus': shiftAllDates(0, -1);  break;
       case 'hour-plus':  shiftAllDates(0, +1);  break;
+      case 'hour-now':   shiftToNow('hour');    break;
     }
   });
 
@@ -2152,12 +2184,12 @@ function renderWeatherPanel() {
       </button>
       <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
         <button class="wt-ctrl-adj" data-action="day-minus">−</button>
-        <span class="wt-ctrl-unit">日</span>
+        <button class="wt-ctrl-now" data-action="day-now" title="將目前選取欄位設為今日,其他欄位同步對齊">今日</button>
         <button class="wt-ctrl-adj" data-action="day-plus">+</button>
       </div>
       <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
         <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
-        <span class="wt-ctrl-unit">時</span>
+        <button class="wt-ctrl-now" data-action="hour-now" title="將目前選取欄位設為現在時刻,其他欄位同步對齊">現時</button>
         <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
       </div>
     </th>`;
