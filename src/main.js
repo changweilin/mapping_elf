@@ -2360,7 +2360,7 @@ function renderWeatherPanel() {
       ? `style="border-top: 3px solid ${rgba(0.8)}; background-color: var(--bg-tertiary); background-image: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
       : `style="border-top: 2px solid ${rgba(0.2)};"`;
 
-    const locked = !pt.isWaypoint;
+    const locked = strictLinearMode && !pt.isWaypoint;
     html += `
       <th class="${thClass}" data-idx="${i}"${pt.isReturn ? ' data-return="true"' : ''} ${thStyle}>
         <div class="wt-col-label" ${labelStyle}>${pt.label}${elapsedBadge}</div>
@@ -2438,17 +2438,19 @@ function renderWeatherPanel() {
       }
     }
 
-    if (speedIntervalMode) {
-      const idx = parseInt(th.dataset.idx);
-      const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
-      const deltaMs = colToMs(th) - prevMs;
-      if (deltaMs !== 0) {
-        for (let j = idx + 1; j < heads.length; j++) {
-          setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
+    if (strictLinearMode) {
+      if (speedIntervalMode) {
+        const idx = parseInt(th.dataset.idx);
+        const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
+        const deltaMs = colToMs(th) - prevMs;
+        if (deltaMs !== 0) {
+          for (let j = idx + 1; j < heads.length; j++) {
+            setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
+          }
         }
+      } else {
+        syncIntervalTimesFromWP();
       }
-    } else {
-      syncIntervalTimesFromWP();
     }
     updateDateConstraints();
     saveWeatherSettings();
@@ -3077,6 +3079,11 @@ async function init() {
     strictLinearEl.addEventListener('change', () => {
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
+      if (strictLinearMode) {
+        if (speedIntervalMode) cascadeWeatherTimes();
+        else syncIntervalTimes();
+      }
+      renderWeatherPanel();
     });
   }
 
