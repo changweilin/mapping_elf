@@ -70,12 +70,12 @@ let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') ||
 let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let oLoopMode = localStorage.getItem(LS_OLOOP_KEY) === '1';
 if (roundTripMode && oLoopMode) { oLoopMode = false; localStorage.setItem(LS_OLOOP_KEY, '0'); }
-let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) === '1';
+let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) !== '0'; // default Pace ON (1 or null)
 let speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
-let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
+let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1'; // default OFF
 let strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
-let importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1';
-let importAutoNameMode = localStorage.getItem(LS_IMPORT_AUTO_NAME_KEY) === '1';
+let importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1'; // default OFF
+let importAutoNameMode = localStorage.getItem(LS_IMPORT_AUTO_NAME_KEY) === '1'; // default OFF
 let skipAutoGeocode = false;
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
@@ -166,6 +166,7 @@ const btnClearRoute = document.getElementById('btn-clear-route');
 const btnReplanRoute = document.getElementById('btn-replan-route');
 const btnUndo = document.getElementById('btn-undo');
 const btnClearCache = document.getElementById('btn-clear-cache');
+const btnResetDefaults = document.getElementById('btn-reset-defaults');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
 const btnDownloadMap = document.getElementById('btn-download-map');
@@ -212,6 +213,11 @@ btnMyLocation.addEventListener('click', () => {
 
 btnExportGpx.addEventListener('click', openExportModal);
 btnImportGpx.addEventListener('click', () => gpxFileInput.click());
+btnResetDefaults?.addEventListener('click', () => {
+  if (confirm('確定要全部回到預設值嗎？這將會清除目前的設置並重啟頁面。')) {
+    resetToDefaults();
+  }
+});
 gpxFileInput.addEventListener('change', importFile);
 
 /** Show/hide the re-plan button based on whether we are in imported-track mode. */
@@ -1403,7 +1409,7 @@ async function fetchPlaceName(lat, lng) {
   const latS = lat.toFixed(5), lngS = lng.toFixed(5);
 
   // Overpass query: search for named POIs with widened radii by feature type
-  const ovpQuery = `[out:json][timeout:10];
+  const ovpQuery = `[out:json][timeout:3];
 (
   node["natural"~"peak|volcano"]["name"](around:3000,${latS},${lngS});
   node["waterway"="waterfall"]["name"](around:1000,${latS},${lngS});
@@ -1420,17 +1426,21 @@ async function fetchPlaceName(lat, lng) {
 );
 out center 20;`;
 
+  // Provide a short timeout so geocoding doesn't block forever
+  const fetchOptions = { signal: AbortSignal.timeout(4000) };
+
   // Run Nominatim (address / road / admin) and Overpass (nearby POIs) in parallel
   const [nomRes, ovpRes] = await Promise.allSettled([
     fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' } }
+      { headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' }, ...fetchOptions }
     ).then(r => r.ok ? r.json() : null),
 
     fetch(OVERPASS_API, {
       method: 'POST',
       body: 'data=' + encodeURIComponent(ovpQuery),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      ...fetchOptions
     }).then(r => r.ok ? r.json() : null),
   ]);
 
@@ -1495,10 +1505,57 @@ async function geocodeWaypoints(waypoints) {
     if (i < waypoints.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
 }
-/** Re-render labels after a geocode result or custom name save. */
+/** Re-render labels locally after a geocode result or custom name save to avoid UI flashing */
 function _applyPlaceNameToDOM() {
-  updateWaypointList(mapManager.waypoints);
-  if (weatherPoints.length > 0) renderWeatherPanel();
+  if (weatherPoints.length > 0) {
+    weatherPoints.forEach((pt) => {
+      if (pt.isWaypoint) {
+        const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === mapManager.waypoints.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
+        pt.label = getPlaceName(pt.lat, pt.lng) || fallbackLabel;
+      }
+    });
+    deduplicateLabels(weatherPoints);
+  }
+
+  // Update Waypoint List Labels iteratively
+  const items = waypointList.querySelectorAll('.waypoint-item');
+  if (items.length === mapManager.waypoints.length) {
+    mapManager.waypoints.forEach((wp, i) => {
+      const pt = weatherPoints.find(p => p.isWaypoint && !p.isReturn && p.wpIndex === i);
+      const fallbackLabel = i === 0 ? '起點' : (i === mapManager.waypoints.length - 1 ? '終點' : `航點 ${i + 1}`);
+      const displayName = pt ? pt.label : (getPlaceName(wp[0], wp[1]) || fallbackLabel);
+      const nameEl = items[i].querySelector('.wp-place-name');
+      if (nameEl && nameEl.textContent !== displayName) {
+        nameEl.textContent = displayName;
+      }
+    });
+  } else {
+    updateWaypointList(mapManager.waypoints);
+  }
+
+  // Update Weather Table Column Labels iteratively
+  const container = document.getElementById('weather-table-container');
+  if (container && weatherPoints.length > 0) {
+    weatherPoints.forEach((pt, col) => {
+      if (pt.isWaypoint) {
+        const th = container.querySelector(`.wt-col-head[data-idx="${col}"]`);
+        if (th) {
+          const labelEl = th.querySelector('.wt-col-label');
+          if (labelEl && !labelEl.querySelector('input')) { // skip if user is editing
+            const badge = labelEl.querySelector('.wt-elapsed-badge');
+            const currentText = (labelEl.childNodes[0]?.nodeType === Node.TEXT_NODE
+              ? labelEl.childNodes[0].textContent
+              : labelEl.textContent).trim();
+            if (currentText !== pt.label) {
+               labelEl.innerHTML = '';
+               labelEl.appendChild(document.createTextNode(pt.label + (badge ? ' ' : '')));
+               if (badge) labelEl.appendChild(badge);
+            }
+          }
+        }
+      }
+    });
+  }
 }
 
 /**
@@ -2659,7 +2716,7 @@ async function init() {
   initWeatherControls();
 
   // Restore route mode
-  const savedMode = localStorage.getItem(LS_ROUTE_MODE_KEY);
+  const savedMode = localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking';
   if (savedMode) {
     routeEngine.setMode(savedMode);
     const modeRadio = document.querySelector(`input[name="route-mode"][value="${savedMode}"]`);
@@ -2667,7 +2724,7 @@ async function init() {
   }
 
   // Restore map tile layer
-  const savedLayer = localStorage.getItem(LS_MAP_LAYER_KEY);
+  const savedLayer = localStorage.getItem(LS_MAP_LAYER_KEY) || 'topo';
   if (savedLayer) {
     mapManager.switchLayer(savedLayer);
     layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === savedLayer));
@@ -3040,6 +3097,29 @@ async function init() {
   setTimeout(() => {
     loadingScreen.classList.add('hidden');
   }, 800);
+}
+
+function resetToDefaults() {
+  const keysToClear = [
+    LS_SEGMENT_KEY,
+    LS_ROUNDTRIP_KEY,
+    LS_OLOOP_KEY,
+    LS_ROUTE_MODE_KEY,
+    LS_MAP_LAYER_KEY,
+    LS_SPEED_MODE_KEY,
+    LS_SPEED_ACTIVITY_KEY,
+    LS_PACE_PARAMS_KEY,
+    LS_PER_SEGMENT_KEY,
+    LS_STRICT_LINEAR_KEY,
+    LS_IMPORT_AUTO_SORT_KEY,
+    LS_IMPORT_AUTO_NAME_KEY,
+    LS_PACE_UNIT_KEY,
+    LS_WINDY_LAYER_KEY,
+    LS_WINDY_MODEL_KEY,
+    LS_MAP_VIEW_KEY
+  ];
+  keysToClear.forEach(key => localStorage.removeItem(key));
+  window.location.reload();
 }
 
 init();

@@ -55,7 +55,7 @@ export class MapManager {
     this.gradientPolylines = []; // Gradient chunks for selected route
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
-    this.currentLayerName = 'streets';
+    this.currentLayerName = 'topo';
     this.intermediateMarkers = [];
     this.ignoreMapClick = false;
     this.dragLine = null;
@@ -71,7 +71,7 @@ export class MapManager {
     for (const [name, config] of Object.entries(TILE_LAYERS)) {
       this.tileLayers[name] = L.tileLayer(config.url, config.options);
     }
-    this.tileLayers.streets.addTo(this.map);
+    this.tileLayers.topo.addTo(this.map);
 
     this.map.on('click', (e) => {
       if (this.ignoreMapClick) return;

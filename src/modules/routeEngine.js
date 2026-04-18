@@ -15,7 +15,7 @@ const PROFILE_MAP = {
 
 export class RouteEngine {
   constructor() {
-    this.mode = 'walking';
+    this.mode = 'hiking';
     this.lastRouteCoords = [];
     this.alternatives = []; // Array of { coords, distance, ascent, descent, score, elevations }
   }
