@@ -21,6 +21,12 @@ export class ElevationProfile {
     this.points = [];
     this._markers = []; // [{cumDistM, label, colIdx, isWaypoint}]
     this.isRoundTrip = false;
+    this.isCollapsed = false;
+  }
+
+  toggleCollapse() {
+    this.isCollapsed = !this.isCollapsed;
+    this._renderChart();
   }
 
   /** Programmatically show the chart tooltip/crosshair at a sampled point index */
@@ -197,7 +203,7 @@ export class ElevationProfile {
             // Fallback: distance-fraction positioning
             xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
             xPx = left + xFrac * (right - left);
-            const elev = self._interpolateElevAtCumM(m.cumDistM);
+            const elev = self.isCollapsed ? 0 : self._interpolateElevAtCumM(m.cumDistM);
             yPx = scales.y.getPixelForValue(elev);
           }
 
@@ -266,8 +272,8 @@ export class ElevationProfile {
         labels,
         datasets: [
           {
-            data: this.elevations,
-            fill: true,
+            data: this.isCollapsed ? this.elevations.map(() => 0) : this.elevations,
+            fill: !this.isCollapsed,
             backgroundColor: gradient,
             borderColor: '#6ee7b7',
             borderWidth: 2,
@@ -280,6 +286,9 @@ export class ElevationProfile {
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        layout: {
+          padding: this.isCollapsed ? { top: 0, bottom: 0, left: -5, right: -5 } : 0
+        },
         interaction: {
           mode: 'index',
           intersect: false,
@@ -287,6 +296,7 @@ export class ElevationProfile {
         plugins: {
           legend: { display: false },
           tooltip: {
+            enabled: !this.isCollapsed,
             backgroundColor: 'rgba(22,24,34,0.9)',
             borderColor: 'rgba(255,255,255,0.1)',
             borderWidth: 1,
@@ -296,19 +306,21 @@ export class ElevationProfile {
             cornerRadius: 8,
             callbacks: {
               title: (items) => `距離: ${items[0].label} km`,
-              label: (item) => `海拔: ${formatElevation(item.raw)}`,
+              label: (item) => `海拔: ${formatElevation(this.elevations[item.dataIndex])}`,
             },
           },
           wpMarkers: {}, // enable local plugin
         },
         scales: {
           x: {
+            display: !this.isCollapsed,
             title: { display: true, text: 'km', color: '#6b7280', font: { size: 10 } },
             ticks: { color: '#6b7280', font: { size: 9 }, maxTicksLimit: 8 },
             grid: { color: 'rgba(255,255,255,0.04)' },
             border: { color: 'rgba(255,255,255,0.06)' },
           },
           y: {
+            display: !this.isCollapsed,
             title: { display: true, text: 'm', color: '#6b7280', font: { size: 10 } },
             ticks: { color: '#6b7280', font: { size: 9 }, maxTicksLimit: 5 },
             grid: { color: 'rgba(255,255,255,0.04)' },

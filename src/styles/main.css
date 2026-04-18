@@ -261,6 +261,7 @@ html, body {
   left: 0;
   right: 0;
   bottom: var(--bottom-panel-height);
+  transition: bottom 0.3s ease;
   z-index: 1;
 }
 
@@ -489,7 +490,7 @@ html, body {
   overflow-y: auto;
   overflow-x: hidden;
   transform: translateX(100%);
-  transition: transform var(--transition-smooth);
+  transition: transform var(--transition-smooth), bottom 0.3s ease;
   box-shadow: var(--shadow-lg);
 }
 .side-panel.open {
@@ -1261,6 +1262,34 @@ html, body {
   background: rgba(255,255,255,0.02);
   border: 1px solid var(--border);
   overflow: hidden;
+  transition: height 0.3s ease;
+}
+.elevation-chart-container.collapsed {
+  height: 32px;
+}
+.chart-toggle-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(15, 17, 23, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #a1a1aa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: all var(--transition-fast);
+}
+.chart-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+.elevation-chart-container.collapsed .chart-toggle-btn svg {
+  transform: rotate(180deg);
 }
 .elevation-chart-container canvas {
   width: 100% !important;
@@ -1910,7 +1939,12 @@ html, body {
 }
 
 .bp-chart-row .elevation-chart-container {
-  height: 130px;
+  height: 140px;
+  transition: height 0.3s ease;
+}
+
+.bp-chart-row .elevation-chart-container.collapsed {
+  height: 32px;
 }
 
 .bp-weather-header {
@@ -2469,6 +2503,13 @@ html, body {
 .export-option small {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* ======== Dynamic Layout Offsets ======== */
+/* (Removed dynamic offsets to keep map boundary fixed) */
+
+.bottom-panel {
+  transition: height 0.3s ease, transform var(--transition-smooth);
 }
 .modal-actions {
   display: flex;

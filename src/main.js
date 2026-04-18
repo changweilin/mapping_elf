@@ -198,6 +198,8 @@ const statKcalCard = document.getElementById('stat-kcal-card');
 const statIntake = document.getElementById('stat-intake');
 const statIntakeCard = document.getElementById('stat-intake-card');
 
+const btnToggleElevation = document.getElementById('btn-toggle-elevation');
+
 const layerBtns = document.querySelectorAll('.layer-btn');
 const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
 
@@ -209,6 +211,12 @@ if (window.innerWidth <= 1024) {
 }
 
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+btnToggleElevation?.addEventListener('click', () => {
+  const container = document.getElementById('elevation-chart-container');
+  container.classList.toggle('collapsed');
+  elevationProfile.toggleCollapse();
+});
 
 // 手機平板螢幕下，點擊地圖自動收合側拉面板
 document.getElementById('map').addEventListener('click', () => {
