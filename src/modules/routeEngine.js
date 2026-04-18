@@ -116,6 +116,32 @@ export class RouteEngine {
         const elevations = await this._fetchElevations(sampled);
         const dist = totalDistance(route.coords);
 
+        // Interpolate elevations to full track for export
+        const fullElevations = new Array(route.coords.length);
+        if (route.coords.length <= 100) {
+          for (let i = 0; i < route.coords.length; i++) {
+            fullElevations[i] = elevations[i];
+          }
+        } else {
+          const step = (route.coords.length - 1) / 99;
+          for (let i = 0; i < 100; i++) {
+            const idx = i === 99 ? route.coords.length - 1 : (i === 0 ? 0 : Math.round(i * step));
+            fullElevations[idx] = elevations[i];
+          }
+          let lastIdx = 0;
+          for (let i = 1; i < 100; i++) {
+            const currIdx = i === 99 ? route.coords.length - 1 : Math.round(i * step);
+            const diff = currIdx - lastIdx;
+            const e1 = elevations[i - 1];
+            const e2 = elevations[i];
+            for (let j = lastIdx + 1; j < currIdx; j++) {
+              const frac = (j - lastIdx) / diff;
+              fullElevations[j] = e1 + frac * (e2 - e1);
+            }
+            lastIdx = currIdx;
+          }
+        }
+
         // Calculate ascent/descent from elevation data
         let ascent = 0, descent = 0;
         let maxElev = -Infinity, minElev = Infinity;
@@ -134,6 +160,7 @@ export class RouteEngine {
           coords: route.coords,
           sampledCoords: sampled,
           elevations,
+          fullElevations,
           distance: dist,
           ascent: Math.round(ascent),
           descent: Math.round(descent),
