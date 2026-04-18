@@ -340,7 +340,7 @@ html, body {
   box-shadow: none !important;
   transition: opacity var(--transition-fast);
   overflow: visible;
-  margin: 0 !important;
+  /* margin: removed to allow Leaflet iconAnchor to work */
   box-sizing: content-box !important; /* Match Leaflet expectation */
   font-size: 13px;
   font-weight: 700;
@@ -390,7 +390,7 @@ html, body {
   pointer-events: none;
   user-select: none;
 }
-.custom-waypoint-icon:hover {
+.custom-waypoint-icon:hover .wp-icon-inner {
   transform: scale(1.2);
 }
 .custom-waypoint-icon.is-selected {
@@ -422,7 +422,7 @@ html, body {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  margin: 0 !important;
+  /* margin: removed to allow Leaflet iconAnchor to work */
   box-sizing: content-box !important;
   overflow: visible;
   -webkit-backface-visibility: hidden;
