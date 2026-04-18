@@ -150,6 +150,17 @@ mapManager.onRouteHover = (lat, lng) => {
   mapManager.showHoverMarker(lat, lng, color);
 };
 
+// Handle clicks on intermediate markers on the map
+mapManager.onIntermediateSelect = (lat, lng) => {
+  if (!weatherPoints || weatherPoints.length === 0) return;
+  let minD = Infinity, closestIdx = 0;
+  for (let i = 0; i < weatherPoints.length; i++) {
+    const d = haversineDistance([lat, lng], [weatherPoints[i].lat, weatherPoints[i].lng]);
+    if (d < minD) { minD = d; closestIdx = i; }
+  }
+  highlightPoint(closestIdx);
+};
+
 // =========== DOM Elements ===========
 const loadingScreen = document.getElementById('loading-screen');
 const sidePanel = document.getElementById('side-panel');
@@ -361,8 +372,6 @@ async function onWaypointsChanged(waypoints) {
     // Re-render weather table and elevation chart markers when waypoints change
     // (e.g. user adds a new point by clicking the map while in track mode).
     renderWeatherPanel();
-    updateIntermediateMarkers();
-    saveImportedTrackSession();
     return;
   }
 
@@ -470,13 +479,10 @@ function selectAlternative(index) {
   // Update card selection highlight
   renderAlternatives(allAlternatives, index);
 
-  // Update intermediate km-interval markers
-  updateIntermediateMarkers();
-
   // Update pace time stat (needs elevation data from profile, available after updateWithData)
   updateTimeStat();
 
-  // Render weather panel placeholder cards for the new route
+  // Render weather panel and intermediate markers
   renderWeatherPanel();
 }
 
@@ -1066,7 +1072,6 @@ function restoreImportedTrack(session) {
 
   mapManager.fitToRoute();
   updateTimeStat();
-  updateIntermediateMarkers();
   renderWeatherPanel();
   return true;
 }
@@ -1091,10 +1096,24 @@ function importFile(e) {
         return;
       }
 
-      // If the file contains a recorded track, load it directly without routing.
       if (result.trackPoints.length > 0) {
         const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
-        const elevations = result.trackPoints.map((p) => p.ele ?? 0);
+        
+        let elevations = result.trackPoints.map((p) => p.ele);
+        for (let i = 0; i < elevations.length; i++) {
+          if (elevations[i] === null) {
+            let nextI = i + 1;
+            while (nextI < elevations.length && elevations[nextI] === null) nextI++;
+            if (nextI < elevations.length) {
+              const prev = i > 0 ? elevations[i - 1] : elevations[nextI];
+              const next = elevations[nextI];
+              const frac = 1 / (nextI - (i - 1));
+              elevations[i] = prev + frac * (next - prev);
+            } else {
+              elevations[i] = i > 0 ? elevations[i - 1] : 0;
+            }
+          }
+        }
 
         // 1. Clear old state normally (importedTrackMode still false so
         //    onWaypointsChanged([]) runs its usual clear path)
@@ -1146,7 +1165,6 @@ function importFile(e) {
 
         mapManager.fitToRoute();
         updateTimeStat();
-        updateIntermediateMarkers();
         renderWeatherPanel();
 
         saveImportedTrackSession();
@@ -1906,25 +1924,32 @@ function _projectImportedIntermediates() {
       const d = haversineDistance([p.lat, p.lng], coords[j]);
       if (d < minD) { minD = d; minI = j; }
     }
-    return { lat: p.lat, lng: p.lng, cumDistM: cumByIdx[minI] };
+    return { lat: p.lat, lng: p.lng, cumDistM: cumByIdx[minI], label: p.label };
   });
   return [pts, totalDistM];
 }
 
 function updateIntermediateMarkers() {
-  if (importedTrackMode && importedIntermediatePoints.length > 0 && currentRouteCoords.length > 1) {
-    const [pts, totalDistM] = _projectImportedIntermediates();
-    mapManager.setIntermediateMarkers(pts, totalDistM);
-  } else if (segmentIntervalKm > 0 && currentRouteCoords.length > 1) {
-    const pts = computeIntermediatePoints(currentRouteCoords, segmentIntervalKm);
-    let totalDistM = 0;
-    for (let i = 1; i < currentRouteCoords.length; i++) {
-      totalDistM += haversineDistance(currentRouteCoords[i - 1], currentRouteCoords[i]);
-    }
-    mapManager.setIntermediateMarkers(pts, totalDistM);
-  } else {
+  if (!weatherPoints || weatherPoints.length === 0) {
     mapManager.clearIntermediateMarkers();
+    return;
   }
+
+  const pts = weatherPoints
+    .filter(p => !p.isWaypoint)
+    .map(p => ({
+      lat: p.lat,
+      lng: p.lng,
+      cumDistM: p._cum,
+      label: p.label
+    }));
+
+  let totalDistM = 0;
+  if (currentRouteCoords.length > 1) {
+    totalDistM = elevationProfile.distances.at(-1) || 0;
+  }
+  
+  mapManager.setIntermediateMarkers(pts, totalDistM);
 }
 
 function buildWeatherPoints() {
@@ -2211,20 +2236,27 @@ function renderWeatherPanel() {
   {
     const maxCumWp = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
     const colorById = {};
+    const labelById = {};
     weatherPoints.forEach(p => {
       if (!p.isWaypoint || p.isReturn) return;
       const xFrac = Math.max(0, Math.min(1, (p._cum ?? 0) / maxCumWp));
       const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
       colorById[p.wpIndex] = interpolateRouteColor(t);
+      labelById[p.wpIndex] = p.label;
     });
     const newColors = mapManager.waypoints.map((_, i) => colorById[i] || null);
     if (newColors.every(c => c !== null) && newColors.length > 0) {
       waypointGradColors = newColors;
       mapManager.setWaypointColors(waypointGradColors);
     }
+    const newLabels = mapManager.waypoints.map((_, i) => labelById[i] || null);
+    mapManager.setWaypointLabels(newLabels);
     // Always re-render sidebar so cumulative distances are up-to-date
     updateWaypointList(mapManager.waypoints);
   }
+
+  // Update intermediate markers on the map
+  updateIntermediateMarkers();
 
   const saved = loadWeatherSettings();
   const now = new Date();

@@ -184,7 +184,8 @@ export class GpxExporter {
       const lat = parseFloat(pt.getAttribute('lat'));
       const lon = parseFloat(pt.getAttribute('lon'));
       const eleEl = pt.querySelector('ele');
-      const ele = eleEl ? parseFloat(eleEl.textContent) : 0;
+      const eleText = eleEl ? eleEl.textContent.trim() : '';
+      const ele = eleText && !isNaN(parseFloat(eleText)) ? parseFloat(eleText) : null;
       if (!isNaN(lat) && !isNaN(lon)) {
         trackPoints.push({ lat, lon, ele });
       }

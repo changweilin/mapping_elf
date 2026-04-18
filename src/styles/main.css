@@ -333,25 +333,58 @@ html, body {
 
 /* Custom marker styles */
 .custom-waypoint-icon {
-  position: relative;
-  box-sizing: border-box;   /* border included in the 36/40px iconSize */
-  width: 36px;
-  height: 36px;
+  cursor: pointer;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  transition: opacity var(--transition-fast);
+  overflow: visible;
+  margin: 0 !important;
+  box-sizing: content-box !important; /* Match Leaflet expectation */
+  font-size: 13px;
+  font-weight: 700;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.wp-icon-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   background: var(--accent-gradient);
   border: 3px solid rgba(255,255,255,0.9);
   box-shadow: 0 2px 8px rgba(0,0,0,0.4), var(--shadow-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--bg-primary);
-  font-size: 13px;
-  font-weight: 700;
-  transition: transform var(--transition-fast);
-  overflow: visible;
+  box-sizing: border-box !important;
 }
-.custom-waypoint-icon > span {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+
+.custom-waypoint-icon.is-selected .wp-icon-inner {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 5px rgba(251,191,36,0.35), var(--shadow-glow);
+  transform: scale(1.1);
+}
+
+.custom-waypoint-icon.is-dragging .wp-icon-inner {
+  border-color: #fbbf24;
+  animation: pulseRotate 0.8s infinite alternate;
+}
+
+.custom-waypoint-icon.start .wp-icon-inner {
+  background: #34d399;
+}
+
+.custom-waypoint-icon.end .wp-icon-inner {
+  background: #f87171;
+}
+
+.custom-waypoint-icon span {
+  position: relative;
   line-height: 1;
   pointer-events: none;
   user-select: none;
@@ -359,16 +392,7 @@ html, body {
 .custom-waypoint-icon:hover {
   transform: scale(1.2);
 }
-.custom-waypoint-icon.is-dragging {
-  animation: pulseRotate 0.8s infinite alternate;
-  border-color: #fbbf24;
-  z-index: 1000 !important;
-  cursor: grabbing;
-}
 .custom-waypoint-icon.is-selected {
-  border-color: #fbbf24;
-  box-shadow: 0 0 0 5px rgba(251,191,36,0.35), var(--shadow-glow);
-  transform: scale(1.25);
   z-index: 900 !important;
 }
 
@@ -389,34 +413,37 @@ html, body {
   to { transform: scale(1.3); box-shadow: 0 0 25px #fbbf24; }
 }
 
-.custom-waypoint-icon.start {
-  background: #34d399;
-  width: 40px;
-  height: 40px;
-}
-.custom-waypoint-icon.end {
-  background: #f87171;
-  width: 40px;
-  height: 40px;
-}
+
 
 /* Intermediate (km-interval) markers — non-interactive, smaller */
 .intermediate-point-icon {
-  position: relative;
+  cursor: pointer;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+  box-sizing: content-box !important;
+  overflow: visible;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.intermediate-point-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
   border-radius: 50%;
-  background: rgba(71, 85, 105, 0.88);
   border: 2px solid rgba(255,255,255,0.65);
   box-shadow: 0 1px 5px rgba(0,0,0,0.35);
-  color: #e2e8f0;
+  box-sizing: border-box !important;
   font-size: 9px;
   font-weight: 700;
-  pointer-events: none;
-  overflow: visible;
+  color: #e2e8f0;
 }
 
 .elevation-hover-marker {
@@ -426,6 +453,24 @@ html, body {
   background: #fbbf24;
   border: 2px solid white;
   box-shadow: 0 0 12px rgba(251,191,36,0.5);
+}
+
+.marker-external-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: rgba(0,0,0,0.65);
+  padding: 3px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ======== Side Panel ======== */
