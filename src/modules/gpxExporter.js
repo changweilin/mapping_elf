@@ -203,9 +203,16 @@ export class GpxExporter {
       const typeEl = wpt.querySelector('type');
       const hasIntervalTag = typeEl && typeEl.textContent.trim() === 'mel:interval';
       const hasIntervalPrefix = rawName.startsWith('*_');
+      const exts = this._getAllExtensions(wpt);
+      const label = hasIntervalPrefix ? rawName.slice(2) : rawName;
       if (hasIntervalTag || hasIntervalPrefix) {
-        const label = hasIntervalPrefix ? rawName.slice(2) : rawName;
-        intermediatePoints.push({ lat, lng: lon, label });
+        intermediatePoints.push({
+          lat, lng: lon, label,
+          date: exts.date || null,
+          time: exts.time || null,
+          weather: exts,
+          windyUrl: exts.windyUrl || null,
+        });
         return;
       }
 
@@ -213,8 +220,10 @@ export class GpxExporter {
         latlon: [lat, lon],
         meta: {
           label: rawName || null,
-          date: this._getExtValue(wpt, 'date'),
-          time: this._getExtValue(wpt, 'time'),
+          date: exts.date || null,
+          time: exts.time || null,
+          weather: exts,
+          windyUrl: exts.windyUrl || null,
         },
       });
     });
@@ -231,13 +240,13 @@ export class GpxExporter {
       // Prepend track start if the first waypoint is far from it
       const trackStart = trackPoints[0];
       if (this._distM(projected[0].latlon[0], projected[0].latlon[1], trackStart.lat, trackStart.lon) > SNAP_M) {
-        projected.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null }, trackIdx: 0 });
+        projected.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: 0 });
       }
 
       // Append track end if the last waypoint is far from it
       const trackEnd = trackPoints[trackPoints.length - 1];
       if (this._distM(projected[projected.length - 1].latlon[0], projected[projected.length - 1].latlon[1], trackEnd.lat, trackEnd.lon) > SNAP_M) {
-        projected.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null }, trackIdx: trackPoints.length - 1 });
+        projected.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: trackPoints.length - 1 });
       }
 
       projected.forEach(wp => {
@@ -255,11 +264,11 @@ export class GpxExporter {
       const step = Math.max(1, Math.floor(trackPoints.length / 10));
       for (let i = 0; i < trackPoints.length; i += step) {
         waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
-        segmentDates.push({ date: null, time: null });
+        segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
       }
       const last = trackPoints[trackPoints.length - 1];
       waypoints.push([last.lat, last.lon]);
-      segmentDates.push({ date: null, time: null });
+      segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
     }
 
     return { waypoints, trackPoints, segmentDates, intermediatePoints };
@@ -284,6 +293,20 @@ export class GpxExporter {
     const a = Math.sin(dLat / 2) ** 2
             + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  /**
+   * Get all custom extension elements as a flat object (namespace-agnostic)
+   */
+  static _getAllExtensions(el) {
+    const res = {};
+    const exts = el.querySelector('extensions');
+    if (!exts) return res;
+    for (const child of exts.children) {
+      const val = child.textContent.trim();
+      if (val) res[child.localName] = val;
+    }
+    return res;
   }
 
   /**

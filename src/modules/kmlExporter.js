@@ -137,19 +137,33 @@ export class KmlExporter {
         const lng = parseFloat(lngStr);
         if (isNaN(lat) || isNaN(lng)) return;
 
+        const description = pm.querySelector('description')?.textContent || '';
+        const meta = this._parseDescription(description);
+
         const rawName = pm.querySelector('name')?.textContent?.trim() || '';
         const hasIntervalStyle = styleUrl === '#wpInterval';
         const hasIntervalPrefix = rawName.startsWith('*_');
+        const label = hasIntervalPrefix ? rawName.slice(2) : rawName;
+
         if (hasIntervalStyle || hasIntervalPrefix) {
           intermediatePoints.push({
-            lat, lng,
-            label: hasIntervalPrefix ? rawName.slice(2) : rawName,
+            lat, lng, label,
+            date: meta.date || null,
+            time: meta.time || null,
+            weather: meta.weather,
+            windyUrl: meta.windyUrl || null,
           });
           return;
         }
 
         waypoints.push([lat, lng]);
-        segmentDates.push({ label: rawName || null, date: null, time: null });
+        segmentDates.push({
+          label: rawName || null,
+          date: meta.date || null,
+          time: meta.time || null,
+          weather: meta.weather,
+          windyUrl: meta.windyUrl || null,
+        });
       } else if (lineEl) {
         // Route LineString → track points
         const coordsText = lineEl.querySelector('coordinates')?.textContent?.trim() || '';
@@ -170,14 +184,37 @@ export class KmlExporter {
       const step = Math.max(1, Math.floor(trackPoints.length / 10));
       for (let i = 0; i < trackPoints.length; i += step) {
         waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
-        segmentDates.push({ date: null, time: null });
+        segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
       }
       const last = trackPoints[trackPoints.length - 1];
       waypoints.push([last.lat, last.lon]);
-      segmentDates.push({ date: null, time: null });
+      segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
     }
 
     return { waypoints, trackPoints, segmentDates, intermediatePoints };
+  }
+
+  static _parseDescription(html) {
+    const res = { weather: {} };
+    if (!html) return res;
+    // Basic extraction from the HTML table string (avoiding full DOMParser for speed if possible)
+    // but DOMParser is safer for arbitrary HTML.
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    doc.querySelectorAll('tr').forEach(tr => {
+      const tds = tr.querySelectorAll('td');
+      if (tds.length === 2) {
+        const key = tds[0].textContent.trim();
+        const val = tds[1].textContent.trim();
+        if (key === '日期') res.date = val;
+        else if (key === '時間') res.time = val;
+        else res.weather[key] = val; // Store by label; main.js will map back to keys
+      } else if (tds.length === 1) {
+        const a = tds[0].querySelector('a');
+        if (a && a.textContent.includes('Windy')) res.windyUrl = a.href;
+      }
+    });
+    return res;
   }
 
   static download(kmlString, filename = 'mapping_elf_track.kml') {

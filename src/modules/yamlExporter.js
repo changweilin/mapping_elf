@@ -75,6 +75,7 @@ export class YamlExporter {
     // Split into point blocks by the "  - label:" sentinel
     const lines = yamlString.split('\n');
     let inPoints = false;
+    let inWeather = false;
     let current = null;
 
     const commitPoint = () => {
@@ -85,19 +86,21 @@ export class YamlExporter {
       const rawLabel = current.label || '';
       const hasIntervalPrefix = rawLabel.startsWith('*_');
       const isInterval = current.type === 'interval' || hasIntervalPrefix;
+      const pointData = {
+        lat, lng,
+        label: hasIntervalPrefix ? rawLabel.slice(2) : rawLabel,
+        date: current.date || null,
+        time: current.time || null,
+        weather: current.weather || {},
+        windyUrl: current.windy || null,
+      };
+
       if (isInterval) {
-        intermediatePoints.push({
-          lat, lng,
-          label: hasIntervalPrefix ? rawLabel.slice(2) : rawLabel,
-        });
+        intermediatePoints.push(pointData);
         return;
       }
       waypoints.push([lat, lng]);
-      segmentDates.push({
-        label: current.label || null,
-        date: current.date || null,
-        time: current.time || null
-      });
+      segmentDates.push(pointData);
     };
 
     for (const raw of lines) {
@@ -109,17 +112,33 @@ export class YamlExporter {
       // New point entry
       if (/^  - label:/.test(line)) {
         commitPoint();
+        inWeather = false;
         current = { label: this._parseScalar(line.replace(/^  - label:\s*/, '')) };
         continue;
       }
 
       if (!current) continue;
 
-      // Top-level point fields (4-space indent or "    key: val")
+      // Weather block start
+      if (/^    weather:/.test(line)) {
+        current.weather = {};
+        inWeather = true;
+        continue;
+      }
+
+      // Weather entries (6-space indent)
+      if (inWeather && /^      (\w+):\s*(.*)/.test(line)) {
+        const [, wKey, wVal] = line.match(/^      (\w+):\s*(.*)/);
+        current.weather[wKey] = this._parseScalar(wVal.replace(/\s*#.*$/, '').trim());
+        continue;
+      }
+
+      // Top-level point fields (4-space indent)
       const fieldMatch = line.match(/^    (\w+):\s*(.*)/);
       if (fieldMatch) {
+        inWeather = false;
         const [, key, val] = fieldMatch;
-        if (key !== 'weather') current[key] = this._parseScalar(val.replace(/\s*#.*$/, '').trim());
+        current[key] = this._parseScalar(val.replace(/\s*#.*$/, '').trim());
         continue;
       }
     }

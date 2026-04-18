@@ -1155,8 +1155,8 @@ function importFile(e) {
           if (importAutoNameMode) geocodeWaypoints(result.waypoints);
         }
 
-        // 5. Apply per-waypoint dates to table columns after panel renders
-        if (result.segmentDates?.some(d => d?.date || d?.time)) {
+        // 5. Apply per-waypoint dates/weather to table columns after panel renders
+        if (result.segmentDates?.some(d => d?.date || d?.time || (d?.weather && Object.keys(d.weather).length > 0))) {
           window._pendingGpxDates = result.segmentDates;
         }
 
@@ -1189,8 +1189,8 @@ function importFile(e) {
       clearImportedTrackSession();
 
       // No track — fall back to waypoint-based routing.
-      // Apply per-waypoint dates to table columns after panel renders
-      if (result.segmentDates?.some(d => d?.date || d?.time)) {
+      // Apply per-waypoint dates/weather to table columns after panel renders
+      if (result.segmentDates?.some(d => d?.date || d?.time || (d?.weather && Object.keys(d.weather).length > 0))) {
         window._pendingGpxDates = result.segmentDates;
       }
 
@@ -2036,6 +2036,8 @@ function buildWeatherPoints() {
         label: p.label || '—',
         lat: p.lat, lng: p.lng, isWaypoint: false,
         _cum: cum, _elapsedH: getElapsedH(cum),
+        weather: p.weather,
+        windyUrl: p.windyUrl,
       });
     });
   } else if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
@@ -2530,19 +2532,46 @@ function renderWeatherPanel() {
   updateElevationMarkers();
 
   if (window._pendingGpxDates) {
+    const labelToKey = {};
+    WEATHER_ROWS.forEach(r => labelToKey[r.label] = r.key);
+
     weatherPoints.forEach((pt, colIdx) => {
-      if (!pt.isWaypoint || pt.wpIndex === undefined) return;
-      const sd = window._pendingGpxDates[pt.wpIndex];
-      if (!sd) return;
+      let importedData = null;
+      if (pt.isWaypoint && pt.wpIndex !== undefined) {
+        importedData = window._pendingGpxDates[pt.wpIndex];
+      } else if (!pt.isWaypoint) {
+        // Match intermediate point by label if importedTrackMode is active
+        importedData = pt; // carries weather/windyUrl if from importedIntermediatePoints
+      }
+
+      if (!importedData) return;
+
       const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
-      if (!th) return;
-      if (sd.date) th.querySelector('.wt-date-input').value = sd.date;
-      if (sd.time) {
-        const h = parseInt(sd.time.split(':')[0]);
-        if (!isNaN(h)) th.querySelector('.wt-time-select').value = String(h);
+      if (th) {
+        if (importedData.date) th.querySelector('.wt-date-input').value = importedData.date;
+        if (importedData.time) {
+          const h = parseInt(importedData.time.split(':')[0]);
+          if (!isNaN(h)) th.querySelector('.wt-time-select').value = String(h);
+        }
+      }
+
+      if (importedData.weather) {
+        const cells = {};
+        for (const [k, v] of Object.entries(importedData.weather)) {
+          const val = (typeof v === 'object') ? v.value : v;
+          const key = labelToKey[k] || k;
+          cells[key] = val;
+          const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${key}"]`);
+          if (cell) cell.textContent = val;
+        }
+        if (Object.keys(cells).length > 0) {
+          saveWeatherCells(getSemanticKey(pt), cells);
+        }
       }
     });
     window._pendingGpxDates = null;
+    // Refresh Windy links to match new dates/times
+    refreshWindyLinks();
   }
 
   // Always persist the rendered state so page reload restores it correctly
