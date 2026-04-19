@@ -2471,11 +2471,12 @@ function renderWeatherPanel() {
   });
 
   // Snapshot each column's time before the user changes it (for delta-shift in speed mode)
-  const heads = Array.from(container.querySelectorAll('.wt-col-head'));
+  // Use Row 2 (date headers) as the authoritative reference for "heads" indexing
+  const heads = Array.from(container.querySelectorAll('.wt-th-date'));
   const snapshot = (th) => () => { th.dataset.prevMs = String(colToMs(th)); };
   heads.forEach(th => {
     const di = th.querySelector('.wt-date-input');
-    const hs = th.querySelector('.wt-time-select');
+    const hs = container.querySelector(`.wt-th-time[data-idx="${th.dataset.idx}"] .wt-time-select`);
     di?.addEventListener('focus', snapshot(th));
     hs?.addEventListener('mousedown', snapshot(th));
     hs?.addEventListener('focus', snapshot(th));
@@ -2490,11 +2491,10 @@ function renderWeatherPanel() {
     if (strictLinearMode) {
       const idx = parseInt(th.dataset.idx);
       if (idx > 0) {
-        const prevTh = heads[idx - 1];
-        const prevDate = prevTh.querySelector('.wt-date-input')?.value;
-        const curDate = th.querySelector('.wt-date-input')?.value;
-        const prevH = parseInt(prevTh.querySelector('.wt-time-select')?.value ?? '0');
-        const curH = parseInt(th.querySelector('.wt-time-select')?.value ?? '0');
+        const prevDate = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"] .wt-date-input`)?.value;
+        const curDate = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value;
+        const prevH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx - 1}"] .wt-time-select`)?.value ?? '0');
+        const curH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
 
         if (prevDate && curDate && prevDate === curDate && curH < prevH) {
           const d = new Date(curDate + 'T12:00:00');
@@ -2502,7 +2502,7 @@ function renderWeatherPanel() {
           const y = d.getFullYear();
           const mo = String(d.getMonth() + 1).padStart(2, '0');
           const dy = String(d.getDate()).padStart(2, '0');
-          const di = th.querySelector('.wt-date-input');
+          const di = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`);
           if (di) di.value = `${y}-${mo}-${dy}`;
         }
       }
@@ -2540,9 +2540,8 @@ function renderWeatherPanel() {
   // Restore previously fetched weather data — read actual date/hour from DOM
   // (after cascade/enforce so keys match what was stored during the original fetch)
   weatherPoints.forEach((pt, colIdx) => {
-    const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
-    const dateStr = th?.querySelector('.wt-date-input')?.value;
-    const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
+    const dateStr = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
+    const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
     if (!dateStr) return;
     const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
     if (cached) {
@@ -2618,14 +2617,22 @@ function renderWeatherPanel() {
 
       if (!importedData) return;
 
-      const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
-      if (th) {
-        if (importedData.date) th.querySelector('.wt-date-input').value = importedData.date;
-        if (importedData.time) {
-          const h = parseInt(importedData.time.split(':')[0]);
-          if (!isNaN(h)) th.querySelector('.wt-time-select').value = String(h);
+    window._pendingGpxDates?.forEach((importedData, colIdx) => {
+      const pt = weatherPoints[colIdx];
+      if (!pt) return;
+
+      if (importedData.date) {
+        const di = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`);
+        if (di) di.value = importedData.date;
+      }
+      if (importedData.time) {
+        const h = parseInt(importedData.time.split(':')[0]);
+        if (!isNaN(h)) {
+          const hs = container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`);
+          if (hs) hs.value = String(h);
         }
       }
+    });
 
       if (importedData.weather) {
         const cells = {};
@@ -2667,9 +2674,8 @@ async function fetchAllWeatherData() {
     const pt = weatherPoints[i];
     if (fetchBtn) fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
 
-    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
-    const dateStr = th?.querySelector('.wt-date-input')?.value;
-    const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '8');
+    const dateStr = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`)?.value;
+    const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`)?.value ?? '8');
     if (!dateStr) continue;
 
     WEATHER_ROWS.forEach(row => {
