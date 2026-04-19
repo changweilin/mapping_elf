@@ -555,10 +555,6 @@
           <button class="btn-secondary flex-1" id="btn-download-route">沿路線下載</button>
           <button class="btn-secondary" id="btn-clear-cache">清除快取</button>
         </div>
-        <div class="offline-actions mt-2" style="display:flex; gap: 8px; flex-wrap: wrap;">
-          <button class="btn-primary flex-1" id="btn-export-mappack">匯出離線地圖包</button>
-          <button class="btn-secondary flex-1" id="btn-import-mappack">匯入離線地圖包</button>
-        </div>
         <div class="download-progress hidden" id="download-progress-container" style="margin-top: 10px;">
           <div style="font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between;">
             <span>下載進度</span>
@@ -593,26 +589,19 @@
           <input type="radio" name="export-fmt" value="yaml">
           <span>YAML <small>（純文字天氣計畫，含 Windy 連結）</small></span>
         </label>
+        <label class="export-option">
+          <input type="radio" name="export-fmt" value="melmap">
+          <span>.melmap 離線地圖包 <small>（含路線、圖磚、偏好）</small></span>
+        </label>
       </div>
-      <div class="modal-actions">
-        <button class="btn-secondary" id="btn-export-cancel">取消</button>
-        <button class="btn-primary" id="btn-export-confirm">匯出</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Map Pack Export Modal -->
-  <div id="mappack-export-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-    <div class="modal-box">
-      <h3 class="modal-title">匯出離線地圖包</h3>
-      <div class="export-options">
+      <div id="melmap-sub-options" class="export-options" style="display:none; margin-left: 24px; border-left: 2px solid var(--border, #ccc); padding-left: 12px;">
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-route" checked>
           <span>路線與航點 <small>（GPX,含高度與天氣）</small></span>
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-tiles" checked>
-          <span>當前圖層圖磚 <small id="mappack-tiles-info">（以路線範圍計算）</small></span>
+          <span>當前圖層圖磚 <small id="mappack-tiles-info"></small></span>
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-state">
@@ -620,8 +609,8 @@
         </label>
       </div>
       <div class="modal-actions">
-        <button class="btn-secondary" id="btn-mappack-export-cancel">取消</button>
-        <button class="btn-primary" id="btn-mappack-export-confirm">匯出</button>
+        <button class="btn-secondary" id="btn-export-cancel">取消</button>
+        <button class="btn-primary" id="btn-export-confirm">匯出</button>
       </div>
     </div>
   </div>
@@ -655,10 +644,8 @@
   <!-- Notification Container -->
   <div id="notifications" class="notifications"></div>
 
-  <!-- Hidden file input for GPX import -->
-  <input type="file" id="gpx-file-input" accept=".gpx,.kml,.yaml,.yml" style="display:none" />
-  <!-- Hidden file input for .melmap import -->
-  <input type="file" id="mappack-file-input" accept=".melmap,.zip" style="display:none" />
+  <!-- Hidden file input for route / .melmap import -->
+  <input type="file" id="gpx-file-input" accept=".gpx,.kml,.yaml,.yml,.melmap,.zip" style="display:none" />
 
   <script type="module" src="./src/main.js"></script>
 </body>

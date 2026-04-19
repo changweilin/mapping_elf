@@ -57,6 +57,7 @@ const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_IMPORT_AUTO_SORT_KEY = 'mappingElf_importAutoSort';
 const LS_IMPORT_AUTO_NAME_KEY = 'mappingElf_importAutoName';
 const LS_IMPORTED_TRACK_KEY = 'mappingElf_importedTrack';
+const LS_PENDING_GPX_KEY = 'mappingElf_pendingGpx';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
@@ -187,10 +188,6 @@ const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
-const btnExportMappack = document.getElementById('btn-export-mappack');
-const btnImportMappack = document.getElementById('btn-import-mappack');
-const mappackFileInput = document.getElementById('mappack-file-input');
-const mappackExportModal = document.getElementById('mappack-export-modal');
 const mappackImportModal = document.getElementById('mappack-import-modal');
 // const btnFetchWeather = document.getElementById('btn-fetch-weather'); (Moved to weather table)
 
@@ -356,7 +353,7 @@ btnClearCache.addEventListener('click', async () => {
   showNotification('快取已清除', 'success');
 });
 
-// =========== Map Pack (.melmap) Export / Import ===========
+// =========== Map Pack (.melmap) helpers ===========
 
 function _estimateTileCountForMapPack() {
   if (currentRouteCoords.length < 2) return { count: 0, layer: null };
@@ -384,44 +381,14 @@ function _estimateTileCountForMapPack() {
   return { count: total, layer: mapManager.currentLayerName };
 }
 
-function _openMappackExportModal() {
-  if (currentRouteCoords.length < 2) {
-    showNotification('請先建立路線', 'warning');
-    return;
-  }
-  const { count, layer } = _estimateTileCountForMapPack();
-  const info = document.getElementById('mappack-tiles-info');
-  if (info) info.textContent = `（圖層:${layer || '—'},預估 ${count} 張）`;
-  mappackExportModal.classList.remove('hidden');
-}
-
-function _closeMappackExportModal() {
-  mappackExportModal.classList.add('hidden');
-}
-
-btnExportMappack?.addEventListener('click', _openMappackExportModal);
-mappackExportModal?.addEventListener('click', (e) => {
-  if (e.target === mappackExportModal) _closeMappackExportModal();
-});
-document.getElementById('btn-mappack-export-cancel')?.addEventListener('click', _closeMappackExportModal);
-
-document.getElementById('btn-mappack-export-confirm')?.addEventListener('click', async () => {
+async function doExportMapPack(filenameBase) {
   const includeRoute = document.getElementById('mappack-inc-route').checked;
   const includeTiles = document.getElementById('mappack-inc-tiles').checked;
   const includeState = document.getElementById('mappack-inc-state').checked;
   if (!includeRoute && !includeTiles && !includeState) {
-    showNotification('至少需勾選一項', 'warning');
+    showNotification('請至少勾選一項離線地圖包內容', 'warning');
     return;
   }
-  _closeMappackExportModal();
-
-  // Build filename from first waypoint (reuse existing naming convention).
-  const startWp = mapManager.waypoints[0];
-  const startName = startWp ? (getEffectiveName(startWp[0], startWp[1]) || null) : null;
-  const now = new Date();
-  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-  const namePart = (startName || '起點').replace(/[\\/:*?"<>|]/g, '_');
-  const filenameBase = `${namePart}_${ts}`;
 
   const layerInfo = mapManager.getCurrentLayerInfo();
   const bounds = includeTiles && currentRouteCoords.length >= 2
@@ -433,8 +400,6 @@ document.getElementById('btn-mappack-export-confirm')?.addEventListener('click',
     : null;
 
   progressContainer.classList.remove('hidden');
-  btnExportMappack.disabled = true;
-  btnImportMappack.disabled = true;
 
   try {
     const { blob, filename, tileCount } = await MapPackExporter.export({
@@ -465,21 +430,16 @@ document.getElementById('btn-mappack-export-confirm')?.addEventListener('click',
     console.error(err);
   } finally {
     progressContainer.classList.add('hidden');
-    btnExportMappack.disabled = false;
-    btnImportMappack.disabled = false;
     progressText.textContent = '0%';
     progressFill.style.width = '0%';
   }
-});
-
-btnImportMappack?.addEventListener('click', () => mappackFileInput?.click());
+}
 
 let _pendingMappack = null;
 
 function _closeMappackImportModal() {
-  mappackImportModal.classList.add('hidden');
+  mappackImportModal?.classList.add('hidden');
   _pendingMappack = null;
-  if (mappackFileInput) mappackFileInput.value = '';
 }
 
 mappackImportModal?.addEventListener('click', (e) => {
@@ -487,14 +447,11 @@ mappackImportModal?.addEventListener('click', (e) => {
 });
 document.getElementById('btn-mappack-import-cancel')?.addEventListener('click', _closeMappackImportModal);
 
-mappackFileInput?.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+async function openMappackImportModal(file) {
   try {
     const parsed = await MapPackImporter.parse(file);
     _pendingMappack = parsed;
 
-    // Toggle checkboxes based on what the pack actually contains.
     const restoreRoute = document.getElementById('mappack-restore-route');
     const restoreTiles = document.getElementById('mappack-restore-tiles');
     const restoreState = document.getElementById('mappack-restore-state');
@@ -523,9 +480,8 @@ mappackFileInput?.addEventListener('change', async (e) => {
   } catch (err) {
     showNotification(err.message || '檔案解析失敗', 'error');
     console.error(err);
-    if (mappackFileInput) mappackFileInput.value = '';
   }
-});
+}
 
 document.getElementById('btn-mappack-import-confirm')?.addEventListener('click', async () => {
   if (!_pendingMappack) return;
@@ -540,8 +496,6 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
   mappackImportModal.classList.add('hidden');
 
   progressContainer.classList.remove('hidden');
-  btnExportMappack.disabled = true;
-  btnImportMappack.disabled = true;
 
   try {
     const applied = await MapPackImporter.apply(parsed, {
@@ -557,7 +511,25 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
       },
     });
 
-    if (applied.gpxXml) {
+    if (applied.layer) {
+      // Switch to the layer whose tiles we just restored FIRST, so subsequent
+      // render sees the right tiles. Route restoration follows.
+      mapManager.switchLayer(applied.layer);
+      localStorage.setItem(LS_MAP_LAYER_KEY, applied.layer);
+      layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === applied.layer));
+      offlineManager.updateCacheInfo();
+    }
+
+    // When state is applied we must reload to pick up module-level variables.
+    // The reload would wipe in-memory track state, and saveImportedTrackSession
+    // has historically been unreliable here (quota / race). Stash the raw GPX
+    // and replay it after reload — simpler and robust.
+    if (applied.gpxXml && applied.stateApplied) {
+      try { localStorage.setItem(LS_PENDING_GPX_KEY, applied.gpxXml); } catch (err) {
+        showNotification('路線資料過大,無法延後還原', 'error');
+        console.error(err);
+      }
+    } else if (applied.gpxXml) {
       try {
         const result = GpxExporter.parse(applied.gpxXml);
         applyImportedResult(result);
@@ -567,16 +539,7 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
       }
     }
 
-    if (applied.layer) {
-      // Switch to the layer whose tiles we just restored, so user sees them.
-      mapManager.switchLayer(applied.layer);
-      localStorage.setItem(LS_MAP_LAYER_KEY, applied.layer);
-      layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === applied.layer));
-      offlineManager.updateCacheInfo();
-    }
-
     if (applied.stateApplied) {
-      // Give UI a moment to breathe before reload.
       showNotification('已還原資料,即將重新載入以套用偏好…', 'success');
       setTimeout(() => location.reload(), 800);
       return;
@@ -591,12 +554,9 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
     console.error(err);
   } finally {
     progressContainer.classList.add('hidden');
-    btnExportMappack.disabled = false;
-    btnImportMappack.disabled = false;
     progressText.textContent = '0%';
     progressFill.style.width = '0%';
     _pendingMappack = null;
-    if (mappackFileInput) mappackFileInput.value = '';
   }
 });
 
@@ -1157,11 +1117,41 @@ const btnExportConfirm = document.getElementById('btn-export-confirm');
 const btnExportCancel = document.getElementById('btn-export-cancel');
 
 function openExportModal() {
-  if (currentRouteCoords.length === 0) {
+  const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
+  // For non-melmap formats, a route is required. For melmap, we gate per-option
+  // inside doExportMapPack so user can export state-only.
+  if (fmt !== 'melmap' && currentRouteCoords.length === 0) {
     showNotification('請先建立路線', 'warning');
     return;
   }
+  // Refresh tile-count estimate whenever the modal is opened.
+  const info = document.getElementById('mappack-tiles-info');
+  if (info) {
+    const est = _estimateTileCountForMapPack();
+    info.textContent = est.count > 0 ? `(約 ${est.count} 張,${est.layer})` : '';
+  }
   exportModal.classList.remove('hidden');
+}
+
+// Toggle melmap sub-options visibility when fmt radio changes.
+exportModal?.querySelectorAll('input[name="export-fmt"]').forEach((r) => {
+  r.addEventListener('change', () => {
+    const sub = document.getElementById('melmap-sub-options');
+    if (sub) sub.style.display = r.checked && r.value === 'melmap' ? '' : sub.style.display;
+    // Hide if a non-melmap radio is now checked.
+    const checked = exportModal.querySelector('input[name="export-fmt"]:checked')?.value;
+    if (sub) sub.style.display = checked === 'melmap' ? '' : 'none';
+  });
+});
+
+function buildExportFilenameBase() {
+  const startWp = mapManager.waypoints[0];
+  const startName = startWp ? (getEffectiveName(startWp[0], startWp[1]) || null) : null;
+  const startCoords = startWp ? `${startWp[0].toFixed(4)},${startWp[1].toFixed(4)}` : '';
+  const now = new Date();
+  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+  const namePart = startName ? startName.replace(/[\\/:*?"<>|]/g, '_') : '起點';
+  return `${namePart}_${startCoords}_${ts}`;
 }
 
 function closeExportModal() {
@@ -1174,6 +1164,22 @@ exportModal?.addEventListener('click', (e) => {
 btnExportCancel?.addEventListener('click', closeExportModal);
 btnExportConfirm?.addEventListener('click', () => {
   const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
+  if (fmt === 'melmap') {
+    const includeRoute = document.getElementById('mappack-inc-route').checked;
+    const includeTiles = document.getElementById('mappack-inc-tiles').checked;
+    const includeState = document.getElementById('mappack-inc-state').checked;
+    if (!includeRoute && !includeTiles && !includeState) {
+      showNotification('請至少勾選一項離線地圖包內容', 'warning');
+      return;
+    }
+    if ((includeRoute || includeTiles) && currentRouteCoords.length === 0) {
+      showNotification('匯出路線/圖磚前請先建立路線', 'warning');
+      return;
+    }
+    closeExportModal();
+    doExportMapPack(buildExportFilenameBase());
+    return;
+  }
   closeExportModal();
   doExport(fmt);
 });
@@ -1239,17 +1245,7 @@ function collectSegmentDates() {
 
 function doExport(fmt) {
   const name = 'Mapping Elf Track';
-
-  // Build filename: 起點名稱_座標_時間戳
-  const startWp = mapManager.waypoints[0];
-  const startName = startWp ? (getEffectiveName(startWp[0], startWp[1]) || null) : null;
-  const startCoords = startWp
-    ? `${startWp[0].toFixed(4)},${startWp[1].toFixed(4)}`
-    : '';
-  const now = new Date();
-  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-  const namePart = startName ? startName.replace(/[\\/:*?"<>|]/g, '_') : '起點';
-  const filename = `${namePart}_${startCoords}_${ts}`;
+  const filename = buildExportFilenameBase();
 
   const wpData = collectExportData();
 
@@ -1459,6 +1455,11 @@ function importFile(e) {
   if (!file) return;
 
   const ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'melmap' || ext === 'zip') {
+    openMappackImportModal(file);
+    gpxFileInput.value = '';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = (evt) => {
     try {
@@ -2312,6 +2313,7 @@ function buildWeatherPoints() {
         _cum: cum, _elapsedH: getElapsedH(cum),
         weather: p.weather,
         windyUrl: p.windyUrl,
+        _preserveLabel: !!p.label,
       });
     });
   } else if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
@@ -2453,7 +2455,7 @@ function buildWeatherPoints() {
       if (pt.isWaypoint) {
         prevWpIdx = pt.wpIndex ?? 0;
         prevWpElapsedH = pt._elapsedH || 0;
-      } else {
+      } else if (!pt._preserveLabel) {
         const displayH = perSegmentMode
           ? (pt._elapsedH || 0) - prevWpElapsedH
           : (pt._elapsedH || 0);
@@ -3472,13 +3474,29 @@ async function init() {
 
   updateFlatPlaceholder();
 
+  // Replay a pending .melmap GPX that was stashed just before a state-restore
+  // reload. Parse + applyImportedResult will also call saveImportedTrackSession,
+  // so subsequent reloads take the normal restore path below.
+  const pendingGpx = (() => {
+    try { return localStorage.getItem(LS_PENDING_GPX_KEY); } catch { return null; }
+  })();
+  if (pendingGpx) {
+    try { localStorage.removeItem(LS_PENDING_GPX_KEY); } catch (_) { }
+    try {
+      const result = GpxExporter.parse(pendingGpx);
+      applyImportedResult(result);
+    } catch (err) {
+      console.error('Pending GPX replay failed:', err);
+    }
+  }
+
   // Restore imported-track session first — if present, it fully reconstructs
   // the track polyline + waypoints + intermediates without triggering routing.
   const savedTrackSession = (() => {
     try { return JSON.parse(localStorage.getItem(LS_IMPORTED_TRACK_KEY) || 'null'); }
     catch { return null; }
   })();
-  const trackRestored = savedTrackSession ? restoreImportedTrack(savedTrackSession) : false;
+  const trackRestored = pendingGpx ? true : (savedTrackSession ? restoreImportedTrack(savedTrackSession) : false);
 
   // Otherwise, fall back to normal waypoint-only restore (triggers route recalc).
   const savedWaypoints = trackRestored ? null : (() => {
