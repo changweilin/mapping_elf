@@ -185,7 +185,7 @@ const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
-const btnFetchWeather = document.getElementById('btn-fetch-weather');
+// const btnFetchWeather = document.getElementById('btn-fetch-weather'); (Moved to weather table)
 
 const statDistance = document.getElementById('stat-distance');
 const statAscent = document.getElementById('stat-ascent');
@@ -692,20 +692,26 @@ function updateTimeStat() {
 
 /** Convert a column header's current date+hour to milliseconds (local time). */
 function colToMs(th) {
-  const d = th.querySelector('.wt-date-input')?.value || '';
-  const h = parseInt(th.querySelector('.wt-time-select')?.value ?? '0');
+  const idx = th.dataset.idx;
+  if (idx === undefined) return 0;
+  const container = th.closest('#weather-table-container');
+  const d = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value || '';
+  const h = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
   if (!d) return 0;
   return new Date(d + 'T00:00:00').getTime() + h * 3600000;
 }
 
 /** Set a column header's date/time from a millisecond value (local time). */
 function setColToMs(th, ms) {
+  const idx = th.dataset.idx;
+  if (idx === undefined) return;
   const d = new Date(Math.max(0, ms));
   const y = d.getFullYear();
   const mo = String(d.getMonth() + 1).padStart(2, '0');
   const dy = String(d.getDate()).padStart(2, '0');
-  const di = th.querySelector('.wt-date-input');
-  const hs = th.querySelector('.wt-time-select');
+  const container = th.closest('#weather-table-container');
+  const di = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`);
+  const hs = container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`);
   if (di) di.value = `${y}-${mo}-${dy}`;
   if (hs) hs.value = String(d.getHours());
 }
@@ -732,21 +738,17 @@ function cascadeWeatherTimes() {
   if (!speedIntervalMode || weatherPoints.length === 0) return;
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
-  if (!th0) return;
-  const startDate = th0.querySelector('.wt-date-input')?.value || '';
-  const startHour = parseInt(th0.querySelector('.wt-time-select')?.value ?? '8');
+  const startDate = container.querySelector('.wt-th-date[data-idx="0"] .wt-date-input')?.value || '';
+  const startHour = parseInt(container.querySelector('.wt-th-time[data-idx="0"] .wt-time-select')?.value ?? '8');
   if (!startDate) return;
 
   weatherPoints.forEach((pt, i) => {
     if (i === 0) return;
-    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
-    if (!th) return;
     const { date, hour } = addHoursToDateTime(startDate, startHour, pt._elapsedH || 0);
-    const dateInput = th.querySelector('.wt-date-input');
-    const hourSelect = th.querySelector('.wt-time-select');
-    if (dateInput) dateInput.value = date;
-    if (hourSelect) hourSelect.value = String(hour);
+    const di = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`);
+    const hs = container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`);
+    if (di) di.value = date;
+    if (hs) hs.value = String(hour);
   });
 }
 
@@ -764,15 +766,12 @@ function cascadeWeatherTimes() {
 function cascadeIntervalTimes(fromWP = perSegmentMode) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  const th0 = container.querySelector('.wt-col-head[data-idx="0"]');
-  if (!th0) return;
-  const startDate = th0.querySelector('.wt-date-input')?.value || '';
-  const startHour = parseInt(th0.querySelector('.wt-time-select')?.value ?? '8');
+  const startDate = container.querySelector('.wt-th-date[data-idx="0"] .wt-date-input')?.value || '';
+  const startHour = parseInt(container.querySelector('.wt-th-time[data-idx="0"] .wt-time-select')?.value ?? '8');
   if (!startDate) return;
+
   weatherPoints.forEach((pt, i) => {
     if (pt.isWaypoint) return;
-    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
-    if (!th) return;
 
     let anchorDate = startDate;
     let anchorHour = startHour;
@@ -780,12 +779,9 @@ function cascadeIntervalTimes(fromWP = perSegmentMode) {
     if (fromWP) {
       for (let j = i - 1; j >= 0; j--) {
         if (weatherPoints[j]?.isWaypoint) {
-          const thj = container.querySelector(`.wt-col-head[data-idx="${j}"]`);
-          if (thj) {
-            anchorDate = thj.querySelector('.wt-date-input')?.value || startDate;
-            anchorHour = parseInt(thj.querySelector('.wt-time-select')?.value ?? String(startHour));
-            anchorElapsedH = weatherPoints[j]._elapsedH || 0;
-          }
+          anchorDate = container.querySelector(`.wt-th-date[data-idx="${j}"] .wt-date-input`)?.value || startDate;
+          anchorHour = parseInt(container.querySelector(`.wt-th-time[data-idx="${j}"] .wt-time-select`)?.value ?? String(startHour));
+          anchorElapsedH = weatherPoints[j]._elapsedH || 0;
           break;
         }
       }
@@ -793,10 +789,10 @@ function cascadeIntervalTimes(fromWP = perSegmentMode) {
 
     const deltaH = (pt._elapsedH || 0) - anchorElapsedH;
     const { date, hour } = addHoursToDateTime(anchorDate, anchorHour, deltaH);
-    const dateInput = th.querySelector('.wt-date-input');
-    const hourSelect = th.querySelector('.wt-time-select');
-    if (dateInput) dateInput.value = date;
-    if (hourSelect) hourSelect.value = String(hour);
+    const di = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`);
+    const hs = container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`);
+    if (di) di.value = date;
+    if (hs) hs.value = String(hour);
   });
 }
 
@@ -811,29 +807,31 @@ function enforceTimeOrdering() {
   if (!strictLinearMode) return;
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  const heads = Array.from(container.querySelectorAll('.wt-col-head'));
-  if (heads.length < 2) return;
+  const N = weatherPoints.length;
+  if (N < 2) return;
 
-  const toMs = (th) => {
-    const d = th.querySelector('.wt-date-input')?.value || '';
-    const h = parseInt(th.querySelector('.wt-time-select')?.value ?? '0');
+  const toMs = (idx) => {
+    const d = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value || '';
+    const h = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
     if (!d) return -Infinity;
     return new Date(d + 'T00:00:00').getTime() + h * 3600000;
   };
 
-  const col0Date = heads[0].querySelector('.wt-date-input')?.value || '';
-  const col0Hour = parseInt(heads[0].querySelector('.wt-time-select')?.value ?? '0');
+  const col0Date = container.querySelector('.wt-th-date[data-idx="0"] .wt-date-input')?.value || '';
+  const col0Hour = parseInt(container.querySelector('.wt-th-time[data-idx="0"] .wt-time-select')?.value ?? '0');
 
-  for (let i = 1; i < heads.length; i++) {
+  for (let i = 1; i < N; i++) {
     const pt = weatherPoints[i];
-    if (!pt?.isWaypoint) continue; // Interval points are handled by cascade
+    if (!pt?.isWaypoint) continue; 
 
-    const prevMs = toMs(heads[i - 1]);
-    const curMs = toMs(heads[i]);
+    const prevMs = toMs(i - 1);
+    const curMs = toMs(i);
     if (curMs >= prevMs) continue;
 
-    const di = heads[i].querySelector('.wt-date-input');
-    const hs = heads[i].querySelector('.wt-time-select');
+    const thDate = container.querySelector(`.wt-th-date[data-idx="${i}"]`);
+    const thTime = container.querySelector(`.wt-th-time[data-idx="${i}"]`);
+    const di = thDate?.querySelector('.wt-date-input');
+    const hs = thTime?.querySelector('.wt-time-select');
 
     // Violation: try the pace-derived time first (col-0 + _elapsedH).
     // This keeps the waypoint aligned with the actual route timing.
@@ -936,9 +934,8 @@ btnExportConfirm?.addEventListener('click', () => {
 function collectExportData() {
   const container = document.getElementById('weather-table-container');
   return weatherPoints.map((pt, colIdx) => {
-    const th = container?.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
-    const date = th?.querySelector('.wt-date-input')?.value || '';
-    const h = th?.querySelector('.wt-time-select')?.value;
+    const date = container?.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value || '';
+    const h = container?.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value;
     const hour = h != null ? parseInt(h) : 0;
     const time = h != null ? `${String(hour).padStart(2, '0')}:00` : '';
     const cached = date ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, date, hour)] : null;
@@ -1693,11 +1690,11 @@ function saveWeatherSettings() {
   const byKey = {};
   const cols = [];
   weatherPoints.forEach((pt, i) => {
-    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
-    if (!th) return;
+    const thDate = container.querySelector(`.wt-th-date[data-idx="${i}"]`);
+    const thTime = container.querySelector(`.wt-th-time[data-idx="${i}"]`);
     const entry = {
-      date: th.querySelector('.wt-date-input')?.value || '',
-      hour: th.querySelector('.wt-time-select')?.value ?? '8',
+      date: thDate?.querySelector('.wt-date-input')?.value || '',
+      hour: thTime?.querySelector('.wt-time-select')?.value ?? '8',
     };
     cols.push(entry); // keep legacy array for backwards compat
     if (!pt.isWaypoint) return; // Interval times are recalculated — no need to persist
@@ -1729,10 +1726,18 @@ function shiftAllDates(deltaDays, deltaHours) {
   if (!container) return;
 
   const deltaMs = deltaDays * 86400000 + deltaHours * 3600000;
-  Array.from(container.querySelectorAll('.wt-col-head')).forEach((th, i) => {
-    if (!weatherPoints[i]?.isWaypoint) return; // skip interval cols — recalculated below
-    setColToMs(th, colToMs(th) + deltaMs);
-  });
+  const N = weatherPoints.length;
+  console.log(`shiftAllDates deltaDays=${deltaDays} deltaHours=${deltaHours} N=${N}`);
+  for (let i = 0; i < N; i++) {
+    if (!weatherPoints[i]?.isWaypoint) continue;
+    const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
+    if (th) {
+      const currentMs = colToMs(th);
+      const newMs = currentMs + deltaMs;
+      console.log(`  Updating col ${i}: currentMs=${currentMs} -> newMs=${newMs}`);
+      setColToMs(th, newMs);
+    }
+  }
 
   syncIntervalTimes();
   saveWeatherSettings();
@@ -1753,15 +1758,24 @@ function shiftToNow(mode /* 'day' | 'hour' */) {
   if (!anchor) return;
 
   const now = new Date();
+  const idx = anchor.dataset.idx;
+
   if (mode === 'day') {
-    const curDate = anchor.querySelector('.wt-date-input')?.value;
-    if (!curDate) return;
+    const di = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`);
+    const curDate = di?.value;
+    if (!curDate) {
+      console.warn(`shiftToNow: Could not find date input for col ${idx}`);
+      return;
+    }
     const cur = new Date(curDate + 'T00:00:00');
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const deltaDays = Math.round((today - cur) / 86400000);
+    console.log(`shiftToNow day: curDate=${curDate} today=${today.toISOString()} deltaDays=${deltaDays}`);
     if (deltaDays !== 0) shiftAllDates(deltaDays, 0);
   } else {
-    const curHour = parseInt(anchor.querySelector('.wt-time-select')?.value ?? '');
+    const hs = container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`);
+    const curHour = parseInt(hs?.value ?? '');
+    console.log(`shiftToNow hour: curHour=${curHour} nowHour=${now.getHours()}`);
     if (Number.isNaN(curHour)) return;
     const deltaHours = now.getHours() - curHour;
     if (deltaHours !== 0) shiftAllDates(0, deltaHours);
@@ -1776,6 +1790,7 @@ function initWeatherControls() {
   document.getElementById('weather-table-container')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
+    console.log('Delegated click caught:', btn.dataset.action);
     switch (btn.dataset.action) {
       case 'fetch':      fetchAllWeatherData(); break;
       case 'day-minus':  shiftAllDates(-1, 0);  break;
@@ -2293,40 +2308,44 @@ function renderWeatherPanel() {
 
   let html = `<table class="weather-table"><colgroup><col style="width:${labelW}px">`;
   colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
-  html += `</colgroup><thead><tr class="wt-header-row">
+  html += `</colgroup><thead>`;
+
+  const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
+  const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+
+  // Track colTimes for Windy links later
+  const colTimes = [];
+
+  // --- Row 1: labels / fetch ---
+  html += `<tr class="wt-header-row wt-header-row-label">
     <th class="wt-label-cell wt-th">
       <button class="wt-ctrl-fetch" data-action="fetch" title="取得天氣">
         <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg>
         <span>取得天氣</span>
       </button>
-      <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
-        <button class="wt-ctrl-adj" data-action="day-minus">−</button>
-        <button class="wt-ctrl-now" data-action="day-now" title="將目前選取欄位設為今日,其他欄位同步對齊">今日</button>
-        <button class="wt-ctrl-adj" data-action="day-plus">+</button>
-      </div>
-      <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
-        <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
-        <button class="wt-ctrl-now" data-action="hour-now" title="將目前選取欄位設為現在時刻,其他欄位同步對齊">現時</button>
-        <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
-      </div>
     </th>`;
-
-  // Index of the first return column (for separator styling)
-  const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
-
-  // Route-gradient color per column (same formula as elevation chart)
-  const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
-
-  const colTimes = [];
+  
   weatherPoints.forEach((pt, i) => {
-    const sv = getSavedCol(pt, i, saved);
-    // For speed mode: only col-0 uses saved/default; others are cascaded after render
-    const date = sv?.date || todayStr;
-    const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
-    colTimes.push({ date, hour });
+    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
+    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+    const gradColor = interpolateRouteColor(t);
+    const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
+
+    let thClass = 'wt-col-head wt-th';
+    if (pt.isReturn) thClass += ' wt-return-col';
+    if (!pt.isWaypoint) thClass += ' wt-interval-col';
+    if (i === firstReturnIdx) thClass += ' wt-return-start';
+
+    const labelStyle = pt.isWaypoint
+      ? `style="color:${gradColor}; font-weight: bold;"`
+      : `style="color:${rgba(0.7)};"`;
+
+    const thStyle = pt.isWaypoint
+      ? `style="border-top: 3px solid ${rgba(0.8)}; background-color: var(--bg-tertiary); background-image: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
+      : `style="border-top: 2px solid ${rgba(0.2)};"`;
+
     let displayElapsedH = pt._elapsedH || 0;
     if (perSegmentMode && displayElapsedH > 0) {
-      // Find the preceding waypoint's _elapsedH and show segment-relative time
       let prevWpElapsed = 0;
       for (let j = i - 1; j >= 0; j--) {
         if (weatherPoints[j]?.isWaypoint) {
@@ -2340,39 +2359,72 @@ function renderWeatherPanel() {
       ? `<span class="wt-elapsed-badge">${formatDuration(displayElapsedH)}</span>`
       : '';
 
-    // Gradient position fraction (mirrors elevation chart logic)
-    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
-    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-    const gradColor = interpolateRouteColor(t);
+    html += `<th class="${thClass}" data-idx="${i}" ${thStyle}>
+      <div class="wt-col-label" ${labelStyle}>${pt.label}${elapsedBadge}</div>
+    </th>`;
+  });
+  html += `</tr>`;
 
-    let thClass = 'wt-col-head wt-th';
+  // --- Row 2: date / day-adj ---
+  html += `<tr class="wt-header-row wt-header-row-date">
+    <th class="wt-label-cell wt-th">
+      <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
+        <button class="wt-ctrl-adj" data-action="day-minus">−</button>
+        <button class="wt-ctrl-now" data-action="day-now" title="將目前選取欄位設為今日,其他欄位同步對齊">今日</button>
+        <button class="wt-ctrl-adj" data-action="day-plus">+</button>
+      </div>
+    </th>`;
+  
+  weatherPoints.forEach((pt, i) => {
+    const sv = getSavedCol(pt, i, saved);
+    const date = sv?.date || todayStr;
+    const locked = strictLinearMode && !pt.isWaypoint;
+
+    let thClass = 'wt-col-head wt-th wt-th-date';
     if (pt.isReturn) thClass += ' wt-return-col';
     if (!pt.isWaypoint) thClass += ' wt-interval-col';
     if (i === firstReturnIdx) thClass += ' wt-return-start';
 
-    const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
-
-    const labelStyle = pt.isWaypoint
-      ? `style="color:${gradColor}; font-weight: bold;"`
-      : `style="color:${rgba(0.7)};"`;
-
-    const thStyle = pt.isWaypoint
-      ? `style="border-top: 3px solid ${rgba(0.8)}; background-color: var(--bg-tertiary); background-image: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
-      : `style="border-top: 2px solid ${rgba(0.2)};"`;
-
-    const locked = strictLinearMode && !pt.isWaypoint;
-    html += `
-      <th class="${thClass}" data-idx="${i}"${pt.isReturn ? ' data-return="true"' : ''} ${thStyle}>
-        <div class="wt-col-label" ${labelStyle}>${pt.label}${elapsedBadge}</div>
-        <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}>
-        <div class="wt-time-row">
-          <span class="wt-time-label">時:</span>
-          <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
-        </div>
-      </th>`;
+    html += `<th class="${thClass}" data-idx="${i}">
+      <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}>
+    </th>`;
+    
+    // Initialize colTimes for later use in Windy links
+    colTimes[i] = { date };
   });
+  html += `</tr>`;
 
-  html += '</tr></thead><tbody>';
+  // --- Row 3: time / hour-adj ---
+  html += `<tr class="wt-header-row wt-header-row-time">
+    <th class="wt-label-cell wt-th">
+      <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
+        <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
+        <button class="wt-ctrl-now" data-action="hour-now" title="將目前選取欄位設為現在時刻,其他欄位同步對齊">此時</button>
+        <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
+      </div>
+    </th>`;
+
+  weatherPoints.forEach((pt, i) => {
+    const sv = getSavedCol(pt, i, saved);
+    const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
+    const locked = strictLinearMode && !pt.isWaypoint;
+
+    let thClass = 'wt-col-head wt-th wt-th-time';
+    if (pt.isReturn) thClass += ' wt-return-col';
+    if (!pt.isWaypoint) thClass += ' wt-interval-col';
+    if (i === firstReturnIdx) thClass += ' wt-return-start';
+
+    html += `<th class="${thClass}" data-idx="${i}">
+      <div class="wt-time-row">
+        <span class="wt-time-label">時:</span>
+        <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
+      </div>
+    </th>`;
+    
+    // Finalize colTimes with hour
+    colTimes[i].hour = hour;
+  });
+  html += `</tr></thead><tbody>`;
 
   // Windy link row
   html += '<tr class="wt-windy-row"><td class="wt-label-cell wt-td">Windy</td>';
@@ -2400,6 +2452,24 @@ function renderWeatherPanel() {
   html += '</tbody></table>';
   container.innerHTML = html;
 
+  // Re-bind controls directly to ensure responsiveness regardless of delegation status
+  container.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // prevent header/column highlight click from triggering
+      const action = btn.dataset.action;
+      console.log('Direct button click:', action);
+      switch (action) {
+        case 'fetch':      fetchAllWeatherData(); break;
+        case 'day-minus':  shiftAllDates(-1, 0);  break;
+        case 'day-plus':   shiftAllDates(+1, 0);  break;
+        case 'day-now':    shiftToNow('day');     break;
+        case 'hour-minus': shiftAllDates(0, -1);  break;
+        case 'hour-plus':  shiftAllDates(0, +1);  break;
+        case 'hour-now':   shiftToNow('hour');    break;
+      }
+    });
+  });
+
   // Snapshot each column's time before the user changes it (for delta-shift in speed mode)
   const heads = Array.from(container.querySelectorAll('.wt-col-head'));
   const snapshot = (th) => () => { th.dataset.prevMs = String(colToMs(th)); };
@@ -2414,7 +2484,7 @@ function renderWeatherPanel() {
   // On change: speed mode → delta-shift subsequent columns; otherwise → cascade interval
   // times from col-0; all modes → enforce waypoint ordering → save
   const onTimeChange = (e) => {
-    const th = e.target.closest('.wt-col-head');
+    const th = e.target.closest('th');
     if (!th) return;
 
     if (strictLinearMode) {
@@ -2582,6 +2652,7 @@ function renderWeatherPanel() {
 }
 
 async function fetchAllWeatherData() {
+  console.log('fetchAllWeatherData triggered');
   if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
 
   const container = document.getElementById('weather-table-container');
@@ -2661,17 +2732,11 @@ function highlightWeatherColumn(colIdx) {
     bgStr = interpolateRouteColor(t).replace('rgb', 'rgba').replace(')', ', 0.15)');
   }
 
-  const th = container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`);
-  if (th) {
-    th.classList.add('wt-col-highlight');
-    if (bgStr) th.style.setProperty('background-color', bgStr, 'important');
-    th.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-  }
-  container.querySelectorAll(`[data-col="${colIdx}"]`)
-    .forEach(td => {
-      td.classList.add('wt-col-highlight');
-      if (bgStr) td.style.setProperty('background-color', bgStr, 'important');
-    });
+  const cols = container.querySelectorAll(`[data-idx="${colIdx}"], [data-col="${colIdx}"]`);
+  cols.forEach(el => {
+    el.classList.add('wt-col-highlight');
+    if (bgStr) el.style.setProperty('background-color', bgStr, 'important');
+  });
 }
 
 /**

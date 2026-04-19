@@ -1960,11 +1960,7 @@ html, body {
    Heights / paddings mirror .wt-col-head so each row aligns with its
    counterpart (label ↔ fetch, date input ↔ 日, time select ↔ 時). */
 .wt-label-cell.wt-th {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  padding: 5px 4px 4px;
+  padding: 4px 4px;
 }
 
 .wt-ctrl-fetch {
@@ -2003,8 +1999,9 @@ html, body {
 .wt-ctrl-adj-row {
   display: flex;
   align-items: center;
-  gap: 1px;
-  height: 22px;
+  justify-content: center;
+  gap: 2px;
+  height: 24px;
 }
 .wt-ctrl-adj-row + .wt-ctrl-adj-row {
   margin-top: 3px;
@@ -2137,20 +2134,30 @@ html, body {
 }
 
 .wt-th.wt-label-cell {
-  background: var(--bg-secondary);
-  z-index: 3;
+  background: var(--bg-tertiary);
+  z-index: 5;
 }
 
 .wt-col-head {
   text-align: center;
-  vertical-align: top;
-  padding: 5px 4px 4px;
+  vertical-align: middle;
+  padding: 4px 4px;
   background: var(--bg-tertiary);
-  border-bottom: 2px solid rgba(110, 231, 183, 0.2);
-  border-top: 2px solid transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   position: sticky;
-  top: 0;
   z-index: 2;
+}
+
+.wt-header-row-label th { top: 0; }
+.wt-header-row-date th  { top: 38px; }
+.wt-header-row-time th  { top: 70px; }
+
+.wt-header-row-label .wt-label-cell { top: 0; }
+.wt-header-row-date .wt-label-cell  { top: 38px; }
+.wt-header-row-time .wt-label-cell  { top: 70px; }
+
+.wt-header-row-time .wt-col-head {
+  border-bottom: 2px solid rgba(110, 231, 183, 0.2);
 }
 /* Intermediate (non-waypoint) columns — subtle visual distinction */
 .wt-interval-col {
@@ -2174,9 +2181,8 @@ html, body {
 
 .wt-label-cell.wt-th {
   position: sticky;
-  top: 0;
   left: 0;
-  z-index: 3;
+  z-index: 10;
   background: var(--bg-tertiary);
 }
 
