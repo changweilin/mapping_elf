@@ -847,8 +847,8 @@ function enforceTimeOrdering() {
 
     // Fallback: pace time itself is too early (waypoints out of order) —
     // reset to predecessor's date+time as the minimum valid state.
-    const prevDi = heads[i - 1].querySelector('.wt-date-input');
-    const prevHs = heads[i - 1].querySelector('.wt-time-select');
+    const prevDi = container.querySelector(`.wt-th-date[data-idx="${i - 1}"] .wt-date-input`);
+    const prevHs = container.querySelector(`.wt-th-time[data-idx="${i - 1}"] .wt-time-select`);
     if (di && prevDi?.value) di.value = prevDi.value;
     if (hs && prevHs?.value != null) hs.value = prevHs.value;
   }
@@ -863,7 +863,7 @@ function updateDateConstraints() {
   if (!strictLinearMode) return;
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  const heads = Array.from(container.querySelectorAll('.wt-col-head'));
+  const heads = Array.from(container.querySelectorAll('.wt-th-date'));
   for (let i = 1; i < heads.length; i++) {
     const pt = weatherPoints[i];
     if (!pt?.isWaypoint) continue;
