@@ -12,6 +12,8 @@ import { KmlExporter } from './modules/kmlExporter.js';
 import { YamlExporter } from './modules/yamlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
+import { MapPackExporter } from './modules/mapPackExporter.js';
+import { MapPackImporter } from './modules/mapPackImporter.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
 
@@ -185,6 +187,11 @@ const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
+const btnExportMappack = document.getElementById('btn-export-mappack');
+const btnImportMappack = document.getElementById('btn-import-mappack');
+const mappackFileInput = document.getElementById('mappack-file-input');
+const mappackExportModal = document.getElementById('mappack-export-modal');
+const mappackImportModal = document.getElementById('mappack-import-modal');
 // const btnFetchWeather = document.getElementById('btn-fetch-weather'); (Moved to weather table)
 
 const statDistance = document.getElementById('stat-distance');
@@ -347,6 +354,250 @@ if (btnDownloadRoute) {
 btnClearCache.addEventListener('click', async () => {
   await offlineManager.clearCache();
   showNotification('快取已清除', 'success');
+});
+
+// =========== Map Pack (.melmap) Export / Import ===========
+
+function _estimateTileCountForMapPack() {
+  if (currentRouteCoords.length < 2) return { count: 0, layer: null };
+  const layerInfo = mapManager.getCurrentLayerInfo();
+  if (!layerInfo) return { count: 0, layer: null };
+  const bounds = L.latLngBounds(currentRouteCoords).pad(0.05);
+
+  let total = 0;
+  const hardMin = 8;
+  const hardMax = Math.min(17, layerInfo.maxZoom);
+  const MAX = 8000;
+  for (let z = hardMin; z <= hardMax; z++) {
+    let xMin = Math.floor(((bounds.getWest() + 180) / 360) * Math.pow(2, z));
+    let xMax = Math.floor(((bounds.getEast() + 180) / 360) * Math.pow(2, z));
+    const latRadN = (bounds.getNorth() * Math.PI) / 180;
+    const latRadS = (bounds.getSouth() * Math.PI) / 180;
+    let yMin = Math.floor(((1 - Math.log(Math.tan(latRadN) + 1 / Math.cos(latRadN)) / Math.PI) / 2) * Math.pow(2, z));
+    let yMax = Math.floor(((1 - Math.log(Math.tan(latRadS) + 1 / Math.cos(latRadS)) / Math.PI) / 2) * Math.pow(2, z));
+    if (xMin > xMax) [xMin, xMax] = [xMax, xMin];
+    if (yMin > yMax) [yMin, yMax] = [yMax, yMin];
+    const count = (xMax - xMin + 1) * (yMax - yMin + 1);
+    if (total + count > MAX) break;
+    total += count;
+  }
+  return { count: total, layer: mapManager.currentLayerName };
+}
+
+function _openMappackExportModal() {
+  if (currentRouteCoords.length < 2) {
+    showNotification('請先建立路線', 'warning');
+    return;
+  }
+  const { count, layer } = _estimateTileCountForMapPack();
+  const info = document.getElementById('mappack-tiles-info');
+  if (info) info.textContent = `（圖層:${layer || '—'},預估 ${count} 張）`;
+  mappackExportModal.classList.remove('hidden');
+}
+
+function _closeMappackExportModal() {
+  mappackExportModal.classList.add('hidden');
+}
+
+btnExportMappack?.addEventListener('click', _openMappackExportModal);
+mappackExportModal?.addEventListener('click', (e) => {
+  if (e.target === mappackExportModal) _closeMappackExportModal();
+});
+document.getElementById('btn-mappack-export-cancel')?.addEventListener('click', _closeMappackExportModal);
+
+document.getElementById('btn-mappack-export-confirm')?.addEventListener('click', async () => {
+  const includeRoute = document.getElementById('mappack-inc-route').checked;
+  const includeTiles = document.getElementById('mappack-inc-tiles').checked;
+  const includeState = document.getElementById('mappack-inc-state').checked;
+  if (!includeRoute && !includeTiles && !includeState) {
+    showNotification('至少需勾選一項', 'warning');
+    return;
+  }
+  _closeMappackExportModal();
+
+  // Build filename from first waypoint (reuse existing naming convention).
+  const startWp = mapManager.waypoints[0];
+  const startName = startWp ? (getEffectiveName(startWp[0], startWp[1]) || null) : null;
+  const now = new Date();
+  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+  const namePart = (startName || '起點').replace(/[\\/:*?"<>|]/g, '_');
+  const filenameBase = `${namePart}_${ts}`;
+
+  const layerInfo = mapManager.getCurrentLayerInfo();
+  const bounds = includeTiles && currentRouteCoords.length >= 2
+    ? L.latLngBounds(currentRouteCoords).pad(0.05)
+    : null;
+
+  const gpxXml = includeRoute
+    ? GpxExporter.generate(collectExportData(), currentRouteCoords, currentElevations, 'Mapping Elf Track')
+    : null;
+
+  progressContainer.classList.remove('hidden');
+  btnExportMappack.disabled = true;
+  btnImportMappack.disabled = true;
+
+  try {
+    const { blob, filename, tileCount } = await MapPackExporter.export({
+      bounds,
+      routeCoords: currentRouteCoords,
+      layerInfo: layerInfo && { ...layerInfo, name: mapManager.currentLayerName },
+      includeRoute,
+      includeTiles,
+      includeState,
+      gpxXml,
+      filenameBase,
+      onProgress: (cur, total, phase) => {
+        const pct = Math.round((cur / Math.max(total, 1)) * 100);
+        progressText.textContent = phase === 'zip'
+          ? `打包中 ${pct}%`
+          : `圖磚 ${pct}% (${cur}/${total})`;
+        progressFill.style.width = `${pct}%`;
+      },
+    });
+    MapPackExporter.triggerDownload(blob, filename);
+    const parts = [];
+    if (includeRoute) parts.push('路線');
+    if (includeTiles) parts.push(`${tileCount} 張圖磚`);
+    if (includeState) parts.push('個人偏好');
+    showNotification(`離線地圖包已匯出 (${parts.join('、')})`, 'success');
+  } catch (err) {
+    showNotification(err.message || '匯出失敗', 'error');
+    console.error(err);
+  } finally {
+    progressContainer.classList.add('hidden');
+    btnExportMappack.disabled = false;
+    btnImportMappack.disabled = false;
+    progressText.textContent = '0%';
+    progressFill.style.width = '0%';
+  }
+});
+
+btnImportMappack?.addEventListener('click', () => mappackFileInput?.click());
+
+let _pendingMappack = null;
+
+function _closeMappackImportModal() {
+  mappackImportModal.classList.add('hidden');
+  _pendingMappack = null;
+  if (mappackFileInput) mappackFileInput.value = '';
+}
+
+mappackImportModal?.addEventListener('click', (e) => {
+  if (e.target === mappackImportModal) _closeMappackImportModal();
+});
+document.getElementById('btn-mappack-import-cancel')?.addEventListener('click', _closeMappackImportModal);
+
+mappackFileInput?.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const parsed = await MapPackImporter.parse(file);
+    _pendingMappack = parsed;
+
+    // Toggle checkboxes based on what the pack actually contains.
+    const restoreRoute = document.getElementById('mappack-restore-route');
+    const restoreTiles = document.getElementById('mappack-restore-tiles');
+    const restoreState = document.getElementById('mappack-restore-state');
+    restoreRoute.checked = parsed.hasGpx;
+    restoreRoute.disabled = !parsed.hasGpx;
+    restoreRoute.parentElement.style.opacity = parsed.hasGpx ? '1' : '0.4';
+    restoreTiles.checked = parsed.hasTiles;
+    restoreTiles.disabled = !parsed.hasTiles;
+    restoreTiles.parentElement.style.opacity = parsed.hasTiles ? '1' : '0.4';
+    restoreState.checked = parsed.hasState;
+    restoreState.disabled = !parsed.hasState;
+    restoreState.parentElement.style.opacity = parsed.hasState ? '1' : '0.4';
+
+    const tilesInfo = document.getElementById('mappack-import-tiles-info');
+    if (tilesInfo) tilesInfo.textContent = parsed.hasTiles
+      ? `（圖層:${parsed.manifest.layer},${parsed.manifest.tileCount} 張)`
+      : '';
+
+    const meta = document.getElementById('mappack-import-meta');
+    if (meta) {
+      const t = parsed.manifest.createdAt ? new Date(parsed.manifest.createdAt).toLocaleString() : '—';
+      meta.textContent = `來源:${parsed.manifest.generator || '—'} · 建立:${t}`;
+    }
+
+    mappackImportModal.classList.remove('hidden');
+  } catch (err) {
+    showNotification(err.message || '檔案解析失敗', 'error');
+    console.error(err);
+    if (mappackFileInput) mappackFileInput.value = '';
+  }
+});
+
+document.getElementById('btn-mappack-import-confirm')?.addEventListener('click', async () => {
+  if (!_pendingMappack) return;
+  const restoreRoute = document.getElementById('mappack-restore-route').checked;
+  const restoreTiles = document.getElementById('mappack-restore-tiles').checked;
+  const restoreState = document.getElementById('mappack-restore-state').checked;
+  if (!restoreRoute && !restoreTiles && !restoreState) {
+    showNotification('至少需勾選一項', 'warning');
+    return;
+  }
+  const parsed = _pendingMappack;
+  mappackImportModal.classList.add('hidden');
+
+  progressContainer.classList.remove('hidden');
+  btnExportMappack.disabled = true;
+  btnImportMappack.disabled = true;
+
+  try {
+    const applied = await MapPackImporter.apply(parsed, {
+      restoreRoute,
+      restoreTiles,
+      restoreState,
+      onProgress: (cur, total, phase) => {
+        const pct = Math.round((cur / Math.max(total, 1)) * 100);
+        progressText.textContent = phase === 'tiles'
+          ? `還原圖磚 ${pct}% (${cur}/${total})`
+          : `${pct}%`;
+        progressFill.style.width = `${pct}%`;
+      },
+    });
+
+    if (applied.gpxXml) {
+      try {
+        const result = GpxExporter.parse(applied.gpxXml);
+        applyImportedResult(result);
+      } catch (err) {
+        showNotification('路線還原失敗', 'error');
+        console.error(err);
+      }
+    }
+
+    if (applied.layer) {
+      // Switch to the layer whose tiles we just restored, so user sees them.
+      mapManager.switchLayer(applied.layer);
+      localStorage.setItem(LS_MAP_LAYER_KEY, applied.layer);
+      layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === applied.layer));
+      offlineManager.updateCacheInfo();
+    }
+
+    if (applied.stateApplied) {
+      // Give UI a moment to breathe before reload.
+      showNotification('已還原資料,即將重新載入以套用偏好…', 'success');
+      setTimeout(() => location.reload(), 800);
+      return;
+    }
+
+    const parts = [];
+    if (applied.gpxXml) parts.push('路線');
+    if (applied.tileCount) parts.push(`${applied.tileCount} 張圖磚`);
+    showNotification(`離線地圖包已匯入 (${parts.join('、') || '無'})`, 'success');
+  } catch (err) {
+    showNotification(err.message || '匯入失敗', 'error');
+    console.error(err);
+  } finally {
+    progressContainer.classList.add('hidden');
+    btnExportMappack.disabled = false;
+    btnImportMappack.disabled = false;
+    progressText.textContent = '0%';
+    progressFill.style.width = '0%';
+    _pendingMappack = null;
+    if (mappackFileInput) mappackFileInput.value = '';
+  }
 });
 
 layerBtns.forEach((btn) => {
@@ -1081,6 +1332,128 @@ function restoreImportedTrack(session) {
   return true;
 }
 
+/**
+ * Apply a parsed import result (from GpxExporter / KmlExporter / YamlExporter)
+ * to the map — same semantics as the original inline importFile logic.
+ * Extracted so that .melmap imports can reuse it.
+ */
+function applyImportedResult(result) {
+  if (result.trackPoints.length > 0) {
+    const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
+
+    let elevations = result.trackPoints.map((p) => p.ele);
+    for (let i = 0; i < elevations.length; i++) {
+      if (elevations[i] === null) {
+        let nextI = i + 1;
+        while (nextI < elevations.length && elevations[nextI] === null) nextI++;
+        if (nextI < elevations.length) {
+          const prev = i > 0 ? elevations[i - 1] : elevations[nextI];
+          const next = elevations[nextI];
+          const frac = 1 / (nextI - (i - 1));
+          elevations[i] = prev + frac * (next - prev);
+        } else {
+          elevations[i] = i > 0 ? elevations[i - 1] : 0;
+        }
+      }
+    }
+
+    // 1. Clear old state normally (importedTrackMode still false so
+    //    onWaypointsChanged([]) runs its usual clear path)
+    importedTrackMode = false;
+    importedIntermediatePoints = [];
+    mapManager.clearWaypoints();
+    mapManager.clearIntermediateMarkers();
+
+    // 2. Enter track mode — from here, onWaypointsChanged skips routing
+    importedTrackMode = true;
+    importedIntermediatePoints = result.intermediatePoints || [];
+    syncTrackModeUI();
+
+    // 3. Draw the track polyline directly
+    mapManager.drawRoute(coords);
+    currentRouteCoords = coords;
+    currentElevations = elevations;
+
+    // 4. Load waypoints as decorative markers (no routing triggered)
+    if (result.waypoints.length > 0) {
+      if (result.segmentDates) {
+        result.waypoints.forEach((wp, i) => {
+          const sd = result.segmentDates[i];
+          if (sd?.label) waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
+        });
+        try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+      }
+      skipAutoGeocode = !importAutoNameMode;
+      result.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+      skipAutoGeocode = false;
+      if (importAutoNameMode) geocodeWaypoints(result.waypoints);
+    }
+
+    // 5. Apply per-waypoint dates/weather to table columns after panel renders
+    if (result.segmentDates?.some(d => d?.date || d?.time || (d?.weather && Object.keys(d.weather).length > 0))) {
+      window._pendingGpxDates = result.segmentDates;
+    }
+
+    // 6. Load elevation profile from track data (no elevation API call)
+    elevationProfile.updateWithData(coords, elevations);
+
+    // 7. Update stats from track data
+    const totalDist = elevationProfile.distances.at(-1) || 0;
+    const epStats = elevationProfile._calcStats();
+    statDistance.textContent = formatDistance(totalDist);
+    statAscent.textContent = formatElevation(epStats.ascent);
+    statDescent.textContent = formatElevation(epStats.descent);
+    statMaxElev.textContent = formatElevation(epStats.maxElev);
+
+    mapManager.fitToRoute();
+    updateTimeStat();
+    renderWeatherPanel();
+
+    saveImportedTrackSession();
+
+    const wpCount = result.waypoints.length;
+    showNotification(
+      `已匯入軌跡（${coords.length} 個點${wpCount > 0 ? `，${wpCount} 個航點` : ''}）`,
+      'success'
+    );
+    return;
+  }
+
+  // Not a track import — any prior track session is now stale.
+  clearImportedTrackSession();
+
+  // No track — fall back to waypoint-based routing.
+  // Apply per-waypoint dates/weather to table columns after panel renders
+  if (result.segmentDates?.some(d => d?.date || d?.time || (d?.weather && Object.keys(d.weather).length > 0))) {
+    window._pendingGpxDates = result.segmentDates;
+  }
+
+  if (result.waypoints.length > 0) {
+    // Preserve imported names as custom names if present
+    if (result.segmentDates) {
+      result.waypoints.forEach((wp, i) => {
+        const sd = result.segmentDates[i];
+        if (sd?.label) {
+          waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
+        }
+      });
+      try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+    }
+
+    // Optional TSP reorder (greedy nearest-neighbor + 2-opt, start fixed).
+    const orderedWaypoints = (importAutoSortMode && result.waypoints.length >= 3)
+      ? tspOptimize(result.waypoints)
+      : result.waypoints;
+
+    skipAutoGeocode = !importAutoNameMode;
+    mapManager.setWaypointsFromImport(orderedWaypoints);
+    skipAutoGeocode = false;
+    if (importAutoNameMode) geocodeWaypoints(orderedWaypoints);
+    const reorderedNote = orderedWaypoints !== result.waypoints ? '(自動排序)' : '';
+    showNotification(`已匯入 ${result.waypoints.length} 個航點 ${reorderedNote}`.trim(), 'success');
+  }
+}
+
 function importFile(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1100,121 +1473,7 @@ function importFile(e) {
         showNotification('不支援的檔案格式', 'error');
         return;
       }
-
-      if (result.trackPoints.length > 0) {
-        const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
-        
-        let elevations = result.trackPoints.map((p) => p.ele);
-        for (let i = 0; i < elevations.length; i++) {
-          if (elevations[i] === null) {
-            let nextI = i + 1;
-            while (nextI < elevations.length && elevations[nextI] === null) nextI++;
-            if (nextI < elevations.length) {
-              const prev = i > 0 ? elevations[i - 1] : elevations[nextI];
-              const next = elevations[nextI];
-              const frac = 1 / (nextI - (i - 1));
-              elevations[i] = prev + frac * (next - prev);
-            } else {
-              elevations[i] = i > 0 ? elevations[i - 1] : 0;
-            }
-          }
-        }
-
-        // 1. Clear old state normally (importedTrackMode still false so
-        //    onWaypointsChanged([]) runs its usual clear path)
-        importedTrackMode = false;
-        importedIntermediatePoints = [];
-        mapManager.clearWaypoints();
-        mapManager.clearIntermediateMarkers();
-
-        // 2. Enter track mode — from here, onWaypointsChanged skips routing
-        importedTrackMode = true;
-        importedIntermediatePoints = result.intermediatePoints || [];
-        syncTrackModeUI();
-
-        // 3. Draw the track polyline directly
-        mapManager.drawRoute(coords);
-        currentRouteCoords = coords;
-        currentElevations = elevations;
-
-        // 4. Load waypoints as decorative markers (no routing triggered)
-        if (result.waypoints.length > 0) {
-          if (result.segmentDates) {
-            result.waypoints.forEach((wp, i) => {
-              const sd = result.segmentDates[i];
-              if (sd?.label) waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
-            });
-            try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
-          }
-          skipAutoGeocode = !importAutoNameMode;
-          result.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
-          skipAutoGeocode = false;
-          if (importAutoNameMode) geocodeWaypoints(result.waypoints);
-        }
-
-        // 5. Apply per-waypoint dates/weather to table columns after panel renders
-        if (result.segmentDates?.some(d => d?.date || d?.time || (d?.weather && Object.keys(d.weather).length > 0))) {
-          window._pendingGpxDates = result.segmentDates;
-        }
-
-        // 6. Load elevation profile from track data (no elevation API call)
-        elevationProfile.updateWithData(coords, elevations);
-
-        // 7. Update stats from track data
-        const totalDist = elevationProfile.distances.at(-1) || 0;
-        const epStats = elevationProfile._calcStats();
-        statDistance.textContent = formatDistance(totalDist);
-        statAscent.textContent = formatElevation(epStats.ascent);
-        statDescent.textContent = formatElevation(epStats.descent);
-        statMaxElev.textContent = formatElevation(epStats.maxElev);
-
-        mapManager.fitToRoute();
-        updateTimeStat();
-        renderWeatherPanel();
-
-        saveImportedTrackSession();
-
-        const wpCount = result.waypoints.length;
-        showNotification(
-          `已匯入軌跡（${coords.length} 個點${wpCount > 0 ? `，${wpCount} 個航點` : ''}）`,
-          'success'
-        );
-        return;
-      }
-
-      // Not a track import — any prior track session is now stale.
-      clearImportedTrackSession();
-
-      // No track — fall back to waypoint-based routing.
-      // Apply per-waypoint dates/weather to table columns after panel renders
-      if (result.segmentDates?.some(d => d?.date || d?.time || (d?.weather && Object.keys(d.weather).length > 0))) {
-        window._pendingGpxDates = result.segmentDates;
-      }
-
-      if (result.waypoints.length > 0) {
-        // Preserve imported names as custom names if present
-        if (result.segmentDates) {
-          result.waypoints.forEach((wp, i) => {
-            const sd = result.segmentDates[i];
-            if (sd?.label) {
-              waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
-            }
-          });
-          try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
-        }
-
-        // Optional TSP reorder (greedy nearest-neighbor + 2-opt, start fixed).
-        const orderedWaypoints = (importAutoSortMode && result.waypoints.length >= 3)
-          ? tspOptimize(result.waypoints)
-          : result.waypoints;
-
-        skipAutoGeocode = !importAutoNameMode;
-        mapManager.setWaypointsFromImport(orderedWaypoints);
-        skipAutoGeocode = false;
-        if (importAutoNameMode) geocodeWaypoints(orderedWaypoints);
-        const reorderedNote = orderedWaypoints !== result.waypoints ? '(自動排序)' : '';
-        showNotification(`已匯入 ${result.waypoints.length} 個航點 ${reorderedNote}`.trim(), 'success');
-      }
+      applyImportedResult(result);
     } catch (err) {
       showNotification('檔案解析失敗', 'error');
       console.error(err);
