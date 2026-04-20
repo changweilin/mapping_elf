@@ -30,6 +30,121 @@ export function cumulativeDistances(points) {
   return dists;
 }
 
+/**
+ * Project a single [lat, lng] point onto a polyline (array of [lat, lng])
+ * and return both the mileage (metres from polyline start) and the distance
+ * (metres from the point to the projected location on the track).
+ *
+ * `startMileage` constrains the result to be ≥ that value — segments entirely
+ * before it are skipped, and segments straddling it clamp `t` so the projected
+ * mileage can't regress. When the waypoint's real projection is behind
+ * `startMileage`, the constrained mileage is clamped and `distance` becomes
+ * large; callers use `distance` as the "did we find a good forward match"
+ * signal.
+ */
+export function projectMileage(polyline, point, startMileage = 0) {
+  if (!Array.isArray(polyline) || polyline.length < 2) {
+    return { mileage: startMileage, distance: Infinity };
+  }
+  const toRad = Math.PI / 180;
+  const [plat, plng] = point;
+  let cum = 0;
+  let bestSq = Infinity;
+  let bestMileage = startMileage;
+  let bestProjected = null;
+  let found = false;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const a = polyline[i];
+    const b = polyline[i + 1];
+    const segLen = haversineDistance(a, b);
+    if (cum + segLen <= startMileage) { cum += segLen; continue; }
+    const cosLat = Math.cos(a[0] * toRad);
+    const bx = (b[1] - a[1]) * cosLat;
+    const by = b[0] - a[0];
+    const px = (plng - a[1]) * cosLat;
+    const py = plat - a[0];
+    const segLen2 = bx * bx + by * by;
+    let t = 0;
+    if (segLen2 > 0) {
+      t = Math.max(0, Math.min(1, (px * bx + py * by) / segLen2));
+    }
+    if (segLen > 0 && cum + t * segLen < startMileage) {
+      t = (startMileage - cum) / segLen;
+    }
+    const dx = px - t * bx;
+    const dy = py - t * by;
+    const sq = dx * dx + dy * dy;
+    if (sq < bestSq) {
+      bestSq = sq;
+      bestMileage = cum + t * segLen;
+      bestProjected = [a[0] + t * by, a[1] + t * (b[1] - a[1])];
+      found = true;
+    }
+    cum += segLen;
+  }
+  const distance = found && bestProjected ? haversineDistance(bestProjected, point) : Infinity;
+  return { mileage: found ? bestMileage : startMileage, distance };
+}
+
+/**
+ * Place each waypoint at a mileage along the track using a multi-pass
+ * forward walk.
+ *
+ * Pass 1: visit waypoints in input order, searching forward from the
+ *   previous waypoint's mileage. If the forward projection is close
+ *   enough to the waypoint (≤ `threshold` metres), place it and advance
+ *   the cursor; otherwise defer. This preserves file order for
+ *   out-and-back tracks (the return-leg waypoints land at later mileages).
+ *
+ * Pass 2+: repeat the same algorithm on the deferred set, starting from
+ *   cursor = 0. Waypoints placed in pass ≥ 2 are flagged `inserted: true`
+ *   so callers can mark their labels (e.g. with a trailing `*`).
+ *
+ * If a pass makes no progress, remaining waypoints are force-placed by
+ * unconstrained best projection (also flagged `inserted`).
+ *
+ * Returns `[{ index, mileage, inserted }, ...]` sorted by mileage (stable),
+ * so pass-2 insertions fall between their neighbouring pass-1 entries.
+ */
+export function orderWaypointsAlongTrack(waypoints, trackCoords, options = {}) {
+  if (waypoints.length === 0) return [];
+  if (!Array.isArray(trackCoords) || trackCoords.length < 2 || waypoints.length === 1) {
+    return waypoints.map((_, i) => ({ index: i, mileage: 0, inserted: false }));
+  }
+  const threshold = options.threshold ?? 500;
+  const n = waypoints.length;
+  const placed = new Array(n).fill(null);
+  let remaining = waypoints.map((_, i) => i);
+  let pass = 0;
+  while (remaining.length > 0) {
+    let cursor = 0;
+    const deferred = [];
+    let progress = false;
+    for (const idx of remaining) {
+      const { mileage, distance } = projectMileage(trackCoords, waypoints[idx], cursor);
+      if (distance <= threshold) {
+        placed[idx] = { mileage, inserted: pass > 0 };
+        cursor = mileage;
+        progress = true;
+      } else {
+        deferred.push(idx);
+      }
+    }
+    if (!progress) {
+      for (const idx of deferred) {
+        const { mileage } = projectMileage(trackCoords, waypoints[idx], 0);
+        placed[idx] = { mileage, inserted: true };
+      }
+      break;
+    }
+    remaining = deferred;
+    pass++;
+  }
+  const entries = placed.map((p, i) => ({ index: i, mileage: p.mileage, inserted: p.inserted }));
+  entries.sort((a, b) => a.mileage - b.mileage);
+  return entries;
+}
+
 export function formatDistance(meters) {
   if (meters < 1000) return `${Math.round(meters)} m`;
   return `${(meters / 1000).toFixed(2)} km`;
@@ -124,7 +239,7 @@ export function tspOptimize(points) {
         const c = points[order[k]];
         const d = k + 1 < n ? points[order[k + 1]] : null;
         const before = dist(a, b) + (d ? dist(c, d) : 0);
-        const after  = dist(a, c) + (d ? dist(b, d) : 0);
+        const after = dist(a, c) + (d ? dist(b, d) : 0);
         if (after + 1e-9 < before) {
           // reverse order[i..k]
           let lo = i, hi = k;
@@ -144,10 +259,10 @@ export function tspOptimize(points) {
  */
 export function interpolateRouteColorRgb(t) {
   const stops = [
-    { t: 0,    r: 110, g: 231, b: 183 }, // #6ee7b7  teal-green
-    { t: 0.33, r: 56,  g: 189, b: 248 }, // #38bdf8  sky-blue
-    { t: 0.66, r: 251, g: 191, b: 36  }, // #fbbf24  amber
-    { t: 1,    r: 248, g: 113, b: 113 }, // #f87171  red
+    { t: 0, r: 110, g: 231, b: 183 }, // #6ee7b7  teal-green
+    { t: 0.33, r: 56, g: 189, b: 248 }, // #38bdf8  sky-blue
+    { t: 0.66, r: 251, g: 191, b: 36 }, // #fbbf24  amber
+    { t: 1, r: 248, g: 113, b: 113 }, // #f87171  red
   ];
   const tc = Math.max(0, Math.min(1, t));
   let lo = stops[0], hi = stops[stops.length - 1];

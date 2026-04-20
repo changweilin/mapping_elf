@@ -103,6 +103,57 @@ const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
 
+/**
+ * Re-read preferences from localStorage into memory variables without a page reload.
+ * Used after a mappack state restoration to apply settings immediately.
+ */
+function applySettingsFromStorage() {
+  segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
+  roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
+  oLoopMode = localStorage.getItem(LS_OLOOP_KEY) === '1';
+  if (roundTripMode && oLoopMode) { oLoopMode = false; localStorage.setItem(LS_OLOOP_KEY, '0'); }
+  speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) !== '0';
+  speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
+  perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
+  strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0';
+  importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1';
+  importAutoNameMode = localStorage.getItem(LS_IMPORT_AUTO_NAME_KEY) === '1';
+  paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh';
+  windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
+  windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
+  try {
+    paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
+  } catch {
+    paceParams = { ...DEFAULT_PACE_PARAMS };
+  }
+
+  // Update UI components that depend on these globals
+  routeEngine.setMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking');
+  const modeRadio = document.querySelector(`input[name="route-mode"][value="${routeEngine.mode}"]`);
+  if (modeRadio) modeRadio.checked = true;
+
+  const savedLayer = localStorage.getItem(LS_MAP_LAYER_KEY) || 'topo';
+  if (mapManager.currentLayerName !== savedLayer) {
+    mapManager.switchLayer(savedLayer);
+  }
+  layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === mapManager.currentLayerName));
+
+  // Sync checkboxes in settings panel
+  const perSegmentEl = document.getElementById('pace-per-segment-enable');
+  if (perSegmentEl) perSegmentEl.checked = perSegmentMode;
+  const strictLinearEl = document.getElementById('strict-linear-enable');
+  if (strictLinearEl) strictLinearEl.checked = strictLinearMode;
+  const importAutoSortEl = document.getElementById('import-auto-sort-enable');
+  if (importAutoSortEl) importAutoSortEl.checked = importAutoSortMode;
+  const importAutoNameEl = document.getElementById('import-auto-name-enable');
+  if (importAutoNameEl) importAutoNameEl.checked = importAutoNameMode;
+
+  // Refresh UI
+  syncTrackModeUI();
+  updateFlatPlaceholder();
+  renderWeatherPanel();
+}
+
 const elevationProfile = new ElevationProfile(
   'elevation-chart',
   'chart-empty',
@@ -206,6 +257,53 @@ const btnToggleElevation = document.getElementById('btn-toggle-elevation');
 
 const layerBtns = document.querySelectorAll('.layer-btn');
 const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
+
+// Pace / Interval UI elements
+const paceParamsPanel = document.getElementById('pace-params-panel');
+const paceFlatInput = document.getElementById('pace-flat-input');
+const paceBodyWeight = document.getElementById('pace-body-weight');
+const pacePackWeight = document.getElementById('pace-pack-weight');
+const paceFatigueLevelEl = document.getElementById('pace-fatigue-level');
+const paceRestRow = document.getElementById('pace-rest-row');
+const paceRestEvery = document.getElementById('pace-rest-every');
+const paceRestMinutes = document.getElementById('pace-rest-minutes');
+const paceUnitSelect = document.getElementById('pace-unit-select');
+
+/** Convert km/h → displayed value in current unit */
+const kmhToDisplay = (v) =>
+  paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2)
+    : paceUnit === 'minkm' ? +(60 / v).toFixed(1)
+      : +v.toFixed(2);
+
+/** Convert displayed value → km/h */
+const displayToKmh = (v) =>
+  paceUnit === 'shanhe' ? SHANHE_BASE / v
+    : paceUnit === 'minkm' ? 60 / v
+      : v;
+
+/** Sync placeholder and input constraints to current unit */
+function updateFlatPlaceholder() {
+  if (!paceFlatInput) return;
+  const body = parseFloat(paceBodyWeight?.value) || 70;
+  const pack = parseFloat(pacePackWeight?.value) || 0;
+  const spdKmh = defaultSpeed(speedActivity, body, pack);
+  if (paceUnit === 'shanhe') {
+    paceFlatInput.min = '0.1';
+    paceFlatInput.max = '10';
+    paceFlatInput.step = '0.05';
+    paceFlatInput.placeholder = (SHANHE_BASE / spdKmh).toFixed(2);
+  } else if (paceUnit === 'minkm') {
+    paceFlatInput.min = '1';
+    paceFlatInput.max = '120';
+    paceFlatInput.step = '0.5';
+    paceFlatInput.placeholder = (60 / spdKmh).toFixed(1);
+  } else {
+    paceFlatInput.min = '0.5';
+    paceFlatInput.max = '80';
+    paceFlatInput.step = '0.5';
+    paceFlatInput.placeholder = spdKmh.toFixed(1);
+  }
+}
 
 // =========== Event Listeners ===========
 
@@ -485,77 +583,77 @@ async function openMappackImportModal(file) {
 
 document.getElementById('btn-mappack-import-confirm')?.addEventListener('click', async () => {
   if (!_pendingMappack) return;
+  console.log('Mappack import confirm clicked');
+
   const restoreRoute = document.getElementById('mappack-restore-route').checked;
   const restoreTiles = document.getElementById('mappack-restore-tiles').checked;
   const restoreState = document.getElementById('mappack-restore-state').checked;
+
   if (!restoreRoute && !restoreTiles && !restoreState) {
     showNotification('至少需勾選一項', 'warning');
     return;
   }
+
   const parsed = _pendingMappack;
   mappackImportModal.classList.add('hidden');
 
-  progressContainer.classList.remove('hidden');
+  // Use the global progress variables defined at the top of the file
+  if (progressContainer) progressContainer.classList.remove('hidden');
+  if (progressText) progressText.textContent = '準備還原...';
+  if (progressFill) progressFill.style.width = '0%';
 
   try {
+    console.log('Applying mappack...', { restoreRoute, restoreTiles, restoreState });
     const applied = await MapPackImporter.apply(parsed, {
       restoreRoute,
       restoreTiles,
       restoreState,
       onProgress: (cur, total, phase) => {
         const pct = Math.round((cur / Math.max(total, 1)) * 100);
-        progressText.textContent = phase === 'tiles'
-          ? `還原圖磚 ${pct}% (${cur}/${total})`
-          : `${pct}%`;
-        progressFill.style.width = `${pct}%`;
+        if (progressText) {
+          progressText.textContent = phase === 'tiles'
+            ? `還原圖磚 ${pct}% (${cur}/${total})`
+            : `${pct}%`;
+        }
+        if (progressFill) progressFill.style.width = `${pct}%`;
       },
     });
 
+    console.log('Mappack apply result:', applied);
+
     if (applied.layer) {
-      // Switch to the layer whose tiles we just restored FIRST, so subsequent
-      // render sees the right tiles. Route restoration follows.
       mapManager.switchLayer(applied.layer);
       localStorage.setItem(LS_MAP_LAYER_KEY, applied.layer);
       layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === applied.layer));
       offlineManager.updateCacheInfo();
     }
 
-    // When state is applied we must reload to pick up module-level variables.
-    // The reload would wipe in-memory track state, and saveImportedTrackSession
-    // has historically been unreliable here (quota / race). Stash the raw GPX
-    // and replay it after reload — simpler and robust.
-    if (applied.gpxXml && applied.stateApplied) {
-      try { localStorage.setItem(LS_PENDING_GPX_KEY, applied.gpxXml); } catch (err) {
-        showNotification('路線資料過大,無法延後還原', 'error');
-        console.error(err);
-      }
-    } else if (applied.gpxXml) {
+    if (applied.stateApplied) {
+      applySettingsFromStorage();
+    }
+
+    if (applied.gpxXml) {
       try {
         const result = GpxExporter.parse(applied.gpxXml);
         applyImportedResult(result);
       } catch (err) {
         showNotification('路線還原失敗', 'error');
-        console.error(err);
+        console.error('GPX parse failed during mappack import:', err);
       }
-    }
-
-    if (applied.stateApplied) {
-      showNotification('已還原資料,即將重新載入以套用偏好…', 'success');
-      setTimeout(() => location.reload(), 800);
-      return;
     }
 
     const parts = [];
     if (applied.gpxXml) parts.push('路線');
     if (applied.tileCount) parts.push(`${applied.tileCount} 張圖磚`);
-    showNotification(`離線地圖包已匯入 (${parts.join('、') || '無'})`, 'success');
+    if (applied.stateApplied) parts.push('個人偏好');
+    showNotification(`離線地圖包匯入完成 (${parts.join('、') || '無'})`, 'success');
   } catch (err) {
     showNotification(err.message || '匯入失敗', 'error');
-    console.error(err);
+    console.error('Mappack apply failed:', err);
   } finally {
-    progressContainer.classList.add('hidden');
-    progressText.textContent = '0%';
-    progressFill.style.width = '0%';
+    if (progressContainer) progressContainer.classList.add('hidden');
+    if (progressText) progressText.textContent = '0%';
+    if (progressFill) progressFill.style.width = '0%';
     _pendingMappack = null;
   }
 });
@@ -1033,7 +1131,7 @@ function enforceTimeOrdering() {
 
   for (let i = 1; i < N; i++) {
     const pt = weatherPoints[i];
-    if (!pt?.isWaypoint) continue; 
+    if (!pt?.isWaypoint) continue;
 
     const prevMs = toMs(i - 1);
     const curMs = toMs(i);
@@ -1794,7 +1892,11 @@ function _applyPlaceNameToDOM() {
     weatherPoints.forEach((pt) => {
       if (pt.isWaypoint) {
         const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === mapManager.waypoints.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
-        pt.label = getPlaceName(pt.lat, pt.lng) || fallbackLabel;
+        const placeName = getPlaceName(pt.lat, pt.lng);
+        // If the geocoded name is just '起點' or '終點', let the fallback logic handle it
+        // so that start/end logic at the same coordinate (O-Loop) works correctly.
+        const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+        pt.label = effectivePlaceName || fallbackLabel;
       }
     });
     deduplicateLabels(weatherPoints);
@@ -1830,9 +1932,9 @@ function _applyPlaceNameToDOM() {
               ? labelEl.childNodes[0].textContent
               : labelEl.textContent).trim();
             if (currentText !== pt.label) {
-               labelEl.innerHTML = '';
-               labelEl.appendChild(document.createTextNode(pt.label + (badge ? ' ' : '')));
-               if (badge) labelEl.appendChild(badge);
+              labelEl.innerHTML = '';
+              labelEl.appendChild(document.createTextNode(pt.label + (badge ? ' ' : '')));
+              if (badge) labelEl.appendChild(badge);
             }
           }
         }
@@ -2052,13 +2154,13 @@ function initWeatherControls() {
     if (!btn) return;
     console.log('Delegated click caught:', btn.dataset.action);
     switch (btn.dataset.action) {
-      case 'fetch':      fetchAllWeatherData(); break;
-      case 'day-minus':  shiftAllDates(-1, 0);  break;
-      case 'day-plus':   shiftAllDates(+1, 0);  break;
-      case 'day-now':    shiftToNow('day');     break;
-      case 'hour-minus': shiftAllDates(0, -1);  break;
-      case 'hour-plus':  shiftAllDates(0, +1);  break;
-      case 'hour-now':   shiftToNow('hour');    break;
+      case 'fetch': fetchAllWeatherData(); break;
+      case 'day-minus': shiftAllDates(-1, 0); break;
+      case 'day-plus': shiftAllDates(+1, 0); break;
+      case 'day-now': shiftToNow('day'); break;
+      case 'hour-minus': shiftAllDates(0, -1); break;
+      case 'hour-plus': shiftAllDates(0, +1); break;
+      case 'hour-now': shiftToNow('hour'); break;
     }
   });
 
@@ -2196,18 +2298,27 @@ function computeIntermediatePoints(coords, intervalKm) {
 function _projectImportedIntermediates() {
   const coords = currentRouteCoords;
   if (coords.length < 2 || importedIntermediatePoints.length === 0) return [[], 0];
-  const cumByIdx = [0];
+
+  // Calculate cumulative distances for routeCoords
+  const dists = [0];
   for (let i = 1; i < coords.length; i++) {
-    cumByIdx.push(cumByIdx[i - 1] + haversineDistance(coords[i - 1], coords[i]));
+    dists.push(dists[i - 1] + haversineDistance(coords[i - 1], coords[i]));
   }
-  const totalDistM = cumByIdx[cumByIdx.length - 1];
+  const totalDistM = dists[dists.length - 1];
+
+  let searchStartIdx = 0;
   const pts = importedIntermediatePoints.map((p) => {
-    let minD = Infinity, minI = 0;
-    for (let j = 0; j < coords.length; j++) {
+    let minD = Infinity, minI = searchStartIdx;
+    for (let j = searchStartIdx; j < coords.length; j++) {
       const d = haversineDistance([p.lat, p.lng], coords[j]);
-      if (d < minD) { minD = d; minI = j; }
+      if (d < minD) {
+        minD = d;
+        minI = j;
+      }
+      if (d === 0) break;
     }
-    return { lat: p.lat, lng: p.lng, cumDistM: cumByIdx[minI], label: p.label };
+    searchStartIdx = minI; // Forward cursor
+    return { lat: p.lat, lng: p.lng, cumDistM: dists[minI], label: p.label };
   });
   return [pts, totalDistM];
 }
@@ -2231,7 +2342,7 @@ function updateIntermediateMarkers() {
   if (currentRouteCoords.length > 1) {
     totalDistM = elevationProfile.distances.at(-1) || 0;
   }
-  
+
   mapManager.setIntermediateMarkers(pts, totalDistM);
 }
 
@@ -2289,33 +2400,84 @@ function buildWeatherPoints() {
 
   const all = [];
 
-  // Add actual waypoints
-  for (let i = 0; i < wps.length; i++) {
-    const placeName = getPlaceName(wps[i][0], wps[i][1]);
-    const label = placeName
-      ? placeName
-      : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
-    all.push({
-      label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i,
-      _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i])
-    });
-  }
-
-  if (importedTrackMode && importedIntermediatePoints.length > 0 && coords.length > 1) {
-    // Imported intermediates take precedence — reuse labels and project onto
-    // the current track to derive cum distance.
-    const [projected] = _projectImportedIntermediates();
-    importedIntermediatePoints.forEach((p, i) => {
-      const cum = projected[i]?.cumDistM ?? 0;
-      all.push({
-        label: p.label || '—',
-        lat: p.lat, lng: p.lng, isWaypoint: false,
-        _cum: cum, _elapsedH: getElapsedH(cum),
-        weather: p.weather,
-        windyUrl: p.windyUrl,
-        _preserveLabel: !!p.label,
+  if (importedTrackMode && coords.length > 1) {
+    // Unified sequential matching for ALL imported markers (waypoints + intermediates)
+    // to correctly handle out-and-back tracks.
+    const markers = [];
+    wps.forEach((wp, i) => {
+      const meta = (window._pendingGpxDates && window._pendingGpxDates[i]) || {};
+      markers.push({
+        lat: wp[0], lng: wp[1], isWaypoint: true, wpIndex: i,
+        fileOrder: meta.fileOrder ?? (i * 1000)
       });
     });
+    importedIntermediatePoints.forEach((p, i) => {
+      markers.push({
+        ...p, isWaypoint: false,
+        fileOrder: p.fileOrder ?? (i * 1000 + 500)
+      });
+    });
+
+    // Sort by original file sequence
+    markers.sort((a, b) => a.fileOrder - b.fileOrder);
+
+    // Single forward walk projection
+    let searchStart = 0;
+    markers.forEach(m => {
+      let minDist = Infinity, minIdx = searchStart;
+      for (let j = searchStart; j < coords.length; j++) {
+        const d = haversineDistance([m.lat, m.lng], coords[j]);
+        if (d < minDist) { minDist = d; minIdx = j; }
+        if (minDist === 0) break;
+      }
+      let cum = 0;
+      for (let j = 1; j <= minIdx; j++) cum += haversineDistance(coords[j - 1], coords[j]);
+
+      if (m.isWaypoint) {
+        wpCumDist[m.wpIndex] = cum;
+        waypointCumDistM[m.wpIndex] = cum;
+        const placeName = getPlaceName(m.lat, m.lng);
+        // If the custom name is just '起點' or '終點', let the fallback logic handle it
+        // so that start/end logic at the same coordinate (O-Loop) works correctly.
+        const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+        const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
+        all.push({
+          label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
+          _cum: cum, _elapsedH: getElapsedH(cum)
+        });
+      } else {
+        all.push({
+          label: m.label || '—',
+          lat: m.lat, lng: m.lng, isWaypoint: false,
+          _cum: cum, _elapsedH: getElapsedH(cum),
+          weather: m.weather,
+          windyUrl: m.windyUrl,
+          _preserveLabel: !!m.label,
+        });
+      }
+      searchStart = minIdx;
+    });
+  } else {
+    // Legacy / Non-Import Batching logic
+    // Add actual waypoints
+    for (let i = 0; i < wps.length; i++) {
+      const placeName = getPlaceName(wps[i][0], wps[i][1]);
+      const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+      const label = effectivePlaceName
+        ? effectivePlaceName
+        : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
+      all.push({
+        label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i,
+        _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i])
+      });
+    }
+  }
+
+  const hasImportedIntersects = importedTrackMode && importedIntermediatePoints.length > 0 && coords.length > 1;
+
+  if (hasImportedIntersects) {
+    // Imported intermediates were already merged in the unified sequential pass above.
+    // Skip generating dynamic intervals.
   } else if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     // Speed mode: intermediate points every 1 hour of travel time
     let wpTimes = null;
@@ -2383,7 +2545,7 @@ function buildWeatherPoints() {
 
   // Round-trip: mark return-leg interval points, add missing fallback midpoints,
   // then add return waypoints (reversed, excluding turning point).
-  if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
+  if (roundTripMode && !importedTrackMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
     // Distance to the turnaround point (last outbound waypoint).
     const oneWayDistM = wpCumDist[wps.length - 1];
 
@@ -2416,7 +2578,8 @@ function buildWeatherPoints() {
     // Return waypoints (reversed, excluding turning point).
     for (let i = wps.length - 2; i >= 0; i--) {
       const placeName = getPlaceName(wps[i][0], wps[i][1]);
-      const outLabel = placeName || (i === 0 ? '起點' : `航點 ${i + 1}`);
+      const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+      const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
       const returnCum = totalDistM - wpCumDist[i];
       all.push({
         label: `↩ ${outLabel}`,
@@ -2473,24 +2636,17 @@ function buildWeatherPoints() {
 }
 
 function computeWeatherPointPositions() {
-  const coords = currentRouteCoords;
   const N = weatherPoints.length;
-  if (coords.length < 2 || N === 0) return weatherPoints.map((_, i) => N <= 1 ? 0.5 : i / (N - 1));
+  if (N === 0) return [];
 
-  let totalDist = 0;
-  for (let j = 1; j < coords.length; j++) totalDist += haversineDistance(coords[j - 1], coords[j]);
+  const totalDist = (currentRouteCoords.length > 1 && elevationProfile.distances.length > 0)
+    ? elevationProfile.distances.at(-1)
+    : (weatherPoints.at(-1)?._cum || 1);
+
   if (totalDist === 0) return weatherPoints.map((_, i) => N <= 1 ? 0.5 : i / (N - 1));
 
-  return weatherPoints.map(pt => {
-    let minD = Infinity, ci = 0;
-    for (let j = 0; j < coords.length; j++) {
-      const d = haversineDistance([pt.lat, pt.lng], coords[j]);
-      if (d < minD) { minD = d; ci = j; }
-    }
-    let cum = 0;
-    for (let j = 1; j <= ci; j++) cum += haversineDistance(coords[j - 1], coords[j]);
-    return cum / totalDist;
-  });
+  // Use pre-calculated _cum distance instead of re-projecting coords (which fails on out-and-back)
+  return weatherPoints.map(pt => (pt._cum || 0) / totalDist);
 }
 
 function renderWeatherPanel() {
@@ -2585,7 +2741,7 @@ function renderWeatherPanel() {
         <span>取得天氣</span>
       </button>
     </th>`;
-  
+
   weatherPoints.forEach((pt, i) => {
     const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
     const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
@@ -2635,7 +2791,7 @@ function renderWeatherPanel() {
         <button class="wt-ctrl-adj" data-action="day-plus">+</button>
       </div>
     </th>`;
-  
+
   weatherPoints.forEach((pt, i) => {
     const sv = getSavedCol(pt, i, saved);
     const date = sv?.date || todayStr;
@@ -2649,7 +2805,7 @@ function renderWeatherPanel() {
     html += `<th class="${thClass}" data-idx="${i}">
       <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}>
     </th>`;
-    
+
     // Initialize colTimes for later use in Windy links
     colTimes[i] = { date };
   });
@@ -2681,7 +2837,7 @@ function renderWeatherPanel() {
         <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
       </div>
     </th>`;
-    
+
     // Finalize colTimes with hour
     colTimes[i].hour = hour;
   });
@@ -2720,13 +2876,13 @@ function renderWeatherPanel() {
       const action = btn.dataset.action;
       console.log('Direct button click:', action);
       switch (action) {
-        case 'fetch':      fetchAllWeatherData(); break;
-        case 'day-minus':  shiftAllDates(-1, 0);  break;
-        case 'day-plus':   shiftAllDates(+1, 0);  break;
-        case 'day-now':    shiftToNow('day');     break;
-        case 'hour-minus': shiftAllDates(0, -1);  break;
-        case 'hour-plus':  shiftAllDates(0, +1);  break;
-        case 'hour-now':   shiftToNow('hour');    break;
+        case 'fetch': fetchAllWeatherData(); break;
+        case 'day-minus': shiftAllDates(-1, 0); break;
+        case 'day-plus': shiftAllDates(+1, 0); break;
+        case 'day-now': shiftToNow('day'); break;
+        case 'hour-minus': shiftAllDates(0, -1); break;
+        case 'hour-plus': shiftAllDates(0, +1); break;
+        case 'hour-now': shiftToNow('hour'); break;
       }
     });
   });
@@ -2867,20 +3023,14 @@ function renderWeatherPanel() {
     const labelToKey = {};
     WEATHER_ROWS.forEach(r => labelToKey[r.label] = r.key);
 
-    weatherPoints.forEach((pt, colIdx) => {
-      let importedData = null;
-      if (pt.isWaypoint && pt.wpIndex !== undefined) {
-        importedData = window._pendingGpxDates[pt.wpIndex];
-      } else if (!pt.isWaypoint) {
-        // Match intermediate point by label if importedTrackMode is active
-        importedData = pt; // carries weather/windyUrl if from importedIntermediatePoints
-      }
+    window._pendingGpxDates.forEach((importedData, wpIdx) => {
+      // Find the corresponding point in weatherPoints. 
+      // For waypoints, we match by wpIndex. 
+      // For non-waypoints (if somehow present in pending), we skip or handle as needed.
+      const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIdx);
+      if (colIdx < 0) return;
 
-      if (!importedData) return;
-
-    window._pendingGpxDates?.forEach((importedData, colIdx) => {
       const pt = weatherPoints[colIdx];
-      if (!pt) return;
 
       if (importedData.date) {
         const di = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`);
@@ -2893,7 +3043,6 @@ function renderWeatherPanel() {
           if (hs) hs.value = String(h);
         }
       }
-    });
 
       if (importedData.weather) {
         const cells = {};
@@ -2909,8 +3058,8 @@ function renderWeatherPanel() {
         }
       }
     });
+
     window._pendingGpxDates = null;
-    // Refresh Windy links to match new dates/times
     refreshWindyLinks();
   }
 
@@ -3271,52 +3420,8 @@ async function init() {
     if (segmentInputEl) segmentInputEl.addEventListener('change', applyIntervalMode);
   }
 
-  // --- Pace params panel wiring ---
-  const paceParamsPanel = document.getElementById('pace-params-panel');
-  const paceFlatInput = document.getElementById('pace-flat-input');
-  const paceBodyWeight = document.getElementById('pace-body-weight');
-  const pacePackWeight = document.getElementById('pace-pack-weight');
-  const paceFatigueLevelEl = document.getElementById('pace-fatigue-level');
-  const paceRestRow = document.getElementById('pace-rest-row');
-  const paceRestEvery = document.getElementById('pace-rest-every');
-  const paceRestMinutes = document.getElementById('pace-rest-minutes');
-
-  const paceUnitSelect = document.getElementById('pace-unit-select');
-
-  /** Convert km/h → displayed value in current unit */
-  const kmhToDisplay = (v) =>
-    paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2)
-      : paceUnit === 'minkm' ? +(60 / v).toFixed(1)
-        : +v.toFixed(2);
-  /** Convert displayed value → km/h */
-  const displayToKmh = (v) =>
-    paceUnit === 'shanhe' ? SHANHE_BASE / v
-      : paceUnit === 'minkm' ? 60 / v
-        : v;
-
-  /** Sync placeholder and input constraints to current unit */
-  const updateFlatPlaceholder = () => {
-    if (!paceFlatInput) return;
-    const body = parseFloat(paceBodyWeight?.value) || 70;
-    const pack = parseFloat(pacePackWeight?.value) || 0;
-    const spdKmh = defaultSpeed(speedActivity, body, pack);
-    if (paceUnit === 'shanhe') {
-      paceFlatInput.min = '0.1';
-      paceFlatInput.max = '10';
-      paceFlatInput.step = '0.05';
-      paceFlatInput.placeholder = (SHANHE_BASE / spdKmh).toFixed(2);
-    } else if (paceUnit === 'minkm') {
-      paceFlatInput.min = '1';
-      paceFlatInput.max = '120';
-      paceFlatInput.step = '0.5';
-      paceFlatInput.placeholder = (60 / spdKmh).toFixed(1);
-    } else {
-      paceFlatInput.min = '0.5';
-      paceFlatInput.max = '80';
-      paceFlatInput.step = '0.5';
-      paceFlatInput.placeholder = spdKmh.toFixed(1);
-    }
-  };
+  // Use the top-level updateFlatPlaceholder
+  updateFlatPlaceholder();
 
   // Restore saved paceParams to UI inputs
   const paceUnitSelectRestored = paceUnitSelect;

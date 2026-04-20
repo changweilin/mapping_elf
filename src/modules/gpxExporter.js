@@ -6,6 +6,8 @@
  *     weather: { key: { label, value } } }
  */
 
+import { orderWaypointsAlongTrack } from './utils.js';
+
 export class GpxExporter {
   /**
    * Generate GPX XML from all weather-column points.
@@ -177,6 +179,7 @@ export class GpxExporter {
     const trackPoints = [];
     const segmentDates = [];
     const intermediatePoints = [];
+    const rawWpts = [];
 
     // Parse track points first so we can project waypoints onto the track
     const trkpts = doc.querySelectorAll('trkpt');
@@ -191,8 +194,7 @@ export class GpxExporter {
       }
     });
 
-    // Parse waypoints — split intermediate (mel:interval or `*_` prefix) out
-    const rawWpts = [];
+    const allMeta = [];
     const wpts = doc.querySelectorAll('wpt');
     wpts.forEach((wpt) => {
       const lat = parseFloat(wpt.getAttribute('lat'));
@@ -201,100 +203,96 @@ export class GpxExporter {
       const nameEl = wpt.querySelector('name');
       const rawName = nameEl ? nameEl.textContent.trim() : '';
       const typeEl = wpt.querySelector('type');
-      const hasIntervalTag = typeEl && typeEl.textContent.trim() === 'mel:interval';
-      const hasIntervalPrefix = rawName.startsWith('*_');
+      const isInterval = (typeEl && typeEl.textContent.trim() === 'mel:interval') || rawName.startsWith('*_');
       const exts = this._getAllExtensions(wpt);
-      const label = hasIntervalPrefix ? rawName.slice(2) : rawName;
-      if (hasIntervalTag || hasIntervalPrefix) {
-        intermediatePoints.push({
-          lat, lng: lon, label,
-          date: exts.date || null,
-          time: exts.time || null,
-          weather: exts,
-          windyUrl: exts.windyUrl || null,
-        });
-        return;
-      }
-
-      rawWpts.push({
-        latlon: [lat, lon],
-        meta: {
-          label: rawName || null,
-          date: exts.date || null,
-          time: exts.time || null,
-          weather: exts,
-          windyUrl: exts.windyUrl || null,
-        },
+      const label = isInterval && rawName.startsWith('*_') ? rawName.slice(2) : rawName;
+      
+      allMeta.push({
+        lat, lon, label, isInterval,
+        date: exts.date || null,
+        time: exts.time || null,
+        weather: exts,
+        windyUrl: exts.windyUrl || null
       });
     });
 
-    if (trackPoints.length > 0 && rawWpts.length > 0) {
-      // Project each waypoint onto the track and sort by ascending track index
+    if (trackPoints.length > 0 && allMeta.length > 0) {
+      // Robust path-aware matching for ALL points together
+      const trackCoords = trackPoints.map(p => [p.lat, p.lon]);
+      const coordsToOrder = allMeta.map(m => [m.lat, m.lon]);
+      const orderInfo = orderWaypointsAlongTrack(coordsToOrder, trackCoords);
+      
       const SNAP_M = 100;
-      const projected = rawWpts.map(wp => ({
-        ...wp,
-        trackIdx: this._nearestTrackIndex(wp.latlon[0], wp.latlon[1], trackPoints),
-      }));
-      projected.sort((a, b) => a.trackIdx - b.trackIdx);
+      let ordered = orderInfo.map(({ index, inserted }) => {
+        const m = allMeta[index];
+        const label = (inserted && m.label && !m.isInterval) ? m.label + '*' : m.label;
+        return { ...m, label };
+      });
 
-      // Prepend track start if the first waypoint is far from it
+      // Prepend/Append track ends if missing
       const trackStart = trackPoints[0];
-      if (this._distM(projected[0].latlon[0], projected[0].latlon[1], trackStart.lat, trackStart.lon) > SNAP_M) {
-        projected.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: 0 });
+      if (this._distM(ordered[0].lat, ordered[0].lon, trackStart.lat, trackStart.lon) > SNAP_M) {
+        ordered.unshift({ lat: trackStart.lat, lon: trackStart.lon, label: null, isInterval: false, weather: {} });
       }
-
-      // Append track end if the last waypoint is far from it
       const trackEnd = trackPoints[trackPoints.length - 1];
-      if (this._distM(projected[projected.length - 1].latlon[0], projected[projected.length - 1].latlon[1], trackEnd.lat, trackEnd.lon) > SNAP_M) {
-        projected.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: trackPoints.length - 1 });
+      if (this._distM(ordered[ordered.length - 1].lat, ordered[ordered.length - 1].lon, trackEnd.lat, trackEnd.lon) > SNAP_M) {
+        ordered.push({ lat: trackEnd.lat, lon: trackEnd.lon, label: null, isInterval: false, weather: {} });
       }
 
-      // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
+      // De-duplicate
       const unique = [];
-      for (const p of projected) {
+      for (const p of ordered) {
         if (unique.length > 0) {
           const prev = unique[unique.length - 1];
-          if (this._distM(p.latlon[0], p.latlon[1], prev.latlon[0], prev.latlon[1]) < 1.0) {
-            continue; // Skip almost identical consecutive point
-          }
+          if (this._distM(p.lat, p.lon, prev.lat, prev.lon) < 1.0) continue;
         }
         unique.push(p);
       }
 
-      unique.forEach(wp => {
-        waypoints.push(wp.latlon);
-        segmentDates.push(wp.meta);
+      // Distribute to return arrays with matched fileOrder
+      unique.forEach((p, idx) => {
+        const meta = {
+          label: p.label || null,
+          date: p.date || null,
+          time: p.time || null,
+          weather: p.weather || {},
+          windyUrl: p.windyUrl || null,
+          fileOrder: idx * 10 // Monotonic fileOrder derived from track sequence
+        };
+        if (p.isInterval) {
+          intermediatePoints.push({
+            lat: p.lat, lng: p.lon, label: p.label,
+            ...meta
+          });
+        } else {
+          waypoints.push([p.lat, p.lon]);
+          segmentDates.push(meta);
+        }
       });
-    } else if (rawWpts.length > 0) {
-      // No track — use waypoints as-is
-      rawWpts.forEach(wp => {
-        waypoints.push(wp.latlon);
-        segmentDates.push(wp.meta);
-      });
-    } else if (trackPoints.length > 0) {
-      // No waypoints — sample evenly from track
-      const step = Math.max(1, Math.floor(trackPoints.length / 10));
-      for (let i = 0; i < trackPoints.length - 1; i += step) {
-        waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
-        segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
+    } else {
+      // Fallback for no track or no waypoints
+      if (allMeta.length > 0) {
+        allMeta.forEach((m, idx) => {
+          const meta = { ...m, fileOrder: idx * 10 };
+          if (m.isInterval) intermediatePoints.push({ lat: m.lat, lng: m.lon, ...meta });
+          else { waypoints.push([m.lat, m.lon]); segmentDates.push(meta); }
+        });
+      } else if (trackPoints.length > 0) {
+        const step = Math.max(1, Math.floor(trackPoints.length / 10));
+        for (let i = 0; i < trackPoints.length; i += step) {
+          const pt = trackPoints[i];
+          waypoints.push([pt.lat, pt.lon]);
+          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, fileOrder: i });
+        }
+        if (trackPoints.length % step !== 0) {
+          const last = trackPoints[trackPoints.length - 1];
+          waypoints.push([last.lat, last.lon]);
+          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, fileOrder: trackPoints.length });
+        }
       }
-      const last = trackPoints[trackPoints.length - 1];
-      waypoints.push([last.lat, last.lon]);
-      segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
     }
 
     return { waypoints, trackPoints, segmentDates, intermediatePoints };
-  }
-
-  /** Index of the track point closest to (lat, lon). */
-  static _nearestTrackIndex(lat, lon, trackPoints) {
-    let minDist = Infinity;
-    let minIdx = 0;
-    for (let i = 0; i < trackPoints.length; i++) {
-      const d = this._distM(lat, lon, trackPoints[i].lat, trackPoints[i].lon);
-      if (d < minDist) { minDist = d; minIdx = i; }
-    }
-    return minIdx;
   }
 
   /** Haversine distance in metres between two lat/lon pairs. */

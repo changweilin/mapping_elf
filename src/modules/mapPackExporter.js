@@ -1,14 +1,15 @@
 /**
  * Mapping Elf — Map Pack Exporter
  *
- * Produces a `.melmap` ZIP containing any combination of:
+ * Produces a .melmap ZIP containing any combination of:
  *   - manifest.json  (always)
  *   - route.gpx      (optional)
  *   - state.json     (optional — localStorage snapshot)
  *   - tiles/{layer}/{z}/{x}/{y}.png  (optional — current layer only)
  *
- * JSZip is loaded dynamically so the main bundle stays lean.
+ * JSZip is pre-loaded at the top for reliability across environments.
  */
+import JSZip from 'jszip';
 
 const MELMAP_VERSION = 1;
 const MAX_TILES = 8000;
@@ -84,7 +85,6 @@ export class MapPackExporter {
       throw new Error('至少需勾選一項內容才能匯出');
     }
 
-    const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
 
     // ---- manifest.json (always) ----

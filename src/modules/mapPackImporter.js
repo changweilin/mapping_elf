@@ -8,6 +8,7 @@
  */
 
 import { LS_STATE_KEYS, MELMAP_VERSION, SUBDOMAINS } from './mapPackExporter.js';
+import JSZip from 'jszip';
 
 // Keep in sync with src/modules/mapManager.js TILE_LAYERS — used to rebuild
 // cache keys so the Service Worker finds tiles on the next render.
@@ -24,9 +25,17 @@ export class MapPackImporter {
    * @returns {Promise<{zip, manifest, hasGpx, hasState, hasTiles}>}
    */
   static async parse(file) {
-    const { default: JSZip } = await import('jszip');
-    const zip = await JSZip.loadAsync(file);
+    console.log('MapPackImporter: Parsing file...', file.name);
+    try {
+      const zip = await JSZip.loadAsync(file);
+      return MapPackImporter._buildParsed(zip);
+    } catch (err) {
+      console.error('JSZip load failed:', err);
+      throw new Error(`檔案解析失敗: ${err.message}`);
+    }
+  }
 
+  static async _buildParsed(zip) {
     const manifestFile = zip.file('manifest.json');
     if (!manifestFile) throw new Error('manifest.json 缺失,不是有效的 .melmap 包');
     const manifest = JSON.parse(await manifestFile.async('string'));
@@ -95,11 +104,12 @@ export class MapPackImporter {
       const tileEntries = [];
       zip.forEach((path, entry) => {
         if (entry.dir) return;
-        // Defend against ZIP Slip — only accept well-formed tile paths.
-        const m = /^tiles\/([^/]+)\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(path);
-        if (!m) return;
-        if (m[1] !== layer) return;
-        tileEntries.push({ entry, z: +m[2], x: +m[3], y: +m[4] });
+        // Normalize path for platform consistency
+        const normalized = path.replace(/\\/g, '/').replace(/^\//, '');
+        const m = /^tiles\/([^/]+)\/(\d+)\/(\d+)\/(\d+)\.(png|jpg|jpeg)$/i.exec(normalized);
+        if (m && m[1] === layer) {
+          tileEntries.push({ entry, z: +m[2], x: +m[3], y: +m[4] });
+        }
       });
 
       const cache = await caches.open('mapping-elf-tiles');
@@ -113,12 +123,12 @@ export class MapPackImporter {
         await Promise.all(chunk.map(async ({ entry, z, x, y }) => {
           try {
             const blob = await entry.async('blob');
-            const urls = this._expandSubdomains(tmpl, z, x, y);
+            const urls = MapPackImporter._expandSubdomains(tmpl, z, x, y);
             // Replicate under every subdomain so Leaflet hash-picks hit.
             await Promise.all(urls.map((u) => cache.put(u, new Response(blob, {
               headers: { 'Content-Type': 'image/png' },
             }))));
-          } catch (_) { /* skip */ }
+          } catch (e) { console.warn('Tile restore failed', e); }
           done++;
           onProgress(done, total, 'tiles');
         }));

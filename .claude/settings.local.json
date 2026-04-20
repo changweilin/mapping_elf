@@ -15,7 +15,8 @@
       "Bash(mkdir -p \"C:/Users/user/.claude/skills/deploy\")",
       "Bash(mkdir -p \"C:/Users/user/.claude/skills/review\")",
       "Bash(grep -rn \"custom-waypoint-icon\\\\|wp-weather-badge\\\\|intermediate-point-icon\" C:/Users/user/Documents/app/mapping_elf/src/ C:/Users/user/Documents/app/mapping_elf/*.css)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(npx vite *)"
     ]
   }
 }

@@ -6,6 +6,8 @@
  *   { lat, lng, label, isWaypoint, isReturn, date, time,
  *     weather: { key: { label, value } } }
  */
+import { orderWaypointsAlongTrack } from './utils.js';
+
 export class KmlExporter {
   /**
    * @param {Array}    wpData      - per-column export data (waypoints + interval points)
@@ -125,6 +127,7 @@ export class KmlExporter {
     const segmentDates = [];
     const intermediatePoints = [];
 
+    let fileOrderCounter = 0;
     doc.querySelectorAll('Placemark').forEach(pm => {
       const styleUrl = pm.querySelector('styleUrl')?.textContent?.trim() || '';
       const pointEl = pm.querySelector('Point');
@@ -152,6 +155,7 @@ export class KmlExporter {
             time: meta.time || null,
             weather: meta.weather,
             windyUrl: meta.windyUrl || null,
+            fileOrder: fileOrderCounter++,
           });
           return;
         }
@@ -163,6 +167,7 @@ export class KmlExporter {
           time: meta.time || null,
           weather: meta.weather,
           windyUrl: meta.windyUrl || null,
+          fileOrder: fileOrderCounter++,
         });
       } else if (lineEl) {
         // Route LineString → track points
@@ -180,33 +185,35 @@ export class KmlExporter {
     });
 
     if (trackPoints.length > 0 && waypoints.length > 0) {
-      // Map waypoints to projected structure for snapping logic
-      // Consistent with GpxExporter.parse (SNAP_M=100)
+      // orderWaypointsAlongTrack walks mileage forward-only in file order so
+      // out-and-back revisits stay distinct. Waypoints whose best forward
+      // match is too far get deferred to a second pass and re-inserted by
+      // mileage with `inserted: true`; we mark those labels with a `*`.
       const SNAP_M = 100;
-      const trackPtsPlain = trackPoints.map(p => ({ lat: p.lat, lon: p.lon }));
-      
-      let projected = waypoints.map((wp, i) => ({
-        latlon: wp,
-        meta: segmentDates[i],
-        trackIdx: this._nearestTrackIndex(wp[0], wp[1], trackPtsPlain)
-      }));
-      projected.sort((a, b) => a.trackIdx - b.trackIdx);
+      const trackCoords = trackPoints.map(p => [p.lat, p.lon]);
+      const orderInfo = orderWaypointsAlongTrack(waypoints, trackCoords);
+      let ordered = orderInfo.map(({ index, inserted }) => {
+        const meta = inserted && segmentDates[index].label
+          ? { ...segmentDates[index], label: segmentDates[index].label + '*' }
+          : segmentDates[index];
+        return { latlon: waypoints[index], meta };
+      });
 
       // Prepend track start if the first waypoint is far from it
       const trackStart = trackPoints[0];
-      if (this._distM(projected[0].latlon[0], projected[0].latlon[1], trackStart.lat, trackStart.lon) > SNAP_M) {
-        projected.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: 0 });
+      if (this._distM(ordered[0].latlon[0], ordered[0].latlon[1], trackStart.lat, trackStart.lon) > SNAP_M) {
+        ordered.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null } });
       }
 
       // Append track end if the last waypoint is far from it
       const trackEnd = trackPoints[trackPoints.length - 1];
-      if (this._distM(projected[projected.length - 1].latlon[0], projected[projected.length - 1].latlon[1], trackEnd.lat, trackEnd.lon) > SNAP_M) {
-        projected.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: trackPoints.length - 1 });
+      if (this._distM(ordered[ordered.length - 1].latlon[0], ordered[ordered.length - 1].latlon[1], trackEnd.lat, trackEnd.lon) > SNAP_M) {
+        ordered.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null } });
       }
 
       // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
       const unique = [];
-      for (const p of projected) {
+      for (const p of ordered) {
         if (unique.length > 0) {
           const prev = unique[unique.length - 1];
           if (this._distM(p.latlon[0], p.latlon[1], prev.latlon[0], prev.latlon[1]) < 1.0) {
@@ -236,16 +243,6 @@ export class KmlExporter {
     }
 
     return { waypoints, trackPoints, segmentDates, intermediatePoints };
-  }
-
-  static _nearestTrackIndex(lat, lon, trackPoints) {
-    let minDist = Infinity;
-    let minIdx = 0;
-    for (let i = 0; i < trackPoints.length; i++) {
-      const d = this._distM(lat, lon, trackPoints[i].lat, trackPoints[i].lon);
-      if (d < minDist) { minDist = d; minIdx = i; }
-    }
-    return minIdx;
   }
 
   static _distM(lat1, lon1, lat2, lon2) {
