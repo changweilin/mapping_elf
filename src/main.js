@@ -1889,13 +1889,22 @@ async function geocodeWaypoints(waypoints) {
 /** Re-render labels locally after a geocode result or custom name save to avoid UI flashing */
 function _applyPlaceNameToDOM() {
   if (weatherPoints.length > 0) {
+    const wps = mapManager.waypoints;
+    const keyCounts = {};
+    wps.forEach(([lat, lng]) => {
+      const k = _geocodeKey(lat, lng);
+      keyCounts[k] = (keyCounts[k] || 0) + 1;
+    });
+    const sharesKey = (lat, lng) => keyCounts[_geocodeKey(lat, lng)] > 1;
+
     weatherPoints.forEach((pt) => {
       if (pt.isWaypoint) {
-        const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === mapManager.waypoints.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
+        const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === wps.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
         const placeName = getPlaceName(pt.lat, pt.lng);
-        // If the geocoded name is just '起點' or '終點', let the fallback logic handle it
-        // so that start/end logic at the same coordinate (O-Loop) works correctly.
-        const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+        // Drop placeName for start/end collisions and for waypoints that share
+        // a _geocodeKey with another waypoint — otherwise the shared name leaks
+        // across start/end and dedup appends '(2)' to one of them.
+        const effectivePlaceName = (placeName === '起點' || placeName === '終點' || sharesKey(pt.lat, pt.lng)) ? null : placeName;
         pt.label = effectivePlaceName || fallbackLabel;
       }
     });
@@ -2351,6 +2360,15 @@ function buildWeatherPoints() {
   const coords = currentRouteCoords;
   if (wps.length === 0) return [];
 
+  // When two waypoints share a _geocodeKey (≈11m), they share custom/place
+  // names — use fallback labels for those to keep start/end distinct.
+  const _wpKeyCounts = {};
+  wps.forEach(([lat, lng]) => {
+    const k = _geocodeKey(lat, lng);
+    _wpKeyCounts[k] = (_wpKeyCounts[k] || 0) + 1;
+  });
+  const _sharesKey = (lat, lng) => _wpKeyCounts[_geocodeKey(lat, lng)] > 1;
+
   // --- Compute cumulative distances for waypoints along the route ---
   let totalDistM = 0;
   const wpCumDist = [];
@@ -2437,9 +2455,10 @@ function buildWeatherPoints() {
         wpCumDist[m.wpIndex] = cum;
         waypointCumDistM[m.wpIndex] = cum;
         const placeName = getPlaceName(m.lat, m.lng);
-        // If the custom name is just '起點' or '終點', let the fallback logic handle it
-        // so that start/end logic at the same coordinate (O-Loop) works correctly.
-        const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+        // Drop placeName when it's literally '起點/終點' OR when multiple
+        // waypoints share the same geocode key — both cases would otherwise
+        // leak the name across start/end and trigger '(2)' dedup suffixes.
+        const effectivePlaceName = (placeName === '起點' || placeName === '終點' || _sharesKey(m.lat, m.lng)) ? null : placeName;
         const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
@@ -2462,7 +2481,7 @@ function buildWeatherPoints() {
     // Add actual waypoints
     for (let i = 0; i < wps.length; i++) {
       const placeName = getPlaceName(wps[i][0], wps[i][1]);
-      const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+      const effectivePlaceName = (placeName === '起點' || placeName === '終點' || _sharesKey(wps[i][0], wps[i][1])) ? null : placeName;
       const label = effectivePlaceName
         ? effectivePlaceName
         : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
@@ -2578,7 +2597,7 @@ function buildWeatherPoints() {
     // Return waypoints (reversed, excluding turning point).
     for (let i = wps.length - 2; i >= 0; i--) {
       const placeName = getPlaceName(wps[i][0], wps[i][1]);
-      const effectivePlaceName = (placeName === '起點' || placeName === '終點') ? null : placeName;
+      const effectivePlaceName = (placeName === '起點' || placeName === '終點' || _sharesKey(wps[i][0], wps[i][1])) ? null : placeName;
       const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
       const returnCum = totalDistM - wpCumDist[i];
       all.push({

@@ -16,7 +16,10 @@
       "Bash(mkdir -p \"C:/Users/user/.claude/skills/review\")",
       "Bash(grep -rn \"custom-waypoint-icon\\\\|wp-weather-badge\\\\|intermediate-point-icon\" C:/Users/user/Documents/app/mapping_elf/src/ C:/Users/user/Documents/app/mapping_elf/*.css)",
       "Bash(npm install *)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Read(//c/tmp/**)",
+      "Bash(unzip -o \"/c/Users/user/Documents/app/mapping_elf/data/820 林道_24.2133,121.3472_20260420_1510.melmap\" -d melmap_test)",
+      "Bash(python -m json.tool)"
     ]
   }
 }
