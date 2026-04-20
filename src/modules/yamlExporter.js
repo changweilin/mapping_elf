@@ -143,8 +143,32 @@ export class YamlExporter {
       }
     }
     commitPoint();
+    
+    // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
+    const uniqueWaypoints = [];
+    const uniqueSegmentDates = [];
+    for (let i = 0; i < waypoints.length; i++) {
+        const wp = waypoints[i];
+        if (uniqueWaypoints.length > 0) {
+            const prev = uniqueWaypoints[uniqueWaypoints.length - 1];
+            if (this._distM(wp[0], wp[1], prev[0], prev[1]) < 1.0) {
+                continue; // Skip almost identical consecutive point
+            }
+        }
+        uniqueWaypoints.push(wp);
+        uniqueSegmentDates.push(segmentDates[i]);
+    }
 
-    return { waypoints, trackPoints: [], segmentDates, intermediatePoints };
+    return { waypoints: uniqueWaypoints, trackPoints: [], segmentDates: uniqueSegmentDates, intermediatePoints };
+  }
+
+  static _distM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   /** Strip surrounding quotes from a YAML scalar value */

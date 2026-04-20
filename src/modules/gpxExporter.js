@@ -249,7 +249,19 @@ export class GpxExporter {
         projected.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: trackPoints.length - 1 });
       }
 
-      projected.forEach(wp => {
+      // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
+      const unique = [];
+      for (const p of projected) {
+        if (unique.length > 0) {
+          const prev = unique[unique.length - 1];
+          if (this._distM(p.latlon[0], p.latlon[1], prev.latlon[0], prev.latlon[1]) < 1.0) {
+            continue; // Skip almost identical consecutive point
+          }
+        }
+        unique.push(p);
+      }
+
+      unique.forEach(wp => {
         waypoints.push(wp.latlon);
         segmentDates.push(wp.meta);
       });
@@ -262,7 +274,7 @@ export class GpxExporter {
     } else if (trackPoints.length > 0) {
       // No waypoints — sample evenly from track
       const step = Math.max(1, Math.floor(trackPoints.length / 10));
-      for (let i = 0; i < trackPoints.length; i += step) {
+      for (let i = 0; i < trackPoints.length - 1; i += step) {
         waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
         segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
       }

@@ -179,10 +179,54 @@ export class KmlExporter {
       }
     });
 
-    // Fallback: if no waypoints from Points but have track, sample some
-    if (waypoints.length === 0 && trackPoints.length > 0) {
+    if (trackPoints.length > 0 && waypoints.length > 0) {
+      // Map waypoints to projected structure for snapping logic
+      // Consistent with GpxExporter.parse (SNAP_M=100)
+      const SNAP_M = 100;
+      const trackPtsPlain = trackPoints.map(p => ({ lat: p.lat, lon: p.lon }));
+      
+      let projected = waypoints.map((wp, i) => ({
+        latlon: wp,
+        meta: segmentDates[i],
+        trackIdx: this._nearestTrackIndex(wp[0], wp[1], trackPtsPlain)
+      }));
+      projected.sort((a, b) => a.trackIdx - b.trackIdx);
+
+      // Prepend track start if the first waypoint is far from it
+      const trackStart = trackPoints[0];
+      if (this._distM(projected[0].latlon[0], projected[0].latlon[1], trackStart.lat, trackStart.lon) > SNAP_M) {
+        projected.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: 0 });
+      }
+
+      // Append track end if the last waypoint is far from it
+      const trackEnd = trackPoints[trackPoints.length - 1];
+      if (this._distM(projected[projected.length - 1].latlon[0], projected[projected.length - 1].latlon[1], trackEnd.lat, trackEnd.lon) > SNAP_M) {
+        projected.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null }, trackIdx: trackPoints.length - 1 });
+      }
+
+      // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
+      const unique = [];
+      for (const p of projected) {
+        if (unique.length > 0) {
+          const prev = unique[unique.length - 1];
+          if (this._distM(p.latlon[0], p.latlon[1], prev.latlon[0], prev.latlon[1]) < 1.0) {
+            continue; // Skip almost identical consecutive point
+          }
+        }
+        unique.push(p);
+      }
+
+      // Re-populate original arrays
+      waypoints.length = 0;
+      segmentDates.length = 0;
+      unique.forEach(p => {
+        waypoints.push(p.latlon);
+        segmentDates.push(p.meta);
+      });
+    } else if (waypoints.length === 0 && trackPoints.length > 0) {
+      // Fallback: if no waypoints but have track, sample some
       const step = Math.max(1, Math.floor(trackPoints.length / 10));
-      for (let i = 0; i < trackPoints.length; i += step) {
+      for (let i = 0; i < trackPoints.length - 1; i += step) {
         waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
         segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
       }
@@ -192,6 +236,25 @@ export class KmlExporter {
     }
 
     return { waypoints, trackPoints, segmentDates, intermediatePoints };
+  }
+
+  static _nearestTrackIndex(lat, lon, trackPoints) {
+    let minDist = Infinity;
+    let minIdx = 0;
+    for (let i = 0; i < trackPoints.length; i++) {
+      const d = this._distM(lat, lon, trackPoints[i].lat, trackPoints[i].lon);
+      if (d < minDist) { minDist = d; minIdx = i; }
+    }
+    return minIdx;
+  }
+
+  static _distM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   static _parseDescription(html) {
