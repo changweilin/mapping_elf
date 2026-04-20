@@ -22,7 +22,8 @@ export class YamlExporter {
     yaml += `points:\n`;
 
     wpData.forEach((pt) => {
-      yaml += `  - label: ${this._yamlStr(pt.label)}\n`;
+      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      yaml += `  - label: ${this._yamlStr(outLabel)}\n`;
       yaml += `    type: ${pt.isWaypoint ? 'waypoint' : 'interval'}\n`;
       if (pt.isReturn) yaml += `    return: true\n`;
       yaml += `    lat: ${pt.lat.toFixed(6)}\n`;
@@ -69,10 +70,12 @@ export class YamlExporter {
   static parse(yamlString) {
     const waypoints = [];
     const segmentDates = [];
+    const intermediatePoints = [];
 
     // Split into point blocks by the "  - label:" sentinel
     const lines = yamlString.split('\n');
     let inPoints = false;
+    let inWeather = false;
     let current = null;
 
     const commitPoint = () => {
@@ -80,15 +83,24 @@ export class YamlExporter {
       const lat = parseFloat(current.lat);
       const lng = parseFloat(current.lng);
       if (isNaN(lat) || isNaN(lng)) return;
-      // Only import waypoints as map waypoints; intervals are skipped
-      if (current.type !== 'interval') {
-        waypoints.push([lat, lng]);
-        segmentDates.push({
-          label: current.label || null,
-          date: current.date || null,
-          time: current.time || null
-        });
+      const rawLabel = current.label || '';
+      const hasIntervalPrefix = rawLabel.startsWith('*_');
+      const isInterval = current.type === 'interval' || hasIntervalPrefix;
+      const pointData = {
+        lat, lng,
+        label: hasIntervalPrefix ? rawLabel.slice(2) : rawLabel,
+        date: current.date || null,
+        time: current.time || null,
+        weather: current.weather || {},
+        windyUrl: current.windy || null,
+      };
+
+      if (isInterval) {
+        intermediatePoints.push(pointData);
+        return;
       }
+      waypoints.push([lat, lng]);
+      segmentDates.push(pointData);
     };
 
     for (const raw of lines) {
@@ -100,23 +112,63 @@ export class YamlExporter {
       // New point entry
       if (/^  - label:/.test(line)) {
         commitPoint();
+        inWeather = false;
         current = { label: this._parseScalar(line.replace(/^  - label:\s*/, '')) };
         continue;
       }
 
       if (!current) continue;
 
-      // Top-level point fields (4-space indent or "    key: val")
+      // Weather block start
+      if (/^    weather:/.test(line)) {
+        current.weather = {};
+        inWeather = true;
+        continue;
+      }
+
+      // Weather entries (6-space indent)
+      if (inWeather && /^      (\w+):\s*(.*)/.test(line)) {
+        const [, wKey, wVal] = line.match(/^      (\w+):\s*(.*)/);
+        current.weather[wKey] = this._parseScalar(wVal.replace(/\s*#.*$/, '').trim());
+        continue;
+      }
+
+      // Top-level point fields (4-space indent)
       const fieldMatch = line.match(/^    (\w+):\s*(.*)/);
       if (fieldMatch) {
+        inWeather = false;
         const [, key, val] = fieldMatch;
-        if (key !== 'weather') current[key] = this._parseScalar(val.replace(/\s*#.*$/, '').trim());
+        current[key] = this._parseScalar(val.replace(/\s*#.*$/, '').trim());
         continue;
       }
     }
     commitPoint();
+    
+    // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
+    const uniqueWaypoints = [];
+    const uniqueSegmentDates = [];
+    for (let i = 0; i < waypoints.length; i++) {
+        const wp = waypoints[i];
+        if (uniqueWaypoints.length > 0) {
+            const prev = uniqueWaypoints[uniqueWaypoints.length - 1];
+            if (this._distM(wp[0], wp[1], prev[0], prev[1]) < 1.0) {
+                continue; // Skip almost identical consecutive point
+            }
+        }
+        uniqueWaypoints.push(wp);
+        uniqueSegmentDates.push(segmentDates[i]);
+    }
 
-    return { waypoints, trackPoints: [], segmentDates };
+    return { waypoints: uniqueWaypoints, trackPoints: [], segmentDates: uniqueSegmentDates, intermediatePoints };
+  }
+
+  static _distM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   /** Strip surrounding quotes from a YAML scalar value */

@@ -261,6 +261,7 @@ html, body {
   left: 0;
   right: 0;
   bottom: var(--bottom-panel-height);
+  transition: bottom 0.3s ease;
   z-index: 1;
 }
 
@@ -333,42 +334,66 @@ html, body {
 
 /* Custom marker styles */
 .custom-waypoint-icon {
-  position: relative;
-  box-sizing: border-box;   /* border included in the 36/40px iconSize */
-  width: 36px;
-  height: 36px;
+  cursor: pointer;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  transition: opacity var(--transition-fast);
+  overflow: visible;
+  /* margin: removed to allow Leaflet iconAnchor to work */
+  box-sizing: content-box !important; /* Match Leaflet expectation */
+  font-size: 13px;
+  font-weight: 700;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.wp-icon-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   background: var(--accent-gradient);
   border: 3px solid rgba(255,255,255,0.9);
   box-shadow: 0 2px 8px rgba(0,0,0,0.4), var(--shadow-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--bg-primary);
-  font-size: 13px;
-  font-weight: 700;
-  transition: transform var(--transition-fast);
-  overflow: visible;
+  box-sizing: border-box !important;
 }
-.custom-waypoint-icon > span {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+
+.custom-waypoint-icon.is-selected .wp-icon-inner {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 5px rgba(251,191,36,0.35), var(--shadow-glow);
+  transform: scale(1.1);
+}
+
+.custom-waypoint-icon.is-dragging .wp-icon-inner {
+  border-color: #fbbf24;
+  animation: pulseRotate 0.8s infinite alternate;
+}
+
+.custom-waypoint-icon.start .wp-icon-inner {
+  background: #34d399;
+}
+
+.custom-waypoint-icon.end .wp-icon-inner {
+  background: #f87171;
+}
+
+.custom-waypoint-icon span {
+  position: relative;
   line-height: 1;
   pointer-events: none;
   user-select: none;
 }
-.custom-waypoint-icon:hover {
+.custom-waypoint-icon:hover .wp-icon-inner {
   transform: scale(1.2);
 }
-.custom-waypoint-icon.is-dragging {
-  animation: pulseRotate 0.8s infinite alternate;
-  border-color: #fbbf24;
-  z-index: 1000 !important;
-  cursor: grabbing;
-}
 .custom-waypoint-icon.is-selected {
-  border-color: #fbbf24;
-  box-shadow: 0 0 0 5px rgba(251,191,36,0.35), var(--shadow-glow);
-  transform: scale(1.25);
   z-index: 900 !important;
 }
 
@@ -389,34 +414,37 @@ html, body {
   to { transform: scale(1.3); box-shadow: 0 0 25px #fbbf24; }
 }
 
-.custom-waypoint-icon.start {
-  background: #34d399;
-  width: 40px;
-  height: 40px;
-}
-.custom-waypoint-icon.end {
-  background: #f87171;
-  width: 40px;
-  height: 40px;
-}
+
 
 /* Intermediate (km-interval) markers — non-interactive, smaller */
 .intermediate-point-icon {
-  position: relative;
+  cursor: pointer;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  /* margin: removed to allow Leaflet iconAnchor to work */
+  box-sizing: content-box !important;
+  overflow: visible;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.intermediate-point-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
   border-radius: 50%;
-  background: rgba(71, 85, 105, 0.88);
   border: 2px solid rgba(255,255,255,0.65);
   box-shadow: 0 1px 5px rgba(0,0,0,0.35);
-  color: #e2e8f0;
+  box-sizing: border-box !important;
   font-size: 9px;
   font-weight: 700;
-  pointer-events: none;
-  overflow: visible;
+  color: #e2e8f0;
 }
 
 .elevation-hover-marker {
@@ -426,6 +454,24 @@ html, body {
   background: #fbbf24;
   border: 2px solid white;
   box-shadow: 0 0 12px rgba(251,191,36,0.5);
+}
+
+.marker-external-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: rgba(0,0,0,0.65);
+  padding: 3px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ======== Side Panel ======== */
@@ -444,7 +490,7 @@ html, body {
   overflow-y: auto;
   overflow-x: hidden;
   transform: translateX(100%);
-  transition: transform var(--transition-smooth);
+  transition: transform var(--transition-smooth), bottom 0.3s ease;
   box-shadow: var(--shadow-lg);
 }
 .side-panel.open {
@@ -1015,6 +1061,7 @@ html, body {
 .pace-checks-row {
   display: flex;
   gap: 8px;
+  margin-top: 8px;
   margin-bottom: 8px;
 }
 
@@ -1215,6 +1262,34 @@ html, body {
   background: rgba(255,255,255,0.02);
   border: 1px solid var(--border);
   overflow: hidden;
+  transition: height 0.3s ease;
+}
+.elevation-chart-container.collapsed {
+  height: 32px;
+}
+.chart-toggle-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(15, 17, 23, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #a1a1aa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: all var(--transition-fast);
+}
+.chart-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+.elevation-chart-container.collapsed .chart-toggle-btn svg {
+  transform: rotate(180deg);
 }
 .elevation-chart-container canvas {
   width: 100% !important;
@@ -1864,7 +1939,12 @@ html, body {
 }
 
 .bp-chart-row .elevation-chart-container {
-  height: 130px;
+  height: 140px;
+  transition: height 0.3s ease;
+}
+
+.bp-chart-row .elevation-chart-container.collapsed {
+  height: 32px;
 }
 
 .bp-weather-header {
@@ -1876,18 +1956,25 @@ html, body {
   border-top: 1px solid var(--border);
 }
 
-/* Corner cell (frozen top-left) — fetch + day/hour adj buttons */
+/* Corner cell (frozen top-left) — fetch + day/hour adj buttons.
+   Heights / paddings mirror .wt-col-head so each row aligns with its
+   counterpart (label ↔ fetch, date input ↔ 日, time select ↔ 時). */
 .wt-label-cell.wt-th {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
   padding: 4px 4px;
 }
 
 .wt-ctrl-fetch {
-  font-size: 10px;
-  padding: 2px 3px;
+  flex: 0 0 auto;
+  height: 26px;
+  margin-bottom: 3px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 4px;
   border-radius: 3px;
   border: 1px solid var(--accent-primary);
   background: rgba(110, 231, 183, 0.08);
@@ -1896,6 +1983,12 @@ html, body {
   white-space: nowrap;
   text-align: center;
   transition: background 0.15s;
+}
+.wt-ctrl-fetch-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
 }
 .wt-ctrl-fetch:hover { background: rgba(110, 231, 183, 0.2); }
 .wt-ctrl-fetch:disabled {
@@ -1906,7 +1999,12 @@ html, body {
 .wt-ctrl-adj-row {
   display: flex;
   align-items: center;
-  gap: 1px;
+  justify-content: center;
+  gap: 2px;
+  height: 24px;
+}
+.wt-ctrl-adj-row + .wt-ctrl-adj-row {
+  margin-top: 3px;
 }
 
 .wt-ctrl-unit {
@@ -1914,6 +2012,28 @@ html, body {
   text-align: center;
   font-size: 9px;
   color: var(--text-muted);
+}
+
+.wt-ctrl-now {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  padding: 0 2px;
+  font-size: 10px;
+  line-height: 1;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  transition: background 0.15s, color 0.15s;
+}
+.wt-ctrl-now:hover {
+  background: var(--accent-primary);
+  color: #000;
+  border-color: var(--accent-primary);
 }
 
 .wt-ctrl-adj {
@@ -2014,20 +2134,30 @@ html, body {
 }
 
 .wt-th.wt-label-cell {
-  background: var(--bg-secondary);
-  z-index: 3;
+  background: var(--bg-tertiary);
+  z-index: 5;
 }
 
 .wt-col-head {
   text-align: center;
-  vertical-align: top;
-  padding: 5px 4px 4px;
+  vertical-align: middle;
+  padding: 4px 4px;
   background: var(--bg-tertiary);
-  border-bottom: 2px solid rgba(110, 231, 183, 0.2);
-  border-top: 2px solid transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   position: sticky;
-  top: 0;
   z-index: 2;
+}
+
+.wt-header-row-label th { top: 0; }
+.wt-header-row-date th  { top: 38px; }
+.wt-header-row-time th  { top: 70px; }
+
+.wt-header-row-label .wt-label-cell { top: 0; }
+.wt-header-row-date .wt-label-cell  { top: 38px; }
+.wt-header-row-time .wt-label-cell  { top: 70px; }
+
+.wt-header-row-time .wt-col-head {
+  border-bottom: 2px solid rgba(110, 231, 183, 0.2);
 }
 /* Intermediate (non-waypoint) columns — subtle visual distinction */
 .wt-interval-col {
@@ -2051,9 +2181,8 @@ html, body {
 
 .wt-label-cell.wt-th {
   position: sticky;
-  top: 0;
   left: 0;
-  z-index: 3;
+  z-index: 10;
   background: var(--bg-tertiary);
 }
 
@@ -2380,6 +2509,13 @@ html, body {
 .export-option small {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* ======== Dynamic Layout Offsets ======== */
+/* (Removed dynamic offsets to keep map boundary fixed) */
+
+.bottom-panel {
+  transition: height 0.3s ease, transform var(--transition-smooth);
 }
 .modal-actions {
   display: flex;

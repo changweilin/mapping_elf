@@ -6,6 +6,8 @@
  *   { lat, lng, label, isWaypoint, isReturn, date, time,
  *     weather: { key: { label, value } } }
  */
+import { orderWaypointsAlongTrack } from './utils.js';
+
 export class KmlExporter {
   /**
    * @param {Array}    wpData      - per-column export data (waypoints + interval points)
@@ -54,8 +56,9 @@ export class KmlExporter {
         ? (pt.isReturn ? '#wpReturn' : '#wpGoing')
         : '#wpInterval';
       const desc = this._buildDescription(pt);
+      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
       kml += `    <Placemark>
-      <name>${this._esc(pt.label)}</name>
+      <name>${this._esc(outLabel)}</name>
       <description><![CDATA[${desc}]]></description>
       <styleUrl>${styleId}</styleUrl>
       <Point>
@@ -122,29 +125,50 @@ export class KmlExporter {
     const waypoints = [];
     const trackPoints = [];
     const segmentDates = [];
+    const intermediatePoints = [];
 
+    let fileOrderCounter = 0;
     doc.querySelectorAll('Placemark').forEach(pm => {
       const styleUrl = pm.querySelector('styleUrl')?.textContent?.trim() || '';
       const pointEl = pm.querySelector('Point');
       const lineEl  = pm.querySelector('LineString');
 
       if (pointEl) {
-        // Skip interval annotation points
-        if (styleUrl === '#wpInterval') return;
-
         const coordsText = pointEl.querySelector('coordinates')?.textContent?.trim() || '';
-        // KML coordinates: lng,lat[,alt]
         const [lngStr, latStr] = coordsText.split(',');
         const lat = parseFloat(latStr);
         const lng = parseFloat(lngStr);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          waypoints.push([lat, lng]);
-          segmentDates.push({
-            label: pm.querySelector('name')?.textContent?.trim() || null,
-            date: null,
-            time: null
+        if (isNaN(lat) || isNaN(lng)) return;
+
+        const description = pm.querySelector('description')?.textContent || '';
+        const meta = this._parseDescription(description);
+
+        const rawName = pm.querySelector('name')?.textContent?.trim() || '';
+        const hasIntervalStyle = styleUrl === '#wpInterval';
+        const hasIntervalPrefix = rawName.startsWith('*_');
+        const label = hasIntervalPrefix ? rawName.slice(2) : rawName;
+
+        if (hasIntervalStyle || hasIntervalPrefix) {
+          intermediatePoints.push({
+            lat, lng, label,
+            date: meta.date || null,
+            time: meta.time || null,
+            weather: meta.weather,
+            windyUrl: meta.windyUrl || null,
+            fileOrder: fileOrderCounter++,
           });
+          return;
         }
+
+        waypoints.push([lat, lng]);
+        segmentDates.push({
+          label: rawName || null,
+          date: meta.date || null,
+          time: meta.time || null,
+          weather: meta.weather,
+          windyUrl: meta.windyUrl || null,
+          fileOrder: fileOrderCounter++,
+        });
       } else if (lineEl) {
         // Route LineString → track points
         const coordsText = lineEl.querySelector('coordinates')?.textContent?.trim() || '';
@@ -160,19 +184,97 @@ export class KmlExporter {
       }
     });
 
-    // Fallback: if no waypoints from Points but have track, sample some
-    if (waypoints.length === 0 && trackPoints.length > 0) {
+    if (trackPoints.length > 0 && waypoints.length > 0) {
+      // orderWaypointsAlongTrack walks mileage forward-only in file order so
+      // out-and-back revisits stay distinct. Waypoints whose best forward
+      // match is too far get deferred to a second pass and re-inserted by
+      // mileage with `inserted: true`; we mark those labels with a `*`.
+      const SNAP_M = 100;
+      const trackCoords = trackPoints.map(p => [p.lat, p.lon]);
+      const orderInfo = orderWaypointsAlongTrack(waypoints, trackCoords);
+      let ordered = orderInfo.map(({ index, inserted }) => {
+        const meta = inserted && segmentDates[index].label
+          ? { ...segmentDates[index], label: segmentDates[index].label + '*' }
+          : segmentDates[index];
+        return { latlon: waypoints[index], meta };
+      });
+
+      // Prepend track start if the first waypoint is far from it
+      const trackStart = trackPoints[0];
+      if (this._distM(ordered[0].latlon[0], ordered[0].latlon[1], trackStart.lat, trackStart.lon) > SNAP_M) {
+        ordered.unshift({ latlon: [trackStart.lat, trackStart.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null } });
+      }
+
+      // Append track end if the last waypoint is far from it
+      const trackEnd = trackPoints[trackPoints.length - 1];
+      if (this._distM(ordered[ordered.length - 1].latlon[0], ordered[ordered.length - 1].latlon[1], trackEnd.lat, trackEnd.lon) > SNAP_M) {
+        ordered.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null } });
+      }
+
+      // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
+      const unique = [];
+      for (const p of ordered) {
+        if (unique.length > 0) {
+          const prev = unique[unique.length - 1];
+          if (this._distM(p.latlon[0], p.latlon[1], prev.latlon[0], prev.latlon[1]) < 1.0) {
+            continue; // Skip almost identical consecutive point
+          }
+        }
+        unique.push(p);
+      }
+
+      // Re-populate original arrays
+      waypoints.length = 0;
+      segmentDates.length = 0;
+      unique.forEach(p => {
+        waypoints.push(p.latlon);
+        segmentDates.push(p.meta);
+      });
+    } else if (waypoints.length === 0 && trackPoints.length > 0) {
+      // Fallback: if no waypoints but have track, sample some
       const step = Math.max(1, Math.floor(trackPoints.length / 10));
-      for (let i = 0; i < trackPoints.length; i += step) {
+      for (let i = 0; i < trackPoints.length - 1; i += step) {
         waypoints.push([trackPoints[i].lat, trackPoints[i].lon]);
-        segmentDates.push({ date: null, time: null });
+        segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
       }
       const last = trackPoints[trackPoints.length - 1];
       waypoints.push([last.lat, last.lon]);
-      segmentDates.push({ date: null, time: null });
+      segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null });
     }
 
-    return { waypoints, trackPoints, segmentDates };
+    return { waypoints, trackPoints, segmentDates, intermediatePoints };
+  }
+
+  static _distM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  static _parseDescription(html) {
+    const res = { weather: {} };
+    if (!html) return res;
+    // Basic extraction from the HTML table string (avoiding full DOMParser for speed if possible)
+    // but DOMParser is safer for arbitrary HTML.
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    doc.querySelectorAll('tr').forEach(tr => {
+      const tds = tr.querySelectorAll('td');
+      if (tds.length === 2) {
+        const key = tds[0].textContent.trim();
+        const val = tds[1].textContent.trim();
+        if (key === '日期') res.date = val;
+        else if (key === '時間') res.time = val;
+        else res.weather[key] = val; // Store by label; main.js will map back to keys
+      } else if (tds.length === 1) {
+        const a = tds[0].querySelector('a');
+        if (a && a.textContent.includes('Windy')) res.windyUrl = a.href;
+      }
+    });
+    return res;
   }
 
   static download(kmlString, filename = 'mapping_elf_track.kml') {

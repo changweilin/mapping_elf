@@ -57,13 +57,13 @@
     </div>
     <div class="toolbar-center">
       <div class="layer-switcher" id="layer-switcher">
-        <button class="layer-btn active" data-layer="streets" id="btn-layer-streets" title="街道圖">
+        <button class="layer-btn" data-layer="streets" id="btn-layer-streets" title="街道圖">
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path d="M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z" fill="currentColor" opacity="0.9" />
           </svg>
           <span>街道</span>
         </button>
-        <button class="layer-btn" data-layer="topo" id="btn-layer-topo" title="地形圖">
+        <button class="layer-btn active" data-layer="topo" id="btn-layer-topo" title="地形圖">
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor"
               opacity="0.9" />
@@ -80,6 +80,11 @@
       </div>
     </div>
     <div class="toolbar-right">
+      <button class="tool-btn" id="btn-reset-defaults" title="全部回到預設">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 13c0-4.42-3.58-8-8-8zm-7 8c0 1.01.25 1.97.7 2.8l-1.46 1.46A7.93 7.93 0 0 1 4 13c0-4.42 3.58-8 8-8v3l5-5-5-5v3c-3.31 0-6 2.69-6 6z" fill="currentColor" />
+        </svg>
+      </button>
       <button class="tool-btn" id="btn-import-gpx" title="匯入路線（GPX / KML / YAML）">
         <svg viewBox="0 0 24 24" width="20" height="20">
           <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
@@ -128,6 +133,11 @@
         <div class="chart-empty-state" id="chart-empty">
           <p>新增路線後顯示高度剖面</p>
         </div>
+        <button id="btn-toggle-elevation" class="chart-toggle-btn" title="收縮/展開高度圖">
+          <svg viewBox="0 0 24 24" width="16" height="16">
+            <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" fill="currentColor"/>
+          </svg>
+        </button>
       </div>
     </div>
     <div class="bp-weather-scroll">
@@ -158,6 +168,13 @@
                 fill="currentColor" />
             </svg>
           </button>
+          <button class="icon-btn hidden" id="btn-replan-route" title="重新規劃路線">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path
+                d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"
+                fill="currentColor" />
+            </svg>
+          </button>
           <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
@@ -179,12 +196,15 @@
         </div>
       </div>
       <div class="nav-mode-row">
-        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="single" id="nav-mode-single"><span>單程</span></label>
-        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="roundtrip" id="nav-mode-roundtrip"><span>來回</span></label>
-        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="oloop" id="nav-mode-oloop"><span>O繞</span></label>
+        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="single"
+            id="nav-mode-single"><span>單程</span></label>
+        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="roundtrip"
+            id="nav-mode-roundtrip"><span>來回</span></label>
+        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="oloop"
+            id="nav-mode-oloop"><span>O繞</span></label>
       </div>
       <div class="segment-interval-row">
-        <label class="segment-interval-label">
+        <label class="segment-interval-label" title="在路線中插入中繼點(依距離或配速間隔),用於檢視沿途天氣與時程">
           <svg viewBox="0 0 24 24" width="13" height="13">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm0-4h-2V7h2v8z"
               fill="currentColor" />
@@ -192,14 +212,14 @@
           中繼點
         </label>
         <div class="interval-mode-controls">
-          <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
+        <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
             關</label>
           <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-distance"
               value="distance"> 距離</label>
           <input type="number" id="segment-interval-input" class="segment-interval-input" min="1" max="100" value="5"
             disabled>
           <span class="segment-interval-unit">km</span>
-          <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-pace" value="pace">
+          <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-pace" value="pace" checked>
             配速</label>
         </div>
       </div>
@@ -223,7 +243,7 @@
       </div>
       <div class="route-mode-selector" id="route-mode-selector">
         <label class="mode-option">
-          <input type="radio" name="route-mode" value="walking" checked />
+          <input type="radio" name="route-mode" value="walking" />
           <span class="mode-label">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
@@ -234,7 +254,7 @@
           </span>
         </label>
         <label class="mode-option">
-          <input type="radio" name="route-mode" value="hiking" />
+          <input type="radio" name="route-mode" value="hiking" checked />
           <span class="mode-label">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor" />
@@ -263,6 +283,16 @@
             </svg>
             駕車
           </span>
+        </label>
+      </div>
+      <div class="pace-checks-row">
+        <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
+          <input type="checkbox" id="import-auto-sort-enable">
+          <span>匯入自動排序</span>
+        </label>
+        <label class="pace-check-opt" title="匯入時,為沒有名稱的航點自動命名">
+          <input type="checkbox" id="import-auto-name-enable">
+          <span>匯入自動命名</span>
         </label>
       </div>
     </section>
@@ -302,11 +332,11 @@
       </div>
       <!-- 按段重算 + 嚴格線性時間 並排 -->
       <div class="pace-checks-row">
-        <label class="pace-check-opt">
+        <label class="pace-check-opt" title="勾選後,各段中繼點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
           <input type="checkbox" id="pace-per-segment-enable">
           <span>按段重算</span>
         </label>
-        <label class="pace-check-opt">
+        <label class="pace-check-opt" title="強制航點時間沿路線單調遞增,避免後段時間早於前段">
           <input type="checkbox" id="strict-linear-enable">
           <span>嚴格線性</span>
         </label>
@@ -461,12 +491,14 @@
       <div class="section-header settings-section-header" id="settings-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">
-            <path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/>
+            <path
+              d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+              fill="currentColor" />
           </svg>
           設置
         </h3>
         <svg class="settings-chevron" viewBox="0 0 24 24" width="16" height="16">
-          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor"/>
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
         </svg>
       </div>
       <div class="settings-body" id="settings-body">
@@ -557,6 +589,24 @@
           <input type="radio" name="export-fmt" value="yaml">
           <span>YAML <small>（純文字天氣計畫，含 Windy 連結）</small></span>
         </label>
+        <label class="export-option">
+          <input type="radio" name="export-fmt" value="melmap">
+          <span>.melmap 離線地圖包 <small>（含路線、圖磚、偏好）</small></span>
+        </label>
+      </div>
+      <div id="melmap-sub-options" class="export-options" style="display:none; margin-left: 24px; border-left: 2px solid var(--border, #ccc); padding-left: 12px;">
+        <label class="export-option">
+          <input type="checkbox" id="mappack-inc-route" checked>
+          <span>路線與航點 <small>（GPX,含高度與天氣）</small></span>
+        </label>
+        <label class="export-option">
+          <input type="checkbox" id="mappack-inc-tiles" checked>
+          <span>當前圖層圖磚 <small id="mappack-tiles-info"></small></span>
+        </label>
+        <label class="export-option">
+          <input type="checkbox" id="mappack-inc-state">
+          <span>個人偏好 <small>（天氣快取、配速參數、UI 設定）</small></span>
+        </label>
       </div>
       <div class="modal-actions">
         <button class="btn-secondary" id="btn-export-cancel">取消</button>
@@ -565,11 +615,37 @@
     </div>
   </div>
 
+  <!-- Map Pack Import Modal -->
+  <div id="mappack-import-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 class="modal-title">匯入離線地圖包</h3>
+      <div class="export-options" id="mappack-import-options">
+        <label class="export-option">
+          <input type="checkbox" id="mappack-restore-route" checked>
+          <span>路線與航點</span>
+        </label>
+        <label class="export-option">
+          <input type="checkbox" id="mappack-restore-tiles" checked>
+          <span>圖磚 <small id="mappack-import-tiles-info"></small></span>
+        </label>
+        <label class="export-option">
+          <input type="checkbox" id="mappack-restore-state">
+          <span>個人偏好</span>
+        </label>
+      </div>
+      <div id="mappack-import-meta" style="font-size: 12px; color: var(--text-dim, #888); margin: 8px 0;"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="btn-mappack-import-cancel">取消</button>
+        <button class="btn-primary" id="btn-mappack-import-confirm">套用</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Notification Container -->
   <div id="notifications" class="notifications"></div>
 
-  <!-- Hidden file input for GPX import -->
-  <input type="file" id="gpx-file-input" accept=".gpx,.kml,.yaml,.yml" style="display:none" />
+  <!-- Hidden file input for route / .melmap import -->
+  <input type="file" id="gpx-file-input" accept=".gpx,.kml,.yaml,.yml,.melmap,.zip" style="display:none" />
 
   <script type="module" src="./src/main.js"></script>
 </body>

@@ -51,11 +51,12 @@ export class MapManager {
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
     this.waypointColors = [];  // Gradient color strings per waypoint index
+    this.waypointLabels = [];  // Custom labels for each waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
     this.gradientPolylines = []; // Gradient chunks for selected route
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
-    this.currentLayerName = 'streets';
+    this.currentLayerName = 'topo';
     this.intermediateMarkers = [];
     this.ignoreMapClick = false;
     this.dragLine = null;
@@ -71,7 +72,7 @@ export class MapManager {
     for (const [name, config] of Object.entries(TILE_LAYERS)) {
       this.tileLayers[name] = L.tileLayer(config.url, config.options);
     }
-    this.tileLayers.streets.addTo(this.map);
+    this.tileLayers.topo.addTo(this.map);
 
     this.map.on('click', (e) => {
       if (this.ignoreMapClick) return;
@@ -386,6 +387,11 @@ export class MapManager {
     this._updateMarkerIcons();
   }
 
+  setWaypointLabels(labels) {
+    this.waypointLabels = labels || [];
+    this._updateMarkerIcons();
+  }
+
   /** Set gradient colors (one per waypoint) so icons match the elevation profile. */
   setWaypointColors(colors) {
     this.waypointColors = colors || [];
@@ -531,16 +537,17 @@ export class MapManager {
       const tLinear = totalDistM > 0 ? Math.min(1, pt.cumDistM / totalDistM) : 0;
       const t = this.isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
       const color = interpolateRouteColor(t);
+      const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
-        html: `<span>${km}</span>`,
+        html: `<div class="intermediate-point-inner" style="background: ${color};"></div>${labelHtml}`,
         iconSize: [22, 22],
         iconAnchor: [11, 11],
       });
-      const marker = L.marker([pt.lat, pt.lng], { icon, interactive: false }).addTo(this.map);
-      // Override the CSS background with the gradient color
-      const el = marker.getElement();
-      if (el) el.style.background = color;
+      const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
+      marker.on('click', () => {
+        if (this.onIntermediateSelect) this.onIntermediateSelect(pt.lat, pt.lng);
+      });
       this.intermediateMarkers.push(marker);
     });
   }
@@ -659,11 +666,14 @@ export class MapManager {
     const weatherHtml = weather ? `<div class="wp-weather-badge">${weather}</div>` : '';
 
     const size = cls ? 40 : 36;
+    const labelText = this.waypointLabels[index];
+    const externalLabel = labelText ? `<div class="marker-external-label">${labelText}</div>` : '';
+
     return L.divIcon({
       className: `custom-waypoint-icon ${cls}`,
-      html: `${weatherHtml}<span>${index + 1}</span>`,
+      html: `<div class="wp-icon-inner">${weatherHtml}<span>${index + 1}</span></div>${externalLabel}`,
       iconSize: [size, size],
-      iconAnchor: [size / 2, size],
+      iconAnchor: [size / 2, size / 2],
     });
   }
 
@@ -680,8 +690,11 @@ export class MapManager {
     if (!color) return;
     const el = marker.getElement();
     if (el) {
-      el.style.background = color;
-      el.style.setProperty('box-shadow', `0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${color}55`);
+      const inner = el.querySelector('.wp-icon-inner');
+      if (inner) {
+        inner.style.background = color;
+        inner.style.setProperty('box-shadow', `0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${color}55`);
+      }
     }
   }
 
