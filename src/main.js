@@ -2829,9 +2829,10 @@ function buildWeatherPoints() {
     }
   }
 
-  // Round-trip: mark return-leg interval points, add missing fallback midpoints,
-  // then add return waypoints (reversed, excluding turning point).
-  if (roundTripMode && !importedTrackMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
+  // Round-trip / O-loop: mark return-leg interval points, add missing fallback
+  // midpoints, then add return waypoints (reversed for round-trip; just the
+  // start point for O-loop).
+  if ((roundTripMode || oLoopMode) && !importedTrackMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
     // Distance to the turnaround point (last outbound waypoint).
     const oneWayDistM = wpCumDist[wps.length - 1];
 
@@ -3054,11 +3055,6 @@ function renderWeatherPanel() {
   html += `</colgroup><thead>`;
 
   const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
-  const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
-  // Return-leg cum range for red→purple→blue gradient
-  const returnCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
-  const retMin = returnCums.length ? Math.min(...returnCums) : 0;
-  const retMax = returnCums.length ? Math.max(...returnCums) : 0;
 
   // Track colTimes for Windy links later
   const colTimes = [];
@@ -3073,15 +3069,7 @@ function renderWeatherPanel() {
     </th>`;
 
   weatherPoints.forEach((pt, i) => {
-    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
-    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-    let gradColor;
-    if (pt.isReturn && retMax > retMin) {
-      const tRet = Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)));
-      gradColor = interpolateReturnColor(tRet);
-    } else {
-      gradColor = interpolateRouteColor(t);
-    }
+    const gradColor = _weatherPointGradColor(pt);
     const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
 
     let thClass = 'wt-col-head wt-th';
@@ -3465,6 +3453,38 @@ async function fetchAllWeatherData() {
 
 // =========== Elevation Markers ===========
 
+/**
+ * Gradient color for a weather-table point, matching the map polyline:
+ *   - return-leg points → red→purple→blue across return cum range
+ *   - outbound points (when a return exists) → teal→red across outbound max
+ *   - no-return modes → legacy (round-trip folds; straight line linear)
+ */
+function _weatherPointGradColor(pt) {
+  if (!pt) return interpolateRouteColor(0);
+  const returnCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
+  const hasReturn = returnCums.length > 0;
+  if (pt.isReturn && hasReturn) {
+    const retMin = Math.min(...returnCums);
+    const retMax = Math.max(...returnCums);
+    const tRet = retMax > retMin
+      ? Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)))
+      : 0;
+    return interpolateReturnColor(tRet);
+  }
+  if (hasReturn) {
+    const fwdCums = weatherPoints.filter(p => !p.isReturn && typeof p._cum === 'number').map(p => p._cum);
+    const outboundMax = fwdCums.length ? Math.max(...fwdCums) : 0;
+    const t = outboundMax > 0
+      ? Math.max(0, Math.min(1, (pt._cum ?? 0) / outboundMax))
+      : 0;
+    return interpolateRouteColor(t);
+  }
+  const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+  const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
+  const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+  return interpolateRouteColor(t);
+}
+
 function highlightWeatherColumn(colIdx) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
@@ -3478,21 +3498,7 @@ function highlightWeatherColumn(colIdx) {
   const pt = weatherPoints[colIdx];
   let bgStr = '';
   if (pt) {
-    const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
-    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
-    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-    let base;
-    if (pt.isReturn) {
-      const retCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
-      const retMin = retCums.length ? Math.min(...retCums) : 0;
-      const retMax = retCums.length ? Math.max(...retCums) : 0;
-      const tRet = retMax > retMin
-        ? Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)))
-        : 0;
-      base = interpolateReturnColor(tRet);
-    } else {
-      base = interpolateRouteColor(t);
-    }
+    const base = _weatherPointGradColor(pt);
     bgStr = base.replace('rgb', 'rgba').replace(')', ', 0.15)');
   }
 
@@ -3545,22 +3551,7 @@ function highlightPoint(colIdx) {
     mapManager.clearHoverMarker();
   } else {
     mapManager.clearWaypointHighlight();
-    const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
-    const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
-    let color;
-    if (pt.isReturn) {
-      const retCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
-      const retMin = retCums.length ? Math.min(...retCums) : 0;
-      const retMax = retCums.length ? Math.max(...retCums) : 0;
-      const tRet = retMax > retMin
-        ? Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)))
-        : 0;
-      color = interpolateReturnColor(tRet);
-    } else {
-      const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-      color = interpolateRouteColor(t);
-    }
-    mapManager.showHoverMarker(pt.lat, pt.lng, color);
+    mapManager.showHoverMarker(pt.lat, pt.lng, _weatherPointGradColor(pt));
   }
 
   // 4. Side panel — highlight the outgoing waypoint item row
