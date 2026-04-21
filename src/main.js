@@ -634,13 +634,15 @@ async function doExportMapPack(filenameBase) {
 let _pendingMappack = null;
 
 function _closeMappackImportModal() {
+  document.body.classList.remove('modal-open');
   mappackImportModal?.classList.add('hidden');
   _pendingMappack = null;
 }
 
-mappackImportModal?.addEventListener('click', (e) => {
-  if (e.target === mappackImportModal) _closeMappackImportModal();
-});
+// Accidental backdrop click-to-close removed to "lock" UI.
+// mappackImportModal?.addEventListener('click', (e) => {
+//   if (e.target === mappackImportModal) _closeMappackImportModal();
+// });
 document.getElementById('btn-mappack-import-cancel')?.addEventListener('click', _closeMappackImportModal);
 
 async function openMappackImportModal(file) {
@@ -672,6 +674,7 @@ async function openMappackImportModal(file) {
       meta.textContent = `來源:${parsed.manifest.generator || '—'} · 建立:${t}`;
     }
 
+    document.body.classList.add('modal-open');
     mappackImportModal.classList.remove('hidden');
   } catch (err) {
     showNotification(err.message || '檔案解析失敗', 'error');
@@ -693,7 +696,7 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
   }
 
   const parsed = _pendingMappack;
-  mappackImportModal.classList.add('hidden');
+  _closeMappackImportModal(); // Centralized close path handles body class removal
 
   // Use the global progress variables defined at the top of the file
   if (progressContainer) progressContainer.classList.remove('hidden');
@@ -1329,6 +1332,7 @@ function openExportModal() {
     const est = _estimateTileCountForMapPack();
     info.textContent = est.count > 0 ? `(約 ${est.count} 張,${est.layer})` : '';
   }
+  document.body.classList.add('modal-open');
   exportModal.classList.remove('hidden');
 }
 
@@ -1354,12 +1358,15 @@ function buildExportFilenameBase() {
 }
 
 function closeExportModal() {
+  document.body.classList.remove('modal-open');
   exportModal.classList.add('hidden');
 }
 
-exportModal?.addEventListener('click', (e) => {
-  if (e.target === exportModal) closeExportModal();
-});
+// Accidental backdrop click-to-close removed per user request to "lock" interaction.
+// Modal must be closed via explicit Confirm / Cancel buttons.
+// exportModal?.addEventListener('click', (e) => {
+//   if (e.target === exportModal) closeExportModal();
+// });
 btnExportCancel?.addEventListener('click', closeExportModal);
 btnExportConfirm?.addEventListener('click', () => {
   const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
