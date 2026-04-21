@@ -88,15 +88,24 @@ async function whitenSvg(filePath) {
 
     let shouldClearFill = false;
     let shouldClearStroke = false;
+    let shouldConvertFill = false;
+    let shouldConvertStroke = false;
+
+    const OWL_BODY_COLOR = "#2E3658";
 
     if (fillMatch) {
       const hex = fillMatch[1].toUpperCase();
       if (isNearWhite(hex) || isNearBlack(hex)) {
         shouldClearFill = true;
-      } else if (isMappingOwl && isPalePattern(hex)) {
+      } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
         const bbox = getPathBoundingBox(dMatch ? dMatch[1] : "");
         if (isInsideTargetRegion(bbox)) {
-          shouldClearFill = true;
+          if (isPalePattern(hex)) {
+            shouldClearFill = true;
+          } else {
+            // It's a deep color residue in the wing area, convert to body color
+            shouldConvertFill = true;
+          }
         }
       }
       if (shouldClearFill) removed.add(hex);
@@ -106,10 +115,14 @@ async function whitenSvg(filePath) {
       const hex = strokeMatch[1].toUpperCase();
       if (isNearWhite(hex) || isNearBlack(hex)) {
         shouldClearStroke = true;
-      } else if (isMappingOwl && isPalePattern(hex)) {
+      } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
         const bbox = getPathBoundingBox(dMatch ? dMatch[1] : "");
         if (isInsideTargetRegion(bbox)) {
-          shouldClearStroke = true;
+          if (isPalePattern(hex)) {
+            shouldClearStroke = true;
+          } else {
+            shouldConvertStroke = true;
+          }
         }
       }
       if (shouldClearStroke) removed.add(hex);
@@ -118,6 +131,8 @@ async function whitenSvg(filePath) {
     let tag = m;
     if (shouldClearFill) tag = tag.replace(/fill="(#[0-9a-fA-F]{6})"/, 'fill="none"');
     if (shouldClearStroke) tag = tag.replace(/stroke="(#[0-9a-fA-F]{6})"/, 'stroke="none"');
+    if (shouldConvertFill) tag = tag.replace(/fill="(#[0-9a-fA-F]{6})"/, `fill="${OWL_BODY_COLOR}"`);
+    if (shouldConvertStroke) tag = tag.replace(/stroke="(#[0-9a-fA-F]{6})"/, `stroke="${OWL_BODY_COLOR}"`);
     return tag;
   });
 
