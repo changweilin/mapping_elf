@@ -3639,12 +3639,112 @@ async function init() {
     );
   }
 
+  // Keyword search (Nominatim forward-geocoding + direct lat,lng parser)
+  initKeywordSearch();
+
   // Map action buttons
   document.getElementById('btn-fit-route')?.addEventListener('click', () => mapManager.fitToRoute());
 
   setTimeout(() => {
     loadingScreen.classList.add('hidden');
   }, 800);
+}
+
+// =========== Keyword Search (forward geocoding) ===========
+/**
+ * Parse "lat,lng" style input (also supports "N 24.5 E 121.5" loosely).
+ * Returns [lat, lng] when both in valid ranges, otherwise null.
+ */
+function parseLatLngInput(q) {
+  const m = q.match(/(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!m) return null;
+  const lat = parseFloat(m[1]);
+  const lng = parseFloat(m[2]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return [lat, lng];
+}
+
+async function searchByKeyword(query) {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1`;
+  const res = await fetch(url, {
+    headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
+  return res.json();
+}
+
+function renderSearchResults(items, resultsEl) {
+  resultsEl.innerHTML = '';
+  if (!items.length) {
+    resultsEl.innerHTML = '<div class="search-result-empty">查無結果</div>';
+    resultsEl.style.display = '';
+    return;
+  }
+  items.forEach(it => {
+    const row = document.createElement('div');
+    row.className = 'search-result-item';
+    const lat = parseFloat(it.lat), lng = parseFloat(it.lon);
+    const name = it.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    row.innerHTML = `
+      <div class="search-result-text">
+        <div class="search-result-name" title="${name.replace(/"/g, '&quot;')}">${name}</div>
+        <div class="search-result-coord">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+      </div>
+      <button class="search-result-add" title="加入為航點">+ 航點</button>
+    `;
+    row.addEventListener('click', (e) => {
+      if (e.target.classList.contains('search-result-add')) return;
+      mapManager.map.setView([lat, lng], Math.max(mapManager.map.getZoom(), 14));
+    });
+    row.querySelector('.search-result-add').addEventListener('click', (e) => {
+      e.stopPropagation();
+      mapManager.addWaypoint(lat, lng);
+      mapManager.map.setView([lat, lng], Math.max(mapManager.map.getZoom(), 14));
+      showNotification('已加入航點', 'success');
+    });
+    resultsEl.appendChild(row);
+  });
+  resultsEl.style.display = '';
+}
+
+function initKeywordSearch() {
+  const input = document.getElementById('search-input');
+  const btn = document.getElementById('btn-search');
+  const resultsEl = document.getElementById('search-results');
+  if (!input || !btn || !resultsEl) return;
+
+  const doSearch = async () => {
+    const q = input.value.trim();
+    if (!q) { resultsEl.style.display = 'none'; return; }
+
+    // Direct coord input — skip network
+    const coords = parseLatLngInput(q);
+    if (coords) {
+      renderSearchResults([{
+        lat: coords[0], lon: coords[1],
+        display_name: `座標: ${coords[0].toFixed(5)}, ${coords[1].toFixed(5)}`,
+      }], resultsEl);
+      return;
+    }
+
+    resultsEl.innerHTML = '<div class="search-result-loading">搜尋中…</div>';
+    resultsEl.style.display = '';
+    try {
+      const items = await searchByKeyword(q);
+      renderSearchResults(items, resultsEl);
+    } catch (err) {
+      console.error('Keyword search failed:', err);
+      resultsEl.innerHTML = '<div class="search-result-empty">搜尋失敗,請稍後再試</div>';
+    }
+  };
+
+  btn.addEventListener('click', doSearch);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+    else if (e.key === 'Escape') { resultsEl.style.display = 'none'; }
+  });
 }
 
 function resetToDefaults() {
