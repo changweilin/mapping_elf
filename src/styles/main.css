@@ -541,6 +541,10 @@ html, body {
   cursor: pointer;
   transition: all var(--transition-fast);
 }
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 .icon-btn:hover {
   background: rgba(255,255,255,0.1);
   color: var(--text-primary);
