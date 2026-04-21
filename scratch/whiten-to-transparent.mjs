@@ -28,16 +28,88 @@ function isNearBlack(hex) {
   return (max - min) <= 40 && avg <= 40;
 }
 
+function isPalePattern(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const avg = (r + g + b) / 3;
+  // Patterns are light (avg >= 150) and low saturation (max-min <= 60)
+  return (max - min) <= 60 && avg >= 150;
+}
+
+function getPathBoundingBox(d) {
+  const coords = d.match(/[-+]?[0-9]*\.?[0-9]+/g);
+  if (!coords) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < coords.length; i += 2) {
+      if (coords[i+1] === undefined) break;
+      const x = parseFloat(coords[i]);
+      const y = parseFloat(coords[i+1]);
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+function isInsideTargetRegion(bbox) {
+  if (!bbox) return false;
+  // Region definitions based on mapping_owl_cursor.svg (viewBox="0 0 2304 1838")
+  const LEFT_WING = bbox.maxX < 900;
+  const RIGHT_WING = bbox.minX > 1400;
+  const HEAD_TOP = bbox.maxY < 550 && bbox.minX > 750 && bbox.maxX < 1550;
+  
+  return LEFT_WING || RIGHT_WING || HEAD_TOP;
+}
+
 async function whitenSvg(filePath) {
   const before = await fs.readFile(filePath, 'utf8');
   const removed = new Set();
-  const after = before.replace(/(fill|stroke)="(#[0-9a-fA-F]{6})"/g, (m, attr, hex) => {
-    if (isNearWhite(hex) || isNearBlack(hex)) {
-      removed.add(hex.toUpperCase());
-      return `${attr}="none"`;
+  const isMappingOwl = filePath.includes('mapping_owl_cursor.svg');
+
+  const after = before.replace(/<path([^>]+)>/g, (m, attrs) => {
+    const fillMatch = attrs.match(/fill="(#[0-9a-fA-F]{6})"/);
+    const strokeMatch = attrs.match(/stroke="(#[0-9a-fA-F]{6})"/);
+    const dMatch = attrs.match(/d="([^"]+)"/);
+
+    let shouldClearFill = false;
+    let shouldClearStroke = false;
+
+    if (fillMatch) {
+      const hex = fillMatch[1].toUpperCase();
+      if (isNearWhite(hex) || isNearBlack(hex)) {
+        shouldClearFill = true;
+      } else if (isMappingOwl && isPalePattern(hex)) {
+        const bbox = getPathBoundingBox(dMatch ? dMatch[1] : "");
+        if (isInsideTargetRegion(bbox)) {
+          shouldClearFill = true;
+        }
+      }
+      if (shouldClearFill) removed.add(hex);
     }
-    return m;
+
+    if (strokeMatch) {
+      const hex = strokeMatch[1].toUpperCase();
+      if (isNearWhite(hex) || isNearBlack(hex)) {
+        shouldClearStroke = true;
+      } else if (isMappingOwl && isPalePattern(hex)) {
+        const bbox = getPathBoundingBox(dMatch ? dMatch[1] : "");
+        if (isInsideTargetRegion(bbox)) {
+          shouldClearStroke = true;
+        }
+      }
+      if (shouldClearStroke) removed.add(hex);
+    }
+
+    let tag = m;
+    if (shouldClearFill) tag = tag.replace(/fill="(#[0-9a-fA-F]{6})"/, 'fill="none"');
+    if (shouldClearStroke) tag = tag.replace(/stroke="(#[0-9a-fA-F]{6})"/, 'stroke="none"');
+    return tag;
   });
+
   await fs.writeFile(filePath, after);
   console.log(`updated ${path.relative(root, filePath)} — removed [${[...removed].join(', ')}]`);
 }
