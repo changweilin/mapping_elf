@@ -2298,17 +2298,37 @@ function initWeatherControls() {
     const h = Math.round(entries[0]?.contentRect.height || 0);
     if (h > 0 && !panel._resizing)
       document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
-    // Redraw chart so it fills the container correctly after layout changes
-    requestAnimationFrame(() => elevationProfile?.chart?.resize());
+    // Redraw chart so it fills the container correctly after layout changes.
+    // Skip during active drag — chart.resize() is expensive and would be called
+    // on every pixel of movement, causing stutter. The drag-end path handles it.
+    if (!panel._resizing)
+      requestAnimationFrame(() => elevationProfile?.chart?.resize());
   }).observe(panel);
 
   if (!handle) return;
 
   // --- Drag-to-resize ---
-  const applyHeight = (clientY) => {
+  // rAF-coalesce pointer moves: multiple move events within a single frame are
+  // collapsed into one DOM write, which keeps the drag smooth under high-rate
+  // input (trackpads, high-Hz touch screens).
+  let pendingClientY = null;
+  let rafId = 0;
+  const flushHeight = () => {
+    rafId = 0;
+    if (pendingClientY == null) return;
+    const clientY = pendingClientY;
+    pendingClientY = null;
     const h = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - clientY));
     panel.style.height = `${h}px`;
     document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+  };
+  const scheduleHeight = (clientY) => {
+    pendingClientY = clientY;
+    if (!rafId) rafId = requestAnimationFrame(flushHeight);
+  };
+  const cancelPending = () => {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    pendingClientY = null;
   };
 
   // Mouse
@@ -2316,12 +2336,14 @@ function initWeatherControls() {
     e.preventDefault();
     panel._resizing = true;
     handle.classList.add('dragging');
-    const onMove = (ev) => applyHeight(ev.clientY);
+    const onMove = (ev) => scheduleHeight(ev.clientY);
     const onUp = () => {
+      cancelPending();
       panel._resizing = false;
       handle.classList.remove('dragging');
       savePanelRatio();
       mapManager.map.invalidateSize({ animate: false });
+      requestAnimationFrame(() => elevationProfile?.chart?.resize());
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -2334,12 +2356,14 @@ function initWeatherControls() {
     e.preventDefault();
     panel._resizing = true;
     handle.classList.add('dragging');
-    const onMove = (ev) => applyHeight(ev.touches[0].clientY);
+    const onMove = (ev) => scheduleHeight(ev.touches[0].clientY);
     const onEnd = () => {
+      cancelPending();
       panel._resizing = false;
       handle.classList.remove('dragging');
       savePanelRatio();
       mapManager.map.invalidateSize({ animate: false });
+      requestAnimationFrame(() => elevationProfile?.chart?.resize());
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
     };
