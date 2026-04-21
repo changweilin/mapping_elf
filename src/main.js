@@ -577,7 +577,7 @@ function _estimateTileCountForMapPack() {
   return { count: total, layer: mapManager.currentLayerName };
 }
 
-async function doExportMapPack(filenameBase) {
+async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
   const includeRoute = document.getElementById('mappack-inc-route').checked;
   const includeTiles = document.getElementById('mappack-inc-tiles').checked;
   const includeState = document.getElementById('mappack-inc-state').checked;
@@ -592,7 +592,7 @@ async function doExportMapPack(filenameBase) {
     : null;
 
   const gpxXml = includeRoute
-    ? GpxExporter.generate(collectExportData(), currentRouteCoords, currentElevations, 'Mapping Elf Track')
+    ? GpxExporter.generate(collectExportData(), currentRouteCoords, currentElevations, routeName)
     : null;
 
   progressContainer.classList.remove('hidden');
@@ -1332,6 +1332,13 @@ function openExportModal() {
     const est = _estimateTileCountForMapPack();
     info.textContent = est.count > 0 ? `(約 ${est.count} 張,${est.layer})` : '';
   }
+
+  // Pre-fill route name input
+  const nameInput = document.getElementById('export-filename-input');
+  if (nameInput) {
+    nameInput.value = buildDefaultRouteName();
+  }
+
   document.body.classList.add('modal-open');
   exportModal.classList.remove('hidden');
 }
@@ -1347,14 +1354,80 @@ exportModal?.querySelectorAll('input[name="export-fmt"]').forEach((r) => {
   });
 });
 
+/**
+ * Generate a default route name: [Highest Point Name]-[Type]
+ * highest point: point with the maximum elevation in the current route.
+ * type: 單程 (single), 來回 (roundtrip), or O繞 (oloop)
+ */
+function buildDefaultRouteName() {
+  if (currentRouteCoords.length === 0) return '';
+
+  // 1. Find point with highest elevation
+  let maxElev = -Infinity;
+  let maxIdx = 0;
+  for (let i = 0; i < currentElevations.length; i++) {
+    const e = currentElevations[i];
+    if (e != null && e > maxElev) {
+      maxElev = e;
+      maxIdx = i;
+    }
+  }
+  const maxCoord = currentRouteCoords[maxIdx];
+  if (!maxCoord) return '未命名路線';
+
+  // 2. Try to find name of the highest point
+  let name = '';
+  let minD = 50; // allow 50m tolerance for "peak" markers
+  mapManager.waypoints.forEach(([lat, lng]) => {
+    const d = haversineDistance(maxCoord, [lat, lng]);
+    if (d < minD) {
+      const wpName = getEffectiveName(lat, lng);
+      // Skip generic waypoint names
+      if (wpName && wpName !== '起點' && wpName !== '終點' && !wpName.startsWith('航點')) {
+        name = wpName;
+        minD = d;
+      }
+    }
+  });
+
+  // Secondary: Use geocoded name of the highest point itself
+  if (!name) {
+    const geoName = getPlaceName(maxCoord[0], maxCoord[1]);
+    if (geoName && geoName !== '起點' && geoName !== '終點' && !geoName.startsWith('航點')) {
+      name = geoName;
+    }
+  }
+
+  // Tertiary: Start point name
+  if (!name) {
+    const startWp = mapManager.waypoints[0];
+    if (startWp) {
+      const startName = getEffectiveName(startWp[0], startWp[1]);
+      if (startName && startName !== '起點') name = startName;
+    }
+  }
+
+  if (!name) name = '路線';
+
+  const suffix = oLoopMode ? '-O繞' : (roundTripMode ? '-來回' : '-單程');
+  return `${name}${suffix}`;
+}
+
 function buildExportFilenameBase() {
-  const startWp = mapManager.waypoints[0];
-  const startName = startWp ? (getEffectiveName(startWp[0], startWp[1]) || null) : null;
-  const startCoords = startWp ? `${startWp[0].toFixed(4)},${startWp[1].toFixed(4)}` : '';
+  const nameInput = document.getElementById('export-filename-input');
+  let namePart = nameInput ? nameInput.value.trim() : '';
+
+  if (!namePart) {
+    namePart = buildDefaultRouteName() || 'MappingElf';
+  }
+
+  // Clean filename
+  namePart = namePart.replace(/[\\/:*?"<>|]/g, '_');
+
   const now = new Date();
   const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
-  const namePart = startName ? startName.replace(/[\\/:*?"<>|]/g, '_') : '起點';
-  return `${namePart}_${startCoords}_${ts}`;
+
+  return `${namePart}_${ts}`;
 }
 
 function closeExportModal() {
@@ -1382,8 +1455,12 @@ btnExportConfirm?.addEventListener('click', () => {
       showNotification('匯出路線/圖磚前請先建立路線', 'warning');
       return;
     }
+
+    const nameInput = document.getElementById('export-filename-input');
+    const routeName = nameInput ? nameInput.value.trim() : buildDefaultRouteName();
+
     closeExportModal();
-    doExportMapPack(buildExportFilenameBase());
+    doExportMapPack(buildExportFilenameBase(), routeName);
     return;
   }
   closeExportModal();
@@ -1450,23 +1527,24 @@ function collectSegmentDates() {
 }
 
 function doExport(fmt) {
-  const name = 'Mapping Elf Track';
+  const nameInput = document.getElementById('export-filename-input');
+  const routeName = (nameInput ? nameInput.value.trim() : null) || buildDefaultRouteName() || 'Mapping Elf Track';
   const filename = buildExportFilenameBase();
 
   const wpData = collectExportData();
 
   if (fmt === 'gpx' || fmt === 'all') {
-    const gpx = GpxExporter.generate(wpData, currentRouteCoords, currentElevations, name);
+    const gpx = GpxExporter.generate(wpData, currentRouteCoords, currentElevations, routeName);
     GpxExporter.download(gpx, `${filename}.gpx`);
   }
 
   if (fmt === 'kml' || fmt === 'all') {
-    const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, name);
+    const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, routeName);
     KmlExporter.download(kml, `${filename}.kml`);
   }
 
   if (fmt === 'yaml' || fmt === 'all') {
-    const yaml = YamlExporter.generate(wpData, name);
+    const yaml = YamlExporter.generate(wpData, routeName);
     YamlExporter.download(yaml, `${filename}.yaml`);
   }
 
