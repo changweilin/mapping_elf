@@ -351,12 +351,9 @@ const btnClearRoute = document.getElementById('btn-clear-route');
 const btnReplanRoute = document.getElementById('btn-replan-route');
 const btnUndo = document.getElementById('btn-undo');
 const btnRedo = document.getElementById('btn-redo');
-const btnClearCache = document.getElementById('btn-clear-cache');
 const btnResetDefaults = document.getElementById('btn-reset-defaults');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
-const btnDownloadMap = document.getElementById('btn-download-map');
-const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
@@ -517,70 +514,6 @@ window.addEventListener('keydown', (e) => {
   const k = (e.key || '').toLowerCase();
   if (k === 'z' && !e.shiftKey) { e.preventDefault(); historyUndo(); }
   else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); historyRedo(); }
-});
-
-btnDownloadMap.addEventListener('click', async () => {
-  const layerInfo = mapManager.getCurrentLayerInfo();
-  if (!layerInfo) return;
-  const bounds = mapManager.map.getBounds();
-
-  progressContainer.classList.remove('hidden');
-  btnDownloadMap.disabled = true;
-  if (btnDownloadRoute) btnDownloadRoute.disabled = true;
-
-  try {
-    await offlineManager.downloadArea(bounds, layerInfo, (current, total) => {
-      const pct = Math.round((current / total) * 100) || 0;
-      progressText.textContent = `${pct}% (${current}/${total})`;
-      progressFill.style.width = `${pct}%`;
-    });
-    showNotification('畫面地圖下載完成', 'success');
-  } catch (err) {
-    showNotification(err.message || '地圖下載失敗', 'error');
-  } finally {
-    progressContainer.classList.add('hidden');
-    btnDownloadMap.disabled = false;
-    if (btnDownloadRoute) btnDownloadRoute.disabled = false;
-    progressText.textContent = '0%';
-    progressFill.style.width = '0%';
-  }
-});
-
-if (btnDownloadRoute) {
-  btnDownloadRoute.addEventListener('click', async () => {
-    if (currentRouteCoords.length < 2) {
-      showNotification('請先建立路線', 'warning');
-      return;
-    }
-    const layerInfo = mapManager.getCurrentLayerInfo();
-    if (!layerInfo) return;
-
-    progressContainer.classList.remove('hidden');
-    btnDownloadMap.disabled = true;
-    btnDownloadRoute.disabled = true;
-
-    try {
-      await offlineManager.downloadRoute(currentRouteCoords, layerInfo, (current, total) => {
-        const pct = Math.round((current / total) * 100) || 0;
-        progressText.textContent = `${pct}% (${current}/${total})`;
-        progressFill.style.width = `${pct}%`;
-      });
-      showNotification('路線地圖下載完成', 'success');
-    } catch (err) {
-      showNotification(err.message || '地圖下載失敗', 'error');
-    } finally {
-      progressContainer.classList.add('hidden');
-      btnDownloadMap.disabled = false;
-      btnDownloadRoute.disabled = false;
-      progressText.textContent = '0%';
-      progressFill.style.width = '0%';
-    }
-  });
-}
-
-btnClearCache.addEventListener('click', async () => {
-  await offlineManager.clearCache();
-  showNotification('快取已清除', 'success');
 });
 
 // =========== Map Pack (.melmap) helpers ===========

@@ -556,42 +556,16 @@
       </div>
     </section>
 
-    <!-- Offline Section -->
-    <section class="panel-section" id="offline-section">
-      <div class="section-header">
-        <h3>
-          <svg viewBox="0 0 24 24" width="18" height="18">
-            <path
-              d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"
-              fill="currentColor" />
-          </svg>
-          離線管理
-        </h3>
+    <!-- Map Pack progress (shown during .melmap export / import) -->
+    <div class="download-progress hidden" id="download-progress-container" style="margin: 10px 16px;">
+      <div style="font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between;">
+        <span>進度</span>
+        <span id="download-progress-text">0%</span>
       </div>
-      <div class="offline-controls">
-        <div class="offline-status" id="offline-status">
-          <span class="status-dot online"></span>
-          <span>線上模式</span>
-        </div>
-        <div class="cache-info" id="cache-info">
-          <span>快取瓦片：—</span>
-        </div>
-        <div class="offline-actions mt-2" style="display:flex; gap: 8px; flex-wrap: wrap;">
-          <button class="btn-primary flex-1" id="btn-download-map">下載畫面地圖</button>
-          <button class="btn-secondary flex-1" id="btn-download-route">沿路線下載</button>
-          <button class="btn-secondary" id="btn-clear-cache">清除快取</button>
-        </div>
-        <div class="download-progress hidden" id="download-progress-container" style="margin-top: 10px;">
-          <div style="font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between;">
-            <span>下載進度</span>
-            <span id="download-progress-text">0%</span>
-          </div>
-          <div class="loading-bar">
-            <div class="loading-bar-fill" id="download-progress-fill" style="width: 0%"></div>
-          </div>
-        </div>
+      <div class="loading-bar">
+        <div class="loading-bar-fill" id="download-progress-fill" style="width: 0%"></div>
       </div>
-    </section>
+    </div>
   </aside>
 
   <!-- Export Format Modal -->
