@@ -104,6 +104,8 @@ html, body {
   margin-bottom: 16px;
   animation: pulse 1.5s ease-in-out infinite;
 }
+.loading-icon img { display: block; }
+.app-logo-icon { display: block; }
 .loading-content h2 {
   font-size: 28px;
   font-weight: 700;

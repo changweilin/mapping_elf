@@ -28,7 +28,11 @@
       "Bash(python /tmp/extract_tools.py)",
       "Bash(cygpath -w /tmp/jsonl_files.txt)",
       "Bash(cygpath -w /tmp)",
-      "Bash(xargs -I{} cygpath -w \"{}\" wc -l /tmp/jsonl_files_win.txt head -2 /tmp/jsonl_files_win.txt)"
+      "Bash(xargs -I{} cygpath -w \"{}\" wc -l /tmp/jsonl_files_win.txt head -2 /tmp/jsonl_files_win.txt)",
+      "Bash(npx --version)",
+      "Bash(magick -version)",
+      "Bash(/c/WINDOWS/system32/convert.exe /?)",
+      "Bash(npx capacitor-assets *)"
     ]
   }
 }

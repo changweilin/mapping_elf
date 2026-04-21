@@ -11,6 +11,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap"
     rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="./src/styles/main.css" />
 </head>
@@ -20,16 +21,7 @@
   <div id="loading-screen" class="loading-screen">
     <div class="loading-content">
       <div class="loading-icon">
-        <svg viewBox="0 0 64 64" width="64" height="64">
-          <path d="M32 4 L40 24 L60 24 L44 36 L50 56 L32 44 L14 56 L20 36 L4 24 L24 24 Z" fill="none"
-            stroke="url(#loadGrad)" stroke-width="2" />
-          <defs>
-            <linearGradient id="loadGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#6ee7b7" />
-              <stop offset="100%" stop-color="#3b82f6" />
-            </linearGradient>
-          </defs>
-        </svg>
+        <img src="./mapping_owl_cursor.svg" alt="Mapping Elf" width="128" height="128" />
       </div>
       <h2>Mapping Elf</h2>
       <p>載入地圖中...</p>
@@ -43,15 +35,7 @@
   <header id="toolbar" class="toolbar">
     <div class="toolbar-left">
       <div class="app-logo">
-        <svg viewBox="0 0 32 32" width="28" height="28">
-          <path d="M16 2 L20 12 L30 12 L22 18 L25 28 L16 22 L7 28 L10 18 L2 12 L12 12 Z" fill="url(#logoGrad)" />
-          <defs>
-            <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#6ee7b7" />
-              <stop offset="100%" stop-color="#3b82f6" />
-            </linearGradient>
-          </defs>
-        </svg>
+        <img src="./simple_owl_cursor.svg" alt="" width="28" height="28" class="app-logo-icon" />
         <span class="app-title">Mapping Elf</span>
       </div>
     </div>
