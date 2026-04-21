@@ -103,6 +103,126 @@ const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
 
+// =========== Undo/Redo History ===========
+// Snapshot-based history for all route-planning actions:
+// waypoint add/remove/drag/reorder/clear, custom-name edits, nav-mode toggle, import.
+const history = {
+  undo: [],
+  redo: [],
+  current: null,
+  suppressed: false,
+  MAX: 50,
+};
+
+function _captureSnapshot() {
+  return {
+    waypoints: mapManager.waypoints.map(([a, b]) => [a, b]),
+    customNames: JSON.parse(JSON.stringify(waypointCustomNames || {})),
+    roundTripMode,
+    oLoopMode,
+    importedTrackMode,
+  };
+}
+
+function _snapsEqual(a, b) {
+  if (!a || !b) return false;
+  if (a.roundTripMode !== b.roundTripMode) return false;
+  if (a.oLoopMode !== b.oLoopMode) return false;
+  if (a.importedTrackMode !== b.importedTrackMode) return false;
+  if (a.waypoints.length !== b.waypoints.length) return false;
+  for (let i = 0; i < a.waypoints.length; i++) {
+    if (a.waypoints[i][0] !== b.waypoints[i][0] || a.waypoints[i][1] !== b.waypoints[i][1]) return false;
+  }
+  const ak = Object.keys(a.customNames), bk = Object.keys(b.customNames);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) if (a.customNames[k] !== b.customNames[k]) return false;
+  return true;
+}
+
+function historyRecord() {
+  if (history.suppressed) return;
+  const next = _captureSnapshot();
+  if (history.current && _snapsEqual(history.current, next)) return;
+  if (history.current) {
+    history.undo.push(history.current);
+    if (history.undo.length > history.MAX) history.undo.shift();
+  }
+  history.current = next;
+  history.redo = [];
+  _updateHistoryButtons();
+}
+
+function _restoreSnapshot(snap) {
+  history.suppressed = true;
+  try {
+    // Nav mode
+    roundTripMode = snap.roundTripMode;
+    oLoopMode = snap.oLoopMode;
+    localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+    localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
+    const modeVal = roundTripMode ? 'roundtrip' : oLoopMode ? 'oloop' : 'single';
+    const modeRadio = document.getElementById(`nav-mode-${modeVal}`);
+    if (modeRadio) modeRadio.checked = true;
+
+    // Track mode flag (polyline isn't snapshotted — best-effort)
+    importedTrackMode = snap.importedTrackMode;
+    if (!importedTrackMode) importedIntermediatePoints = [];
+    if (typeof syncTrackModeUI === 'function') syncTrackModeUI();
+
+    // Custom names
+    Object.keys(waypointCustomNames).forEach(k => delete waypointCustomNames[k]);
+    Object.assign(waypointCustomNames, snap.customNames);
+    try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+
+    // Waypoints — bulk rebuild without intermediate callbacks
+    const cb = mapManager.onWaypointChange;
+    mapManager.onWaypointChange = () => {};
+    try {
+      mapManager.clearWaypoints();
+      snap.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+    } finally {
+      mapManager.onWaypointChange = cb;
+    }
+  } finally {
+    history.suppressed = false;
+  }
+  history.current = _captureSnapshot();
+  // Trigger a single routing pass with the restored waypoints.
+  // Skip auto-geocode since names are already restored.
+  skipAutoGeocode = true;
+  try { onWaypointsChanged(mapManager.waypoints); }
+  finally { skipAutoGeocode = false; }
+  _updateHistoryButtons();
+}
+
+function historyUndo() {
+  if (history.undo.length === 0) return;
+  const target = history.undo.pop();
+  history.redo.push(history.current);
+  _restoreSnapshot(target);
+  showNotification('已復原', 'info', 1200);
+}
+
+function historyRedo() {
+  if (history.redo.length === 0) return;
+  const target = history.redo.pop();
+  history.undo.push(history.current);
+  _restoreSnapshot(target);
+  showNotification('已取消復原', 'info', 1200);
+}
+
+function _updateHistoryButtons() {
+  if (btnUndo) btnUndo.disabled = history.undo.length === 0;
+  if (btnRedo) btnRedo.disabled = history.redo.length === 0;
+}
+
+function historyInit() {
+  history.current = _captureSnapshot();
+  history.undo = [];
+  history.redo = [];
+  _updateHistoryButtons();
+}
+
 /**
  * Re-read preferences from localStorage into memory variables without a page reload.
  * Used after a mappack state restoration to apply settings immediately.
@@ -230,6 +350,7 @@ const btnImportGpx = document.getElementById('btn-import-gpx');
 const btnClearRoute = document.getElementById('btn-clear-route');
 const btnReplanRoute = document.getElementById('btn-replan-route');
 const btnUndo = document.getElementById('btn-undo');
+const btnRedo = document.getElementById('btn-redo');
 const btnClearCache = document.getElementById('btn-clear-cache');
 const btnResetDefaults = document.getElementById('btn-reset-defaults');
 const gpxFileInput = document.getElementById('gpx-file-input');
@@ -385,7 +506,18 @@ btnClearRoute.addEventListener('click', () => {
   showNotification('路線已清除', 'info');
 });
 
-btnUndo.addEventListener('click', () => mapManager.removeLastWaypoint());
+btnUndo.addEventListener('click', () => historyUndo());
+btnRedo?.addEventListener('click', () => historyRedo());
+
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const t = e.target;
+  const tag = t?.tagName?.toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return;
+  const k = (e.key || '').toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); historyUndo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); historyRedo(); }
+});
 
 btnDownloadMap.addEventListener('click', async () => {
   const layerInfo = mapManager.getCurrentLayerInfo();
@@ -681,6 +813,9 @@ routeModeRadios.forEach((radio) => {
 // =========== Core Logic ===========
 
 async function onWaypointsChanged(waypoints) {
+  // Record this state change for undo/redo (no-op if suppressed or unchanged).
+  historyRecord();
+
   // In imported-track mode, update the sidebar list but skip routing entirely.
   // The track polyline is managed directly; waypoints are decorative markers only.
   if (importedTrackMode) {
@@ -1432,6 +1567,19 @@ function restoreImportedTrack(session) {
  * Extracted so that .melmap imports can reuse it.
  */
 function applyImportedResult(result) {
+  // Bulk import: suppress per-waypoint history entries and record one entry
+  // for the whole import at the end.
+  const _wasSuppressed = history.suppressed;
+  history.suppressed = true;
+  try {
+    _applyImportedResultCore(result);
+  } finally {
+    history.suppressed = _wasSuppressed;
+  }
+  historyRecord();
+}
+
+function _applyImportedResultCore(result) {
   if (result.trackPoints.length > 0) {
     const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
 
@@ -1967,6 +2115,7 @@ function saveCustomName(lat, lng, name) {
   }
   try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
   _applyPlaceNameToDOM();
+  historyRecord();
 }
 
 /**
@@ -3328,6 +3477,7 @@ async function init() {
         localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
         localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
         if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+        else historyRecord();
       });
     });
   }
@@ -3648,6 +3798,9 @@ async function init() {
   setTimeout(() => {
     loadingScreen.classList.add('hidden');
   }, 800);
+
+  // Seed undo/redo history with the restored state as the baseline.
+  historyInit();
 }
 
 // =========== Keyword Search (forward geocoding) ===========

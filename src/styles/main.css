@@ -549,6 +549,16 @@ html, body {
   background: rgba(248,113,113,0.15);
   color: var(--danger);
 }
+.icon-btn:disabled,
+.icon-btn[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.icon-btn:disabled:hover,
+.icon-btn[disabled]:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-secondary);
+}
 
 /* Waypoint List */
 .waypoint-list {
