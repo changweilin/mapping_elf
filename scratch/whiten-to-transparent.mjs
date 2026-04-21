@@ -14,7 +14,7 @@ function isNearWhite(hex) {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const avg = (r + g + b) / 3;
-  return (max - min) <= 50 && avg >= 215;
+  return (max - min) <= 50 && avg >= 190;
 }
 
 function isNearBlack(hex) {
@@ -47,6 +47,8 @@ const svgs = [
   'public/simple_owl_cursor.svg',
   'public/mapping_owl_cursor.svg',
   'public/favicon.svg',
+  'data/simple_owl_cursor.svg',
+  'data/mapping_owl_cursor.svg',
 ];
 for (const rel of svgs) {
   await whitenSvg(path.join(root, rel));
