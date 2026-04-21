@@ -461,7 +461,9 @@ gpxFileInput.addEventListener('change', importFile);
 
 /** Show/hide the re-plan button based on whether we are in imported-track mode. */
 function syncTrackModeUI() {
-  btnReplanRoute?.classList.toggle('hidden', !importedTrackMode);
+  if (btnReplanRoute) {
+    btnReplanRoute.disabled = !importedTrackMode;
+  }
 }
 
 btnReplanRoute?.addEventListener('click', () => {
