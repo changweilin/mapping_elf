@@ -2994,16 +2994,21 @@ function renderWeatherPanel() {
     }
   }
 
-  // Compute per-waypoint gradient colors (matching elevation chart) and apply
-  // to map markers + sidebar list so all views share the same teal→red palette.
+  // Compute per-waypoint gradient colors (matching polyline + elevation chart).
+  // Configured (forward) waypoints span the outbound segment teal→red (0→1);
+  // return waypoints (not rendered as map markers) use the red→purple→blue return gradient.
   {
-    const maxCumWp = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+    const fwdCums = weatherPoints
+      .filter(p => p.isWaypoint && !p.isReturn && typeof p._cum === 'number')
+      .map(p => p._cum);
+    const outboundMax = fwdCums.length ? Math.max(...fwdCums) : 0;
     const colorById = {};
     const labelById = {};
     weatherPoints.forEach(p => {
       if (!p.isWaypoint || p.isReturn) return;
-      const xFrac = Math.max(0, Math.min(1, (p._cum ?? 0) / maxCumWp));
-      const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+      const t = outboundMax > 0
+        ? Math.max(0, Math.min(1, (p._cum ?? 0) / outboundMax))
+        : 0;
       colorById[p.wpIndex] = interpolateRouteColor(t);
       labelById[p.wpIndex] = p.label;
     });
