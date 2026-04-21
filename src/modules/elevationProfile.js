@@ -3,7 +3,7 @@
  * Queries Open-Meteo Elevation API and renders Chart.js profile
  */
 import { Chart, registerables } from 'chart.js';
-import { samplePoints, cumulativeDistances, formatDistance, formatElevation, interpolateRouteColor, interpolateRouteColorRgb } from './utils.js';
+import { samplePoints, cumulativeDistances, formatDistance, formatElevation, interpolateRouteColor, interpolateRouteColorRgb, interpolateReturnColor, interpolateReturnColorRgb } from './utils.js';
 
 Chart.register(...registerables);
 
@@ -21,6 +21,7 @@ export class ElevationProfile {
     this.points = [];
     this._markers = []; // [{cumDistM, label, colIdx, isWaypoint}]
     this.isRoundTrip = false;
+    this.turnaroundFrac = null; // 0-1 fraction where outbound ends; null = no split
     this.isCollapsed = false;
   }
 
@@ -73,9 +74,10 @@ export class ElevationProfile {
    * @param {Array} routeCoords
    * @param {boolean} [isRoundTrip=false]
    */
-  async update(routeCoords, isRoundTrip = false) {
+  async update(routeCoords, isRoundTrip = false, turnaroundLatLng = null) {
     this.isRoundTrip = isRoundTrip;
     if (!routeCoords || routeCoords.length < 2) {
+      this.turnaroundFrac = null;
       this.clear();
       return { ascent: 0, descent: 0, maxElev: 0, minElev: 0 };
     }
@@ -100,6 +102,7 @@ export class ElevationProfile {
 
     // Calculate cumulative distances
     this.distances = cumulativeDistances(this.points);
+    this.turnaroundFrac = this._computeTurnaroundFrac(turnaroundLatLng);
 
     // Calculate stats
     const stats = this._calcStats();
@@ -110,14 +113,31 @@ export class ElevationProfile {
     return stats;
   }
 
+  /** Find the fraction along the sampled polyline closest to turnaround latlng. */
+  _computeTurnaroundFrac(turnaroundLatLng) {
+    if (!turnaroundLatLng || !this.points || this.points.length < 3) return null;
+    const [tlat, tlng] = turnaroundLatLng;
+    let minD = Infinity, minI = -1;
+    for (let i = 1; i < this.points.length - 1; i++) {
+      const d = (this.points[i][0] - tlat) ** 2 + (this.points[i][1] - tlng) ** 2;
+      if (d < minD) { minD = d; minI = i; }
+    }
+    if (minI < 0) return null;
+    const total = this.distances[this.distances.length - 1] || 0;
+    if (total <= 0) return null;
+    const f = this.distances[minI] / total;
+    return (f > 0.01 && f < 0.99) ? f : null;
+  }
+
   /**
    * Update chart with pre-fetched elevation data (no API call)
    * @param {Array} sampledCoords
    * @param {Array} elevations
    * @param {boolean} [isRoundTrip=false]
    */
-  updateWithData(sampledCoords, elevations, isRoundTrip = false) {
+  updateWithData(sampledCoords, elevations, isRoundTrip = false, turnaroundLatLng = null) {
     if (!sampledCoords || sampledCoords.length < 2) {
+      this.turnaroundFrac = null;
       this.clear();
       return;
     }
@@ -126,6 +146,7 @@ export class ElevationProfile {
     this.points = sampledCoords;
     this.elevations = elevations;
     this.distances = cumulativeDistances(this.points);
+    this.turnaroundFrac = this._computeTurnaroundFrac(turnaroundLatLng);
     this._renderChart();
   }
 
@@ -207,8 +228,18 @@ export class ElevationProfile {
             yPx = scales.y.getPixelForValue(elev);
           }
 
-          const tColor = self.isRoundTrip ? 1 - Math.abs(2 * xFrac - 1) : xFrac;
-          const rgb = interpolateRouteColorRgb(tColor);
+          let rgb;
+          if (self.turnaroundFrac != null && xFrac > self.turnaroundFrac) {
+            const denom = 1 - self.turnaroundFrac;
+            const tRet = denom > 0 ? (xFrac - self.turnaroundFrac) / denom : 0;
+            rgb = interpolateReturnColorRgb(Math.max(0, Math.min(1, tRet)));
+          } else if (self.turnaroundFrac != null) {
+            const tOut = self.turnaroundFrac > 0 ? xFrac / self.turnaroundFrac : 0;
+            rgb = interpolateRouteColorRgb(Math.max(0, Math.min(1, tOut)));
+          } else {
+            const tColor = self.isRoundTrip ? 1 - Math.abs(2 * xFrac - 1) : xFrac;
+            rgb = interpolateRouteColorRgb(tColor);
+          }
           const baseColor = `rgb(${rgb.r},${rgb.g},${rgb.b})`;
           const lineColor = `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`;
 
@@ -247,8 +278,17 @@ export class ElevationProfile {
         const { chartArea, ctx: c } = chart;
         if (!chartArea) return;
         const g = c.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
-        if (self.isRoundTrip) {
-          // Symmetric: teal→sky→amber→red→amber→sky→teal
+        if (self.turnaroundFrac != null) {
+          // Outbound teal→sky→amber→red up to turnaround, then red→purple→blue
+          const tf = self.turnaroundFrac;
+          g.addColorStop(0,         'rgb(110,231,183)');
+          g.addColorStop(tf * 0.33, 'rgb(56,189,248)');
+          g.addColorStop(tf * 0.66, 'rgb(251,191,36)');
+          g.addColorStop(tf,        'rgb(248,113,113)');
+          g.addColorStop(tf + (1 - tf) * 0.5, 'rgb(168,85,247)');
+          g.addColorStop(1,         'rgb(59,130,246)');
+        } else if (self.isRoundTrip) {
+          // Legacy fallback (no turnaround info): symmetric teal→red→teal
           g.addColorStop(0, 'rgb(110,231,183)');
           g.addColorStop(0.165, 'rgb(56,189,248)');
           g.addColorStop(0.33, 'rgb(251,191,36)');
@@ -349,8 +389,18 @@ export class ElevationProfile {
               const maxDist = self.distances[self.distances.length - 1] || 1;
               const cumM = self.distances[idx] || 0;
               const xFrac = Math.max(0, Math.min(1, cumM / maxDist));
-              const t = self.isRoundTrip ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-              const color = interpolateRouteColor(t);
+              let color;
+              if (self.turnaroundFrac != null && xFrac > self.turnaroundFrac) {
+                const denom = 1 - self.turnaroundFrac;
+                const tRet = denom > 0 ? (xFrac - self.turnaroundFrac) / denom : 0;
+                color = interpolateReturnColor(Math.max(0, Math.min(1, tRet)));
+              } else if (self.turnaroundFrac != null) {
+                const tOut = self.turnaroundFrac > 0 ? xFrac / self.turnaroundFrac : 0;
+                color = interpolateRouteColor(Math.max(0, Math.min(1, tOut)));
+              } else {
+                const t = self.isRoundTrip ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+                color = interpolateRouteColor(t);
+              }
               self.onHover(self.points[idx][0], self.points[idx][1], color);
             }
           }

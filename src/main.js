@@ -14,7 +14,7 @@ import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
-import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
@@ -320,8 +320,19 @@ mapManager.onRouteHover = (lat, lng) => {
   const maxM = elevationProfile.distances[elevationProfile.distances.length - 1] || 1;
   const cumM = elevationProfile.distances[closestIdx] || 0;
   const xFrac = Math.max(0, Math.min(1, cumM / maxM));
-  const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-  const color = interpolateRouteColor(t);
+  const tf = elevationProfile.turnaroundFrac;
+  let color;
+  if (tf != null && xFrac > tf) {
+    const denom = 1 - tf;
+    const tRet = denom > 0 ? (xFrac - tf) / denom : 0;
+    color = interpolateReturnColor(Math.max(0, Math.min(1, tRet)));
+  } else if (tf != null) {
+    const tOut = tf > 0 ? xFrac / tf : 0;
+    color = interpolateRouteColor(Math.max(0, Math.min(1, tOut)));
+  } else {
+    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+    color = interpolateRouteColor(t);
+  }
   mapManager.showHoverMarker(lat, lng, color);
 };
 
@@ -845,8 +856,11 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
 
     if (allAlternatives.length > 0) {
-      // Draw all routes on map with continuous gradient coloring
-      mapManager.drawMultipleRoutes(allAlternatives, 0, roundTripMode);
+      // Draw all routes on map with continuous gradient coloring.
+      // For round-trip / O-loop, the last configured waypoint marks the return-leg split.
+      const hasReturn = (roundTripMode || oLoopMode) && waypoints.length >= 2;
+      const turnaroundLatLng = hasReturn ? waypoints[waypoints.length - 1] : null;
+      mapManager.drawMultipleRoutes(allAlternatives, 0, roundTripMode, turnaroundLatLng);
 
       // Show alternatives panel
       renderAlternatives(allAlternatives, 0);
@@ -889,7 +903,9 @@ function selectAlternative(index) {
   mapManager.selectRoute(allAlternatives, index, true);
 
   // Update elevation chart with pre-fetched data
-  elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode);
+  const wps = mapManager.waypoints;
+  const turnaroundLL = (roundTripMode || oLoopMode) && wps.length >= 2 ? wps[wps.length - 1] : null;
+  elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
 
   // Update stats from pre-calculated route data
   statDistance.textContent = formatDistance(route.distance);
@@ -2584,7 +2600,16 @@ function updateIntermediateMarkers() {
     totalDistM = elevationProfile.distances.at(-1) || 0;
   }
 
-  mapManager.setIntermediateMarkers(pts, totalDistM);
+  // Turnaround distance: largest _cum among forward (non-return) waypoints.
+  let turnaroundDistM = null;
+  if ((roundTripMode || oLoopMode) && !importedTrackMode) {
+    const fwdCums = weatherPoints
+      .filter(p => p.isWaypoint && !p.isReturn && typeof p._cum === 'number')
+      .map(p => p._cum);
+    if (fwdCums.length) turnaroundDistM = Math.max(...fwdCums);
+  }
+
+  mapManager.setIntermediateMarkers(pts, totalDistM, turnaroundDistM);
 }
 
 function buildWeatherPoints() {
@@ -3025,6 +3050,10 @@ function renderWeatherPanel() {
 
   const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
   const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
+  // Return-leg cum range for red→purple→blue gradient
+  const returnCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
+  const retMin = returnCums.length ? Math.min(...returnCums) : 0;
+  const retMax = returnCums.length ? Math.max(...returnCums) : 0;
 
   // Track colTimes for Windy links later
   const colTimes = [];
@@ -3041,7 +3070,13 @@ function renderWeatherPanel() {
   weatherPoints.forEach((pt, i) => {
     const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
     const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-    const gradColor = interpolateRouteColor(t);
+    let gradColor;
+    if (pt.isReturn && retMax > retMin) {
+      const tRet = Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)));
+      gradColor = interpolateReturnColor(tRet);
+    } else {
+      gradColor = interpolateRouteColor(t);
+    }
     const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
 
     let thClass = 'wt-col-head wt-th';
@@ -3441,7 +3476,19 @@ function highlightWeatherColumn(colIdx) {
     const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
     const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
     const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-    bgStr = interpolateRouteColor(t).replace('rgb', 'rgba').replace(')', ', 0.15)');
+    let base;
+    if (pt.isReturn) {
+      const retCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
+      const retMin = retCums.length ? Math.min(...retCums) : 0;
+      const retMax = retCums.length ? Math.max(...retCums) : 0;
+      const tRet = retMax > retMin
+        ? Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)))
+        : 0;
+      base = interpolateReturnColor(tRet);
+    } else {
+      base = interpolateRouteColor(t);
+    }
+    bgStr = base.replace('rgb', 'rgba').replace(')', ', 0.15)');
   }
 
   const cols = container.querySelectorAll(`[data-idx="${colIdx}"], [data-col="${colIdx}"]`);
@@ -3495,8 +3542,19 @@ function highlightPoint(colIdx) {
     mapManager.clearWaypointHighlight();
     const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
     const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
-    const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-    const color = interpolateRouteColor(t);
+    let color;
+    if (pt.isReturn) {
+      const retCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
+      const retMin = retCums.length ? Math.min(...retCums) : 0;
+      const retMax = retCums.length ? Math.max(...retCums) : 0;
+      const tRet = retMax > retMin
+        ? Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)))
+        : 0;
+      color = interpolateReturnColor(tRet);
+    } else {
+      const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+      color = interpolateRouteColor(t);
+    }
     mapManager.showHoverMarker(pt.lat, pt.lng, color);
   }
 

@@ -283,3 +283,31 @@ export function interpolateRouteColor(t) {
   const { r, g, b } = interpolateRouteColorRgb(t);
   return `rgb(${r},${g},${b})`;
 }
+
+/**
+ * Return-leg gradient: red → purple → blue (used on round-trip / O-loop return).
+ */
+export function interpolateReturnColorRgb(t) {
+  const stops = [
+    { t: 0,   r: 248, g: 113, b: 113 }, // #f87171 red (matches outbound end)
+    { t: 0.5, r: 168, g:  85, b: 247 }, // #a855f7 purple
+    { t: 1,   r:  59, g: 130, b: 246 }, // #3b82f6 blue
+  ];
+  const tc = Math.max(0, Math.min(1, t));
+  let lo = stops[0], hi = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (tc <= stops[i + 1].t) { lo = stops[i]; hi = stops[i + 1]; break; }
+  }
+  const span = hi.t - lo.t;
+  const f = span > 0 ? (tc - lo.t) / span : 0;
+  return {
+    r: Math.round(lo.r + (hi.r - lo.r) * f),
+    g: Math.round(lo.g + (hi.g - lo.g) * f),
+    b: Math.round(lo.b + (hi.b - lo.b) * f),
+  };
+}
+
+export function interpolateReturnColor(t) {
+  const { r, g, b } = interpolateReturnColorRgb(t);
+  return `rgb(${r},${g},${b})`;
+}

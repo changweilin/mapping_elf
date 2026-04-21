@@ -3,7 +3,7 @@
  * Handles Leaflet map, layers, waypoints, multiple route polylines
  */
 import L from 'leaflet';
-import { interpolateRouteColor } from './utils.js';
+import { interpolateRouteColor, interpolateReturnColor } from './utils.js';
 
 const TILE_LAYERS = {
   streets: {
@@ -47,6 +47,7 @@ export class MapManager {
     this.onRouteHover = null; // callback(lat, lng) | callback(null, null)
     this.onWaypointSelect = null; // callback(wpIndex)
     this.isRoundTrip = false;
+    this.turnaroundLatLng = null; // [lat,lng] of last forward waypoint for return-leg gradient split
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = []; // Weather emoji per waypoint index
@@ -415,10 +416,11 @@ export class MapManager {
    * @param {number} selectedIdx - Index of the currently selected route
    * @param {boolean} isRoundTrip - if true, gradient is symmetric (teal→red→teal)
    */
-  drawMultipleRoutes(routes, selectedIdx = 0, isRoundTrip = false) {
+  drawMultipleRoutes(routes, selectedIdx = 0, isRoundTrip = false, turnaroundLatLng = null) {
     this.clearAllRoutes();
     this.selectedRouteIndex = selectedIdx;
     this.isRoundTrip = isRoundTrip;
+    this.turnaroundLatLng = turnaroundLatLng;
     this._redrawRoutes(routes, selectedIdx);
   }
 
@@ -482,7 +484,7 @@ export class MapManager {
     // Draw selected route as continuous gradient on top
     const selectedRoute = routes.find((r) => r.index === selectedIdx);
     if (selectedRoute) {
-      this._drawGradientRoute(selectedRoute.coords, this.isRoundTrip || false);
+      this._drawGradientRoute(selectedRoute.coords, this.isRoundTrip || false, this.turnaroundLatLng);
     }
   }
 
@@ -492,10 +494,21 @@ export class MapManager {
    * @param {Array} routeCoords
    * @param {boolean} isRoundTrip - if true, gradient goes teal→red→teal (symmetric)
    */
-  _drawGradientRoute(routeCoords, isRoundTrip = false) {
+  _drawGradientRoute(routeCoords, isRoundTrip = false, turnaroundLatLng = null) {
     this.clearGradientRoute();
     const N = routeCoords.length;
     if (N < 2) return;
+
+    // Find split index closest to turnaround waypoint (used for return-leg gradient).
+    let splitIdx = -1;
+    if (turnaroundLatLng && N > 2) {
+      const [tlat, tlng] = turnaroundLatLng;
+      let minD = Infinity;
+      for (let i = 1; i < N - 1; i++) {
+        const d = (routeCoords[i][0] - tlat) ** 2 + (routeCoords[i][1] - tlng) ** 2;
+        if (d < minD) { minD = d; splitIdx = i; }
+      }
+    }
 
     const chunks = Math.min(GRADIENT_CHUNKS, N - 1);
     const chunkSize = (N - 1) / chunks;
@@ -505,10 +518,22 @@ export class MapManager {
       const endI = Math.min(Math.floor((chunk + 1) * chunkSize), N - 1);
       if (endI <= startI) continue;
 
-      const tLinear = startI / (N - 1);
-      // For round-trip: mirror gradient at midpoint (0→1→0)
-      const t = isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
-      const color = interpolateRouteColor(t);
+      let color;
+      if (splitIdx > 0) {
+        // Two-stage gradient: outbound (original) then return (red→purple→blue)
+        if (startI < splitIdx) {
+          const t = splitIdx > 0 ? startI / splitIdx : 0;
+          color = interpolateRouteColor(t);
+        } else {
+          const denom = (N - 1) - splitIdx;
+          const t = denom > 0 ? (startI - splitIdx) / denom : 0;
+          color = interpolateReturnColor(t);
+        }
+      } else {
+        const tLinear = startI / (N - 1);
+        const t = isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
+        color = interpolateRouteColor(t);
+      }
       const pl = L.polyline(routeCoords.slice(startI, endI + 1), {
         color,
         weight: 5,
@@ -530,13 +555,24 @@ export class MapManager {
    * Set km-interval intermediate markers (non-interactive, small icons)
    * @param {Array<{lat,lng,cumDistM}>} points
    */
-  setIntermediateMarkers(points, totalDistM = 0) {
+  setIntermediateMarkers(points, totalDistM = 0, turnaroundDistM = null) {
     this.clearIntermediateMarkers();
     points.forEach((pt) => {
       const km = (pt.cumDistM / 1000).toFixed(0);
-      const tLinear = totalDistM > 0 ? Math.min(1, pt.cumDistM / totalDistM) : 0;
-      const t = this.isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
-      const color = interpolateRouteColor(t);
+      let color;
+      if (turnaroundDistM && turnaroundDistM > 0 && totalDistM > turnaroundDistM) {
+        if (pt.cumDistM <= turnaroundDistM) {
+          const t = Math.max(0, Math.min(1, pt.cumDistM / turnaroundDistM));
+          color = interpolateRouteColor(t);
+        } else {
+          const t = Math.max(0, Math.min(1, (pt.cumDistM - turnaroundDistM) / (totalDistM - turnaroundDistM)));
+          color = interpolateReturnColor(t);
+        }
+      } else {
+        const tLinear = totalDistM > 0 ? Math.min(1, pt.cumDistM / totalDistM) : 0;
+        const t = this.isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
+        color = interpolateRouteColor(t);
+      }
       const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
