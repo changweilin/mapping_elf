@@ -564,6 +564,14 @@ html, body {
   color: var(--text-secondary);
 }
 
+/* Frozen UI state for track import mode */
+.is-frozen {
+  opacity: 0.5;
+  pointer-events: none;
+  filter: grayscale(0.2);
+  transition: opacity var(--transition-normal);
+}
+
 /* Waypoint List */
 .waypoint-list {
   max-height: 200px;

@@ -212,8 +212,9 @@ function historyRedo() {
 }
 
 function _updateHistoryButtons() {
-  if (btnUndo) btnUndo.disabled = history.undo.length === 0;
-  if (btnRedo) btnRedo.disabled = history.redo.length === 0;
+  const frozen = !!importedTrackMode;
+  if (btnUndo) btnUndo.disabled = frozen || history.undo.length === 0;
+  if (btnRedo) btnRedo.disabled = frozen || history.redo.length === 0;
 }
 
 function historyInit() {
@@ -464,6 +465,36 @@ function syncTrackModeUI() {
   if (btnReplanRoute) {
     btnReplanRoute.disabled = !importedTrackMode;
   }
+
+  // Freeze route and pace parameter inputs when in imported track mode (except replan/clear)
+  const freezeSelectors = [
+    '.nav-mode-row input',
+    '.segment-interval-row input',
+    '.segment-interval-row select',
+    '.route-mode-selector input',
+    '.pace-check-opt input', // TSP sort, Auto-name
+    '#pace-params-panel input',
+    '#pace-params-panel select'
+  ];
+
+  const frozen = !!importedTrackMode;
+  document.querySelectorAll(freezeSelectors.join(',')).forEach(el => {
+    el.disabled = frozen;
+  });
+
+  // Visual dimming for frozen sections
+  const frozenContainers = [
+    '.nav-mode-row',
+    '.segment-interval-row',
+    '.route-mode-selector',
+    '.pace-checks-row',
+    '#pace-params-panel'
+  ];
+  document.querySelectorAll(frozenContainers.join(',')).forEach(c => {
+    c.classList.toggle('is-frozen', frozen);
+  });
+
+  _updateHistoryButtons();
 }
 
 btnReplanRoute?.addEventListener('click', () => {
