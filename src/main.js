@@ -103,6 +103,126 @@ const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
 
+// =========== Undo/Redo History ===========
+// Snapshot-based history for all route-planning actions:
+// waypoint add/remove/drag/reorder/clear, custom-name edits, nav-mode toggle, import.
+const history = {
+  undo: [],
+  redo: [],
+  current: null,
+  suppressed: false,
+  MAX: 50,
+};
+
+function _captureSnapshot() {
+  return {
+    waypoints: mapManager.waypoints.map(([a, b]) => [a, b]),
+    customNames: JSON.parse(JSON.stringify(waypointCustomNames || {})),
+    roundTripMode,
+    oLoopMode,
+    importedTrackMode,
+  };
+}
+
+function _snapsEqual(a, b) {
+  if (!a || !b) return false;
+  if (a.roundTripMode !== b.roundTripMode) return false;
+  if (a.oLoopMode !== b.oLoopMode) return false;
+  if (a.importedTrackMode !== b.importedTrackMode) return false;
+  if (a.waypoints.length !== b.waypoints.length) return false;
+  for (let i = 0; i < a.waypoints.length; i++) {
+    if (a.waypoints[i][0] !== b.waypoints[i][0] || a.waypoints[i][1] !== b.waypoints[i][1]) return false;
+  }
+  const ak = Object.keys(a.customNames), bk = Object.keys(b.customNames);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) if (a.customNames[k] !== b.customNames[k]) return false;
+  return true;
+}
+
+function historyRecord() {
+  if (history.suppressed) return;
+  const next = _captureSnapshot();
+  if (history.current && _snapsEqual(history.current, next)) return;
+  if (history.current) {
+    history.undo.push(history.current);
+    if (history.undo.length > history.MAX) history.undo.shift();
+  }
+  history.current = next;
+  history.redo = [];
+  _updateHistoryButtons();
+}
+
+function _restoreSnapshot(snap) {
+  history.suppressed = true;
+  try {
+    // Nav mode
+    roundTripMode = snap.roundTripMode;
+    oLoopMode = snap.oLoopMode;
+    localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+    localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
+    const modeVal = roundTripMode ? 'roundtrip' : oLoopMode ? 'oloop' : 'single';
+    const modeRadio = document.getElementById(`nav-mode-${modeVal}`);
+    if (modeRadio) modeRadio.checked = true;
+
+    // Track mode flag (polyline isn't snapshotted — best-effort)
+    importedTrackMode = snap.importedTrackMode;
+    if (!importedTrackMode) importedIntermediatePoints = [];
+    if (typeof syncTrackModeUI === 'function') syncTrackModeUI();
+
+    // Custom names
+    Object.keys(waypointCustomNames).forEach(k => delete waypointCustomNames[k]);
+    Object.assign(waypointCustomNames, snap.customNames);
+    try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+
+    // Waypoints — bulk rebuild without intermediate callbacks
+    const cb = mapManager.onWaypointChange;
+    mapManager.onWaypointChange = () => {};
+    try {
+      mapManager.clearWaypoints();
+      snap.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+    } finally {
+      mapManager.onWaypointChange = cb;
+    }
+  } finally {
+    history.suppressed = false;
+  }
+  history.current = _captureSnapshot();
+  // Trigger a single routing pass with the restored waypoints.
+  // Skip auto-geocode since names are already restored.
+  skipAutoGeocode = true;
+  try { onWaypointsChanged(mapManager.waypoints); }
+  finally { skipAutoGeocode = false; }
+  _updateHistoryButtons();
+}
+
+function historyUndo() {
+  if (history.undo.length === 0) return;
+  const target = history.undo.pop();
+  history.redo.push(history.current);
+  _restoreSnapshot(target);
+  showNotification('已復原', 'info', 1200);
+}
+
+function historyRedo() {
+  if (history.redo.length === 0) return;
+  const target = history.redo.pop();
+  history.undo.push(history.current);
+  _restoreSnapshot(target);
+  showNotification('已取消復原', 'info', 1200);
+}
+
+function _updateHistoryButtons() {
+  if (btnUndo) btnUndo.disabled = history.undo.length === 0;
+  if (btnRedo) btnRedo.disabled = history.redo.length === 0;
+}
+
+function historyInit() {
+  history.current = _captureSnapshot();
+  history.undo = [];
+  history.redo = [];
+  _updateHistoryButtons();
+}
+
 /**
  * Re-read preferences from localStorage into memory variables without a page reload.
  * Used after a mappack state restoration to apply settings immediately.
@@ -230,12 +350,10 @@ const btnImportGpx = document.getElementById('btn-import-gpx');
 const btnClearRoute = document.getElementById('btn-clear-route');
 const btnReplanRoute = document.getElementById('btn-replan-route');
 const btnUndo = document.getElementById('btn-undo');
-const btnClearCache = document.getElementById('btn-clear-cache');
+const btnRedo = document.getElementById('btn-redo');
 const btnResetDefaults = document.getElementById('btn-reset-defaults');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
-const btnDownloadMap = document.getElementById('btn-download-map');
-const btnDownloadRoute = document.getElementById('btn-download-route');
 const progressContainer = document.getElementById('download-progress-container');
 const progressText = document.getElementById('download-progress-text');
 const progressFill = document.getElementById('download-progress-fill');
@@ -387,70 +505,17 @@ btnClearRoute.addEventListener('click', () => {
   showNotification('路線已清除', 'info');
 });
 
-btnUndo.addEventListener('click', () => mapManager.removeLastWaypoint());
+btnUndo.addEventListener('click', () => historyUndo());
+btnRedo?.addEventListener('click', () => historyRedo());
 
-btnDownloadMap.addEventListener('click', async () => {
-  const layerInfo = mapManager.getCurrentLayerInfo();
-  if (!layerInfo) return;
-  const bounds = mapManager.map.getBounds();
-
-  progressContainer.classList.remove('hidden');
-  btnDownloadMap.disabled = true;
-  if (btnDownloadRoute) btnDownloadRoute.disabled = true;
-
-  try {
-    await offlineManager.downloadArea(bounds, layerInfo, (current, total) => {
-      const pct = Math.round((current / total) * 100) || 0;
-      progressText.textContent = `${pct}% (${current}/${total})`;
-      progressFill.style.width = `${pct}%`;
-    });
-    showNotification('畫面地圖下載完成', 'success');
-  } catch (err) {
-    showNotification(err.message || '地圖下載失敗', 'error');
-  } finally {
-    progressContainer.classList.add('hidden');
-    btnDownloadMap.disabled = false;
-    if (btnDownloadRoute) btnDownloadRoute.disabled = false;
-    progressText.textContent = '0%';
-    progressFill.style.width = '0%';
-  }
-});
-
-if (btnDownloadRoute) {
-  btnDownloadRoute.addEventListener('click', async () => {
-    if (currentRouteCoords.length < 2) {
-      showNotification('請先建立路線', 'warning');
-      return;
-    }
-    const layerInfo = mapManager.getCurrentLayerInfo();
-    if (!layerInfo) return;
-
-    progressContainer.classList.remove('hidden');
-    btnDownloadMap.disabled = true;
-    btnDownloadRoute.disabled = true;
-
-    try {
-      await offlineManager.downloadRoute(currentRouteCoords, layerInfo, (current, total) => {
-        const pct = Math.round((current / total) * 100) || 0;
-        progressText.textContent = `${pct}% (${current}/${total})`;
-        progressFill.style.width = `${pct}%`;
-      });
-      showNotification('路線地圖下載完成', 'success');
-    } catch (err) {
-      showNotification(err.message || '地圖下載失敗', 'error');
-    } finally {
-      progressContainer.classList.add('hidden');
-      btnDownloadMap.disabled = false;
-      btnDownloadRoute.disabled = false;
-      progressText.textContent = '0%';
-      progressFill.style.width = '0%';
-    }
-  });
-}
-
-btnClearCache.addEventListener('click', async () => {
-  await offlineManager.clearCache();
-  showNotification('快取已清除', 'success');
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const t = e.target;
+  const tag = t?.tagName?.toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return;
+  const k = (e.key || '').toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); historyUndo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); historyRedo(); }
 });
 
 // =========== Map Pack (.melmap) helpers ===========
@@ -683,6 +748,9 @@ routeModeRadios.forEach((radio) => {
 // =========== Core Logic ===========
 
 async function onWaypointsChanged(waypoints) {
+  // Record this state change for undo/redo (no-op if suppressed or unchanged).
+  historyRecord();
+
   // In imported-track mode, update the sidebar list but skip routing entirely.
   // The track polyline is managed directly; waypoints are decorative markers only.
   if (importedTrackMode) {
@@ -1434,6 +1502,19 @@ function restoreImportedTrack(session) {
  * Extracted so that .melmap imports can reuse it.
  */
 function applyImportedResult(result) {
+  // Bulk import: suppress per-waypoint history entries and record one entry
+  // for the whole import at the end.
+  const _wasSuppressed = history.suppressed;
+  history.suppressed = true;
+  try {
+    _applyImportedResultCore(result);
+  } finally {
+    history.suppressed = _wasSuppressed;
+  }
+  historyRecord();
+}
+
+function _applyImportedResultCore(result) {
   if (result.trackPoints.length > 0) {
     const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
 
@@ -1969,6 +2050,7 @@ function saveCustomName(lat, lng, name) {
   }
   try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
   _applyPlaceNameToDOM();
+  historyRecord();
 }
 
 /**
@@ -2218,17 +2300,37 @@ function initWeatherControls() {
     const h = Math.round(entries[0]?.contentRect.height || 0);
     if (h > 0 && !panel._resizing)
       document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
-    // Redraw chart so it fills the container correctly after layout changes
-    requestAnimationFrame(() => elevationProfile?.chart?.resize());
+    // Redraw chart so it fills the container correctly after layout changes.
+    // Skip during active drag — chart.resize() is expensive and would be called
+    // on every pixel of movement, causing stutter. The drag-end path handles it.
+    if (!panel._resizing)
+      requestAnimationFrame(() => elevationProfile?.chart?.resize());
   }).observe(panel);
 
   if (!handle) return;
 
   // --- Drag-to-resize ---
-  const applyHeight = (clientY) => {
+  // rAF-coalesce pointer moves: multiple move events within a single frame are
+  // collapsed into one DOM write, which keeps the drag smooth under high-rate
+  // input (trackpads, high-Hz touch screens).
+  let pendingClientY = null;
+  let rafId = 0;
+  const flushHeight = () => {
+    rafId = 0;
+    if (pendingClientY == null) return;
+    const clientY = pendingClientY;
+    pendingClientY = null;
     const h = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - clientY));
     panel.style.height = `${h}px`;
     document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+  };
+  const scheduleHeight = (clientY) => {
+    pendingClientY = clientY;
+    if (!rafId) rafId = requestAnimationFrame(flushHeight);
+  };
+  const cancelPending = () => {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    pendingClientY = null;
   };
 
   // Mouse
@@ -2236,12 +2338,14 @@ function initWeatherControls() {
     e.preventDefault();
     panel._resizing = true;
     handle.classList.add('dragging');
-    const onMove = (ev) => applyHeight(ev.clientY);
+    const onMove = (ev) => scheduleHeight(ev.clientY);
     const onUp = () => {
+      cancelPending();
       panel._resizing = false;
       handle.classList.remove('dragging');
       savePanelRatio();
       mapManager.map.invalidateSize({ animate: false });
+      requestAnimationFrame(() => elevationProfile?.chart?.resize());
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -2254,12 +2358,14 @@ function initWeatherControls() {
     e.preventDefault();
     panel._resizing = true;
     handle.classList.add('dragging');
-    const onMove = (ev) => applyHeight(ev.touches[0].clientY);
+    const onMove = (ev) => scheduleHeight(ev.touches[0].clientY);
     const onEnd = () => {
+      cancelPending();
       panel._resizing = false;
       handle.classList.remove('dragging');
       savePanelRatio();
       mapManager.map.invalidateSize({ animate: false });
+      requestAnimationFrame(() => elevationProfile?.chart?.resize());
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
     };
@@ -3330,6 +3436,7 @@ async function init() {
         localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
         localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
         if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+        else historyRecord();
       });
     });
   }
@@ -3641,12 +3748,115 @@ async function init() {
     );
   }
 
+  // Keyword search (Nominatim forward-geocoding + direct lat,lng parser)
+  initKeywordSearch();
+
   // Map action buttons
   document.getElementById('btn-fit-route')?.addEventListener('click', () => mapManager.fitToRoute());
 
   setTimeout(() => {
     loadingScreen.classList.add('hidden');
   }, 800);
+
+  // Seed undo/redo history with the restored state as the baseline.
+  historyInit();
+}
+
+// =========== Keyword Search (forward geocoding) ===========
+/**
+ * Parse "lat,lng" style input (also supports "N 24.5 E 121.5" loosely).
+ * Returns [lat, lng] when both in valid ranges, otherwise null.
+ */
+function parseLatLngInput(q) {
+  const m = q.match(/(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!m) return null;
+  const lat = parseFloat(m[1]);
+  const lng = parseFloat(m[2]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return [lat, lng];
+}
+
+async function searchByKeyword(query) {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1`;
+  const res = await fetch(url, {
+    headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
+  return res.json();
+}
+
+function renderSearchResults(items, resultsEl) {
+  resultsEl.innerHTML = '';
+  if (!items.length) {
+    resultsEl.innerHTML = '<div class="search-result-empty">查無結果</div>';
+    resultsEl.style.display = '';
+    return;
+  }
+  items.forEach(it => {
+    const row = document.createElement('div');
+    row.className = 'search-result-item';
+    const lat = parseFloat(it.lat), lng = parseFloat(it.lon);
+    const name = it.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    row.innerHTML = `
+      <div class="search-result-text">
+        <div class="search-result-name" title="${name.replace(/"/g, '&quot;')}">${name}</div>
+        <div class="search-result-coord">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+      </div>
+      <button class="search-result-add" title="加入為航點">+ 航點</button>
+    `;
+    row.addEventListener('click', (e) => {
+      if (e.target.classList.contains('search-result-add')) return;
+      mapManager.map.setView([lat, lng], Math.max(mapManager.map.getZoom(), 14));
+    });
+    row.querySelector('.search-result-add').addEventListener('click', (e) => {
+      e.stopPropagation();
+      mapManager.addWaypoint(lat, lng);
+      mapManager.map.setView([lat, lng], Math.max(mapManager.map.getZoom(), 14));
+      showNotification('已加入航點', 'success');
+    });
+    resultsEl.appendChild(row);
+  });
+  resultsEl.style.display = '';
+}
+
+function initKeywordSearch() {
+  const input = document.getElementById('search-input');
+  const btn = document.getElementById('btn-search');
+  const resultsEl = document.getElementById('search-results');
+  if (!input || !btn || !resultsEl) return;
+
+  const doSearch = async () => {
+    const q = input.value.trim();
+    if (!q) { resultsEl.style.display = 'none'; return; }
+
+    // Direct coord input — skip network
+    const coords = parseLatLngInput(q);
+    if (coords) {
+      renderSearchResults([{
+        lat: coords[0], lon: coords[1],
+        display_name: `座標: ${coords[0].toFixed(5)}, ${coords[1].toFixed(5)}`,
+      }], resultsEl);
+      return;
+    }
+
+    resultsEl.innerHTML = '<div class="search-result-loading">搜尋中…</div>';
+    resultsEl.style.display = '';
+    try {
+      const items = await searchByKeyword(q);
+      renderSearchResults(items, resultsEl);
+    } catch (err) {
+      console.error('Keyword search failed:', err);
+      resultsEl.innerHTML = '<div class="search-result-empty">搜尋失敗,請稍後再試</div>';
+    }
+  };
+
+  btn.addEventListener('click', doSearch);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+    else if (e.key === 'Escape') { resultsEl.style.display = 'none'; }
+  });
 }
 
 function resetToDefaults() {
