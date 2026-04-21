@@ -35,8 +35,8 @@ function isPalePattern(hex) {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const avg = (r + g + b) / 3;
-  // Patterns are light (avg >= 150) and low saturation (max-min <= 60)
-  return (max - min) <= 60 && avg >= 150;
+  // Loosened threshold: catch more saturated (up to 100) and darker (down to 110)
+  return (max - min) <= 100 && avg >= 110;
 }
 
 function getPathBoundingBox(d) {
@@ -57,12 +57,23 @@ function getPathBoundingBox(d) {
 
 function isInsideTargetRegion(bbox) {
   if (!bbox) return false;
-  // Region definitions based on mapping_owl_cursor.svg (viewBox="0 0 2304 1838")
-  const LEFT_WING = bbox.maxX < 900;
-  const RIGHT_WING = bbox.minX > 1400;
-  const HEAD_TOP = bbox.maxY < 550 && bbox.minX > 750 && bbox.maxX < 1550;
   
-  return LEFT_WING || RIGHT_WING || HEAD_TOP;
+  // 1. Hard protection for hills and map base (raising line to 1170)
+  // Also protect the far left edge (X < 450) where hills start
+  if (bbox.minY > 1170 || bbox.minX < 450) return false;
+  
+  // 2. Head Top (Y < 550) - middle-focused
+  const HEAD_TOP = bbox.maxY < 550 && bbox.minX > 800 && bbox.maxX < 1500;
+  if (HEAD_TOP) return true;
+
+  // 3. Right side protection: strictly skip everything on the right half (X > 1150)
+  if (bbox.minX > 1150) return false;
+
+  // 4. Tight Left Wing rectangles (targeting textures above the hill line)
+  const wing_upper = (bbox.minX < 1050 && bbox.maxX > 450 && bbox.minY < 1000 && bbox.maxY > 600);
+  const wing_lower = (bbox.minX < 900 && bbox.maxX > 550 && bbox.minY < 1170 && bbox.maxY > 1000);
+  
+  return wing_upper || wing_lower;
 }
 
 async function whitenSvg(filePath) {
