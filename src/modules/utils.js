@@ -285,13 +285,15 @@ export function interpolateRouteColor(t) {
 }
 
 /**
- * Return-leg gradient: red → purple → blue (used on round-trip / O-loop return).
+ * Return-leg gradient: red → purple → deep-sea blue → sky blue
+ * (used on round-trip / O-loop return).
  */
 export function interpolateReturnColorRgb(t) {
   const stops = [
-    { t: 0,   r: 248, g: 113, b: 113 }, // #f87171 red (matches outbound end)
-    { t: 0.5, r: 168, g:  85, b: 247 }, // #a855f7 purple
-    { t: 1,   r:  59, g: 130, b: 246 }, // #3b82f6 blue
+    { t: 0,    r: 248, g: 113, b: 113 }, // #f87171 red (matches outbound end)
+    { t: 0.33, r: 168, g:  85, b: 247 }, // #a855f7 purple
+    { t: 0.66, r:  30, g:  64, b: 175 }, // #1e40af deep-sea blue
+    { t: 1,    r:  56, g: 189, b: 248 }, // #38bdf8 sky blue
   ];
   const tc = Math.max(0, Math.min(1, t));
   let lo = stops[0], hi = stops[stops.length - 1];

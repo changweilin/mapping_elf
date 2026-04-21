@@ -61,7 +61,11 @@ export class RouteEngine {
 
         const feature = data.features[0];
         // BRouter geojson coordinates are [lng, lat, elevation?]
-        const coords = feature.geometry.coordinates.map((c) => [c[1], c[0]]);
+        const rawCoords = feature.geometry.coordinates;
+        const coords = rawCoords.map((c) => [c[1], c[0]]);
+        const inlineElevations = rawCoords.some((c) => c.length > 2 && typeof c[2] === 'number')
+          ? rawCoords.map((c) => (typeof c[2] === 'number' ? c[2] : null))
+          : null;
         // Anchor route endpoints exactly at the original waypoints (BRouter snaps to roads)
         if (coords.length > 0) coords[0] = [...waypoints[0]];
         if (coords.length > 1) coords[coords.length - 1] = [...waypoints[waypoints.length - 1]];
@@ -70,6 +74,7 @@ export class RouteEngine {
 
         rawRoutes = [{
           coords,
+          inlineElevations,
           osrmDistance: distance,
           osrmDuration: duration
         }];
@@ -113,32 +118,68 @@ export class RouteEngine {
       rawRoutes.map(async (route, idx) => {
         // Higher resolution sampling for better climb calculation (100 points)
         const sampled = samplePoints(route.coords, 100);
-        const elevations = await this._fetchElevations(sampled);
         const dist = totalDistance(route.coords);
 
-        // Interpolate elevations to full track for export
-        const fullElevations = new Array(route.coords.length);
-        if (route.coords.length <= 100) {
-          for (let i = 0; i < route.coords.length; i++) {
-            fullElevations[i] = elevations[i];
+        let elevations;
+        let fullElevations = new Array(route.coords.length);
+
+        const hasInline = Array.isArray(route.inlineElevations)
+          && route.inlineElevations.some((e) => typeof e === 'number');
+
+        if (hasInline) {
+          // Use BRouter's per-point elevation; fill any nulls by interpolation
+          fullElevations = [...route.inlineElevations];
+          for (let i = 0; i < fullElevations.length; i++) {
+            if (fullElevations[i] == null) {
+              let nextI = i + 1;
+              while (nextI < fullElevations.length && fullElevations[nextI] == null) nextI++;
+              if (nextI < fullElevations.length) {
+                const prev = i > 0 ? fullElevations[i - 1] : fullElevations[nextI];
+                const next = fullElevations[nextI];
+                const frac = 1 / (nextI - (i - 1));
+                fullElevations[i] = prev + frac * (next - prev);
+              } else {
+                fullElevations[i] = i > 0 ? fullElevations[i - 1] : 0;
+              }
+            }
+          }
+          // Sample at the same indices samplePoints() uses
+          if (route.coords.length <= 100) {
+            elevations = [...fullElevations];
+          } else {
+            const step = (route.coords.length - 1) / 99;
+            elevations = [fullElevations[0]];
+            for (let i = 1; i < 99; i++) {
+              elevations.push(fullElevations[Math.round(i * step)]);
+            }
+            elevations.push(fullElevations[route.coords.length - 1]);
           }
         } else {
-          const step = (route.coords.length - 1) / 99;
-          for (let i = 0; i < 100; i++) {
-            const idx = i === 99 ? route.coords.length - 1 : (i === 0 ? 0 : Math.round(i * step));
-            fullElevations[idx] = elevations[i];
-          }
-          let lastIdx = 0;
-          for (let i = 1; i < 100; i++) {
-            const currIdx = i === 99 ? route.coords.length - 1 : Math.round(i * step);
-            const diff = currIdx - lastIdx;
-            const e1 = elevations[i - 1];
-            const e2 = elevations[i];
-            for (let j = lastIdx + 1; j < currIdx; j++) {
-              const frac = (j - lastIdx) / diff;
-              fullElevations[j] = e1 + frac * (e2 - e1);
+          elevations = await this._fetchElevations(sampled);
+
+          // Interpolate elevations to full track for export
+          if (route.coords.length <= 100) {
+            for (let i = 0; i < route.coords.length; i++) {
+              fullElevations[i] = elevations[i];
             }
-            lastIdx = currIdx;
+          } else {
+            const step = (route.coords.length - 1) / 99;
+            for (let i = 0; i < 100; i++) {
+              const idx = i === 99 ? route.coords.length - 1 : (i === 0 ? 0 : Math.round(i * step));
+              fullElevations[idx] = elevations[i];
+            }
+            let lastIdx = 0;
+            for (let i = 1; i < 100; i++) {
+              const currIdx = i === 99 ? route.coords.length - 1 : Math.round(i * step);
+              const diff = currIdx - lastIdx;
+              const e1 = elevations[i - 1];
+              const e2 = elevations[i];
+              for (let j = lastIdx + 1; j < currIdx; j++) {
+                const frac = (j - lastIdx) / diff;
+                fullElevations[j] = e1 + frac * (e2 - e1);
+              }
+              lastIdx = currIdx;
+            }
           }
         }
 
