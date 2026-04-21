@@ -1931,7 +1931,11 @@ function getPlaceName(lat, lng) { return getEffectiveName(lat, lng); }
  */
 function deduplicateLabels(pts) {
   const count = {};
-  pts.forEach(p => { count[p.label] = (count[p.label] || 0) + 1; });
+  pts.forEach(p => {
+    // Skip protection for system labels — only deduplicate meaningful names
+    if (p.label === '起點' || p.label === '終點' || p.label.startsWith('↩ ')) return;
+    count[p.label] = (count[p.label] || 0) + 1;
+  });
   const used = {};
   pts.forEach(p => {
     if (count[p.label] > 1) {
@@ -1941,14 +1945,13 @@ function deduplicateLabels(pts) {
   });
 }
 /**
- * Distance tier for sorting Overpass candidates (lower = closer).
- * Near ≤ 100 m → 0 | Medium ≤ 250 m → 1 | Far ≤ 500 m → 2 | Beyond → 3
+ * Continuous rank for a candidate: type score + distance penalty.
+ * K ≈ 150 m per score-unit, matching the old tier width (100/250/500).
+ * Smooth — neighbouring waypoints can't flip labels over a few metres of boundary.
  */
-function _distTier(dist) {
-  if (dist <= 100) return 0;
-  if (dist <= 250) return 1;
-  if (dist <= 500) return 2;
-  return 3;
+const _POI_DIST_K = 150;
+function _poiRank(score, dist) {
+  return score + (dist || 0) / _POI_DIST_K;
 }
 
 /** Priority score for an Overpass POI element (lower = higher priority). */
@@ -2027,37 +2030,36 @@ out center 20;`;
   const nomData = nomRes.status === 'fulfilled' ? nomRes.value : null;
   const ovpData = ovpRes.status === 'fulfilled' ? ovpRes.value : null;
 
-  // --- Best Overpass candidate (sorted by priority score, then distance) ---
-  let ovpName = null, ovpScore = 99;
+  // --- Best Overpass candidate (sorted by continuous rank = score + dist/K) ---
+  let ovpName = null, ovpRank = Infinity;
   if (ovpData?.elements) {
     const ranked = ovpData.elements
       .filter(e => e.tags?.name)
-      .map(e => ({
-        name: e.tags.name,
-        score: _poiScore(e.tags),
-        dist: haversineDistance([lat, lng], [e.lat ?? e.center?.lat ?? lat, e.lon ?? e.center?.lon ?? lng]),
-      }))
-      .sort((a, b) => {
-        const ta = _distTier(a.dist), tb = _distTier(b.dist);
-        if (ta !== tb) return ta - tb;          // closer tier wins
-        return a.score - b.score;               // same tier → type priority
-      });
-    if (ranked.length) { ovpName = ranked[0].name; ovpScore = ranked[0].score; }
+      .map(e => {
+        const dist = haversineDistance([lat, lng], [e.lat ?? e.center?.lat ?? lat, e.lon ?? e.center?.lon ?? lng]);
+        return { name: e.tags.name, rank: _poiRank(_poiScore(e.tags), dist) };
+      })
+      .sort((a, b) => a.rank - b.rank);
+    if (ranked.length) { ovpName = ranked[0].name; ovpRank = ranked[0].rank; }
   }
 
   // --- Best Nominatim POI name (only if data.name is a landmark, not a road/boundary) ---
-  let nomPOI = null, nomPOIScore = 99;
+  let nomPOI = null, nomPOIRank = Infinity;
   if (nomData?.name) {
-    nomPOIScore = _nominatimScore(nomData);
-    if (nomPOIScore < 99) nomPOI = nomData.name;
+    const nomScore = _nominatimScore(nomData);
+    if (nomScore < 99) {
+      nomPOI = nomData.name;
+      const nLat = parseFloat(nomData.lat), nLon = parseFloat(nomData.lon);
+      const nDist = (Number.isFinite(nLat) && Number.isFinite(nLon))
+        ? haversineDistance([lat, lng], [nLat, nLon]) : 0;
+      nomPOIRank = _poiRank(nomScore, nDist);
+    }
   }
 
-  // --- Select final name ---
-  // 1. Best landmark from Overpass or Nominatim POI (whichever has lower score)
+  // --- Select final name by rank (whichever landmark is better) ---
   let name = null;
-  if (ovpScore <= nomPOIScore && ovpName) name = ovpName;
+  if (ovpName && ovpRank <= nomPOIRank) name = ovpName;
   else if (nomPOI) name = nomPOI;
-  else if (ovpName) name = ovpName; // Overpass fallback (score 9)
 
   // 2. Fallback: road name, then administrative area
   if (!name && nomData) {
@@ -2078,7 +2080,7 @@ async function geocodeWaypoints(waypoints) {
   for (let i = 0; i < waypoints.length; i++) {
     const [lat, lng] = waypoints[i];
     const k = _geocodeKey(lat, lng);
-    if (k in waypointPlaceNames) continue; // already known
+    if (k in waypointPlaceNames || k in waypointCustomNames) continue; // already known
     await fetchPlaceName(lat, lng);
     _applyPlaceNameToDOM();
     // Nominatim rate limit: max 1 req/s
@@ -2098,12 +2100,18 @@ function _applyPlaceNameToDOM() {
 
     weatherPoints.forEach((pt) => {
       if (pt.isWaypoint) {
+        const k = _geocodeKey(pt.lat, pt.lng);
+        const customName = waypointCustomNames[k];
+        const geocodedName = waypointPlaceNames[k];
         const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === wps.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
-        const placeName = getPlaceName(pt.lat, pt.lng);
-        // Drop placeName for start/end collisions and for waypoints that share
-        // a _geocodeKey with another waypoint — otherwise the shared name leaks
-        // across start/end and dedup appends '(2)' to one of them.
-        const effectivePlaceName = (placeName === '起點' || placeName === '終點' || sharesKey(pt.lat, pt.lng)) ? null : placeName;
+        
+        let effectivePlaceName = customName;
+        if (!effectivePlaceName) {
+          // Only use geocoded name if it's not a generic start/end and not shared with another point
+          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !sharesKey(pt.lat, pt.lng)) {
+            effectivePlaceName = geocodedName;
+          }
+        }
         pt.label = effectivePlaceName || fallbackLabel;
       }
     });
@@ -2704,13 +2712,23 @@ function buildWeatherPoints() {
     // Legacy / Non-Import Batching logic
     // Add actual waypoints
     for (let i = 0; i < wps.length; i++) {
-      const placeName = getPlaceName(wps[i][0], wps[i][1]);
-      const effectivePlaceName = (placeName === '起點' || placeName === '終點' || _sharesKey(wps[i][0], wps[i][1])) ? null : placeName;
+      const lat = wps[i][0], lng = wps[i][1];
+      const k = _geocodeKey(lat, lng);
+      const customName = waypointCustomNames[k];
+      const geocodedName = waypointPlaceNames[k];
+      
+      let effectivePlaceName = customName;
+      if (!effectivePlaceName) {
+         if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+           effectivePlaceName = geocodedName;
+         }
+      }
+
       const label = effectivePlaceName
         ? effectivePlaceName
         : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
       all.push({
-        label, lat: wps[i][0], lng: wps[i][1], isWaypoint: true, wpIndex: i,
+        label, lat, lng, isWaypoint: true, wpIndex: i,
         _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i])
       });
     }
@@ -2818,16 +2836,51 @@ function buildWeatherPoints() {
       });
     }
 
-    // Return waypoints (reversed, excluding turning point).
-    for (let i = wps.length - 2; i >= 0; i--) {
-      const placeName = getPlaceName(wps[i][0], wps[i][1]);
-      const effectivePlaceName = (placeName === '起點' || placeName === '終點' || _sharesKey(wps[i][0], wps[i][1])) ? null : placeName;
-      const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
-      const returnCum = totalDistM - wpCumDist[i];
+    // Out-and-back Return waypoints (reversed, excluding turning point).
+    if (roundTripMode) {
+      for (let i = wps.length - 2; i >= 0; i--) {
+        const lat = wps[i][0], lng = wps[i][1];
+        const k = _geocodeKey(lat, lng);
+        const customName = waypointCustomNames[k];
+        const geocodedName = waypointPlaceNames[k];
+
+        let effectivePlaceName = customName;
+        if (!effectivePlaceName) {
+           if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+             effectivePlaceName = geocodedName;
+           }
+        }
+        const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
+        const returnCum = totalDistM - wpCumDist[i];
+        all.push({
+          label: `↩ ${outLabel}`,
+          lat, lng,
+          isWaypoint: true,
+          isReturn: true,
+          wpIndex: i,
+          _cum: returnCum,
+          _elapsedH: getElapsedH(returnCum),
+        });
+      }
+    } else if (oLoopMode) {
+      // O-Loop: just add the start point back at the very end.
+      const i = 0;
+      const lat = wps[i][0], lng = wps[i][1];
+      const k = _geocodeKey(lat, lng);
+      const customName = waypointCustomNames[k];
+      const geocodedName = waypointPlaceNames[k];
+
+      let effectivePlaceName = customName;
+      if (!effectivePlaceName) {
+         if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+            effectivePlaceName = geocodedName;
+         }
+      }
+      const outLabel = effectivePlaceName || '起點';
+      const returnCum = totalDistM;
       all.push({
         label: `↩ ${outLabel}`,
-        lat: wps[i][0],
-        lng: wps[i][1],
+        lat, lng,
         isWaypoint: true,
         isReturn: true,
         wpIndex: i,
@@ -3928,6 +3981,11 @@ function renderSearchResults(items, resultsEl) {
     });
     row.querySelector('.search-result-add').addEventListener('click', (e) => {
       e.stopPropagation();
+      // Store the search result name as a custom name before adding to avoid redundant geocoding
+      // and ensure the specific place name found during search is preserved.
+      if (it.name || it.display_name) {
+        saveCustomName(lat, lng, it.name || it.display_name.split(',')[0]);
+      }
       mapManager.addWaypoint(lat, lng);
       mapManager.map.setView([lat, lng], Math.max(mapManager.map.getZoom(), 14));
       showNotification('已加入航點', 'success');

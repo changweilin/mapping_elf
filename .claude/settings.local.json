@@ -24,7 +24,11 @@
       "Read(//tmp/**)",
       "Bash(curl -sS -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
       "Bash(curl -sS -L http://localhost:5173/)",
-      "Bash(kill %1)"
+      "Bash(kill %1)",
+      "Bash(python /tmp/extract_tools.py)",
+      "Bash(cygpath -w /tmp/jsonl_files.txt)",
+      "Bash(cygpath -w /tmp)",
+      "Bash(xargs -I{} cygpath -w \"{}\" wc -l /tmp/jsonl_files_win.txt head -2 /tmp/jsonl_files_win.txt)"
     ]
   }
 }
