@@ -3789,17 +3789,17 @@ async function init() {
   }
 
 
-  // --- Settings section collapse toggle ---
-  {
-    const settingsHeader = document.getElementById('settings-toggle-header');
-    const settingsBody = document.getElementById('settings-body');
-    if (settingsHeader && settingsBody) {
-      settingsHeader.addEventListener('click', () => {
-        const collapsed = settingsBody.classList.toggle('collapsed');
-        settingsHeader.classList.toggle('collapsed', collapsed);
-      });
-    }
-  }
+  // --- Collapsible sections toggle ---
+  document.querySelectorAll('.collapsible-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const section = header.closest('.collapsible');
+      const body = section?.querySelector('.collapsible-body');
+      if (body) {
+        const collapsed = body.classList.toggle('collapsed');
+        header.classList.toggle('collapsed', collapsed);
+      }
+    });
+  });
 
   // --- Windy settings ---
   const windyLayerEl = document.getElementById('windy-layer-select');

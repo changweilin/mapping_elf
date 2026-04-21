@@ -1117,40 +1117,48 @@ html, body {
   color: var(--text-primary);
 }
 
-/* Settings section */
-.settings-section-header {
+/* Collapsible sections */
+.collapsible-header {
   cursor: pointer;
   margin-bottom: 0;
   user-select: none;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.settings-section-header h3 {
+.collapsible-header h3 {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.settings-chevron {
+.chevron-icon {
   color: var(--text-muted);
-  transition: transform 0.2s;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
   transform: rotate(180deg); /* default: pointing down = expanded */
 }
 
-.settings-section-header.collapsed .settings-chevron {
+.collapsible-header.collapsed .chevron-icon {
   transform: rotate(0deg); /* pointing up = collapsed */
 }
 
-.settings-body {
+.collapsible-body {
   overflow: hidden;
-  max-height: 200px;
-  transition: max-height 0.25s ease, opacity 0.2s ease;
+  max-height: 2000px;
+  transition: max-height 0.3s ease-out, opacity 0.2s ease, padding 0.2s ease;
   opacity: 1;
   padding-top: 10px;
 }
 
-.settings-body.collapsed {
-  max-height: 0;
-  opacity: 0;
-  padding-top: 0;
+.collapsible-body.collapsed {
+  max-height: 0 !important;
+  opacity: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  pointer-events: none;
 }
 
 .settings-row {

@@ -152,34 +152,39 @@
   <!-- Side Panel -->
   <aside id="side-panel" class="side-panel open">
     <!-- Keyword Search -->
-    <section class="panel-section" id="search-section">
-      <div class="section-header">
+    <section class="panel-section collapsible" id="search-section">
+      <div class="section-header collapsible-header collapsed" id="search-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" />
           </svg>
           關鍵字搜索
         </h3>
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
+        </svg>
       </div>
-      <div class="search-controls">
-        <div class="search-input-row">
-          <input type="text" id="search-input" class="search-input" placeholder="輸入地名、座標或關鍵字..." autocomplete="off" />
-          <button class="btn-primary" id="btn-search" title="搜尋">搜尋</button>
+      <div class="collapsible-body collapsed" id="search-body">
+        <div class="search-controls">
+          <div class="search-input-row">
+            <input type="text" id="search-input" class="search-input" placeholder="輸入地名、座標或關鍵字..." autocomplete="off" />
+            <button class="btn-primary" id="btn-search" title="搜尋">搜尋</button>
+          </div>
+          <div class="search-results" id="search-results" style="display:none;"></div>
         </div>
-        <div class="search-results" id="search-results" style="display:none;"></div>
       </div>
     </section>
 
     <!-- Route Controls -->
-    <section class="panel-section" id="route-section">
-      <div class="section-header">
+    <section class="panel-section collapsible" id="route-section">
+      <div class="section-header collapsible-header" id="route-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path d="M21 3L3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z" fill="currentColor" />
           </svg>
           路線規劃
         </h3>
-        <div class="section-actions">
+        <div class="section-actions" onclick="event.stopPropagation()">
           <button class="icon-btn" id="btn-undo" title="復原 (Ctrl+Z)" disabled>
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
@@ -209,123 +214,128 @@
             </svg>
           </button>
         </div>
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
+        </svg>
       </div>
-      <div class="waypoint-list" id="waypoint-list">
-        <div class="empty-state">
-          <svg viewBox="0 0 24 24" width="40" height="40" opacity="0.4">
-            <path
-              d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z"
-              fill="currentColor" />
-          </svg>
-          <p>在地圖上點擊以新增航點</p>
-          <span class="hint">點擊地圖任意位置開始規劃路線</span>
+      <div class="collapsible-body" id="route-body">
+        <div class="waypoint-list" id="waypoint-list">
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" width="40" height="40" opacity="0.4">
+              <path
+                d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z"
+                fill="currentColor" />
+            </svg>
+            <p>在地圖上點擊以新增航點</p>
+            <span class="hint">點擊地圖任意位置開始規劃路線</span>
+          </div>
         </div>
-      </div>
-      <div class="nav-mode-row">
-        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="single"
-            id="nav-mode-single"><span>單程</span></label>
-        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="roundtrip"
-            id="nav-mode-roundtrip"><span>來回</span></label>
-        <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="oloop"
-            id="nav-mode-oloop"><span>O繞</span></label>
-      </div>
-      <div class="segment-interval-row">
-        <label class="segment-interval-label" title="在路線中插入中繼點(依距離或配速間隔),用於檢視沿途天氣與時程">
-          <svg viewBox="0 0 24 24" width="13" height="13">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm0-4h-2V7h2v8z"
-              fill="currentColor" />
-          </svg>
-          中繼點
-        </label>
-        <div class="interval-mode-controls">
-        <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
-            關</label>
-          <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-distance"
-              value="distance"> 距離</label>
-          <input type="number" id="segment-interval-input" class="segment-interval-input" min="1" max="100" value="5"
-            disabled>
-          <span class="segment-interval-unit">km</span>
-          <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-pace" value="pace" checked>
-            配速</label>
+        <div class="nav-mode-row">
+          <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="single"
+              id="nav-mode-single"><span>單程</span></label>
+          <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="roundtrip"
+              id="nav-mode-roundtrip"><span>來回</span></label>
+          <label class="nav-mode-opt"><input type="radio" name="nav-mode" value="oloop"
+              id="nav-mode-oloop"><span>O繞</span></label>
         </div>
-      </div>
-      <div class="segment-interval-row" id="interval-activity-row" style="display:none">
-        <label class="segment-interval-label">
-          <svg viewBox="0 0 24 24" width="13" height="13">
-            <path
-              d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7z"
-              fill="currentColor" />
-          </svg>
-          運動
-        </label>
-        <select id="speed-activity-select" class="speed-activity-select">
-          <option value="walking">步行</option>
-          <option value="hiking" selected>健行</option>
-          <option value="trail-run">越野跑</option>
-          <option value="running">跑步</option>
-          <option value="cycling">自行車</option>
-          <option value="driving">駕車</option>
-        </select>
-      </div>
-      <div class="route-mode-selector" id="route-mode-selector">
-        <label class="mode-option">
-          <input type="radio" name="route-mode" value="walking" />
-          <span class="mode-label">
-            <svg viewBox="0 0 24 24" width="16" height="16">
+        <div class="segment-interval-row">
+          <label class="segment-interval-label" title="在路線中插入中繼點(依距離或配速間隔),用於檢視沿途天氣與時程">
+            <svg viewBox="0 0 24 24" width="13" height="13">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm0-4h-2V7h2v8z"
+                fill="currentColor" />
+            </svg>
+            中繼點
+          </label>
+          <div class="interval-mode-controls">
+          <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
+              關</label>
+            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-distance"
+                value="distance"> 距離</label>
+            <input type="number" id="segment-interval-input" class="segment-interval-input" min="1" max="100" value="5"
+              disabled>
+            <span class="segment-interval-unit">km</span>
+            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-pace" value="pace" checked>
+              配速</label>
+          </div>
+        </div>
+        <div class="segment-interval-row" id="interval-activity-row" style="display:none">
+          <label class="segment-interval-label">
+            <svg viewBox="0 0 24 24" width="13" height="13">
               <path
                 d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7z"
                 fill="currentColor" />
             </svg>
-            步行
-          </span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="route-mode" value="hiking" checked />
-          <span class="mode-label">
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor" />
-            </svg>
-            山徑
-          </span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="route-mode" value="cycling" />
-          <span class="mode-label">
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path
-                d="M15.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM5 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5zm5.8-10l2.4-2.4.8.8c1.3 1.3 3 2.1 5 2.1V9c-1.5 0-2.7-.6-3.6-1.5l-1.9-1.9c-.5-.4-1-.6-1.6-.6s-1.1.2-1.4.6L7.8 8.4c-.4.4-.6.9-.6 1.4 0 .6.2 1.1.6 1.4L11 14v5h2v-6.2l-2.2-2.3zM19 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
-                fill="currentColor" />
-            </svg>
-            自行車
-          </span>
-        </label>
-        <label class="mode-option">
-          <input type="radio" name="route-mode" value="driving" />
-          <span class="mode-label">
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path
-                d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"
-                fill="currentColor" />
-            </svg>
-            駕車
-          </span>
-        </label>
-      </div>
-      <div class="pace-checks-row">
-        <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
-          <input type="checkbox" id="import-auto-sort-enable">
-          <span>匯入自動排序</span>
-        </label>
-        <label class="pace-check-opt" title="匯入時,為沒有名稱的航點自動命名">
-          <input type="checkbox" id="import-auto-name-enable">
-          <span>匯入自動命名</span>
-        </label>
+            運動
+          </label>
+          <select id="speed-activity-select" class="speed-activity-select">
+            <option value="walking">步行</option>
+            <option value="hiking" selected>健行</option>
+            <option value="trail-run">越野跑</option>
+            <option value="running">跑步</option>
+            <option value="cycling">自行車</option>
+            <option value="driving">駕車</option>
+          </select>
+        </div>
+        <div class="route-mode-selector" id="route-mode-selector">
+          <label class="mode-option">
+            <input type="radio" name="route-mode" value="walking" />
+            <span class="mode-label">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path
+                  d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7z"
+                  fill="currentColor" />
+              </svg>
+              步行
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="route-mode" value="hiking" checked />
+            <span class="mode-label">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor" />
+              </svg>
+              山徑
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="route-mode" value="cycling" />
+            <span class="mode-label">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path
+                  d="M15.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM5 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5zM5.8-10l2.4-2.4.8.8c1.3 1.3 3 2.1 5 2.1V9c-1.5 0-2.7-.6-3.6-1.5l-1.9-1.9c-.5-.4-1-.6-1.6-.6s-1.1.2-1.4.6L7.8 8.4c-.4.4-.6.9-.6 1.4 0 .6.2 1.1.6 1.4L11 14v5h2v-6.2l-2.2-2.3zM19 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
+                  fill="currentColor" />
+              </svg>
+              自行車
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="route-mode" value="driving" />
+            <span class="mode-label">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path
+                  d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"
+                  fill="currentColor" />
+              </svg>
+              駕車
+            </span>
+          </label>
+        </div>
+        <div class="pace-checks-row">
+          <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
+            <input type="checkbox" id="import-auto-sort-enable">
+            <span>匯入自動排序</span>
+          </label>
+          <label class="pace-check-opt" title="匯入時,為沒有名稱的航點自動命名">
+            <input type="checkbox" id="import-auto-name-enable">
+            <span>匯入自動命名</span>
+          </label>
+        </div>
       </div>
     </section>
 
     <!-- Pace Parameters (shown when speed mode is ON) -->
-    <section class="panel-section" id="pace-params-panel" style="display:none">
-      <div class="section-header pace-section-header">
+    <section class="panel-section collapsible" id="pace-params-panel" style="display:none">
+      <div class="section-header collapsible-header collapsed" id="pace-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path
@@ -334,69 +344,74 @@
           </svg>
           配速參數
         </h3>
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
+        </svg>
       </div>
-      <!-- 配速 + 疲勞程度 並排 -->
-      <div class="pace-top-grid">
-        <div class="pace-field">
-          <label class="pace-label">平地配速</label>
-          <input type="number" id="pace-flat-input" class="pace-input" min="0.5" max="80" step="0.5" placeholder="—">
-          <select id="pace-unit-select" class="pace-unit-select">
-            <option value="kmh">km/h</option>
-            <option value="minkm">min/km</option>
-            <option value="shanhe">上河</option>
-          </select>
+      <div class="collapsible-body collapsed" id="pace-body">
+        <!-- 配速 + 疲勞程度 並排 -->
+        <div class="pace-top-grid">
+          <div class="pace-field">
+            <label class="pace-label">平地配速</label>
+            <input type="number" id="pace-flat-input" class="pace-input" min="0.5" max="80" step="0.5" placeholder="—">
+            <select id="pace-unit-select" class="pace-unit-select">
+              <option value="kmh">km/h</option>
+              <option value="minkm">min/km</option>
+              <option value="shanhe">上河</option>
+            </select>
+          </div>
+          <div class="pace-field">
+            <label class="pace-label">疲勞程度</label>
+            <select id="pace-fatigue-level" class="pace-fatigue-select">
+              <option value="none">無疲勞</option>
+              <option value="casual">非耐力</option>
+              <option value="general" selected>一般</option>
+              <option value="trained">專項</option>
+            </select>
+          </div>
         </div>
-        <div class="pace-field">
-          <label class="pace-label">疲勞程度</label>
-          <select id="pace-fatigue-level" class="pace-fatigue-select">
-            <option value="none">無疲勞</option>
-            <option value="casual">非耐力</option>
-            <option value="general" selected>一般</option>
-            <option value="trained">專項</option>
-          </select>
+        <!-- 按段重算 + 嚴格線性時間 並排 -->
+        <div class="pace-checks-row">
+          <label class="pace-check-opt" title="勾選後,各段中繼點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
+            <input type="checkbox" id="pace-per-segment-enable">
+            <span>按段重算</span>
+          </label>
+          <label class="pace-check-opt" title="強制航點時間沿路線單調遞增,避免後段時間早於前段">
+            <input type="checkbox" id="strict-linear-enable">
+            <span>嚴格線性</span>
+          </label>
         </div>
-      </div>
-      <!-- 按段重算 + 嚴格線性時間 並排 -->
-      <div class="pace-checks-row">
-        <label class="pace-check-opt" title="勾選後,各段中繼點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
-          <input type="checkbox" id="pace-per-segment-enable">
-          <span>按段重算</span>
-        </label>
-        <label class="pace-check-opt" title="強制航點時間沿路線單調遞增,避免後段時間早於前段">
-          <input type="checkbox" id="strict-linear-enable">
-          <span>嚴格線性</span>
-        </label>
-      </div>
-      <!-- 體重 + 負重 -->
-      <div class="pace-grid">
-        <div class="pace-field">
-          <label class="pace-label">體重</label>
-          <input type="number" id="pace-body-weight" class="pace-input" min="30" max="200" step="1" value="70">
-          <span class="pace-unit">kg</span>
+        <!-- 體重 + 負重 -->
+        <div class="pace-grid">
+          <div class="pace-field">
+            <label class="pace-label">體重</label>
+            <input type="number" id="pace-body-weight" class="pace-input" min="30" max="200" step="1" value="70">
+            <span class="pace-unit">kg</span>
+          </div>
+          <div class="pace-field">
+            <label class="pace-label">負重</label>
+            <input type="number" id="pace-pack-weight" class="pace-input" min="0" max="80" step="0.5" value="0">
+            <span class="pace-unit">kg</span>
+          </div>
         </div>
-        <div class="pace-field">
-          <label class="pace-label">負重</label>
-          <input type="number" id="pace-pack-weight" class="pace-input" min="0" max="80" step="0.5" value="0">
-          <span class="pace-unit">kg</span>
-        </div>
-      </div>
-      <div class="pace-grid" id="pace-rest-row">
-        <div class="pace-field">
-          <label class="pace-label">休息間隔</label>
-          <input type="number" id="pace-rest-every" class="pace-input" min="0.5" max="12" step="0.5" value="1">
-          <span class="pace-unit">小時</span>
-        </div>
-        <div class="pace-field">
-          <label class="pace-label">休息時長</label>
-          <input type="number" id="pace-rest-minutes" class="pace-input" min="1" max="120" step="5" value="10">
-          <span class="pace-unit">分</span>
+        <div class="pace-grid" id="pace-rest-row">
+          <div class="pace-field">
+            <label class="pace-label">休息間隔</label>
+            <input type="number" id="pace-rest-every" class="pace-input" min="0.5" max="12" step="0.5" value="1">
+            <span class="pace-unit">小時</span>
+          </div>
+          <div class="pace-field">
+            <label class="pace-label">休息時長</label>
+            <input type="number" id="pace-rest-minutes" class="pace-input" min="1" max="120" step="5" value="10">
+            <span class="pace-unit">分</span>
+          </div>
         </div>
       </div>
     </section>
 
     <!-- Route Alternatives -->
-    <section class="panel-section" id="alternatives-section" style="display:none;">
-      <div class="section-header">
+    <section class="panel-section collapsible" id="alternatives-section" style="display:none;">
+      <div class="section-header collapsible-header collapsed" id="alternatives-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path
@@ -406,15 +421,20 @@
           路線方案
         </h3>
         <span class="alternatives-count" id="alt-count"></span>
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
+        </svg>
       </div>
-      <div class="alternatives-list" id="alternatives-list">
-        <!-- Dynamically populated -->
+      <div class="collapsible-body collapsed" id="alternatives-body">
+        <div class="alternatives-list" id="alternatives-list">
+          <!-- Dynamically populated -->
+        </div>
       </div>
     </section>
 
     <!-- Stats Section -->
-    <section class="panel-section" id="stats-section">
-      <div class="section-header">
+    <section class="panel-section collapsible" id="stats-section">
+      <div class="section-header collapsible-header collapsed" id="stats-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path
@@ -423,98 +443,103 @@
           </svg>
           路線統計
         </h3>
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
+        </svg>
       </div>
-      <div class="stats-grid" id="stats-grid">
-        <div class="stat-card">
-          <div class="stat-icon distance">
-            <svg viewBox="0 0 24 24" width="20" height="20">
-              <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" fill="currentColor" />
-            </svg>
+      <div class="collapsible-body collapsed" id="stats-body">
+        <div class="stats-grid" id="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon distance">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" fill="currentColor" />
+              </svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">總距離</span>
+              <span class="stat-value" id="stat-distance">—</span>
+            </div>
           </div>
-          <div class="stat-info">
-            <span class="stat-label">總距離</span>
-            <span class="stat-value" id="stat-distance">—</span>
+          <div class="stat-card">
+            <div class="stat-icon ascent">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"
+                  fill="currentColor" />
+              </svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">總爬升</span>
+              <span class="stat-value" id="stat-ascent">—</span>
+            </div>
           </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon ascent">
-            <svg viewBox="0 0 24 24" width="20" height="20">
-              <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"
-                fill="currentColor" />
-            </svg>
+          <div class="stat-card">
+            <div class="stat-icon descent">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path d="M16 18l2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 6.3 6.29L22 12v6h-6z" fill="currentColor" />
+              </svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">總下降</span>
+              <span class="stat-value" id="stat-descent">—</span>
+            </div>
           </div>
-          <div class="stat-info">
-            <span class="stat-label">總爬升</span>
-            <span class="stat-value" id="stat-ascent">—</span>
+          <div class="stat-card">
+            <div class="stat-icon elevation">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor" />
+              </svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">最高海拔</span>
+              <span class="stat-value" id="stat-max-elev">—</span>
+            </div>
           </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon descent">
-            <svg viewBox="0 0 24 24" width="20" height="20">
-              <path d="M16 18l2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 6.3 6.29L22 12v6h-6z" fill="currentColor" />
-            </svg>
+          <div class="stat-card" id="stat-time-card" style="display:none">
+            <div class="stat-icon time-icon">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path
+                  d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"
+                  fill="currentColor" />
+              </svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">預估時間</span>
+              <span class="stat-value" id="stat-time">—</span>
+            </div>
           </div>
-          <div class="stat-info">
-            <span class="stat-label">總下降</span>
-            <span class="stat-value" id="stat-descent">—</span>
+          <div class="stat-card" id="stat-kcal-card" style="display:none">
+            <div class="stat-icon kcal-icon">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path
+                  d="M13.5 .67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"
+                  fill="currentColor" />
+              </svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">消耗熱量</span>
+              <span class="stat-value" id="stat-kcal">—</span>
+            </div>
           </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon elevation">
-            <svg viewBox="0 0 24 24" width="20" height="20">
-              <path d="M14 6l-3.75 5 2.85 3.8-1.6 1.2C9.81 13.75 7 10 7 10l-6 8h22L14 6z" fill="currentColor" />
-            </svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">最高海拔</span>
-            <span class="stat-value" id="stat-max-elev">—</span>
-          </div>
-        </div>
-        <div class="stat-card" id="stat-time-card" style="display:none">
-          <div class="stat-icon time-icon">
-            <svg viewBox="0 0 24 24" width="20" height="20">
-              <path
-                d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"
-                fill="currentColor" />
-            </svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">預估時間</span>
-            <span class="stat-value" id="stat-time">—</span>
-          </div>
-        </div>
-        <div class="stat-card" id="stat-kcal-card" style="display:none">
-          <div class="stat-icon kcal-icon">
-            <svg viewBox="0 0 24 24" width="20" height="20">
-              <path
-                d="M13.5 .67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"
-                fill="currentColor" />
-            </svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">消耗熱量</span>
-            <span class="stat-value" id="stat-kcal">—</span>
-          </div>
-        </div>
-        <div class="stat-card" id="stat-intake-card" style="display:none">
-          <div class="stat-icon intake-icon">
-            <svg viewBox="0 0 24 24" width="20" height="20">
-              <path
-                d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-2.21-2.85-4-6.39-4C6.1 10.99 2.97 12.78 2.97 15c0 2.21 3.13 4 6.67 4 3.54 0 6.39-1.79 6.39-4zm-3.01-5.07c-.29-.06-.6-.06-.89-.06-2.98 0-5.61.94-7.12 2.33-.31.28-.56.58-.8.88v-3.6h8.81v.45z"
-                fill="currentColor" />
-            </svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">建議補給</span>
-            <span class="stat-value" id="stat-intake">—</span>
+          <div class="stat-card" id="stat-intake-card" style="display:none">
+            <div class="stat-icon intake-icon">
+              <svg viewBox="0 0 24 24" width="20" height="20">
+                <path
+                  d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-2.21-2.85-4-6.39-4C6.1 10.99 2.97 12.78 2.97 15c0 2.21 3.13 4 6.67 4 3.54 0 6.39-1.79 6.39-4zm-3.01-5.07c-.29-.06-.6-.06-.89-.06-2.98 0-5.61.94-7.12 2.33-.31.28-.56.58-.8.88v-3.6h8.81v.45z"
+                  fill="currentColor" />
+              </svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">建議補給</span>
+              <span class="stat-value" id="stat-intake">—</span>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
     <!-- Settings Section -->
-    <section class="panel-section" id="settings-section">
-      <div class="section-header settings-section-header" id="settings-toggle-header">
+    <section class="panel-section collapsible" id="settings-section">
+      <div class="section-header collapsible-header collapsed" id="settings-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">
             <path
@@ -523,11 +548,11 @@
           </svg>
           Windy設置
         </h3>
-        <svg class="settings-chevron" viewBox="0 0 24 24" width="16" height="16">
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
           <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
         </svg>
       </div>
-      <div class="settings-body" id="settings-body">
+      <div class="collapsible-body collapsed" id="settings-body">
         <div class="settings-row">
           <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
           <select id="windy-layer-select" title="天氣圖層">
