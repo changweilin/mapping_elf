@@ -719,7 +719,7 @@ btnClearRoute.addEventListener('click', () => {
   localStorage.removeItem(LS_GEOCODE_KEY);
   localStorage.removeItem(LS_WAYPOINTS_KEY);
   const _wc = document.getElementById('weather-table-container');
-  if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
+  if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
   hideAlternatives();
   showNotification('路線已清除', 'info');
 });
@@ -1074,7 +1074,7 @@ async function onWaypointsChanged(waypoints) {
       currentElevations = [];
       allAlternatives = [];
       const _wc = document.getElementById('weather-table-container');
-      if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
+      if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
     }
     return;
   }
@@ -2128,7 +2128,6 @@ function refreshWindyLinks() {
 // =========== Weather Panel ===========
 
 const WEATHER_ROWS = [
-  { key: 'forecastTime', label: '預報時間' },
   { key: 'weather', label: '天氣' },
   { key: 'temp', label: '溫度' },
   { key: 'precipitation', label: '雨量' },
@@ -2146,6 +2145,7 @@ const WEATHER_ROWS = [
   { key: 'radiation', label: '輻射' },
   { key: 'sunrise', label: '日出' },
   { key: 'sunset', label: '日落' },
+  { key: 'forecastTime', label: '預報時間' },
 ];
 
 let weatherPoints = [];
@@ -3254,7 +3254,7 @@ function renderWeatherPanel() {
   if (!container) return;
 
   if (weatherPoints.length === 0) {
-    container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
+    container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
     return;
   }
 
@@ -3339,9 +3339,9 @@ function renderWeatherPanel() {
   // --- Row 1: labels / fetch ---
   html += `<tr class="wt-header-row wt-header-row-label">
     <th class="wt-label-cell wt-th">
-      <button class="wt-ctrl-fetch" data-action="fetch" title="取得天氣">
+      <button class="wt-ctrl-fetch" data-action="fetch" title="更新天氣">
         <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg>
-        <span>取得天氣</span>
+        <span>更新天氣</span>
       </button>
     </th>`;
 
@@ -3477,7 +3477,7 @@ function renderWeatherPanel() {
       const action = btn.dataset.action;
       console.log('Direct button click:', action);
       switch (action) {
-        case 'fetch': fetchAllWeatherData(); break;
+        case 'fetch': fetchAllWeatherData({ force: true }); break;
         case 'day-minus': shiftAllDates(-1, 0); break;
         case 'day-plus': shiftAllDates(+1, 0); break;
         case 'day-now': shiftToNow('day'); break;
@@ -3544,6 +3544,7 @@ function renderWeatherPanel() {
     saveWeatherSettings();
     th.dataset.prevMs = String(colToMs(th));
     refreshWindyLinks();
+    fetchAllWeatherData({ onlyColIndex: parseInt(th.dataset.idx) });
   };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
     el.addEventListener('change', onTimeChange)
@@ -3688,8 +3689,8 @@ function autoFetchWeather(options = {}) {
 }
 
 async function fetchAllWeatherData(options = {}) {
-  const { force = false, onlyWaypointIndex = null } = options;
-  console.log('fetchAllWeatherData triggered', { force, onlyWaypointIndex });
+  const { force = false, onlyWaypointIndex = null, onlyColIndex = null } = options;
+  console.log('fetchAllWeatherData triggered', { force, onlyWaypointIndex, onlyColIndex });
   if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
 
   const container = document.getElementById('weather-table-container');
@@ -3702,10 +3703,11 @@ async function fetchAllWeatherData(options = {}) {
   for (let i = 0; i < weatherPoints.length; i++) {
     const pt = weatherPoints[i];
 
-    // Filter by specific waypoint if requested
+    // Filter by specific waypoint or column if requested
     if (onlyWaypointIndex !== null) {
         if (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex) continue;
     }
+    if (onlyColIndex !== null && i !== onlyColIndex) continue;
 
     if (fetchBtn) fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
 
@@ -3791,7 +3793,7 @@ async function fetchAllWeatherData(options = {}) {
 
   if (fetchBtn) {
     fetchBtn.disabled = false;
-    fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>取得天氣</span>`;
+    fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
   }
   showNotification('天氣資訊已更新', 'success', 2000);
 }
@@ -3982,7 +3984,6 @@ function _renderWeatherCard(colIdx) {
   }
   if (isFull) {
     const CARD_ROWS = [
-      { key: 'forecastTime', label: '預報時間' },
       { key: 'tempRange', label: '高/低溫' },
       { key: 'feelsLike', label: '體感溫度' },
       { key: 'precipitation', label: '雨量' },
@@ -3998,6 +3999,7 @@ function _renderWeatherCard(colIdx) {
       { key: 'radiation', label: '輻射' },
       { key: 'sunrise', label: '日出' },
       { key: 'sunset', label: '日落' },
+      { key: 'forecastTime', label: '預報時間' },
     ];
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
