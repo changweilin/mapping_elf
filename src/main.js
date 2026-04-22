@@ -3461,27 +3461,31 @@ async function fetchAllWeatherData() {
  */
 function _weatherPointGradColor(pt) {
   if (!pt) return interpolateRouteColor(0);
-  const returnCums = weatherPoints.filter(p => p.isReturn && typeof p._cum === 'number').map(p => p._cum);
-  const hasReturn = returnCums.length > 0;
-  if (pt.isReturn && hasReturn) {
-    const retMin = Math.min(...returnCums);
-    const retMax = Math.max(...returnCums);
-    const tRet = retMax > retMin
-      ? Math.max(0, Math.min(1, ((pt._cum ?? retMin) - retMin) / (retMax - retMin)))
+
+  const fwdPts = weatherPoints.filter(p => !p.isReturn && typeof p._cum === 'number');
+  const outboundMax = fwdPts.length ? Math.max(...fwdPts.map(p => p._cum)) : 0;
+  const allPts = weatherPoints.filter(p => typeof p._cum === 'number');
+  const totalMax = allPts.length ? Math.max(...allPts.map(p => p._cum)) : 0;
+
+  if (pt.isReturn) {
+    const tRet = (totalMax > outboundMax)
+      ? Math.max(0, Math.min(1, ((pt._cum ?? outboundMax) - outboundMax) / (totalMax - outboundMax)))
       : 0;
     return interpolateReturnColor(tRet);
   }
-  if (hasReturn) {
-    const fwdCums = weatherPoints.filter(p => !p.isReturn && typeof p._cum === 'number').map(p => p._cum);
-    const outboundMax = fwdCums.length ? Math.max(...fwdCums) : 0;
-    const t = outboundMax > 0
-      ? Math.max(0, Math.min(1, (pt._cum ?? 0) / outboundMax))
-      : 0;
-    return interpolateRouteColor(t);
+
+  // Outbound or non-split route
+  const t = outboundMax > 0
+    ? Math.max(0, Math.min(1, (pt._cum ?? 0) / outboundMax))
+    : 0;
+
+  if (roundTripMode && !pt.isReturn && !weatherPoints.some(p => p.isReturn)) {
+    // Basic round-trip fold fallback (when no explicit return points exist yet)
+    const xFrac = totalMax > 0 ? (pt._cum ?? 0) / totalMax : 0;
+    const tFold = 1 - Math.abs(2 * xFrac - 1);
+    return interpolateRouteColor(tFold);
   }
-  const maxCum = weatherPoints.reduce((m, p) => Math.max(m, p._cum ?? 0), 0) || 1;
-  const xFrac = Math.max(0, Math.min(1, (pt._cum ?? 0) / maxCum));
-  const t = roundTripMode ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+
   return interpolateRouteColor(t);
 }
 

@@ -3,7 +3,7 @@
  * Handles Leaflet map, layers, waypoints, multiple route polylines
  */
 import L from 'leaflet';
-import { interpolateRouteColor, interpolateReturnColor } from './utils.js';
+import { interpolateRouteColor, interpolateReturnColor, cumulativeDistances } from './utils.js';
 
 const TILE_LAYERS = {
   streets: {
@@ -499,15 +499,20 @@ export class MapManager {
     const N = routeCoords.length;
     if (N < 2) return;
 
-    // Find split index closest to turnaround waypoint (used for return-leg gradient).
-    let splitIdx = -1;
+    // Use distance-based interpolation for better visual matching with markers/chart
+    const dists = cumulativeDistances(routeCoords);
+    const totalD = dists[N - 1] || 1;
+
+    // Find split distance closest to turnaround waypoint
+    let splitD = -1;
     if (turnaroundLatLng && N > 2) {
       const [tlat, tlng] = turnaroundLatLng;
-      let minD = Infinity;
+      let minSq = Infinity, splitIdx = -1;
       for (let i = 1; i < N - 1; i++) {
-        const d = (routeCoords[i][0] - tlat) ** 2 + (routeCoords[i][1] - tlng) ** 2;
-        if (d < minD) { minD = d; splitIdx = i; }
+        const dSq = (routeCoords[i][0] - tlat) ** 2 + (routeCoords[i][1] - tlng) ** 2;
+        if (dSq < minSq) { minSq = dSq; splitIdx = i; }
       }
+      if (splitIdx > 0) splitD = dists[splitIdx];
     }
 
     const chunks = Math.min(GRADIENT_CHUNKS, N - 1);
@@ -518,22 +523,23 @@ export class MapManager {
       const endI = Math.min(Math.floor((chunk + 1) * chunkSize), N - 1);
       if (endI <= startI) continue;
 
+      const d = dists[startI];
       let color;
-      if (splitIdx > 0) {
-        // Two-stage gradient: outbound (original) then return (red→purple→blue)
-        if (startI < splitIdx) {
-          const t = splitIdx > 0 ? startI / splitIdx : 0;
+      if (splitD > 0) {
+        if (d < splitD) {
+          const t = d / splitD;
           color = interpolateRouteColor(t);
         } else {
-          const denom = (N - 1) - splitIdx;
-          const t = denom > 0 ? (startI - splitIdx) / denom : 0;
+          const denom = totalD - splitD;
+          const t = denom > 0 ? (d - splitD) / denom : 0;
           color = interpolateReturnColor(t);
         }
       } else {
-        const tLinear = startI / (N - 1);
-        const t = isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
+        const xFrac = d / totalD;
+        const t = isRoundTrip ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
         color = interpolateRouteColor(t);
       }
+
       const pl = L.polyline(routeCoords.slice(startI, endI + 1), {
         color,
         weight: 5,
