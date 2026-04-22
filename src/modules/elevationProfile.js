@@ -281,13 +281,13 @@ export class ElevationProfile {
         if (self.turnaroundFrac != null) {
           // Outbound teal→sky→amber→red up to turnaround, then red→purple→deep-sea→sky blue
           const tf = self.turnaroundFrac;
-          g.addColorStop(0,         'rgb(110,231,183)');
+          g.addColorStop(0, 'rgb(110,231,183)');
           g.addColorStop(tf * 0.33, 'rgb(56,189,248)');
           g.addColorStop(tf * 0.66, 'rgb(251,191,36)');
-          g.addColorStop(tf,        'rgb(248,113,113)');
+          g.addColorStop(tf, 'rgb(248,113,113)');
           g.addColorStop(tf + (1 - tf) * 0.33, 'rgb(168,85,247)');
           g.addColorStop(tf + (1 - tf) * 0.66, 'rgb(30,64,175)');
-          g.addColorStop(1,         'rgb(56,189,248)');
+          g.addColorStop(1, 'rgb(56,189,248)');
         } else if (self.isRoundTrip) {
           // Legacy fallback (no turnaround info): symmetric teal→red→teal
           g.addColorStop(0, 'rgb(110,231,183)');
