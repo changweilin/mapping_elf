@@ -50,9 +50,12 @@ export function formatDuration(hours) {
 
 export function formatDurationHHMM(hours) {
   if (!hours || hours <= 0) return '00:00';
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const totalMinutes = Math.round(hours * 60);
+  const d = Math.floor(totalMinutes / 1440);
+  const h = Math.floor((totalMinutes % 1440) / 60);
+  const m = totalMinutes % 60;
+  const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  return d > 0 ? `${d}d ${hhmm}` : hhmm;
 }
 
 /**
