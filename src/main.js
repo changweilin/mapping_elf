@@ -597,12 +597,27 @@ const iconMoon = document.getElementById('icon-moon');
 const iconSun = document.getElementById('icon-sun');
 
 function updateThemeIcons() {
-  if (document.documentElement.classList.contains('light-theme')) {
+  const isLight = document.documentElement.classList.contains('light-theme');
+  if (isLight) {
     if (iconMoon) iconMoon.style.display = 'none';
     if (iconSun) iconSun.style.display = 'block';
   } else {
     if (iconMoon) iconMoon.style.display = 'block';
     if (iconSun) iconSun.style.display = 'none';
+  }
+
+  // Update Logos
+  const suffix = isLight ? '' : '_dark';
+  const loadingLogo = document.querySelector('.loading-icon img');
+  const toolbarLogo = document.querySelector('.app-logo-icon');
+  
+  if (loadingLogo) loadingLogo.src = `./mapping_owl_cursor${suffix}.svg`;
+  if (toolbarLogo) toolbarLogo.src = `./simple_owl_cursor${suffix}.svg`;
+
+  // Update Favicon (Optional but nice)
+  const favicon = document.querySelector('link[rel="icon"]');
+  if (favicon) {
+    favicon.href = `./favicon${suffix}.svg`;
   }
 }
 // 初始設定 Icon

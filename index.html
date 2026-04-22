@@ -18,9 +18,20 @@
     (function() {
       try {
         var theme = localStorage.getItem('mappingElf_theme');
-        if (theme === 'light' || (!theme && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+        var isLight = (theme === 'light' || (!theme && window.matchMedia('(prefers-color-scheme: light)').matches));
+        if (isLight) {
           document.documentElement.classList.add('light-theme');
         }
+        // Set logos immediately to prevent flash
+        var suffix = isLight ? '' : '_dark';
+        window.addEventListener('DOMContentLoaded', function() {
+          var loadingLogo = document.querySelector('.loading-icon img');
+          var toolbarLogo = document.querySelector('.app-logo-icon');
+          var favicon = document.querySelector('link[rel="icon"]');
+          if (loadingLogo) loadingLogo.src = './mapping_owl_cursor' + suffix + '.svg';
+          if (toolbarLogo) toolbarLogo.src = './simple_owl_cursor' + suffix + '.svg';
+          if (favicon) favicon.href = './favicon' + suffix + '.svg';
+        });
       } catch (e) {}
     })();
   </script>
