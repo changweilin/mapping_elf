@@ -2791,6 +2791,38 @@ body.modal-open {
 .weather-card.full {
   width: 280px;
 }
+.weather-card.is-highlighted {
+  z-index: 1000 !important;
+  border-color: var(--accent-primary);
+  box-shadow: var(--shadow-lg), 0 0 15px rgba(110, 231, 183, 0.4);
+  transform: scale(1.02);
+}
+
+.weather-card:not(.full) {
+  width: auto;
+  min-width: 120px;
+}
+.weather-card:not(.full) .wc-title {
+  display: none;
+}
+.weather-card:not(.full) .wc-weather-desc {
+  display: none;
+}
+.weather-card:not(.full) .wc-weather-main {
+  justify-content: center;
+  padding: 4px 0;
+}
+.weather-card:not(.full) .wc-header {
+  gap: 2px;
+  padding: 4px;
+}
+.weather-card:not(.full) .wc-body {
+  padding: 4px 6px;
+}
+.weather-card:not(.full) .wc-row {
+  padding: 2px 0;
+  font-size: 11px;
+}
 
 @keyframes weatherCardIn {
   from { opacity: 0; transform: translateY(8px) scale(0.95); }

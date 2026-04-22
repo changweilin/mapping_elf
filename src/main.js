@@ -3836,6 +3836,10 @@ function _renderWeatherCard(colIdx) {
   const isCompact = state === 'compact';
   const isFull = state === 'full';
 
+  // Check if this card should be highlighted
+  const curTh = document.querySelector('#weather-table-container .wt-col-head.wt-col-highlight');
+  const isHighlighted = curTh && parseInt(curTh.dataset.idx) === colIdx;
+
   // Resolve display values
   const val = (key) => {
     if (data) return getCellValue(data, key);
@@ -3861,7 +3865,7 @@ function _renderWeatherCard(colIdx) {
   const canNav = colsWithWeather.length > 1;
 
   // Build HTML with unique ID per column card
-  let html = `<div class="weather-card${isFull ? ' full' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}">`;
+  let html = `<div class="weather-card${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}">`;
 
   // Header
   html += `<div class="wc-header">`;
@@ -4148,6 +4152,13 @@ function highlightPoint(colIdx) {
   if (waypointCentering) {
     mapManager.map.panTo([pt.lat, pt.lng], { animate: true });
   }
+
+  // 6. Weather Card — Highlight the card and bring to front
+  document.querySelectorAll('.weather-card.is-highlighted').forEach(el => el.classList.remove('is-highlighted'));
+  const card = document.getElementById(`wc-root-${colIdx}`);
+  if (card) {
+    card.classList.add('is-highlighted');
+  }
 }
 
 /** Remove all cross-view highlights. */
@@ -4157,6 +4168,7 @@ function clearAllHighlights() {
     el.style.removeProperty('background-color');
   });
   document.querySelectorAll('.waypoint-item.wp-highlight').forEach(el => el.classList.remove('wp-highlight'));
+  document.querySelectorAll('.weather-card.is-highlighted').forEach(el => el.classList.remove('is-highlighted'));
   mapManager.clearWaypointHighlight();
   mapManager.clearHoverMarker();
   elevationProfile.hideCrosshair();
