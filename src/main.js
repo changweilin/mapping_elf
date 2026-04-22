@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Mapping Elf — Main Entry
  */
 import 'leaflet/dist/leaflet.css';
@@ -176,7 +176,7 @@ function _restoreSnapshot(snap) {
 
     // Waypoints — bulk rebuild without intermediate callbacks
     const cb = mapManager.onWaypointChange;
-    mapManager.onWaypointChange = () => {};
+    mapManager.onWaypointChange = () => { };
     try {
       mapManager.clearWaypoints();
       snap.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
@@ -2120,7 +2120,7 @@ function _applyPlaceNameToDOM() {
         const customName = waypointCustomNames[k];
         const geocodedName = waypointPlaceNames[k];
         const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === wps.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
-        
+
         let effectivePlaceName = customName;
         if (!effectivePlaceName) {
           // Only use geocoded name if it's not a generic start/end and not shared with another point
@@ -2741,12 +2741,12 @@ function buildWeatherPoints() {
       const k = _geocodeKey(lat, lng);
       const customName = waypointCustomNames[k];
       const geocodedName = waypointPlaceNames[k];
-      
+
       let effectivePlaceName = customName;
       if (!effectivePlaceName) {
-         if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
-           effectivePlaceName = geocodedName;
-         }
+        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+          effectivePlaceName = geocodedName;
+        }
       }
 
       const label = effectivePlaceName
@@ -2872,9 +2872,9 @@ function buildWeatherPoints() {
 
         let effectivePlaceName = customName;
         if (!effectivePlaceName) {
-           if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
-             effectivePlaceName = geocodedName;
-           }
+          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+            effectivePlaceName = geocodedName;
+          }
         }
         const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
         const returnCum = totalDistM - wpCumDist[i];
@@ -2898,9 +2898,9 @@ function buildWeatherPoints() {
 
       let effectivePlaceName = customName;
       if (!effectivePlaceName) {
-         if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
-            effectivePlaceName = geocodedName;
-         }
+        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+          effectivePlaceName = geocodedName;
+        }
       }
       const outLabel = effectivePlaceName || '起點';
       const returnCum = totalDistM;

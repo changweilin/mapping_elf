@@ -505,9 +505,10 @@ export class MapManager {
 
     // Find split distance closest to turnaround waypoint
     let splitD = -1;
+    let splitIdx = -1;
     if (turnaroundLatLng && N > 2) {
       const [tlat, tlng] = turnaroundLatLng;
-      let minSq = Infinity, splitIdx = -1;
+      let minSq = Infinity;
       for (let i = 1; i < N - 1; i++) {
         const dSq = (routeCoords[i][0] - tlat) ** 2 + (routeCoords[i][1] - tlng) ** 2;
         if (dSq < minSq) { minSq = dSq; splitIdx = i; }
@@ -523,10 +524,39 @@ export class MapManager {
       const endI = Math.min(Math.floor((chunk + 1) * chunkSize), N - 1);
       if (endI <= startI) continue;
 
+      if (splitIdx > startI && splitIdx < endI) {
+        // Chunk straddles the split point. Subdivide it!
+        const d1 = dists[startI];
+        const t1 = splitD > 0 ? d1 / splitD : 0;
+        const pl1 = L.polyline(routeCoords.slice(startI, splitIdx + 1), {
+          color: interpolateRouteColor(t1),
+          weight: 5,
+          opacity: ROUTE_SELECTED_OPACITY,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(this.map);
+        this._bindRouteHoverEvents(pl1);
+        this.gradientPolylines.push(pl1);
+
+        const d2 = dists[splitIdx];
+        const denom = totalD - splitD;
+        const t2 = denom > 0 ? (d2 - splitD) / denom : 0;
+        const pl2 = L.polyline(routeCoords.slice(splitIdx, endI + 1), {
+          color: interpolateReturnColor(t2),
+          weight: 5,
+          opacity: ROUTE_SELECTED_OPACITY,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(this.map);
+        this._bindRouteHoverEvents(pl2);
+        this.gradientPolylines.push(pl2);
+        continue;
+      }
+
       const d = dists[startI];
       let color;
       if (splitD > 0) {
-        if (d < splitD) {
+        if (startI < splitIdx) {
           const t = d / splitD;
           color = interpolateRouteColor(t);
         } else {
@@ -690,7 +720,7 @@ export class MapManager {
     // Suppress per-waypoint callbacks — fire once at the end to avoid
     // repeated route recalculations and weather panel re-renders during import.
     const cb = this.onWaypointChange;
-    this.onWaypointChange = () => {};
+    this.onWaypointChange = () => { };
     this.clearWaypoints();
     coords.forEach(([lat, lng]) => this.addWaypoint(lat, lng));
     this.onWaypointChange = cb;
