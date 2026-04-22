@@ -1054,13 +1054,28 @@ async function onWaypointsChanged(waypoints) {
   if (!skipAutoGeocode) geocodeWaypoints(waypoints);
 
   if (waypoints.length < 2) {
-    mapManager.clearRoute();
-    elevationProfile.clear();
-    resetStats();
-    hideAlternatives();
-    currentRouteCoords = [];
-    currentElevations = [];
-    allAlternatives = [];
+    if (waypoints.length === 1) {
+      // Just 1 point, no route, but we still want to show weather
+      mapManager.clearRoute();
+      elevationProfile.clear();
+      resetStats();
+      hideAlternatives();
+      currentRouteCoords = [];
+      currentElevations = [];
+      allAlternatives = [];
+      renderWeatherPanel();
+      autoFetchWeather({ force: false });
+    } else {
+      mapManager.clearRoute();
+      elevationProfile.clear();
+      resetStats();
+      hideAlternatives();
+      currentRouteCoords = [];
+      currentElevations = [];
+      allAlternatives = [];
+      const _wc = document.getElementById('weather-table-container');
+      if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得天氣」</p></div>';
+    }
     return;
   }
 
@@ -3698,21 +3713,40 @@ async function fetchAllWeatherData(options = {}) {
     let data = cachedWeatherData[cacheKey];
 
     // If not forced and we have cache, just apply it and skip fetching
-    if (!force && data) {
-      const cells = {};
-      WEATHER_ROWS.forEach(row => {
-        const val = getCellValue(data, row.key);
-        cells[row.key] = val;
-        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
-      });
-      saveWeatherCells(getSemanticKey(pt), cells);
-      if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
-        mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+    if (!force) {
+      if (data) {
+        const cells = { _icon: data.weatherIcon };
+        WEATHER_ROWS.forEach(row => {
+          const val = getCellValue(data, row.key);
+          cells[row.key] = val;
+          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+          if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
+        });
+        saveWeatherCells(getSemanticKey(pt), cells);
+        if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
+          mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+        
+        // Update chart markers to show icon immediately
+        updateElevationMarkers();
+        updateIntermediateMarkers();
+        continue;
+      }
       
-      // Update chart markers to show icon immediately
-      updateElevationMarkers();
-      continue;
+      // Also check if UI already restored this point's weather from map pack (savedWeatherCells)
+      const semKey = getSemanticKey(pt);
+      const existingCells = savedWeatherCells[semKey];
+      if (existingCells && existingCells.weather && existingCells.weather !== '—') {
+        const cell = container.querySelector(`[data-col="${i}"][data-key="weather"]`);
+        if (cell && cell.textContent !== '...' && cell.textContent !== '—') {
+          // Data is already populated correctly in the UI
+          if (pt.isWaypoint && pt.wpIndex !== undefined && existingCells._icon) {
+            mapManager.setWaypointWeather(pt.wpIndex, existingCells._icon);
+          }
+          updateElevationMarkers();
+          updateIntermediateMarkers();
+          continue;
+        }
+      }
     }
 
     WEATHER_ROWS.forEach(row => {
@@ -3725,7 +3759,7 @@ async function fetchAllWeatherData(options = {}) {
       cachedWeatherData[cacheKey] = data;
       // Save after each point so partial data survives a mid-fetch page close
       localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
-      const cells = {};
+      const cells = { _icon: data.weatherIcon };
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(data, row.key);
         cells[row.key] = val;
@@ -3739,6 +3773,7 @@ async function fetchAllWeatherData(options = {}) {
 
       // Refresh chart markers to show icon immediately
       updateElevationMarkers();
+      updateIntermediateMarkers();
     } catch (err) {
       console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
       WEATHER_ROWS.forEach(row => {
