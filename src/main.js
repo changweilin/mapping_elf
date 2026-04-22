@@ -945,6 +945,9 @@ function selectAlternative(index) {
 
   // Render weather panel and intermediate markers
   renderWeatherPanel();
+
+  // Automatically fetch weather data when the route is finalised
+  autoFetchWeather();
 }
 
 /**
@@ -1785,6 +1788,9 @@ function _applyImportedResultCore(result) {
     const reorderedNote = orderedWaypoints !== result.waypoints ? '(自動排序)' : '';
     showNotification(`已匯入 ${result.waypoints.length} 個航點 ${reorderedNote}`.trim(), 'success');
   }
+
+  // Automatically fetch weather data after import is applied
+  autoFetchWeather();
 }
 
 function importFile(e) {
@@ -1892,12 +1898,12 @@ function refreshWindyLinks() {
 const WEATHER_ROWS = [
   { key: 'weather', label: '天氣' },
   { key: 'temp', label: '溫度' },
+  { key: 'precipitation', label: '雨量' },
   { key: 'tempRange', label: '高/低' },
   { key: 'feelsLike', label: '體感' },
   { key: 'humidity', label: '濕度' },
-  { key: 'dewPoint', label: '露點' },
-  { key: 'precipitation', label: '降水' },
   { key: 'precipProb', label: '機率' },
+  { key: 'dewPoint', label: '露點' },
   { key: 'cloudCover', label: '雲量' },
   { key: 'windSpeed', label: '風速' },
   { key: 'windGust', label: '陣風' },
@@ -3416,6 +3422,24 @@ function renderWeatherPanel() {
   saveWeatherSettings();
 }
 
+/**
+ * Automatically fetch weather for all points.
+ * Debounced and checks for existing UI states to avoid conflicting fetches.
+ */
+let autoFetchTimeout = 0;
+function autoFetchWeather() {
+  if (autoFetchTimeout) clearTimeout(autoFetchTimeout);
+  autoFetchTimeout = setTimeout(() => {
+    // Only auto-fetch if we are not already processing a route
+    // and if the "Fetch" button is not currently disabled (meaning a fetch is in progress)
+    const fetchBtn = document.querySelector('[data-action="fetch"]');
+    if (!isProcessing && fetchBtn && !fetchBtn.disabled) {
+      console.log('Triggering auto weather fetch...');
+      fetchAllWeatherData();
+    }
+  }, 1000); // 1s delay to let everything settle
+}
+
 async function fetchAllWeatherData() {
   console.log('fetchAllWeatherData triggered');
   if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
@@ -3633,7 +3657,15 @@ function updateElevationMarkers() {
         dataIdx = Math.round(fraction * (sampledPts.length - 1));
         cumDistM = sampledDists[dataIdx] || 0;
       }
-      markers.push({ cumDistM, dataIdx, label: pt.label, colIdx, isWaypoint: pt.isWaypoint });
+
+      // Try to find weather icon for this point
+      const container = document.getElementById('weather-table-container');
+      const dateStr = container?.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
+      const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
+      const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] : null;
+      const weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(pt)]?.weather?.split(' ')[0] || null;
+
+      markers.push({ cumDistM, dataIdx, label: pt.label, colIdx, isWaypoint: pt.isWaypoint, weatherIcon });
     }
   });
   elevationProfile.setWaypointMarkers(markers);

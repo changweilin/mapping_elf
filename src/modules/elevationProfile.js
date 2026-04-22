@@ -265,6 +265,15 @@ export class ElevationProfile {
           c.lineWidth = 1.5;
           c.stroke();
 
+          // Draw weather icon emoji if available
+          if (m.weatherIcon && !self.isCollapsed) {
+            c.font = '16px serif';
+            c.textAlign = 'center';
+            c.textBaseline = 'bottom';
+            // Draw slightly above the dot
+            c.fillText(m.weatherIcon, xPx, yPx - r - 5);
+          }
+
           c.restore();
         });
       },
