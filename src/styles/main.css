@@ -2260,7 +2260,7 @@ html, body {
 
 .weather-table th,
 .weather-table td {
-  border: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2288,7 +2288,7 @@ html, body {
   vertical-align: middle;
   padding: 4px 4px;
   background: var(--bg-tertiary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border);
   position: sticky;
   z-index: 2;
 }
@@ -2306,8 +2306,9 @@ html, body {
 }
 /* Intermediate (non-waypoint) columns — subtle visual distinction */
 .wt-interval-col {
-  background: rgb(26, 28, 42) !important;
-  border-bottom-color: rgba(255,255,255,0.06) !important;
+  background: var(--bg-primary) !important;
+  opacity: 0.95;
+  border-bottom-color: var(--border) !important;
 }
 .wt-interval-col .wt-col-label {
   color: #4b5563;
@@ -2320,7 +2321,7 @@ html, body {
   opacity: 0.5;
   cursor: default;
   pointer-events: none;
-  border-color: rgba(255,255,255,0.06);
+  border-color: var(--border);
   background: transparent;
 }
 
@@ -2372,15 +2373,16 @@ html, body {
   width: 100%;
   padding: 2px 3px;
   border-radius: 3px;
-  border: 1px solid rgba(255,255,255,0.15);
-  background: #1e2030;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
   margin-bottom: 3px;
   box-sizing: border-box;
-  color-scheme: dark;
 }
+html:not(.light-theme) .wt-date-input { color-scheme: dark; }
+html.light-theme .wt-date-input { color-scheme: light; }
 
 .wt-time-row {
   display: flex;
@@ -2401,8 +2403,8 @@ html, body {
   min-width: 0;
   padding: 2px 3px;
   border-radius: 3px;
-  border: 1px solid rgba(255,255,255,0.15);
-  background: #1e2030;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
