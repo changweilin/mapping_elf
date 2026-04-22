@@ -3769,10 +3769,14 @@ function navigateWeatherCard(colIdx, delta) {
   const nextColIdx = colsWithWeather[nextPos];
   if (nextColIdx === colIdx) return;
 
-  // Preserve the mode (compact/full) when navigating
   const mode = _wcStates.get(colIdx) || 'compact';
-  closeWeatherCard(colIdx);
   setWeatherCardMode(nextColIdx, mode);
+  // Ensure map pans to the next point and UI highlights it
+  highlightPoint(nextColIdx);
+  const nextPt = weatherPoints[nextColIdx];
+  if (nextPt) {
+    mapManager.map.panTo([nextPt.lat, nextPt.lng], { animate: true });
+  }
 }
 
 /**
