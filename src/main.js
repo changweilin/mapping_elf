@@ -2128,6 +2128,7 @@ function refreshWindyLinks() {
 // =========== Weather Panel ===========
 
 const WEATHER_ROWS = [
+  { key: 'forecastTime', label: '預報時間' },
   { key: 'weather', label: '天氣' },
   { key: 'temp', label: '溫度' },
   { key: 'precipitation', label: '雨量' },
@@ -2512,6 +2513,7 @@ function getCellValue(data, key) {
   if (!data) return '—';
   const v = (a, b) => a != null ? a : (b != null ? b : '—');
   switch (key) {
+    case 'forecastTime': return v(data.forecastTime, '—');
     case 'weather': return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
     case 'temp': return v(data.temp, data.tempMax);
     case 'tempRange': return (data.tempMax || data.tempMin) ? `${v(data.tempMax, '—')} / ${v(data.tempMin, '—')}` : '—';
@@ -3980,6 +3982,7 @@ function _renderWeatherCard(colIdx) {
   }
   if (isFull) {
     const CARD_ROWS = [
+      { key: 'forecastTime', label: '預報時間' },
       { key: 'tempRange', label: '高/低溫' },
       { key: 'feelsLike', label: '體感溫度' },
       { key: 'precipitation', label: '雨量' },
@@ -3998,7 +4001,8 @@ function _renderWeatherCard(colIdx) {
     ];
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
-      html += `<div class="wc-info-item"><span class="wc-info-label">${row.label}</span><span class="wc-info-value">${val(row.key)}</span></div>`;
+      const fullWidth = row.key === 'forecastTime' ? ' style="grid-column: span 2;"' : '';
+      html += `<div class="wc-info-item"${fullWidth}><span class="wc-info-label">${row.label}</span><span class="wc-info-value">${val(row.key)}</span></div>`;
     });
     html += `</div>`;
 
