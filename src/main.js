@@ -723,11 +723,54 @@ btnUndo.addEventListener('click', () => historyUndo());
 btnRedo?.addEventListener('click', () => historyRedo());
 
 window.addEventListener('keydown', (e) => {
-  if (!(e.ctrlKey || e.metaKey)) return;
   const t = e.target;
   const tag = t?.tagName?.toLowerCase();
   if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return;
+
   const k = (e.key || '').toLowerCase();
+
+  // Weather Card Keyboard Controls (Arrow keys)
+  // Operates on the highlighted weather card/point if open, or the first open card found.
+  const highlightedTh = document.querySelector('#weather-table-container .wt-col-head.wt-col-highlight');
+  const highlightedColIdx = highlightedTh ? parseInt(highlightedTh.dataset.idx) : -1;
+  let activeColIdx = -1;
+  if (highlightedColIdx !== -1 && _wcStates.has(highlightedColIdx)) {
+    activeColIdx = highlightedColIdx;
+  } else if (_wcStates.size > 0) {
+    activeColIdx = _wcStates.keys().next().value;
+  }
+
+  if (activeColIdx !== -1) {
+    if (k === 'arrowleft') {
+      e.preventDefault();
+      navigateWeatherCard(activeColIdx, -1);
+      return;
+    }
+    if (k === 'arrowright') {
+      e.preventDefault();
+      navigateWeatherCard(activeColIdx, 1);
+      return;
+    }
+    if (k === 'arrowup') {
+      e.preventDefault();
+      const curMode = _wcStates.get(activeColIdx) || 'compact';
+      const nextMode = curMode === 'compact' ? 'full' : 'minimized';
+      const targets = getCollectiveIndices(activeColIdx);
+      targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+      return;
+    }
+    if (k === 'arrowdown') {
+      e.preventDefault();
+      const curMode = _wcStates.get(activeColIdx) || 'compact';
+      const nextMode = curMode === 'full' ? 'compact' : 'minimized';
+      const targets = getCollectiveIndices(activeColIdx);
+      targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+      return;
+    }
+  }
+
+  // Undo/Redo/Search (requires Ctrl/Meta)
+  if (!(e.ctrlKey || e.metaKey)) return;
   if (k === 'z' && !e.shiftKey) { e.preventDefault(); historyUndo(); }
   else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); historyRedo(); }
 });
@@ -4023,9 +4066,13 @@ mapManager.onWeatherBadgeClick = (idx, isIntermediate) => {
         collectiveCols.forEach(ci => closeWeatherCard(ci));
       } else {
         collectiveCols.forEach(ci => { if (!_wcStates.has(ci)) openWeatherCard(ci); });
+        // Sync highlight so keyboard controls target this group immediately
+        highlightPoint(targetColIdx);
       }
     } else {
       openWeatherCard(targetColIdx);
+      // Sync highlight so keyboard controls target this card immediately
+      highlightPoint(targetColIdx);
     }
   }
 };
