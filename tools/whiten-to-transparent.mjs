@@ -17,12 +17,22 @@ import {
   isNearWhite,
   isNearBlack,
   isPalePattern,
+  parseHex,
 } from './svg-utils.mjs';
 
 const root = path.resolve(process.cwd());
 
 /** 貓頭鷹 SVG 專用的主體色 */
 const OWL_BODY_COLOR = "#2E3658";
+
+/**
+ * 判斷 path 的包圍框是否位於地圖區域 (Y > 1230)。
+ * 使用較高的閾值以避免誤觸山丘底部邊界線。
+ */
+function isInsideMapRegion(bbox) {
+  if (!bbox) return false;
+  return bbox.minY > 1230;
+}
 
 /**
  * 判斷 path 的包圍框是否位於需要清理的目標區域。
@@ -66,6 +76,8 @@ async function whitenSvg(filePath) {
     let shouldClearStroke = false;
     let shouldConvertFill = false;
     let shouldConvertStroke = false;
+    let mapFillTarget = null;
+    let mapStrokeTarget = null;
 
     if (fillMatch) {
       const hex = fillMatch[1].toUpperCase();
@@ -73,7 +85,22 @@ async function whitenSvg(filePath) {
         shouldClearFill = true;
       } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
         const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
-        if (isInsideTargetRegion(bbox)) {
+        if (isInsideMapRegion(bbox)) {
+          const { r, g, b } = parseHex(hex);
+          const brightness = r + g + b;
+          const w = bbox.maxX - bbox.minX;
+          const h = bbox.maxY - bbox.minY;
+
+          // 亮度夠高且非主體色才視為地圖米色區域，深色結構線（亮度 < 420）維持不變
+          if (brightness >= 420) {
+            if (w * h < 1500) {
+              shouldClearFill = true; // 將極細微的紋路和斑點填補（移除以露出底色）
+            } else {
+              // 分類為較深或較淺的米色兩種
+              mapFillTarget = (brightness > 480) ? '#D7B181' : '#C0956A';
+            }
+          }
+        } else if (isInsideTargetRegion(bbox)) {
           if (isPalePattern(hex)) {
             shouldClearFill = true;
           } else {
@@ -90,7 +117,20 @@ async function whitenSvg(filePath) {
         shouldClearStroke = true;
       } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
         const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
-        if (isInsideTargetRegion(bbox)) {
+        if (isInsideMapRegion(bbox)) {
+          const { r, g, b } = parseHex(hex);
+          const brightness = r + g + b;
+          const w = bbox.maxX - bbox.minX;
+          const h = bbox.maxY - bbox.minY;
+
+          if (brightness >= 420) {
+            if (w * h < 1500) {
+              shouldClearStroke = true;
+            } else {
+              mapStrokeTarget = (brightness > 480) ? '#D7B181' : '#C0956A';
+            }
+          }
+        } else if (isInsideTargetRegion(bbox)) {
           if (isPalePattern(hex)) {
             shouldClearStroke = true;
           } else {
@@ -103,9 +143,13 @@ async function whitenSvg(filePath) {
 
     let tag = m;
     if (shouldClearFill) tag = tag.replace(/fill="(#[0-9a-fA-F]{6})"/, 'fill="none"');
+    else if (mapFillTarget) tag = tag.replace(/fill="(#[0-9a-fA-F]{6})"/, `fill="${mapFillTarget}"`);
+    else if (shouldConvertFill) tag = tag.replace(/fill="(#[0-9a-fA-F]{6})"/, `fill="${OWL_BODY_COLOR}"`);
+
     if (shouldClearStroke) tag = tag.replace(/stroke="(#[0-9a-fA-F]{6})"/, 'stroke="none"');
-    if (shouldConvertFill) tag = tag.replace(/fill="(#[0-9a-fA-F]{6})"/, `fill="${OWL_BODY_COLOR}"`);
-    if (shouldConvertStroke) tag = tag.replace(/stroke="(#[0-9a-fA-F]{6})"/, `stroke="${OWL_BODY_COLOR}"`);
+    else if (mapStrokeTarget) tag = tag.replace(/stroke="(#[0-9a-fA-F]{6})"/, `stroke="${mapStrokeTarget}"`);
+    else if (shouldConvertStroke) tag = tag.replace(/stroke="(#[0-9a-fA-F]{6})"/, `stroke="${OWL_BODY_COLOR}"`);
+
     return tag;
   });
 
