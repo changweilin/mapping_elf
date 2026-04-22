@@ -40,6 +40,9 @@ let importedTrackMode = false;
 // from an imported file. Used only while importedTrackMode is active; cleared on
 // re-plan / clear-route so the auto-computed markers take over.
 let importedIntermediatePoints = [];
+let lastWaypoints = [];
+let pendingNewWaypointIndex = null;
+let isInitialLoad = false;
 
 const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
@@ -558,6 +561,8 @@ btnClearRoute.addEventListener('click', () => {
   localStorage.removeItem(LS_WEATHER_CACHE_KEY);
   currentRouteCoords = [];
   currentElevations = [];
+  lastWaypoints = [];
+  pendingNewWaypointIndex = null;
   waypointCumDistM = [];
   delete window._pendingGpxDates;
   Object.keys(waypointCustomNames).forEach(k => delete waypointCustomNames[k]);
@@ -820,6 +825,22 @@ async function onWaypointsChanged(waypoints) {
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
   historyRecord();
 
+  // Detect if exactly one waypoint was added (not moved or removed)
+  if (waypoints.length === lastWaypoints.length + 1) {
+    let diffIdx = -1;
+    for (let i = 0; i < lastWaypoints.length; i++) {
+        if (waypoints[i][0] !== lastWaypoints[i][0] || waypoints[i][1] !== lastWaypoints[i][1]) {
+            diffIdx = i;
+            break;
+        }
+    }
+    if (diffIdx === -1) diffIdx = lastWaypoints.length; // Added at end
+    pendingNewWaypointIndex = diffIdx;
+  } else {
+    pendingNewWaypointIndex = null;
+  }
+  lastWaypoints = waypoints.map(w => [...w]);
+
   // In imported-track mode, update the sidebar list but skip routing entirely.
   // The track polyline is managed directly; waypoints are decorative markers only.
   if (importedTrackMode) {
@@ -946,8 +967,14 @@ function selectAlternative(index) {
   // Render weather panel and intermediate markers
   renderWeatherPanel();
 
-  // Automatically fetch weather data when the route is finalised
-  autoFetchWeather();
+  // Automatically fetch weather data when the route is finalised.
+  // ONLY if it was a single-point addition, otherwise skip (per user request).
+  if (pendingNewWaypointIndex !== null) {
+      autoFetchWeather({ onlyWaypointIndex: pendingNewWaypointIndex });
+      pendingNewWaypointIndex = null;
+  } else if (isInitialLoad) {
+      autoFetchWeather();
+  }
 }
 
 /**
@@ -1789,8 +1816,8 @@ function _applyImportedResultCore(result) {
     showNotification(`已匯入 ${result.waypoints.length} 個航點 ${reorderedNote}`.trim(), 'success');
   }
 
-  // Automatically fetch weather data after import is applied
-  autoFetchWeather();
+  // Automatically fetch weather data after import is applied (covering "新載入")
+  autoFetchWeather({ force: false }); // Cache will still be checked, which is fine
 }
 
 function importFile(e) {
@@ -2417,7 +2444,7 @@ function initWeatherControls() {
     if (!btn) return;
     console.log('Delegated click caught:', btn.dataset.action);
     switch (btn.dataset.action) {
-      case 'fetch': fetchAllWeatherData(); break;
+      case 'fetch': fetchAllWeatherData({ force: true }); break;
       case 'day-minus': shiftAllDates(-1, 0); break;
       case 'day-plus': shiftAllDates(+1, 0); break;
       case 'day-now': shiftToNow('day'); break;
@@ -3427,38 +3454,62 @@ function renderWeatherPanel() {
  * Debounced and checks for existing UI states to avoid conflicting fetches.
  */
 let autoFetchTimeout = 0;
-function autoFetchWeather() {
+function autoFetchWeather(options = {}) {
   if (autoFetchTimeout) clearTimeout(autoFetchTimeout);
   autoFetchTimeout = setTimeout(() => {
     // Only auto-fetch if we are not already processing a route
     // and if the "Fetch" button is not currently disabled (meaning a fetch is in progress)
     const fetchBtn = document.querySelector('[data-action="fetch"]');
     if (!isProcessing && fetchBtn && !fetchBtn.disabled) {
-      console.log('Triggering auto weather fetch...');
-      fetchAllWeatherData();
+      console.log('Triggering auto weather fetch...', options);
+      fetchAllWeatherData(options);
     }
   }, 1000); // 1s delay to let everything settle
 }
 
-async function fetchAllWeatherData() {
-  console.log('fetchAllWeatherData triggered');
+async function fetchAllWeatherData(options = {}) {
+  const { force = false, onlyWaypointIndex = null } = options;
+  console.log('fetchAllWeatherData triggered', { force, onlyWaypointIndex });
   if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
 
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
   saveWeatherSettings();
-  mapManager.clearWaypointWeather();
   const fetchBtn = document.querySelector('[data-action="fetch"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
   for (let i = 0; i < weatherPoints.length; i++) {
     const pt = weatherPoints[i];
+
+    // Filter by specific waypoint if requested
+    if (onlyWaypointIndex !== null) {
+        if (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex) continue;
+    }
+
     if (fetchBtn) fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
 
     const dateStr = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`)?.value;
     const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`)?.value ?? '8');
     if (!dateStr) continue;
+
+    const cacheKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+    let data = cachedWeatherData[cacheKey];
+
+    // If not forced and we have cache, just apply it and skip fetching
+    if (!force && data) {
+      const cells = {};
+      WEATHER_ROWS.forEach(row => {
+        const val = getCellValue(data, row.key);
+        cells[row.key] = val;
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
+      });
+      saveWeatherCells(getSemanticKey(pt), cells);
+      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
+        mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+      continue;
+    }
 
     WEATHER_ROWS.forEach(row => {
       const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
@@ -3466,8 +3517,8 @@ async function fetchAllWeatherData() {
     });
 
     try {
-      const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
-      cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] = data;
+      data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
+      cachedWeatherData[cacheKey] = data;
       // Save after each point so partial data survives a mid-fetch page close
       localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
       const cells = {};
@@ -3988,6 +4039,7 @@ function updateElevationMarkers() {
 // =========== Init ===========
 
 async function init() {
+  isInitialLoad = true;
   await offlineManager.register();
   initWeatherControls();
 
@@ -4357,6 +4409,7 @@ async function init() {
 
   // Seed undo/redo history with the restored state as the baseline.
   historyInit();
+  isInitialLoad = false;
 }
 
 // =========== Keyword Search (forward geocoding) ===========
