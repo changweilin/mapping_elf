@@ -1982,6 +1982,8 @@ function _applyImportedResultCore(result) {
       `已匯入軌跡（${coords.length} 個點${wpCount > 0 ? `，${wpCount} 個航點` : ''}）`,
       'success'
     );
+    // Explicitly call autoFetchWeather here before returning from track mode
+    autoFetchWeather({ force: false });
     return;
   }
 
