@@ -46,6 +46,7 @@ export class MapManager {
     this.onRouteSelect = null; // callback(index)
     this.onRouteHover = null; // callback(lat, lng) | callback(null, null)
     this.onWaypointSelect = null; // callback(wpIndex)
+    this.onWeatherBadgeClick = null; // callback(wpIndex)
     this.isRoundTrip = false;
     this.turnaroundLatLng = null; // [lat,lng] of last forward waypoint for return-leg gradient split
     this.waypoints = [];
@@ -62,6 +63,7 @@ export class MapManager {
     this.ignoreMapClick = false;
     this.dragLine = null;
     this._dragWpIndex = undefined;
+    this._weatherPopup = null; // Leaflet popup for weather card
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -302,11 +304,19 @@ export class MapManager {
       }
     });
 
-    // Click/tap: cancel drag mode; on normal click → notify selection
+    // Click/tap: cancel drag mode; on normal click → notify selection or weather badge
     marker.on('click', (e) => {
       if (_dragModeActive || _justDragged) {
         L.DomEvent.stopPropagation(e);
         if (_dragModeActive) _disableDrag();
+        return;
+      }
+      // Detect click on weather badge
+      const target = e.originalEvent?.target;
+      if (target && target.closest && target.closest('.wp-weather-badge')) {
+        L.DomEvent.stopPropagation(e);
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this.onWeatherBadgeClick?.(idx);
         return;
       }
       const idx = this.waypointMarkers.indexOf(marker);
@@ -800,5 +810,55 @@ export class MapManager {
   /** Remove all waypoint selection highlights. */
   clearWaypointHighlight() {
     this.waypointMarkers.forEach(m => m.getElement()?.classList.remove('is-selected'));
+  }
+
+  /**
+   * Open a weather card popup attached to a waypoint marker.
+   * @param {number} wpIndex - waypoint index
+   * @param {string} htmlContent - full inner HTML for the popup
+   */
+  openWeatherPopup(wpIndex, htmlContent, onReady) {
+    this.closeWeatherPopup();
+    const marker = this.waypointMarkers[wpIndex];
+    if (!marker) return;
+
+    this._weatherPopup = L.popup({
+      className: 'weather-popup',
+      closeButton: false,
+      closeOnClick: false,
+      autoClose: false,
+      autoPan: true,
+      autoPanPaddingTopLeft: [20, 60],
+      autoPanPaddingBottomRight: [20, 20],
+      offset: [0, -24],
+      maxWidth: 320,
+      minWidth: 200,
+    })
+      .setLatLng(marker.getLatLng())
+      .setContent(htmlContent)
+      .openOn(this.map);
+
+    // Prevent Leaflet from swallowing click events inside the popup
+    const wrapper = this._weatherPopup.getElement();
+    if (wrapper) {
+      L.DomEvent.disableClickPropagation(wrapper);
+      L.DomEvent.disableScrollPropagation(wrapper);
+    }
+
+    // Call onReady callback so event handlers can be bound
+    if (onReady) onReady(wrapper);
+  }
+
+  /** Close the weather card popup if open. */
+  closeWeatherPopup() {
+    if (this._weatherPopup) {
+      this.map.closePopup(this._weatherPopup);
+      this._weatherPopup = null;
+    }
+  }
+
+  /** Check if the weather popup is currently open. */
+  isWeatherPopupOpen() {
+    return !!this._weatherPopup && this.map.hasLayer(this._weatherPopup);
   }
 }
