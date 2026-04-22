@@ -395,7 +395,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--bg-primary);
+  color: #0f172a; /* Always dark text for high contrast on bright gradient */
   box-sizing: border-box !important;
 }
 
@@ -438,9 +438,10 @@ html, body {
   transform: translateX(-50%);
   font-size: 15px;
   line-height: 1;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.4);
   pointer-events: none;
   white-space: nowrap;
+  filter: drop-shadow(0 1px 2px rgba(255,255,255,0.3));
 }
 
 @keyframes pulseRotate {
@@ -478,7 +479,7 @@ html, body {
   box-sizing: border-box !important;
   font-size: 9px;
   font-weight: 700;
-  color: #e2e8f0;
+  color: #111827; /* Dark text for contrast on markers */
 }
 
 .elevation-hover-marker {
@@ -498,13 +499,15 @@ html, body {
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-primary);
-  background: rgba(0,0,0,0.65);
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   padding: 3px 6px;
   border-radius: 6px;
   white-space: nowrap;
   pointer-events: none;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
-  border: 1px solid rgba(255,255,255,0.1);
+  text-shadow: none;
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
 }
 
