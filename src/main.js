@@ -60,7 +60,10 @@ const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_IMPORT_AUTO_SORT_KEY = 'mappingElf_importAutoSort';
 const LS_IMPORT_AUTO_NAME_KEY = 'mappingElf_importAutoName';
 const LS_IMPORTED_TRACK_KEY = 'mappingElf_importedTrack';
-const LS_PENDING_GPX_KEY = 'mappingElf_pendingGpx';
+const LS_COLLECTIVE_MARKED_KEY = 'mappingElf_collectiveMarked';
+const LS_COLLECTIVE_INTERMEDIATE_KEY = 'mappingElf_collectiveIntermediate';
+const LS_COLLECTIVE_ALL_KEY = 'mappingElf_collectiveAll';
+const LS_WAYPOINT_CENTERING_KEY = 'mappingElf_waypointCentering';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
@@ -86,6 +89,10 @@ let skipAutoGeocode = false;
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
 let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
 let windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
+let collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0'; // default true
+let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) === '1'; // default false
+let collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1'; // default false
+let waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0'; // default true
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -276,6 +283,22 @@ function applySettingsFromStorage() {
   const importAutoNameEl = document.getElementById('import-auto-name-enable');
   if (importAutoNameEl) importAutoNameEl.checked = importAutoNameMode;
 
+  // Waypoint Settings
+  const collectiveMarkedEl = document.getElementById('collective-marked-pts');
+  if (collectiveMarkedEl) collectiveMarkedEl.checked = collectiveMarked;
+  const collectiveIntermediateEl = document.getElementById('collective-intermediate-pts');
+  if (collectiveIntermediateEl) collectiveIntermediateEl.checked = collectiveIntermediate;
+  const collectiveAllEl = document.getElementById('collective-all-waypoints');
+  if (collectiveAllEl) {
+    collectiveAllEl.checked = collectiveAll;
+    if (collectiveAll) {
+       if (collectiveMarkedEl) collectiveMarkedEl.disabled = true;
+       if (collectiveIntermediateEl) collectiveIntermediateEl.disabled = true;
+    }
+  }
+  const waypointCenteringEl = document.getElementById('waypoint-centering-enable');
+  if (waypointCenteringEl) waypointCenteringEl.checked = waypointCentering;
+
   // Refresh UI
   syncTrackModeUI();
   updateFlatPlaceholder();
@@ -441,6 +464,90 @@ function updateFlatPlaceholder() {
     paceFlatInput.step = '0.5';
     paceFlatInput.placeholder = spdKmh.toFixed(1);
   }
+}
+
+// =========== Waypoint Settings ===========
+
+function initWaypointSettings() {
+  const collectiveMarkedEl = document.getElementById('collective-marked-pts');
+  const collectiveIntermediateEl = document.getElementById('collective-intermediate-pts');
+  const collectiveAllEl = document.getElementById('collective-all-waypoints');
+  const waypointCenteringEl = document.getElementById('waypoint-centering-enable');
+
+  const btnMinimize = document.getElementById('btn-collective-minimize');
+  const btnToggleGrid = document.getElementById('btn-collective-toggle-grid');
+
+  const syncCollectiveLock = () => {
+    const isAll = collectiveAllEl?.checked;
+    if (collectiveMarkedEl) collectiveMarkedEl.disabled = !!isAll;
+    if (collectiveIntermediateEl) collectiveIntermediateEl.disabled = !!isAll;
+  };
+
+  collectiveMarkedEl?.addEventListener('change', () => {
+    collectiveMarked = collectiveMarkedEl.checked;
+    localStorage.setItem(LS_COLLECTIVE_MARKED_KEY, collectiveMarked ? '1' : '0');
+  });
+
+  collectiveIntermediateEl?.addEventListener('change', () => {
+    collectiveIntermediate = collectiveIntermediateEl.checked;
+    localStorage.setItem(LS_COLLECTIVE_INTERMEDIATE_KEY, collectiveIntermediate ? '1' : '0');
+  });
+
+  collectiveAllEl?.addEventListener('change', () => {
+    collectiveAll = collectiveAllEl.checked;
+    localStorage.setItem(LS_COLLECTIVE_ALL_KEY, collectiveAll ? '1' : '0');
+    syncCollectiveLock();
+  });
+
+  waypointCenteringEl?.addEventListener('change', () => {
+    waypointCentering = waypointCenteringEl.checked;
+    localStorage.setItem(LS_WAYPOINT_CENTERING_KEY, waypointCentering ? '1' : '0');
+  });
+
+  // Collective Actions
+  const getCollectiveIndices = () => {
+    const indices = [];
+    weatherPoints.forEach((pt, i) => {
+      if (collectiveAll) {
+        indices.push(i);
+      } else {
+        if (pt.isWaypoint && !pt.isReturn && collectiveMarked) indices.push(i);
+        if (!pt.isWaypoint && collectiveIntermediate) indices.push(i);
+      }
+    });
+    return indices;
+  };
+
+  btnMinimize?.addEventListener('click', () => {
+    const targetCols = getCollectiveIndices();
+    if (targetCols.length === 0) {
+      showNotification('未選取任何操作目標 (標示點 / 中繼點)', 'warning');
+      return;
+    }
+    targetCols.forEach(idx => closeWeatherCard(idx));
+    showNotification(`已關閉 ${targetCols.length} 個天氣卡`, 'success', 1500);
+  });
+
+  btnToggleGrid?.addEventListener('click', () => {
+    const targetCols = getCollectiveIndices();
+    if (targetCols.length === 0) {
+      showNotification('未選取任何操作目標', 'warning');
+      return;
+    }
+    // Determine target mode (toggle based on first found or default)
+    let firstOpenMode = null;
+    for (const idx of targetCols) {
+      if (_wcStates.has(idx)) {
+        firstOpenMode = _wcStates.get(idx);
+        break;
+      }
+    }
+    const targetMode = firstOpenMode === 'full' ? 'compact' : 'full';
+    targetCols.forEach(idx => setWeatherCardMode(idx, targetMode));
+    showNotification(`已切換 ${targetCols.length} 個天氣卡模式`, 'success', 1500);
+  });
+
+  syncCollectiveLock();
 }
 
 // =========== Event Listeners ===========
@@ -3984,6 +4091,11 @@ function highlightPoint(colIdx) {
       item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }
+
+  // 5. Map Centering
+  if (waypointCentering) {
+    mapManager.map.panTo([pt.lat, pt.lng], { animate: true });
+  }
 }
 
 /** Remove all cross-view highlights. */
@@ -4045,6 +4157,7 @@ async function init() {
   isInitialLoad = true;
   await offlineManager.register();
   initWeatherControls();
+  initWaypointSettings();
 
   // Restore route mode
   const savedMode = localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking';
