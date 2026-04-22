@@ -314,13 +314,10 @@ const elevationProfile = new ElevationProfile(
   'chart-empty',
   (lat, lng, color) => mapManager.showHoverMarker(lat, lng, color),
   (colIdx) => {
-    const pt = weatherPoints[colIdx];
-    if (!pt) return;
-    if (pt.isWaypoint && pt.wpIndex !== undefined && !pt.isReturn) {
-      mapManager.onWeatherBadgeClick(pt.wpIndex, false);
-    } else {
-      mapManager.onWeatherBadgeClick(colIdx, true);
-    }
+    // Open the specific weather card for this marker (handles both outbound/return 
+    // waypoints and intermediate points accurately).
+    openWeatherCard(colIdx);
+    highlightPoint(colIdx);
   }
 );
 
@@ -1161,14 +1158,11 @@ function selectAlternative(index) {
   // Render weather panel and intermediate markers
   renderWeatherPanel();
 
-  // Automatically fetch weather data when the route is finalised.
-  // ONLY if it was a single-point addition, otherwise skip (per user request).
-  if (pendingNewWaypointIndex !== null) {
-      autoFetchWeather({ onlyWaypointIndex: pendingNewWaypointIndex });
-      pendingNewWaypointIndex = null;
-  } else if (isInitialLoad) {
-      autoFetchWeather();
-  }
+  // Automatically fetch weather data whenever the route is finalized.
+  // We trigger a general auto-fetch (force:false) so that all points (new waypoints, 
+  // return waypoints, and intermediate points) get weather info if missing.
+  autoFetchWeather({ force: false });
+  pendingNewWaypointIndex = null;
 }
 
 /**
@@ -3713,8 +3707,11 @@ async function fetchAllWeatherData(options = {}) {
         if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
       });
       saveWeatherCells(getSemanticKey(pt), cells);
-      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
+      if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+      
+      // Update chart markers to show icon immediately
+      updateElevationMarkers();
       continue;
     }
 
@@ -3736,9 +3733,12 @@ async function fetchAllWeatherData(options = {}) {
         if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
       });
       saveWeatherCells(getSemanticKey(pt), cells);
-      // Map weather icon only on outgoing waypoints (return shares the same marker)
-      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
+      // Update map icon (shared between outbound/return return markers)
+      if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+
+      // Refresh chart markers to show icon immediately
+      updateElevationMarkers();
     } catch (err) {
       console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
       WEATHER_ROWS.forEach(row => {

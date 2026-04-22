@@ -1395,7 +1395,8 @@ html, body {
 .chart-toggle-btn {
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
+  right: auto;
   width: 20px;
   height: 20px;
   border-radius: 4px;
