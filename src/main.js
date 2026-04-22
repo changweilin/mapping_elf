@@ -313,7 +313,15 @@ const elevationProfile = new ElevationProfile(
   'elevation-chart',
   'chart-empty',
   (lat, lng, color) => mapManager.showHoverMarker(lat, lng, color),
-  (colIdx) => highlightPoint(colIdx)
+  (colIdx) => {
+    const pt = weatherPoints[colIdx];
+    if (!pt) return;
+    if (pt.isWaypoint && pt.wpIndex !== undefined && !pt.isReturn) {
+      mapManager.onWeatherBadgeClick(pt.wpIndex, false);
+    } else {
+      mapManager.onWeatherBadgeClick(colIdx, true);
+    }
+  }
 );
 
 // When user clicks an alternative route on the map
@@ -3979,6 +3987,11 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   const root = wrapper?.querySelector(`.weather-card`) || document.getElementById(`wc-root-${colIdx}`);
   if (!root) return;
 
+  // Clicking the card highlights the point
+  root.addEventListener('click', () => {
+    highlightPoint(colIdx);
+  });
+
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4201,10 +4214,16 @@ function highlightPoint(colIdx) {
   }
 
   // 6. Weather Card — Highlight the card and bring to front
-  document.querySelectorAll('.weather-card.is-highlighted').forEach(el => el.classList.remove('is-highlighted'));
+  document.querySelectorAll('.weather-card.is-highlighted').forEach(el => {
+    el.classList.remove('is-highlighted');
+    const popup = el.closest('.leaflet-popup');
+    if (popup) popup.style.zIndex = '';
+  });
   const card = document.getElementById(`wc-root-${colIdx}`);
   if (card) {
     card.classList.add('is-highlighted');
+    const popup = card.closest('.leaflet-popup');
+    if (popup) popup.style.zIndex = '1000';
   }
 }
 
@@ -4215,7 +4234,11 @@ function clearAllHighlights() {
     el.style.removeProperty('background-color');
   });
   document.querySelectorAll('.waypoint-item.wp-highlight').forEach(el => el.classList.remove('wp-highlight'));
-  document.querySelectorAll('.weather-card.is-highlighted').forEach(el => el.classList.remove('is-highlighted'));
+  document.querySelectorAll('.weather-card.is-highlighted').forEach(el => {
+    el.classList.remove('is-highlighted');
+    const popup = el.closest('.leaflet-popup');
+    if (popup) popup.style.zIndex = '';
+  });
   mapManager.clearWaypointHighlight();
   mapManager.clearHoverMarker();
   elevationProfile.hideCrosshair();
