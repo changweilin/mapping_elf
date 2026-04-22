@@ -1,81 +1,57 @@
+/**
+ * SVG 白邊清理 + 原生資產生成工具
+ *
+ * 功能：
+ * 1. 將 SVG 中的白色/黑色/淺色 path 替換為透明或主體色
+ * 2. 針對 mapping_owl_cursor.svg 提供區域性精準過濾
+ * 3. 從處理後的 SVG 重新生成 PNG 資產（icon, splash）
+ *
+ * 用法：node tools/whiten-to-transparent.mjs
+ */
+
 import sharp from 'sharp';
 import fs from 'fs/promises';
 import path from 'path';
+import {
+  getBoundingBox,
+  isNearWhite,
+  isNearBlack,
+  isPalePattern,
+} from './svg-utils.mjs';
 
 const root = path.resolve(process.cwd());
 
-// Decide whether a hex color counts as "white-ish" — neutral + bright.
-// Catches pure whites, creams (#F9F3E5), and light grays (#DADADE),
-// rejects browns (#C49D6A), navy (#2F395D), and black.
-function isNearWhite(hex) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const avg = (r + g + b) / 3;
-  return (max - min) <= 50 && avg >= 190;
-}
+/** 貓頭鷹 SVG 專用的主體色 */
+const OWL_BODY_COLOR = "#2E3658";
 
-function isNearBlack(hex) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const avg = (r + g + b) / 3;
-  // Threshold: Neutral (low saturation) and average brightness below 40 (~15%)
-  return (max - min) <= 40 && avg <= 40;
-}
-
-function isPalePattern(hex) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const avg = (r + g + b) / 3;
-  // Loosened threshold: catch more saturated (up to 100) and darker (down to 110)
-  return (max - min) <= 100 && avg >= 110;
-}
-
-function getPathBoundingBox(d) {
-  const coords = d.match(/[-+]?[0-9]*\.?[0-9]+/g);
-  if (!coords) return null;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (let i = 0; i < coords.length; i += 2) {
-      if (coords[i+1] === undefined) break;
-      const x = parseFloat(coords[i]);
-      const y = parseFloat(coords[i+1]);
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-  }
-  return { minX, minY, maxX, maxY };
-}
-
+/**
+ * 判斷 path 的包圍框是否位於需要清理的目標區域。
+ * 用於 mapping_owl_cursor.svg 的精準區域過濾。
+ */
 function isInsideTargetRegion(bbox) {
   if (!bbox) return false;
-  
-  // 1. Hard protection for hills and map base (raising line to 1170)
-  // Also protect the far left edge (X < 450) where hills start
+
+  // 1. 保護山丘和地圖底部（Y > 1170）以及最左側邊緣（X < 450）
   if (bbox.minY > 1170 || bbox.minX < 450) return false;
-  
-  // 2. Head Top (Y < 550) - middle-focused
+
+  // 2. 頭頂區域（Y < 550）— 只處理中間範圍
   const HEAD_TOP = bbox.maxY < 550 && bbox.minX > 800 && bbox.maxX < 1500;
   if (HEAD_TOP) return true;
 
-  // 3. Right side protection: strictly skip everything on the right half (X > 1150)
+  // 3. 嚴格跳過右半邊（X > 1150）
   if (bbox.minX > 1150) return false;
 
-  // 4. Tight Left Wing rectangles (targeting textures above the hill line)
+  // 4. 左翼精準矩形（只處理山丘線以上的紋理）
   const wing_upper = (bbox.minX < 1050 && bbox.maxX > 450 && bbox.minY < 1000 && bbox.maxY > 600);
   const wing_lower = (bbox.minX < 900 && bbox.maxX > 550 && bbox.minY < 1170 && bbox.maxY > 1000);
-  
+
   return wing_upper || wing_lower;
 }
 
+/**
+ * 清理單一 SVG 檔案中的白邊和淺色圖案。
+ * @param {string} filePath - SVG 檔案的絕對路徑
+ */
 async function whitenSvg(filePath) {
   const before = await fs.readFile(filePath, 'utf8');
   const removed = new Set();
@@ -91,19 +67,16 @@ async function whitenSvg(filePath) {
     let shouldConvertFill = false;
     let shouldConvertStroke = false;
 
-    const OWL_BODY_COLOR = "#2E3658";
-
     if (fillMatch) {
       const hex = fillMatch[1].toUpperCase();
       if (isNearWhite(hex) || isNearBlack(hex)) {
         shouldClearFill = true;
       } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
-        const bbox = getPathBoundingBox(dMatch ? dMatch[1] : "");
+        const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
         if (isInsideTargetRegion(bbox)) {
           if (isPalePattern(hex)) {
             shouldClearFill = true;
           } else {
-            // It's a deep color residue in the wing area, convert to body color
             shouldConvertFill = true;
           }
         }
@@ -116,7 +89,7 @@ async function whitenSvg(filePath) {
       if (isNearWhite(hex) || isNearBlack(hex)) {
         shouldClearStroke = true;
       } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
-        const bbox = getPathBoundingBox(dMatch ? dMatch[1] : "");
+        const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
         if (isInsideTargetRegion(bbox)) {
           if (isPalePattern(hex)) {
             shouldClearStroke = true;
@@ -140,7 +113,8 @@ async function whitenSvg(filePath) {
   console.log(`updated ${path.relative(root, filePath)} — removed [${[...removed].join(', ')}]`);
 }
 
-// 1) Rewrite the three web SVGs
+// ── 1) 清理 SVG 白邊 ──────────────────────────────────────────
+
 const svgs = [
   'public/simple_owl_cursor.svg',
   'public/mapping_owl_cursor.svg',
@@ -152,21 +126,22 @@ for (const rel of svgs) {
   await whitenSvg(path.join(root, rel));
 }
 
-// 2) Regenerate the native asset masters from the updated SVGs
+// ── 2) 從處理後的 SVG 重新生成原生資產 ─────────────────────────
+
 const OUT = path.join(root, 'assets');
 await fs.mkdir(OUT, { recursive: true });
 
 const simpleSvg = path.join(root, 'public/simple_owl_cursor.svg');
 const mappingSvg = path.join(root, 'public/mapping_owl_cursor.svg');
 
-// icon-only: 1024x1024 transparent
+// icon-only: 1024x1024 透明背景
 await sharp(simpleSvg, { density: 512 })
   .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
   .png()
   .toFile(path.join(OUT, 'icon-only.png'));
 console.log('wrote icon-only.png');
 
-// icon-foreground: owl on transparent 1024 canvas at ~60% (safe zone for adaptive icons)
+// icon-foreground: 貓頭鷹置中於 1024 畫布，約 60%（自適應圖示安全區域）
 const fgSize = Math.round(1024 * 0.60);
 const fgOwl = await sharp(simpleSvg, { density: 512 })
   .resize(fgSize, fgSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -177,13 +152,13 @@ await sharp({
 }).composite([{ input: fgOwl, gravity: 'center' }]).png().toFile(path.join(OUT, 'icon-foreground.png'));
 console.log('wrote icon-foreground.png');
 
-// icon-background: flat tile matching app chrome
+// icon-background: 與 app 主題色一致的純色背景
 await sharp({
   create: { width: 1024, height: 1024, channels: 4, background: { r: 0x0f, g: 0x11, b: 0x17, alpha: 1 } }
 }).png().toFile(path.join(OUT, 'icon-background.png'));
 console.log('wrote icon-background.png');
 
-// splash: 2732x2732 on #0f1117, mapping owl centered at ~55%
+// splash: 2732x2732 暗色背景，mapping owl 置中約 55%
 const splashBg = { r: 0x0f, g: 0x11, b: 0x17, alpha: 1 };
 const owlTargetW = Math.round(2732 * 0.55);
 const owlBuffer = await sharp(mappingSvg, { density: 512 })
