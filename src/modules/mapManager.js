@@ -63,7 +63,7 @@ export class MapManager {
     this.ignoreMapClick = false;
     this.dragLine = null;
     this._dragWpIndex = undefined;
-    this._weatherPopup = null; // Leaflet popup for weather card
+    this._weatherPopups = new Map(); // Leaflet popups for weather cards (wpIndex -> popup)
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -814,32 +814,40 @@ export class MapManager {
 
   /**
    * Open a weather card popup attached to a waypoint marker.
-   * @param {number} wpIndex - waypoint index
+   * Multiple popups can coexist.
+   * @param {number} wpIndex
    * @param {string} htmlContent - full inner HTML for the popup
+   * @param {function} onReady - callback(wrapper) fired when popup is added to DOM
    */
   openWeatherPopup(wpIndex, htmlContent, onReady) {
-    this.closeWeatherPopup();
     const marker = this.waypointMarkers[wpIndex];
     if (!marker) return;
 
-    this._weatherPopup = L.popup({
-      className: 'weather-popup',
-      closeButton: false,
-      closeOnClick: false,
-      autoClose: false,
-      autoPan: true,
-      autoPanPaddingTopLeft: [20, 60],
-      autoPanPaddingBottomRight: [20, 20],
-      offset: [0, -24],
-      maxWidth: 320,
-      minWidth: 200,
-    })
+    // If already open for this index, update it instead of recreating (prevents flashing)
+    let popup = this._weatherPopups.get(wpIndex);
+    if (!popup) {
+      popup = L.popup({
+        className: 'weather-popup',
+        closeButton: false,
+        closeOnClick: false,
+        autoClose: false,
+        autoPan: true,
+        autoPanPaddingTopLeft: [20, 60],
+        autoPanPaddingBottomRight: [20, 20],
+        offset: [0, -24],
+        maxWidth: 320,
+        minWidth: 200,
+      });
+      this._weatherPopups.set(wpIndex, popup);
+    }
+
+    popup
       .setLatLng(marker.getLatLng())
       .setContent(htmlContent)
       .openOn(this.map);
 
     // Prevent Leaflet from swallowing click events inside the popup
-    const wrapper = this._weatherPopup.getElement();
+    const wrapper = popup.getElement();
     if (wrapper) {
       L.DomEvent.disableClickPropagation(wrapper);
       L.DomEvent.disableScrollPropagation(wrapper);
@@ -849,16 +857,27 @@ export class MapManager {
     if (onReady) onReady(wrapper);
   }
 
-  /** Close the weather card popup if open. */
-  closeWeatherPopup() {
-    if (this._weatherPopup) {
-      this.map.closePopup(this._weatherPopup);
-      this._weatherPopup = null;
+  /**
+   * Close a specific weather card popup or all of them.
+   * @param {number} wpIndex - if undefined, closes ALL popups
+   */
+  closeWeatherPopup(wpIndex) {
+    if (wpIndex !== undefined) {
+      const popup = this._weatherPopups.get(wpIndex);
+      if (popup) {
+        this.map.closePopup(popup);
+        this._weatherPopups.delete(wpIndex);
+      }
+    } else {
+      this._weatherPopups.forEach(p => this.map.closePopup(p));
+      this._weatherPopups.clear();
     }
   }
 
-  /** Check if the weather popup is currently open. */
-  isWeatherPopupOpen() {
-    return !!this._weatherPopup && this.map.hasLayer(this._weatherPopup);
+  /** Check if a specific weather popup is currently open. */
+  isWeatherPopupOpen(wpIndex) {
+    if (wpIndex === undefined) return this._weatherPopups.size > 0;
+    const popup = this._weatherPopups.get(wpIndex);
+    return !!popup && this.map.hasLayer(popup);
   }
 }

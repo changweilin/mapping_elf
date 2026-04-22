@@ -186,6 +186,10 @@ function _restoreSnapshot(snap) {
     } finally {
       mapManager.onWaypointChange = cb;
     }
+
+    // Close all weather cards — indices will change
+    _wcStates.clear();
+    mapManager.closeWeatherPopup();
   } finally {
     history.suppressed = false;
   }
@@ -552,6 +556,8 @@ btnClearRoute.addEventListener('click', () => {
   importedIntermediatePoints = [];
   clearImportedTrackSession();
   syncTrackModeUI();
+  _wcStates.clear();
+  mapManager.closeWeatherPopup();
   mapManager.clearWaypoints();
   mapManager.clearIntermediateMarkers();
   elevationProfile.clear();
@@ -3552,61 +3558,63 @@ async function fetchAllWeatherData(options = {}) {
 
 // =========== Weather Card (Map Popup) ===========
 
-let _wcState = 'minimized'; // 'minimized' | 'compact' | 'full'
-let _wcWpIndex = -1;         // currently displayed waypoint index
+// Map of wpIndex -> state ('compact' | 'full') for currently open weather cards
+let _wcStates = new Map();
 
 /**
  * Open (or toggle) the weather card popup for a waypoint.
  * Default opens in compact mode.
  */
 function openWeatherCard(wpIndex) {
-  // Toggle off if clicking same waypoint that's already open
-  if (_wcWpIndex === wpIndex && _wcState !== 'minimized') {
-    closeWeatherCard();
+  // If already open, close it (toggle behavior)
+  if (_wcStates.has(wpIndex)) {
+    closeWeatherCard(wpIndex);
     return;
   }
-  _wcWpIndex = wpIndex;
-  _wcState = 'compact';
-  _renderWeatherCard();
+  _wcStates.set(wpIndex, 'compact');
+  _renderWeatherCard(wpIndex);
 }
 
-/** Close the weather card (set to minimized). */
-function closeWeatherCard() {
-  _wcState = 'minimized';
-  _wcWpIndex = -1;
-  mapManager.closeWeatherPopup();
+/** Close a specific weather card. */
+function closeWeatherCard(wpIndex) {
+  _wcStates.delete(wpIndex);
+  mapManager.closeWeatherPopup(wpIndex);
 }
 
 /** Set the card mode and re-render. */
-function setWeatherCardMode(mode) {
+function setWeatherCardMode(wpIndex, mode) {
   if (mode === 'minimized') {
-    closeWeatherCard();
+    closeWeatherCard(wpIndex);
     return;
   }
-  _wcState = mode;
-  _renderWeatherCard();
+  _wcStates.set(wpIndex, mode);
+  _renderWeatherCard(wpIndex);
 }
 
-/** Navigate to the next/prev waypoint that has weather data. */
-function navigateWeatherCard(delta) {
+/** Navigate a specific card holder to the next/prev waypoint that has weather data. */
+function navigateWeatherCard(wpIndex, delta) {
   // Find all waypoint indices that have weather badges
-  const wpIndices = [];
+  const wpWithWeather = [];
   for (let i = 0; i < mapManager.waypointWeather.length; i++) {
-    if (mapManager.waypointWeather[i]) wpIndices.push(i);
+    if (mapManager.waypointWeather[i]) wpWithWeather.push(i);
   }
-  if (wpIndices.length === 0) return;
+  if (wpWithWeather.length === 0) return;
 
-  const curPos = wpIndices.indexOf(_wcWpIndex);
+  const curPos = wpWithWeather.indexOf(wpIndex);
   let nextPos;
   if (curPos < 0) {
-    nextPos = delta > 0 ? 0 : wpIndices.length - 1;
+    nextPos = 0;
   } else {
-    nextPos = curPos + delta;
-    if (nextPos < 0) nextPos = wpIndices.length - 1;
-    if (nextPos >= wpIndices.length) nextPos = 0;
+    nextPos = (curPos + delta + wpWithWeather.length) % wpWithWeather.length;
   }
-  _wcWpIndex = wpIndices[nextPos];
-  _renderWeatherCard();
+
+  const nextWpIndex = wpWithWeather[nextPos];
+  if (nextWpIndex === wpIndex) return;
+
+  // Preserve the mode (compact/full) when navigating
+  const mode = _wcStates.get(wpIndex) || 'compact';
+  closeWeatherCard(wpIndex);
+  setWeatherCardMode(nextWpIndex, mode);
 }
 
 /**
@@ -3650,22 +3658,23 @@ function _getWeatherCardData(wpIndex) {
   return { data: null, pt, dateStr, hour, colIdx };
 }
 
-/** Render the weather card popup and attach it to the map. */
-function _renderWeatherCard() {
-  if (_wcState === 'minimized' || _wcWpIndex < 0) {
-    mapManager.closeWeatherPopup();
+/** Render a specific weather card. */
+function _renderWeatherCard(wpIndex) {
+  const state = _wcStates.get(wpIndex);
+  if (!state || state === 'minimized') {
+    mapManager.closeWeatherPopup(wpIndex);
     return;
   }
 
-  const info = _getWeatherCardData(_wcWpIndex);
+  const info = _getWeatherCardData(wpIndex);
   if (!info) {
-    mapManager.closeWeatherPopup();
+    mapManager.closeWeatherPopup(wpIndex);
     return;
   }
 
   const { data, cells, pt, dateStr, hour } = info;
-  const isCompact = _wcState === 'compact';
-  const isFull = _wcState === 'full';
+  const isCompact = state === 'compact';
+  const isFull = state === 'full';
 
   // Resolve display values
   const val = (key) => {
@@ -3674,65 +3683,49 @@ function _renderWeatherCard() {
     return '—';
   };
 
-  // Extract icon & desc from weather string
+  // Weather info
   const weatherStr = val('weather');
   const weatherParts = weatherStr.split(' ');
   const wIcon = weatherParts[0] || '❓';
   const wDesc = weatherParts.slice(1).join(' ') || '—';
   const temp = val('temp');
   const precipitation = val('precipitation');
+  const label = pt.label || `航點 ${wpIndex + 1}`;
 
-  // Label for this waypoint
-  const label = pt.label || `航點 ${_wcWpIndex + 1}`;
-
-  // Check nav availability
+  // Nav
   const wpWithWeather = [];
   for (let i = 0; i < mapManager.waypointWeather.length; i++) {
     if (mapManager.waypointWeather[i]) wpWithWeather.push(i);
   }
-  const curNavPos = wpWithWeather.indexOf(_wcWpIndex);
-  const canPrev = wpWithWeather.length > 1;
-  const canNext = wpWithWeather.length > 1;
+  const canNav = wpWithWeather.length > 1;
 
-  // Build HTML
-  let html = `<div class="weather-card${isFull ? ' full' : ''}" id="wc-root">`;
+  // Build HTML with unique ID per waypoint card
+  let html = `<div class="weather-card${isFull ? ' full' : ''}" id="wc-root-${wpIndex}" data-wp-idx="${wpIndex}">`;
 
   // Header
   html += `<div class="wc-header">`;
-  html += `<button class="wc-btn" id="wc-btn-prev" title="上一個航點"${!canPrev ? ' disabled' : ''}>`;
+  html += `<button class="wc-btn q-prev" title="上一個航點"${!canNav ? ' disabled' : ''}>`;
   html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
   html += `<span class="wc-title">${wIcon} ${label}</span>`;
-  html += `<button class="wc-btn" id="wc-btn-next" title="下一個航點"${!canNext ? ' disabled' : ''}>`;
+  html += `<button class="wc-btn q-next" title="下一個航點"${!canNav ? ' disabled' : ''}>`;
   html += `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg></button>`;
-  html += `<button class="wc-btn" id="wc-btn-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
+  html += `<button class="wc-btn q-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
   html += `<svg viewBox="0 0 24 24"><path d="${isCompact
-    ? 'M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z'  // expand chevron
-    : 'M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z'     // collapse chevron
+    ? 'M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z'
+    : 'M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z'
   }" fill="currentColor"/></svg></button>`;
-  html += `<button class="wc-btn" id="wc-btn-close" title="縮到最小">`;
+  html += `<button class="wc-btn q-close" title="關閉">`;
   html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
   html += `</div>`;
 
   // Body
   html += `<div class="wc-body">`;
-
-  // Weather main row (always shown)
-  html += `<div class="wc-weather-main">`;
-  html += `<span class="wc-weather-icon">${wIcon}</span>`;
-  html += `<span class="wc-weather-desc">${wDesc}</span>`;
-  html += `<span class="wc-weather-temp">${temp}</span>`;
-  html += `</div>`;
+  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${temp}</span></div>`;
 
   if (isCompact) {
-    // Compact: only precipitation below the main row
-    html += `<div class="wc-row">`;
-    html += `<span class="wc-row-label">雨量</span>`;
-    html += `<span class="wc-row-value">${precipitation}</span>`;
-    html += `</div>`;
+    html += `<div class="wc-row"><span class="wc-row-label">雨量</span><span class="wc-row-value">${precipitation}</span></div>`;
   }
-
   if (isFull) {
-    // Full: show all weather rows in a 2-column grid
     const CARD_ROWS = [
       { key: 'tempRange', label: '高/低溫' },
       { key: 'feelsLike', label: '體感溫度' },
@@ -3750,34 +3743,26 @@ function _renderWeatherCard() {
       { key: 'sunrise', label: '日出' },
       { key: 'sunset', label: '日落' },
     ];
-
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
-      const v = val(row.key);
-      html += `<div class="wc-info-item"><span class="wc-info-label">${row.label}</span><span class="wc-info-value">${v}</span></div>`;
+      html += `<div class="wc-info-item"><span class="wc-info-label">${row.label}</span><span class="wc-info-value">${val(row.key)}</span></div>`;
     });
     html += `</div>`;
 
-    // Windy link
     const windyUrl = buildWindyUrl(pt.lat, pt.lng, dateStr, hour);
     html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
-    html += `<img src="https://www.windy.com/favicon.ico" alt="Windy">`;
-    html += `<span>在 Windy 開啟</span>`;
-    html += `<svg viewBox="0 0 24 24" width="12" height="12" style="opacity:0.6"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg>`;
-    html += `</a>`;
+    html += `<img src="https://www.windy.com/favicon.ico" alt="Windy"><span>在 Windy 開啟</span>`;
+    html += `<svg viewBox="0 0 24 24" width="12" height="12" style="opacity:0.6"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg></a>`;
   }
 
-  // Swipe hint (touch devices)
   const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
   if (isTouchDevice) {
     html += `<div class="wc-swipe-hint">↕ 上下滑動切換大小 · ↔ 左右滑動切換航點</div>`;
   }
+  html += `</div></div>`;
 
-  html += `</div>`; // .wc-body
-  html += `</div>`; // .weather-card
-
-  mapManager.openWeatherPopup(_wcWpIndex, html, () => {
-    _bindWeatherCardEvents();
+  mapManager.openWeatherPopup(wpIndex, html, (wrapper) => {
+    _bindWeatherCardEvents(wpIndex, wrapper);
   });
 }
 
