@@ -90,7 +90,7 @@ let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'mink
 let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
 let windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
 let collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0'; // default true
-let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) === '1'; // default false
+let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0'; // default true
 let collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1'; // default false
 let waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0'; // default true
 let paceParams = (() => {
@@ -256,6 +256,10 @@ function applySettingsFromStorage() {
   paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh';
   windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
   windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
+  collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0';
+  collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
+  collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1';
+  waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0';
   try {
     paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
   } catch {
@@ -504,20 +508,6 @@ function initWaypointSettings() {
     localStorage.setItem(LS_WAYPOINT_CENTERING_KEY, waypointCentering ? '1' : '0');
   });
 
-  // Collective Actions
-  const getCollectiveIndices = () => {
-    const indices = [];
-    weatherPoints.forEach((pt, i) => {
-      if (collectiveAll) {
-        indices.push(i);
-      } else {
-        if (pt.isWaypoint && !pt.isReturn && collectiveMarked) indices.push(i);
-        if (!pt.isWaypoint && collectiveIntermediate) indices.push(i);
-      }
-    });
-    return indices;
-  };
-
   btnMinimize?.addEventListener('click', () => {
     const targetCols = getCollectiveIndices();
     if (targetCols.length === 0) {
@@ -548,6 +538,46 @@ function initWaypointSettings() {
   });
 
   syncCollectiveLock();
+}
+
+/**
+ * Get weather-column indices for collective operations.
+ * If pivotIdx is provided, it handles "各自集體操作" logic when collectiveAll is false.
+ */
+function getCollectiveIndices(pivotIdx = -1) {
+  if (pivotIdx === -1) {
+    // Global call (e.g. from side panel buttons)
+    const indices = [];
+    weatherPoints.forEach((pt, i) => {
+      if (collectiveAll) {
+        indices.push(i);
+      } else {
+        if (pt.isWaypoint && !pt.isReturn && collectiveMarked) indices.push(i);
+        if (!pt.isWaypoint && collectiveIntermediate) indices.push(i);
+      }
+    });
+    return indices;
+  }
+
+  // Pivot-based call (from card/badge interaction)
+  if (collectiveAll) {
+    return weatherPoints.map((_, i) => i);
+  }
+
+  const pt = weatherPoints[pivotIdx];
+  if (!pt) return [pivotIdx];
+
+  const isMarked = pt.isWaypoint && !pt.isReturn;
+  const isIntermediate = !pt.isWaypoint;
+
+  if (isMarked && collectiveMarked) {
+    return weatherPoints.map((p, i) => (p.isWaypoint && !p.isReturn) ? i : -1).filter(idx => idx !== -1);
+  }
+  if (isIntermediate && collectiveIntermediate) {
+    return weatherPoints.map((p, i) => (!p.isWaypoint) ? i : -1).filter(idx => idx !== -1);
+  }
+
+  return [pivotIdx];
 }
 
 // =========== Event Listeners ===========
@@ -3901,12 +3931,15 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    closeWeatherCard(colIdx);
+    const targets = getCollectiveIndices(colIdx);
+    targets.forEach(idx => closeWeatherCard(idx));
   });
   root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curMode = _wcStates.get(colIdx) || 'compact';
-    setWeatherCardMode(colIdx, curMode === 'compact' ? 'full' : 'compact');
+    const nextMode = curMode === 'compact' ? 'full' : 'compact';
+    const targets = getCollectiveIndices(colIdx);
+    targets.forEach(idx => setWeatherCardMode(idx, nextMode));
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -3965,12 +3998,27 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
 
 // Bind weather badge click callback on mapManager
 mapManager.onWeatherBadgeClick = (idx, isIntermediate) => {
+  let targetColIdx = -1;
   if (isIntermediate) {
-    openWeatherCard(idx);
+    targetColIdx = idx;
   } else {
     // waypoints use their waypoint index for badge click; map back to colIdx
-    const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === idx);
-    if (colIdx >= 0) openWeatherCard(colIdx);
+    targetColIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === idx);
+  }
+
+  if (targetColIdx >= 0) {
+    const collectiveCols = getCollectiveIndices(targetColIdx);
+    if (collectiveCols.length > 1) {
+      // Collective toggle
+      const isAlreadyOpen = _wcStates.has(targetColIdx);
+      if (isAlreadyOpen) {
+        collectiveCols.forEach(ci => closeWeatherCard(ci));
+      } else {
+        collectiveCols.forEach(ci => { if (!_wcStates.has(ci)) openWeatherCard(ci); });
+      }
+    } else {
+      openWeatherCard(targetColIdx);
+    }
   }
 };
 
