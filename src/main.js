@@ -15,7 +15,7 @@ import { OfflineManager } from './modules/offlineManager.js';
 import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
 import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -3097,7 +3097,7 @@ function renderWeatherPanel() {
       displayElapsedH = displayElapsedH - prevWpElapsed;
     }
     const elapsedBadge = (speedIntervalMode || segmentIntervalKm > 0) && displayElapsedH > 0
-      ? `<span class="wt-elapsed-badge">${formatDuration(displayElapsedH)}</span>`
+      ? `<span class="wt-elapsed-badge">${formatDurationHHMM(displayElapsedH)}</span>`
       : '';
 
     html += `<th class="${thClass}" data-idx="${i}" ${thStyle}>

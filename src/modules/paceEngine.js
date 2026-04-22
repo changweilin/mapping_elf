@@ -48,6 +48,13 @@ export function formatDuration(hours) {
   return `${h} 小時 ${m} 分`;
 }
 
+export function formatDurationHHMM(hours) {
+  if (!hours || hours <= 0) return '00:00';
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 /**
  * Return the default flat speed for an activity given body/pack weight.
  * Useful for showing placeholder text in the UI.
