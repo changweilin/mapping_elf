@@ -2649,14 +2649,27 @@ function updateIntermediateMarkers() {
     return;
   }
 
+  const container = document.getElementById('weather-table-container');
+
   const pts = weatherPoints
-    .filter(p => !p.isWaypoint)
-    .map(p => ({
-      lat: p.lat,
-      lng: p.lng,
-      cumDistM: p._cum,
-      label: p.label
-    }));
+    .map((p, i) => ({ pt: p, i }))
+    .filter(x => !x.pt.isWaypoint)
+    .map(x => {
+      // Look up weather icon for intermediate point
+      const dateStr = container?.querySelector(`.wt-th-date[data-idx="${x.i}"] .wt-date-input`)?.value;
+      const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${x.i}"] .wt-time-select`)?.value ?? '0');
+      const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, dateStr, hour)] : null;
+      const weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(x.pt)]?.weather?.split(' ')[0] || null;
+
+      return {
+        lat: x.pt.lat,
+        lng: x.pt.lng,
+        cumDistM: x.pt._cum,
+        label: x.pt.label,
+        colIdx: x.i,
+        weatherIcon
+      };
+    });
 
   let totalDistM = 0;
   if (currentRouteCoords.length > 1) {
@@ -3558,80 +3571,86 @@ async function fetchAllWeatherData(options = {}) {
 
 // =========== Weather Card (Map Popup) ===========
 
-// Map of wpIndex -> state ('compact' | 'full') for currently open weather cards
+// Map of colIdx -> state ('compact' | 'full') for currently open weather cards
 let _wcStates = new Map();
 
 /**
- * Open (or toggle) the weather card popup for a waypoint.
+ * Open (or toggle) the weather card popup for a point.
  * Default opens in compact mode.
  */
-function openWeatherCard(wpIndex) {
+function openWeatherCard(colIdx) {
   // If already open, close it (toggle behavior)
-  if (_wcStates.has(wpIndex)) {
-    closeWeatherCard(wpIndex);
+  if (_wcStates.has(colIdx)) {
+    closeWeatherCard(colIdx);
     return;
   }
-  _wcStates.set(wpIndex, 'compact');
-  _renderWeatherCard(wpIndex);
+  _wcStates.set(colIdx, 'compact');
+  _renderWeatherCard(colIdx);
 }
 
 /** Close a specific weather card. */
-function closeWeatherCard(wpIndex) {
-  _wcStates.delete(wpIndex);
-  mapManager.closeWeatherPopup(wpIndex);
+function closeWeatherCard(colIdx) {
+  _wcStates.delete(colIdx);
+  mapManager.closeWeatherPopup(colIdx);
 }
 
 /** Set the card mode and re-render. */
-function setWeatherCardMode(wpIndex, mode) {
+function setWeatherCardMode(colIdx, mode) {
   if (mode === 'minimized') {
-    closeWeatherCard(wpIndex);
+    closeWeatherCard(colIdx);
     return;
   }
-  _wcStates.set(wpIndex, mode);
-  _renderWeatherCard(wpIndex);
+  _wcStates.set(colIdx, mode);
+  _renderWeatherCard(colIdx);
 }
 
-/** Navigate a specific card holder to the next/prev waypoint that has weather data. */
-function navigateWeatherCard(wpIndex, delta) {
-  // Find all waypoint indices that have weather badges
-  const wpWithWeather = [];
-  for (let i = 0; i < mapManager.waypointWeather.length; i++) {
-    if (mapManager.waypointWeather[i]) wpWithWeather.push(i);
-  }
-  if (wpWithWeather.length === 0) return;
+/** Navigate a specific card holder to the next/prev point that has weather data. */
+function navigateWeatherCard(colIdx, delta) {
+  // Find all column indices that have weather icons (either waypoints with markers or intermediate points with markers)
+  const colsWithWeather = [];
+  const container = document.getElementById('weather-table-container');
 
-  const curPos = wpWithWeather.indexOf(wpIndex);
+  weatherPoints.forEach((pt, i) => {
+    const dateStr = container?.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`)?.value;
+    const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`)?.value ?? '0');
+    const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] : null;
+    const icon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(pt)]?.weather?.split(' ')[0] || null;
+    
+    if (icon) colsWithWeather.push(i);
+  });
+
+  if (colsWithWeather.length === 0) return;
+
+  const curPos = colsWithWeather.indexOf(colIdx);
   let nextPos;
   if (curPos < 0) {
-    nextPos = 0;
+    nextPos = delta > 0 ? 0 : colsWithWeather.length - 1;
   } else {
-    nextPos = (curPos + delta + wpWithWeather.length) % wpWithWeather.length;
+    nextPos = (curPos + delta + colsWithWeather.length) % colsWithWeather.length;
   }
 
-  const nextWpIndex = wpWithWeather[nextPos];
-  if (nextWpIndex === wpIndex) return;
+  const nextColIdx = colsWithWeather[nextPos];
+  if (nextColIdx === colIdx) return;
 
   // Preserve the mode (compact/full) when navigating
-  const mode = _wcStates.get(wpIndex) || 'compact';
-  closeWeatherCard(wpIndex);
-  setWeatherCardMode(nextWpIndex, mode);
+  const mode = _wcStates.get(colIdx) || 'compact';
+  closeWeatherCard(colIdx);
+  setWeatherCardMode(nextColIdx, mode);
 }
 
 /**
- * Get weather data for a specific waypoint.
+ * Get weather data for a specific column.
  * Attempts: 1) cachedWeatherData  2) savedWeatherCells  3) fallback '—'
  */
-function _getWeatherCardData(wpIndex) {
-  // Find the matching weatherPoint for this waypoint
-  const pt = weatherPoints.find(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIndex);
+function _getWeatherCardData(colIdx) {
+  const pt = weatherPoints[colIdx];
   if (!pt) return null;
 
   const container = document.getElementById('weather-table-container');
-  const colIdx = weatherPoints.indexOf(pt);
 
   // Try to read date/hour from the weather table DOM
   let dateStr = null, hour = null;
-  if (container && colIdx >= 0) {
+  if (container) {
     dateStr = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
     hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
   }
@@ -3659,16 +3678,16 @@ function _getWeatherCardData(wpIndex) {
 }
 
 /** Render a specific weather card. */
-function _renderWeatherCard(wpIndex) {
-  const state = _wcStates.get(wpIndex);
+function _renderWeatherCard(colIdx) {
+  const state = _wcStates.get(colIdx);
   if (!state || state === 'minimized') {
-    mapManager.closeWeatherPopup(wpIndex);
+    mapManager.closeWeatherPopup(colIdx);
     return;
   }
 
-  const info = _getWeatherCardData(wpIndex);
+  const info = _getWeatherCardData(colIdx);
   if (!info) {
-    mapManager.closeWeatherPopup(wpIndex);
+    mapManager.closeWeatherPopup(colIdx);
     return;
   }
 
@@ -3690,24 +3709,25 @@ function _renderWeatherCard(wpIndex) {
   const wDesc = weatherParts.slice(1).join(' ') || '—';
   const temp = val('temp');
   const precipitation = val('precipitation');
-  const label = pt.label || `航點 ${wpIndex + 1}`;
+  const label = pt.label || (pt.isWaypoint ? `航點 ${pt.wpIndex + 1}` : '中繼點');
 
   // Nav
-  const wpWithWeather = [];
-  for (let i = 0; i < mapManager.waypointWeather.length; i++) {
-    if (mapManager.waypointWeather[i]) wpWithWeather.push(i);
-  }
-  const canNav = wpWithWeather.length > 1;
+  const colsWithWeather = [];
+  weatherPoints.forEach((p, i) => {
+    const icon = savedWeatherCells[getSemanticKey(p)]?.weather?.split(' ')[0];
+    if (icon) colsWithWeather.push(i);
+  });
+  const canNav = colsWithWeather.length > 1;
 
-  // Build HTML with unique ID per waypoint card
-  let html = `<div class="weather-card${isFull ? ' full' : ''}" id="wc-root-${wpIndex}" data-wp-idx="${wpIndex}">`;
+  // Build HTML with unique ID per column card
+  let html = `<div class="weather-card${isFull ? ' full' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}">`;
 
   // Header
   html += `<div class="wc-header">`;
-  html += `<button class="wc-btn q-prev" title="上一個航點"${!canNav ? ' disabled' : ''}>`;
+  html += `<button class="wc-btn q-prev" title="上一個點"${!canNav ? ' disabled' : ''}>`;
   html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
   html += `<span class="wc-title">${wIcon} ${label}</span>`;
-  html += `<button class="wc-btn q-next" title="下一個航點"${!canNav ? ' disabled' : ''}>`;
+  html += `<button class="wc-btn q-next" title="下一個點"${!canNav ? ' disabled' : ''}>`;
   html += `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg></button>`;
   html += `<button class="wc-btn q-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
   html += `<svg viewBox="0 0 24 24"><path d="${isCompact
@@ -3761,32 +3781,33 @@ function _renderWeatherCard(wpIndex) {
   }
   html += `</div></div>`;
 
-  mapManager.openWeatherPopup(wpIndex, html, (wrapper) => {
-    _bindWeatherCardEvents(wpIndex, wrapper);
-  });
+  mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
+    _bindWeatherCardEvents(colIdx, wrapper);
+  }, !pt.isWaypoint, pt.wpIndex);
 }
 
 /** Bind click and touch events to the weather card DOM. */
-function _bindWeatherCardEvents() {
-  const root = document.getElementById('wc-root');
+function _bindWeatherCardEvents(colIdx, wrapper) {
+  const root = wrapper?.querySelector(`.weather-card`) || document.getElementById(`wc-root-${colIdx}`);
   if (!root) return;
 
   // Button clicks
-  root.querySelector('#wc-btn-close')?.addEventListener('click', (e) => {
+  root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    closeWeatherCard();
+    closeWeatherCard(colIdx);
   });
-  root.querySelector('#wc-btn-toggle')?.addEventListener('click', (e) => {
+  root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    setWeatherCardMode(_wcState === 'compact' ? 'full' : 'compact');
+    const curMode = _wcStates.get(colIdx) || 'compact';
+    setWeatherCardMode(colIdx, curMode === 'compact' ? 'full' : 'compact');
   });
-  root.querySelector('#wc-btn-prev')?.addEventListener('click', (e) => {
+  root.querySelector('.q-prev')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    navigateWeatherCard(-1);
+    navigateWeatherCard(colIdx, -1);
   });
-  root.querySelector('#wc-btn-next')?.addEventListener('click', (e) => {
+  root.querySelector('.q-next')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    navigateWeatherCard(+1);
+    navigateWeatherCard(colIdx, +1);
   });
 
   // Touch gestures: swipe detection
@@ -3806,7 +3827,6 @@ function _bindWeatherCardEvents() {
     const dy = touch.clientY - _touchStartY;
     const dt = Date.now() - _touchStartTime;
 
-    // Must be a quick swipe (< 400ms) with sufficient distance (> 40px)
     if (dt > 400) return;
 
     const absDx = Math.abs(dx);
@@ -3815,38 +3835,36 @@ function _bindWeatherCardEvents() {
 
     if (absDx > absDy && absDx > minSwipe) {
       // Horizontal swipe
-      e.preventDefault();
       if (dx < 0) {
-        // Swipe left → next waypoint
-        navigateWeatherCard(+1);
+        navigateWeatherCard(colIdx, +1);
       } else {
-        // Swipe right → prev waypoint
-        navigateWeatherCard(-1);
+        navigateWeatherCard(colIdx, -1);
       }
     } else if (absDy > absDx && absDy > minSwipe) {
       // Vertical swipe
-      e.preventDefault();
       if (dy < 0) {
-        // Swipe up → expand: minimized→compact→full
-        if (_wcState === 'compact') {
-          setWeatherCardMode('full');
-        }
-        // If already full, do nothing
+        // Swipe up
+        const curMode = _wcStates.get(colIdx) || 'compact';
+        if (curMode === 'compact') setWeatherCardMode(colIdx, 'full');
       } else {
-        // Swipe down → collapse: full→compact→minimized
-        if (_wcState === 'full') {
-          setWeatherCardMode('compact');
-        } else if (_wcState === 'compact') {
-          closeWeatherCard();
-        }
+        // Swipe down
+        const curMode = _wcStates.get(colIdx) || 'compact';
+        if (curMode === 'full') setWeatherCardMode(colIdx, 'compact');
+        else closeWeatherCard(colIdx);
       }
     }
   }, { passive: false });
 }
 
 // Bind weather badge click callback on mapManager
-mapManager.onWeatherBadgeClick = (wpIndex) => {
-  openWeatherCard(wpIndex);
+mapManager.onWeatherBadgeClick = (idx, isIntermediate) => {
+  if (isIntermediate) {
+    openWeatherCard(idx);
+  } else {
+    // waypoints use their waypoint index for badge click; map back to colIdx
+    const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === idx);
+    if (colIdx >= 0) openWeatherCard(colIdx);
+  }
 };
 
 // =========== Elevation Markers ===========

@@ -63,7 +63,7 @@ export class MapManager {
     this.ignoreMapClick = false;
     this.dragLine = null;
     this._dragWpIndex = undefined;
-    this._weatherPopups = new Map(); // Leaflet popups for weather cards (wpIndex -> popup)
+    this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -316,7 +316,11 @@ export class MapManager {
       if (target && target.closest && target.closest('.wp-weather-badge')) {
         L.DomEvent.stopPropagation(e);
         const idx = this.waypointMarkers.indexOf(marker);
-        if (idx >= 0) this.onWeatherBadgeClick?.(idx);
+        if (idx >= 0) {
+          // waypoints need their colIdx for the weather card; main.js will provide a callback/helper
+          // but for now we just find the column mapped to this waypoint.
+          this.onWeatherBadgeClick?.(idx, false);
+        }
         return;
       }
       const idx = this.waypointMarkers.indexOf(marker);
@@ -604,7 +608,6 @@ export class MapManager {
   setIntermediateMarkers(points, totalDistM = 0, turnaroundDistM = null) {
     this.clearIntermediateMarkers();
     points.forEach((pt) => {
-      const km = (pt.cumDistM / 1000).toFixed(0);
       let color;
       if (turnaroundDistM && turnaroundDistM > 0 && totalDistM > turnaroundDistM) {
         if (pt.cumDistM <= turnaroundDistM) {
@@ -619,15 +622,29 @@ export class MapManager {
         const t = this.isRoundTrip ? 1 - Math.abs(2 * tLinear - 1) : tLinear;
         color = interpolateRouteColor(t);
       }
+
+      const weatherHtml = pt.weatherIcon ? `<div class="wp-weather-badge">${pt.weatherIcon}</div>` : '';
       const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
+
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
-        html: `<div class="intermediate-point-inner" style="background: ${color};"></div>${labelHtml}`,
+        html: `<div class="intermediate-point-inner" style="background: ${color};">${weatherHtml}</div>${labelHtml}`,
         iconSize: [22, 22],
         iconAnchor: [11, 11],
       });
+
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
-      marker.on('click', () => {
+      marker._colIdx = pt.colIdx;
+
+      marker.on('click', (e) => {
+        // Detect click on weather badge
+        const target = e.originalEvent?.target;
+        if (target && target.closest && target.closest('.wp-weather-badge')) {
+          L.DomEvent.stopPropagation(e);
+          if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+          return;
+        }
+
         if (this.onIntermediateSelect) this.onIntermediateSelect(pt.lat, pt.lng);
       });
       this.intermediateMarkers.push(marker);
@@ -813,18 +830,33 @@ export class MapManager {
   }
 
   /**
-   * Open a weather card popup attached to a waypoint marker.
+   * Open a weather card popup attached to a marker.
    * Multiple popups can coexist.
-   * @param {number} wpIndex
+   * @param {number} colIdx - weather column index
    * @param {string} htmlContent - full inner HTML for the popup
    * @param {function} onReady - callback(wrapper) fired when popup is added to DOM
+   * @param {boolean} isIntermediate - if true, attach to intermediate markers
    */
-  openWeatherPopup(wpIndex, htmlContent, onReady) {
-    const marker = this.waypointMarkers[wpIndex];
-    if (!marker) return;
+  openWeatherPopup(colIdx, htmlContent, onReady, isIntermediate = false, waypointIndex = -1) {
+    const marker = isIntermediate 
+      ? this.intermediateMarkers.find(m => m.options.colIdx === colIdx) // We'll need to store colIdx on marker options
+      : this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx]; // fallback for legacy logic
+    
+    // Better: let the caller provide the marker or latlng. 
+    // But since we want to attach to the marker, let's find it.
+    let targetMarker = null;
+    if (isIntermediate) {
+      // Find intermediate marker by some property? 
+      // I'll update setIntermediateMarkers to store colIdx on the marker.
+      targetMarker = this.intermediateMarkers.find(m => m._colIdx === colIdx);
+    } else {
+      targetMarker = this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx];
+    }
+    
+    if (!targetMarker) return;
 
     // If already open for this index, update it instead of recreating (prevents flashing)
-    let popup = this._weatherPopups.get(wpIndex);
+    let popup = this._weatherPopups.get(colIdx);
     if (!popup) {
       popup = L.popup({
         className: 'weather-popup',
@@ -834,15 +866,15 @@ export class MapManager {
         autoPan: true,
         autoPanPaddingTopLeft: [20, 60],
         autoPanPaddingBottomRight: [20, 20],
-        offset: [0, -24],
+        offset: isIntermediate ? [0, -12] : [0, -24],
         maxWidth: 320,
         minWidth: 200,
       });
-      this._weatherPopups.set(wpIndex, popup);
+      this._weatherPopups.set(colIdx, popup);
     }
 
     popup
-      .setLatLng(marker.getLatLng())
+      .setLatLng(targetMarker.getLatLng())
       .setContent(htmlContent)
       .openOn(this.map);
 
@@ -859,14 +891,14 @@ export class MapManager {
 
   /**
    * Close a specific weather card popup or all of them.
-   * @param {number} wpIndex - if undefined, closes ALL popups
+   * @param {number} colIdx - if undefined, closes ALL popups
    */
-  closeWeatherPopup(wpIndex) {
-    if (wpIndex !== undefined) {
-      const popup = this._weatherPopups.get(wpIndex);
+  closeWeatherPopup(colIdx) {
+    if (colIdx !== undefined) {
+      const popup = this._weatherPopups.get(colIdx);
       if (popup) {
         this.map.closePopup(popup);
-        this._weatherPopups.delete(wpIndex);
+        this._weatherPopups.delete(colIdx);
       }
     } else {
       this._weatherPopups.forEach(p => this.map.closePopup(p));
@@ -875,9 +907,9 @@ export class MapManager {
   }
 
   /** Check if a specific weather popup is currently open. */
-  isWeatherPopupOpen(wpIndex) {
-    if (wpIndex === undefined) return this._weatherPopups.size > 0;
-    const popup = this._weatherPopups.get(wpIndex);
+  isWeatherPopupOpen(colIdx) {
+    if (colIdx === undefined) return this._weatherPopups.size > 0;
+    const popup = this._weatherPopups.get(colIdx);
     return !!popup && this.map.hasLayer(popup);
   }
 }
