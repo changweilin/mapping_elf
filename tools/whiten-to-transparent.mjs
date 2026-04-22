@@ -26,12 +26,21 @@ const root = path.resolve(process.cwd());
 const OWL_BODY_COLOR = "#2E3658";
 
 /**
- * 判斷 path 的包圍框是否位於地圖區域 (Y > 1230)。
- * 使用較高的閾值以避免誤觸山丘底部邊界線。
+ * 判斷 path 的包圍框是否位於地圖區域 (Y > 1170)。
  */
 function isInsideMapRegion(bbox) {
   if (!bbox) return false;
-  return bbox.minY > 1230;
+  // 寬度較大的地圖與山丘區：改用中心點判定，確保大型背景路徑也被納入
+  return bbox.centerY > 1050;
+}
+
+/**
+ * 針對右側流動感強烈的「風紋」區域進行精確圈選。
+ */
+function isWindPatternZone(bbox) {
+  if (!bbox) return false;
+  // 右側風紋延伸區：中心點位於右方且避開頂部
+  return bbox.centerX > 1150 && bbox.centerY > 800;
 }
 
 /**
@@ -81,31 +90,26 @@ async function whitenSvg(filePath) {
 
     if (fillMatch) {
       const hex = fillMatch[1].toUpperCase();
-      if (isNearWhite(hex) || isNearBlack(hex)) {
-        shouldClearFill = true;
-      } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
-        const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
-        if (isInsideMapRegion(bbox)) {
-          const { r, g, b } = parseHex(hex);
-          const brightness = r + g + b;
-          const w = bbox.maxX - bbox.minX;
-          const h = bbox.maxY - bbox.minY;
+      const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
+      const isMapOrPattern = isMappingOwl && bbox && (isInsideMapRegion(bbox) || isWindPatternZone(bbox));
 
-          // 亮度夠高且非主體色才視為地圖米色區域，深色結構線（亮度 < 420）維持不變
-          if (brightness >= 420) {
-            if (w * h < 1500) {
-              shouldClearFill = true; // 將極細微的紋路和斑點填補（移除以露出底色）
-            } else {
-              // 分類為較深或較淺的米色兩種
-              mapFillTarget = (brightness > 480) ? '#D7B181' : '#C0956A';
-            }
-          }
-        } else if (isInsideTargetRegion(bbox)) {
-          if (isPalePattern(hex)) {
-            shouldClearFill = true;
-          } else {
-            shouldConvertFill = true;
-          }
+      if (isMapOrPattern && hex !== OWL_BODY_COLOR) {
+        const area = (bbox.maxX - bbox.minX) * (bbox.maxY - bbox.minY);
+        // 地圖與風紋區域：全數轉為米色系，保留原始結構與透明線條
+        if (area > 50000) {
+          mapFillTarget = '#D7B181'; // 大面積背景使用淺米色
+        } else {
+          mapFillTarget = '#C0956A'; // 小面積細節/輪廓使用深米色
+        }
+      } else if (isNearWhite(hex)) {
+        shouldClearFill = true;
+      } else if (isMappingOwl && hex !== OWL_BODY_COLOR && bbox && isInsideTargetRegion(bbox)) {
+        if (isNearBlack(hex)) {
+          shouldConvertFill = true;
+        } else if (isPalePattern(hex)) {
+          shouldClearFill = true;
+        } else {
+          shouldConvertFill = true;
         }
       }
       if (shouldClearFill) removed.add(hex);
@@ -113,29 +117,25 @@ async function whitenSvg(filePath) {
 
     if (strokeMatch) {
       const hex = strokeMatch[1].toUpperCase();
-      if (isNearWhite(hex) || isNearBlack(hex)) {
-        shouldClearStroke = true;
-      } else if (isMappingOwl && hex !== OWL_BODY_COLOR) {
-        const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
-        if (isInsideMapRegion(bbox)) {
-          const { r, g, b } = parseHex(hex);
-          const brightness = r + g + b;
-          const w = bbox.maxX - bbox.minX;
-          const h = bbox.maxY - bbox.minY;
+      const bbox = getBoundingBox(dMatch ? dMatch[1] : "");
+      const isMapOrPattern = isMappingOwl && bbox && (isInsideMapRegion(bbox) || isWindPatternZone(bbox));
 
-          if (brightness >= 420) {
-            if (w * h < 1500) {
-              shouldClearStroke = true;
-            } else {
-              mapStrokeTarget = (brightness > 480) ? '#D7B181' : '#C0956A';
-            }
-          }
-        } else if (isInsideTargetRegion(bbox)) {
-          if (isPalePattern(hex)) {
-            shouldClearStroke = true;
-          } else {
-            shouldConvertStroke = true;
-          }
+      if (isMapOrPattern && hex !== OWL_BODY_COLOR) {
+        const area = (bbox.maxX - bbox.minX) * (bbox.maxY - bbox.minY);
+        if (area > 50000) {
+          mapStrokeTarget = '#D7B181';
+        } else {
+          mapStrokeTarget = '#C0956A';
+        }
+      } else if (isNearWhite(hex)) {
+        shouldClearStroke = true;
+      } else if (isMappingOwl && hex !== OWL_BODY_COLOR && bbox && isInsideTargetRegion(bbox)) {
+        if (isNearBlack(hex)) {
+          shouldConvertStroke = true;
+        } else if (isPalePattern(hex)) {
+          shouldClearStroke = true;
+        } else {
+          shouldConvertStroke = true;
         }
       }
       if (shouldClearStroke) removed.add(hex);
