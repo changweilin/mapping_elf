@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Mapping Elf — Main Entry
  */
 import 'leaflet/dist/leaflet.css';
@@ -356,6 +356,7 @@ const alternativesList = document.getElementById('alternatives-list');
 const altCount = document.getElementById('alt-count');
 
 const btnTogglePanel = document.getElementById('btn-toggle-panel');
+const btnToggleTheme = document.getElementById('btn-toggle-theme');
 const btnMyLocation = document.getElementById('btn-my-location');
 const btnExportGpx = document.getElementById('btn-export-gpx');
 const btnImportGpx = document.getElementById('btn-import-gpx');
@@ -440,6 +441,29 @@ function updateFlatPlaceholder() {
 // 在手機與平板預設收合側邊欄
 if (window.innerWidth <= 1024) {
   sidePanel.classList.remove('open');
+}
+
+// Theme Toggle
+const iconMoon = document.getElementById('icon-moon');
+const iconSun = document.getElementById('icon-sun');
+
+function updateThemeIcons() {
+  if (document.documentElement.classList.contains('light-theme')) {
+    if (iconMoon) iconMoon.style.display = 'none';
+    if (iconSun) iconSun.style.display = 'block';
+  } else {
+    if (iconMoon) iconMoon.style.display = 'block';
+    if (iconSun) iconSun.style.display = 'none';
+  }
+}
+// 初始設定 Icon
+if (btnToggleTheme) {
+  updateThemeIcons();
+  btnToggleTheme.addEventListener('click', () => {
+    const isLight = document.documentElement.classList.toggle('light-theme');
+    localStorage.setItem('mappingElf_theme', isLight ? 'light' : 'dark');
+    updateThemeIcons();
+  });
 }
 
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
