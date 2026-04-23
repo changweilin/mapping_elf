@@ -3139,17 +3139,8 @@ function buildWeatherPoints() {
     // Sort by original file sequence
     markers.sort((a, b) => a.fileOrder - b.fileOrder);
 
-    // Round-trip / O-loop turnaround detection for imported tracks
-    let turnaroundDistM = Infinity;
-    if ((roundTripMode || oLoopMode) && coords.length > 2) {
-      let maxDFromStart = -1, maxI = 0;
-      for (let i = 0; i < coords.length; i++) {
-        const d = haversineDistance(coords[0], coords[i]);
-        if (d > maxDFromStart) { maxDFromStart = d; maxI = i; }
-      }
-      turnaroundDistM = 0;
-      for (let j = 1; j <= maxI; j++) turnaroundDistM += haversineDistance(coords[j-1], coords[j]);
-    }
+    // Imported tracks are strictly processed as single-way. We do not use the UI
+    // nav-mode (roundTripMode/oLoopMode) to synthesize return flags here.
 
     // Single forward walk projection
     let searchStart = 0;
@@ -3168,7 +3159,7 @@ function buildWeatherPoints() {
         waypointCumDistM[m.wpIndex] = cum;
         const placeName = getPlaceName(m.lat, m.lng);
         const isShared = _isSharedLocation(m.lat, m.lng);
-        const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
+        const isRet = false; // Imported tracks always single-way
         
         const effectivePlaceName = (placeName === '起點' || placeName === '終點' || isShared) ? null : placeName;
         const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
@@ -3178,7 +3169,7 @@ function buildWeatherPoints() {
           _cum: cum, _elapsedH: getElapsedH(cum)
         });
       } else {
-        const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
+        const isRet = false; // Imported tracks always single-way
         all.push({
           label: m.label || '—',
           lat: m.lat, lng: m.lng, isWaypoint: false,
