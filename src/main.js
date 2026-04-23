@@ -897,8 +897,10 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
     ? L.latLngBounds(currentRouteCoords).pad(0.05)
     : null;
 
+  const { exportCoords, exportElevations } = getExportRouteData();
+
   const gpxXml = includeRoute
-    ? GpxExporter.generate(collectExportData(), currentRouteCoords, currentElevations, routeName)
+    ? GpxExporter.generate(collectExportData(), exportCoords, exportElevations, routeName)
     : null;
 
   progressContainer.classList.remove('hidden');
@@ -1893,6 +1895,43 @@ function collectExportData() {
 }
 
 /**
+ * Prepare route coords and elevations for export. If the route is an un-imported
+ * round-trip track, mirror the outbound coords so the exported track actually goes back.
+ */
+function getExportRouteData() {
+  let exportCoords = currentRouteCoords;
+  let exportElevations = currentElevations;
+
+  if (!importedTrackMode && currentRouteCoords.length > 1) {
+    const startC = currentRouteCoords[0];
+    const endC = currentRouteCoords[currentRouteCoords.length - 1];
+    const isClosed = haversineDistance(startC, endC) < 20;
+
+    if (roundTripMode && !isClosed) {
+      const revC = [];
+      const revE = [];
+      for (let i = currentRouteCoords.length - 2; i >= 0; i--) {
+        revC.push(currentRouteCoords[i]);
+        if (currentElevations && currentElevations.length === currentRouteCoords.length) {
+          revE.push(currentElevations[i]);
+        }
+      }
+      exportCoords = currentRouteCoords.concat(revC);
+      if (revE.length > 0) {
+        exportElevations = currentElevations.concat(revE);
+      }
+    } else if (oLoopMode && !isClosed) {
+      // For O-loop, if not closed, add a straight segment back to start
+      exportCoords = currentRouteCoords.concat([startC]);
+      if (currentElevations && currentElevations.length === currentRouteCoords.length) {
+        exportElevations = currentElevations.concat([currentElevations[0]]);
+      }
+    }
+  }
+  return { exportCoords, exportElevations };
+}
+
+/**
  * Collect per-waypoint date/time/weather for GPX (indexed by wpIndex).
  */
 function collectSegmentDates() {
@@ -1911,14 +1950,15 @@ function doExport(fmt) {
   const filename = buildExportFilenameBase();
 
   const wpData = collectExportData();
+  const { exportCoords, exportElevations } = getExportRouteData();
 
   if (fmt === 'gpx' || fmt === 'all') {
-    const gpx = GpxExporter.generate(wpData, currentRouteCoords, currentElevations, routeName);
+    const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName);
     GpxExporter.download(gpx, `${filename}.gpx`);
   }
 
   if (fmt === 'kml' || fmt === 'all') {
-    const kml = KmlExporter.generate(wpData, currentRouteCoords, currentElevations, routeName);
+    const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName);
     KmlExporter.download(kml, `${filename}.kml`);
   }
 
@@ -2051,7 +2091,12 @@ function _applyImportedResultCore(result) {
       if (result.segmentDates) {
         result.waypoints.forEach((wp, i) => {
           const sd = result.segmentDates[i];
-          if (sd?.label) waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
+          if (sd?.label) {
+            let cleanLabel = sd.label;
+            if (cleanLabel.startsWith('↩ ')) cleanLabel = cleanLabel.substring(2);
+            if (cleanLabel.endsWith(' (回程)')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 5);
+            waypointCustomNames[_geocodeKey(wp[0], wp[1])] = cleanLabel;
+          }
         });
         try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
       }
@@ -2108,7 +2153,10 @@ function _applyImportedResultCore(result) {
       result.waypoints.forEach((wp, i) => {
         const sd = result.segmentDates[i];
         if (sd?.label) {
-          waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
+          let cleanLabel = sd.label;
+          if (cleanLabel.startsWith('↩ ')) cleanLabel = cleanLabel.substring(2);
+          if (cleanLabel.endsWith(' (回程)')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 5);
+          waypointCustomNames[_geocodeKey(wp[0], wp[1])] = cleanLabel;
         }
       });
       try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
@@ -2317,17 +2365,18 @@ function getPlaceName(lat, lng) { return getEffectiveName(lat, lng); }
 function deduplicateLabels(pts) {
   const count = {};
   pts.forEach(p => {
-    // Skip protection for system labels — only deduplicate meaningful names
-    if (p.label === '起點' || p.label === '終點' || p.label.startsWith('↩ ')) return;
     count[p.label] = (count[p.label] || 0) + 1;
   });
   const used = {};
   pts.forEach(p => {
     if (count[p.label] > 1) {
       used[p.label] = (used[p.label] || 0) + 1;
-      // Only add suffix to return-leg points when names conflict
-      if (used[p.label] > 1 && p.isReturn) {
-        p.label = `${p.label} (回程)`;
+      if (used[p.label] > 1) {
+        if (p.isReturn) {
+          p.label = `↩ ${p.label}`;
+        } else {
+          p.label = `${p.label} (${used[p.label]})`;
+        }
       }
     }
   });
@@ -2486,7 +2535,6 @@ function _applyPlaceNameToDOM() {
       }
       return matches > 1;
     };
-
     weatherPoints.forEach((pt) => {
       if (pt.isWaypoint) {
         const k = _geocodeKey(pt.lat, pt.lng);
@@ -3110,14 +3158,11 @@ function buildWeatherPoints() {
         wpCumDist[m.wpIndex] = cum;
         waypointCumDistM[m.wpIndex] = cum;
         const placeName = getPlaceName(m.lat, m.lng);
-        // Drop placeName when it's literally '起點/終點' OR when multiple
-        // waypoints share the same geocode key — both cases would otherwise
-        // leak the name across start/end and trigger '(2)' dedup suffixes.
         const isShared = _isSharedLocation(m.lat, m.lng);
         const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
+        
         const effectivePlaceName = (placeName === '起點' || placeName === '終點' || isShared) ? null : placeName;
-        let label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
-        if (isRet && !label.startsWith('↩ ')) label = `↩ ${label}`;
+        const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
           isReturn: isRet,
@@ -3125,10 +3170,8 @@ function buildWeatherPoints() {
         });
       } else {
         const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
-        let label = m.label || '—';
-        if (isRet && label !== '—' && !label.startsWith('↩ ')) label = `↩ ${label}`;
         all.push({
-          label,
+          label: m.label || '—',
           lat: m.lat, lng: m.lng, isWaypoint: false,
           isReturn: isRet,
           _cum: cum, _elapsedH: getElapsedH(cum),
