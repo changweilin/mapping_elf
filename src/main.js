@@ -327,9 +327,14 @@ const elevationProfile = new ElevationProfile(
   'elevation-chart',
   'chart-empty',
   (lat, lng, color) => mapManager.showHoverMarker(lat, lng, color),
-  (colIdx) => {
-    // Open the specific weather card for this marker using collective rules.
-    handleWeatherIconInteraction(colIdx);
+  (colIdx, isIconClick) => {
+    if (isIconClick) {
+      // Open the specific weather card for this marker using collective rules.
+      handleWeatherIconInteraction(colIdx);
+    } else {
+      // Dot click: only highlight the point on the map/sidebar
+      highlightPoint(colIdx);
+    }
   }
 );
 
@@ -610,7 +615,8 @@ function getCollectiveIndices(pivotIdx = -1) {
       if (collectiveAll) {
         indices.push(i);
       } else {
-        if (pt.isWaypoint && !pt.isReturn && collectiveMarked) indices.push(i);
+        // Include both outbound and return-leg waypoints in "Marked Points" collective operation
+        if (pt.isWaypoint && collectiveMarked) indices.push(i);
         if (!pt.isWaypoint && collectiveIntermediate) indices.push(i);
       }
     });
@@ -625,11 +631,11 @@ function getCollectiveIndices(pivotIdx = -1) {
   const pt = weatherPoints[pivotIdx];
   if (!pt) return [pivotIdx];
 
-  const isMarked = pt.isWaypoint && !pt.isReturn;
+  const isMarked = pt.isWaypoint;
   const isIntermediate = !pt.isWaypoint;
 
   if (isMarked && collectiveMarked) {
-    return weatherPoints.map((p, i) => (p.isWaypoint && !p.isReturn) ? i : -1).filter(idx => idx !== -1).filter(i => isPointIconVisible(i));
+    return weatherPoints.map((p, i) => (p.isWaypoint) ? i : -1).filter(idx => idx !== -1).filter(i => isPointIconVisible(i));
   }
   if (isIntermediate && collectiveIntermediate) {
     return weatherPoints.map((p, i) => (!p.isWaypoint) ? i : -1).filter(idx => idx !== -1).filter(i => isPointIconVisible(i));

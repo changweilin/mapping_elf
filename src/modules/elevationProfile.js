@@ -337,7 +337,7 @@ export class ElevationProfile {
         responsive: true,
         maintainAspectRatio: false,
         layout: {
-          padding: this.isCollapsed ? { top: 0, bottom: 0, left: -5, right: -5 } : { top: 30, bottom: 0, left: 0, right: 10 }
+          padding: this.isCollapsed ? { top: 0, bottom: 0, left: -5, right: -5 } : { top: 45, bottom: 4, left: 20, right: 20 }
         },
         interaction: {
           mode: 'index',
@@ -377,28 +377,9 @@ export class ElevationProfile {
             border: { color: 'rgba(255,255,255,0.06)' },
           },
         },
-        onClick: (event, _elements, chart) => {
-          const markers = self._markers;
-          if (!markers || markers.length === 0 || !self.onMarkerClick) return;
-          const rect = chart.canvas.getBoundingClientRect();
-          const xPx = (event.native?.clientX ?? 0) - rect.left;
-          const { left: cLeft, right: cRight } = chart.chartArea;
-          const totalM = self.distances[self.distances.length - 1] || 1;
-          let closest = null, minDist = 18;
-          const meta = chart.getDatasetMeta(0);
-          markers.forEach((m) => {
-            let mxPx;
-            const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
-            if (ptMeta) {
-              mxPx = ptMeta.x;
-            } else {
-              mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
-            }
-            const d = Math.abs(xPx - mxPx);
-            if (d < minDist) { minDist = d; closest = m; }
-          });
-          if (closest) self.onMarkerClick(closest.colIdx);
-        },
+        // We move click handling to a native listener to ensure clicks in 
+        // padding areas (where weather icons live) are always caught.
+        onClick: null,
         onHover: (event, elements, chart) => {
           if (elements.length > 0 && self.onHover) {
             const idx = elements[0].index;
@@ -421,30 +402,85 @@ export class ElevationProfile {
               self.onHover(self.points[idx][0], self.points[idx][1], color);
             }
           }
-          // Change cursor when hovering near a marker
-          const markers = self._markers;
-          if (markers && markers.length > 0 && event.native) {
-            const rect = chart.canvas.getBoundingClientRect();
-            const xPx = event.native.clientX - rect.left;
-            const { left: cLeft, right: cRight } = chart.chartArea;
-            const totalM = self.distances[self.distances.length - 1] || 1;
-            const meta = chart.getDatasetMeta(0);
-            const near = markers.some((m) => {
-              let mxPx;
-              const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
-              if (ptMeta) {
-                mxPx = ptMeta.x;
-              } else {
-                mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
-              }
-              return Math.abs(xPx - mxPx) < 18;
-            });
-            chart.canvas.style.cursor = near ? 'pointer' : 'default';
-          }
         },
       },
       plugins: [markerPlugin, lineGradientPlugin],
     });
+
+    // Native click listener to capture hits on weather icons in the top padding area
+    this.canvas.onclick = (e) => {
+      const markers = self._markers;
+      if (!markers || markers.length === 0 || !self.onMarkerClick || !self.chart) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const xPx = e.clientX - rect.left;
+      const yPx = e.clientY - rect.top;
+      const { left: cLeft, right: cRight } = self.chart.chartArea;
+      const { scales } = self.chart;
+      const totalM = self.distances[self.distances.length - 1] || 1;
+      let closest = null, minDist = 12;
+      const meta = self.chart.getDatasetMeta(0);
+
+      markers.forEach((m) => {
+        let mxPx, myPx;
+        const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
+        if (ptMeta) {
+          mxPx = ptMeta.x;
+          myPx = ptMeta.y;
+        } else {
+          mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
+          const elev = self.isCollapsed ? 0 : self._interpolateElevAtCumM(m.cumDistM);
+          myPx = scales.y.getPixelForValue(elev);
+        }
+
+        const r = m.isWaypoint ? 5 : 3.5;
+        const dDot = Math.sqrt((xPx - mxPx) ** 2 + (yPx - myPx) ** 2);
+        let dIcon = Infinity;
+        if (m.weatherIcon && !self.isCollapsed) {
+          const iyPx = myPx - r - 12;
+          dIcon = Math.sqrt((xPx - mxPx) ** 2 + (yPx - iyPx) ** 2);
+        }
+        const d = Math.min(dDot, dIcon);
+        if (d < minDist) {
+          minDist = d;
+          closest = { colIdx: m.colIdx, isIconClick: dIcon < dDot };
+        }
+      });
+      if (closest) self.onMarkerClick(closest.colIdx, closest.isIconClick);
+    };
+
+    // Native mousemove for reliable cursor changes in padding areas
+    this.canvas.onmousemove = (e) => {
+      const markers = self._markers;
+      if (!markers || markers.length === 0 || !self.chart) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const xPx = e.clientX - rect.left;
+      const yPx = e.clientY - rect.top;
+      const { left: cLeft, right: cRight } = self.chart.chartArea;
+      const { scales } = self.chart;
+      const totalM = self.distances[self.distances.length - 1] || 1;
+      const meta = self.chart.getDatasetMeta(0);
+      const near = markers.some((m) => {
+        let mxPx, myPx;
+        const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
+        if (ptMeta) {
+          mxPx = ptMeta.x;
+          myPx = ptMeta.y;
+        } else {
+          mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
+          const elev = self.isCollapsed ? 0 : self._interpolateElevAtCumM(m.cumDistM);
+          myPx = scales.y.getPixelForValue(elev);
+        }
+        const r = m.isWaypoint ? 5 : 3.5;
+        const dDot = Math.sqrt((xPx - mxPx) ** 2 + (yPx - myPx) ** 2);
+        let dIcon = Infinity;
+        if (m.weatherIcon && !self.isCollapsed) {
+          const iyPx = myPx - r - 12;
+          dIcon = Math.sqrt((xPx - mxPx) ** 2 + (yPx - iyPx) ** 2);
+        }
+        return Math.min(dDot, dIcon) < 12;
+      });
+      this.canvas.style.cursor = near ? 'pointer' : 'default';
+    };
 
     // Resize on next frame so the chart fills the container correctly
     // (the bottom panel may not have finished layout when _renderChart is called)
