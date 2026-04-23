@@ -3040,10 +3040,30 @@ body.modal-open {
 }
 
 /* Swipe hint animation */
-.wc-swipe-hint {
-  text-align: center;
-  font-size: 9px;
-  color: var(--text-muted);
-  padding: 2px 0 0;
-  opacity: 0.6;
+
+/* ======== Instructions ======== */
+.instr-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 2px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.1);
+  vertical-align: middle;
 }
+
+[data-theme="dark"] .instr-badge {
+  background: #374151;
+  border-color: #4b5563;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.3);
+}
+
+.instr-title svg {
+  opacity: 0.8;
+}
+

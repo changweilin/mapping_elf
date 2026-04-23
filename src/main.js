@@ -745,6 +745,14 @@ btnToggleElevation?.addEventListener('click', () => {
   elevationProfile.toggleCollapse();
 });
 
+// Double-click on chart container to toggle collapse as well
+document.getElementById('elevation-chart-container')?.addEventListener('dblclick', () => {
+  const container = document.getElementById('elevation-chart-container');
+  container.classList.toggle('collapsed');
+  elevationProfile.toggleCollapse();
+});
+
+
 // 手機平板螢幕下，點擊地圖自動收合側拉面板
 document.getElementById('map').addEventListener('click', () => {
   if (window.innerWidth <= 1024 && sidePanel.classList.contains('open')) {
@@ -4462,10 +4470,6 @@ function _renderWeatherCard(colIdx) {
     html += `<svg viewBox="0 0 24 24" width="12" height="12" style="opacity:0.6"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg></a>`;
   }
 
-  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  if (isTouchDevice) {
-    html += `<div class="wc-swipe-hint">↑ 上滑切換大小 · ↓ 下滑收起 · ↔ 左右切換點位</div>`;
-  }
   html += `</div></div>`;
 
   mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
