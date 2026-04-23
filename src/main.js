@@ -1390,7 +1390,9 @@ function updateWaypointList(waypoints) {
         || interpolateRouteColor(n > 1 ? i / (n - 1) : 0);
       // Fallback label matches weather card: 起點 / 終點 / 航點 N
       const fallbackLabel = i === 0 ? '起點' : (i === n - 1 ? '終點' : `航點 ${i + 1}`);
-      const displayName = placeName || fallbackLabel;
+      // Find final label from weatherPoints (which has been deduplicated)
+      const pt = weatherPoints.find(p => p.isWaypoint && !p.isReturn && p.wpIndex === i);
+      const displayName = pt ? pt.label : (placeName || fallbackLabel);
       const cumM = waypointCumDistM[i];
       const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
       return `
