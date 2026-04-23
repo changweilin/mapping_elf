@@ -589,6 +589,8 @@ function getCollectiveIndices(pivotIdx = -1) {
     // Global call (e.g. from side panel buttons)
     const indices = [];
     weatherPoints.forEach((pt, i) => {
+      // Skip points whose icon type is hidden
+      if (!isPointIconVisible(i)) return;
       if (collectiveAll) {
         indices.push(i);
       } else {
@@ -601,7 +603,7 @@ function getCollectiveIndices(pivotIdx = -1) {
 
   // Pivot-based call (from card/badge interaction)
   if (collectiveAll) {
-    return weatherPoints.map((_, i) => i);
+    return weatherPoints.map((_, i) => i).filter(i => isPointIconVisible(i));
   }
 
   const pt = weatherPoints[pivotIdx];
@@ -611,10 +613,10 @@ function getCollectiveIndices(pivotIdx = -1) {
   const isIntermediate = !pt.isWaypoint;
 
   if (isMarked && collectiveMarked) {
-    return weatherPoints.map((p, i) => (p.isWaypoint && !p.isReturn) ? i : -1).filter(idx => idx !== -1);
+    return weatherPoints.map((p, i) => (p.isWaypoint && !p.isReturn) ? i : -1).filter(idx => idx !== -1).filter(i => isPointIconVisible(i));
   }
   if (isIntermediate && collectiveIntermediate) {
-    return weatherPoints.map((p, i) => (!p.isWaypoint) ? i : -1).filter(idx => idx !== -1);
+    return weatherPoints.map((p, i) => (!p.isWaypoint) ? i : -1).filter(idx => idx !== -1).filter(i => isPointIconVisible(i));
   }
 
   return [pivotIdx];
@@ -636,7 +638,26 @@ function updateMapWeatherIconVisibility() {
   if (!mapContainer) return;
   mapContainer.classList.toggle('hide-wp-weather', !showWpIcon);
   mapContainer.classList.toggle('hide-im-weather', !showImIcon);
+  // Close weather cards for points whose icon type is now hidden
+  if (weatherPoints && weatherPoints.length > 0) {
+    weatherPoints.forEach((pt, i) => {
+      if (!isPointIconVisible(i) && _wcStates.has(i)) {
+        closeWeatherCard(i);
+      }
+    });
+  }
   updateElevationMarkers();
+}
+
+/**
+ * Check if a weather point's icon is currently visible based on the
+ * "Show Waypoint Weather Icons" / "Show Intermediate Weather Icons" toggles.
+ */
+function isPointIconVisible(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return false;
+  if (pt.isWaypoint) return showWpIcon;
+  return showImIcon;
 }
 
 function updateThemeIcons() {
@@ -3924,11 +3945,14 @@ function setWeatherCardMode(colIdx, mode) {
 
 /** Navigate a specific card holder to the next/prev point that has weather data. */
 function navigateWeatherCard(colIdx, delta) {
-  // Find all column indices that have weather icons (either waypoints with markers or intermediate points with markers)
+  // Find all column indices that have weather icons AND whose icon type is visible
   const colsWithWeather = [];
   const container = document.getElementById('weather-table-container');
 
   weatherPoints.forEach((pt, i) => {
+    // Skip points whose icon type is hidden by the toggle
+    if (!isPointIconVisible(i)) return;
+
     const dateStr = container?.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`)?.value;
     const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`)?.value ?? '0');
     const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] : null;
