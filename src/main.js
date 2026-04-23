@@ -782,6 +782,16 @@ function syncTrackModeUI() {
     el.disabled = frozen;
   });
 
+  // Also freeze search result buttons if they exist
+  document.querySelectorAll('.search-result-add').forEach(btn => {
+    btn.disabled = frozen;
+  });
+
+  // Sync frozen state to map manager
+  if (mapManager) {
+    mapManager.setFrozen(frozen);
+  }
+
   // Visual dimming for frozen sections
   const frozenContainers = [
     '.nav-mode-row',
@@ -1407,6 +1417,7 @@ function hideAlternatives() {
 }
 
 function updateWaypointList(waypoints) {
+  const frozen = !!importedTrackMode;
   if (waypoints.length === 0) {
     waypointList.innerHTML = `
       <div class="empty-state">
@@ -1435,13 +1446,13 @@ function updateWaypointList(waypoints) {
       const cumM = waypointCumDistM[i];
       const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
       return `
-        <div class="waypoint-item">
+        <div class="waypoint-item ${frozen ? 'is-frozen' : ''}">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
           <span class="wp-coords" title="${coords}" style="color:${gradColor}">
             <span class="wp-place-name">${displayName}</span>
             ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
-          <div class="wp-actions">
+          <div class="wp-actions" style="${frozen ? 'display:none' : ''}">
             <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
             <button class="wp-action wp-down" data-index="${i}" title="向下移" ${i === waypoints.length - 1 ? 'disabled' : ''}>↓</button>
             <button class="wp-action wp-remove" data-index="${i}" title="移除">×</button>
@@ -1495,7 +1506,7 @@ function updateWaypointList(waypoints) {
     nameEl.title = '雙擊編輯名稱';
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      if (nameEl.querySelector('input')) return;
+      if (frozen || nameEl.querySelector('input')) return;
       const input = document.createElement('input');
       input.type = 'text';
       input.value = getEffectiveName(wp[0], wp[1]) || nameEl.textContent.trim();
@@ -1654,14 +1665,14 @@ function updateWaypointList(waypoints) {
     };
 
     item.addEventListener('mousedown', (e) => {
-      if (e.button !== 0 || e.target.closest('.wp-actions')) return;
+      if (frozen || e.button !== 0 || e.target.closest('.wp-actions')) return;
       triggerLP(e.clientX, e.clientY);
       const onUp = () => { cancelLP(); document.removeEventListener('mouseup', onUp); };
       document.addEventListener('mouseup', onUp);
     });
 
     item.addEventListener('touchstart', (e) => {
-        if (e.target.closest('.wp-actions')) return;
+        if (frozen || e.target.closest('.wp-actions')) return;
         const t = e.touches[0];
         triggerLP(t.clientX, t.clientY);
     }, { passive: true });
@@ -5152,6 +5163,7 @@ async function searchByKeyword(query) {
 }
 
 function renderSearchResults(items, resultsEl) {
+  const frozen = !!importedTrackMode;
   resultsEl.innerHTML = '';
   if (!items.length) {
     resultsEl.innerHTML = '<div class="search-result-empty">查無結果</div>';
@@ -5168,7 +5180,7 @@ function renderSearchResults(items, resultsEl) {
         <div class="search-result-name" title="${name.replace(/"/g, '&quot;')}">${name}</div>
         <div class="search-result-coord">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
       </div>
-      <button class="search-result-add" title="加入為航點">+ 航點</button>
+      <button class="search-result-add" title="加入為航點" ${frozen ? 'disabled' : ''}>+ 航點</button>
     `;
     row.addEventListener('click', (e) => {
       if (e.target.classList.contains('search-result-add')) return;
@@ -5176,6 +5188,7 @@ function renderSearchResults(items, resultsEl) {
     });
     row.querySelector('.search-result-add').addEventListener('click', (e) => {
       e.stopPropagation();
+      if (frozen) return;
       // Store the search result name as a custom name before adding to avoid redundant geocoding
       // and ensure the specific place name found during search is preserved.
       if (it.name || it.display_name) {

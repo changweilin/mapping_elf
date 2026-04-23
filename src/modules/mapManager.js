@@ -42,6 +42,7 @@ const GRADIENT_CHUNKS = 80;
 
 export class MapManager {
   constructor(containerId, onWaypointChange) {
+    this.isFrozen = false; // Freeze map clicks and waypoint dragging
     this.onWaypointChange = onWaypointChange;
     this.onRouteSelect = null; // callback(index)
     this.onRouteHover = null; // callback(lat, lng) | callback(null, null)
@@ -62,6 +63,7 @@ export class MapManager {
     this.intermediateMarkers = [];
     this.ignoreMapClick = false;
     this.dragLine = null;
+    this.dragLine = null;
     this._dragWpIndex = undefined;
     this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
@@ -79,7 +81,7 @@ export class MapManager {
     this.tileLayers.topo.addTo(this.map);
 
     this.map.on('click', (e) => {
-      if (this.ignoreMapClick) return;
+      if (this.ignoreMapClick || this.isFrozen) return;
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
@@ -165,6 +167,10 @@ export class MapManager {
     this.currentLayerName = layerName;
   }
 
+  setFrozen(val) {
+    this.isFrozen = val;
+  }
+
   addWaypoint(lat, lng, insertIndex = null) {
     const idx = insertIndex !== null ? insertIndex : this.waypoints.length;
     this.waypoints.splice(idx, 0, [lat, lng]);
@@ -203,7 +209,7 @@ export class MapManager {
     // handler below). The manual touch-drag handler will activate at 500ms.
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
-      if (_isTouchActive || _longPressTimer !== null || _dragModeActive) return;
+      if (this.isFrozen || _isTouchActive || _longPressTimer !== null || _dragModeActive) return;
       _enableDrag();
     });
 
@@ -211,7 +217,7 @@ export class MapManager {
     let _mouseLPTimer = null;
     let _mouseStartX = 0, _mouseStartY = 0;
     marker.on('mousedown', (e) => {
-      if (e.originalEvent.button !== 0 || _dragModeActive) return;
+      if (this.isFrozen || e.originalEvent.button !== 0 || _dragModeActive) return;
       L.DomEvent.stopPropagation(e);
       _mouseStartX = e.originalEvent.clientX;
       _mouseStartY = e.originalEvent.clientY;
@@ -277,7 +283,7 @@ export class MapManager {
     let _touchStartX = 0, _touchStartY = 0;
     marker.on('touchstart', (e) => {
       _isTouchActive = true;
-      if (_dragModeActive) return;
+      if (this.isFrozen || _dragModeActive) return;
       const touch = e.originalEvent.touches[0];
       _touchStartX = touch.clientX;
       _touchStartY = touch.clientY;
@@ -522,6 +528,7 @@ export class MapManager {
       pl._routeIndex = route.index;
       pl.on('click', (e) => {
         L.DomEvent.stop(e);
+        if (this.isFrozen) return;
         if (this._clickTimeout) {
           clearTimeout(this._clickTimeout);
           this._clickTimeout = null;
@@ -877,6 +884,7 @@ export class MapManager {
   _bindGradientRouteEvents(polyline) {
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
+      if (this.isFrozen) return;
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
