@@ -459,6 +459,13 @@ html, body {
 
 
 /* Intermediate (km-interval) markers — non-interactive, smaller */
+.map-container.hide-wp-weather .custom-waypoint-icon .wp-weather-badge {
+  display: none !important;
+}
+.map-container.hide-im-weather .intermediate-point-icon .wp-weather-badge {
+  display: none !important;
+}
+
 .intermediate-point-icon {
   cursor: pointer;
   background: transparent !important;

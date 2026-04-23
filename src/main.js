@@ -93,6 +93,12 @@ let collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0'; /
 let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0'; // default true
 let collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1'; // default false
 let waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0'; // default true
+
+const LS_SHOW_WP_ICON_KEY = 'mappingElf_showWpIcon';
+const LS_SHOW_IM_ICON_KEY = 'mappingElf_showImIcon';
+let showWpIcon = localStorage.getItem(LS_SHOW_WP_ICON_KEY) !== '0'; // default true
+let showImIcon = localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== null ? localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== '0' : window.innerWidth > 768;
+
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -260,6 +266,8 @@ function applySettingsFromStorage() {
   collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
   collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1';
   waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0';
+  showWpIcon = localStorage.getItem(LS_SHOW_WP_ICON_KEY) !== '0';
+  showImIcon = localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== null ? localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== '0' : window.innerWidth > 768;
   try {
     paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
   } catch {
@@ -303,9 +311,15 @@ function applySettingsFromStorage() {
   const waypointCenteringEl = document.getElementById('waypoint-centering-enable');
   if (waypointCenteringEl) waypointCenteringEl.checked = waypointCentering;
 
+  const showWpIconEl = document.getElementById('show-waypoint-weather-icon');
+  if (showWpIconEl) showWpIconEl.checked = showWpIcon;
+  const showImIconEl = document.getElementById('show-intermediate-weather-icon');
+  if (showImIconEl) showImIconEl.checked = showImIcon;
+
   // Refresh UI
   syncTrackModeUI();
   updateFlatPlaceholder();
+  updateMapWeatherIconVisibility();
   renderWeatherPanel();
 }
 
@@ -513,6 +527,26 @@ function initWaypointSettings() {
     localStorage.setItem(LS_WAYPOINT_CENTERING_KEY, waypointCentering ? '1' : '0');
   });
 
+  const showWpIconEl = document.getElementById('show-waypoint-weather-icon');
+  if (showWpIconEl) {
+    showWpIconEl.checked = showWpIcon;
+    showWpIconEl.addEventListener('change', () => {
+      showWpIcon = showWpIconEl.checked;
+      localStorage.setItem(LS_SHOW_WP_ICON_KEY, showWpIcon ? '1' : '0');
+      updateMapWeatherIconVisibility();
+    });
+  }
+
+  const showImIconEl = document.getElementById('show-intermediate-weather-icon');
+  if (showImIconEl) {
+    showImIconEl.checked = showImIcon;
+    showImIconEl.addEventListener('change', () => {
+      showImIcon = showImIconEl.checked;
+      localStorage.setItem(LS_SHOW_IM_ICON_KEY, showImIcon ? '1' : '0');
+      updateMapWeatherIconVisibility();
+    });
+  }
+
   btnMinimize?.addEventListener('click', () => {
     const targetCols = getCollectiveIndices();
     if (targetCols.length === 0) {
@@ -543,6 +577,7 @@ function initWaypointSettings() {
   });
 
   syncCollectiveLock();
+  updateMapWeatherIconVisibility();
 }
 
 /**
@@ -595,6 +630,13 @@ if (window.innerWidth <= 1024) {
 // Theme Toggle
 const iconMoon = document.getElementById('icon-moon');
 const iconSun = document.getElementById('icon-sun');
+
+function updateMapWeatherIconVisibility() {
+  const mapContainer = document.getElementById('map');
+  if (!mapContainer) return;
+  mapContainer.classList.toggle('hide-wp-weather', !showWpIcon);
+  mapContainer.classList.toggle('hide-im-weather', !showImIcon);
+}
 
 function updateThemeIcons() {
   const isLight = document.documentElement.classList.contains('light-theme');
