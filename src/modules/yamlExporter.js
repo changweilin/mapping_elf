@@ -23,8 +23,8 @@ export class YamlExporter {
 
     wpData.forEach((pt) => {
       let outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
-      if (pt.isReturn) {
-        outLabel += ' ↺';
+      if (pt.isReturn && !outLabel.endsWith(' ↩')) {
+        outLabel += ' ↩';
       }
       yaml += `  - label: ${this._yamlStr(outLabel)}\n`;
       yaml += `    type: ${pt.isWaypoint ? 'waypoint' : 'interval'}\n`;

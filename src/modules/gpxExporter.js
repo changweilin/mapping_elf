@@ -39,8 +39,8 @@ export class GpxExporter {
       // Prefix intermediate labels with the `*_` marker so they survive
       // round-trips even when the <type> extension is stripped by other tools.
       let outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
-      if (pt.isReturn) {
-        outLabel += ' ↺';
+      if (pt.isReturn && !outLabel.endsWith(' ↩')) {
+        outLabel += ' ↩';
       }
       gpx += `    <name>${this._escapeXml(outLabel)}</name>\n`;
 

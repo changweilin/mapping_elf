@@ -765,12 +765,12 @@ btnReplanRoute?.addEventListener('click', () => {
   syncTrackModeUI();
   // Clear the imported track polyline but keep waypoint markers
   mapManager.clearRoute();
-  // Remove return waypoints identified by ' ↺'
+  // Remove return waypoints identified by ' ↩' or ' ↺'
   for (let i = mapManager.waypoints.length - 1; i >= 0; i--) {
     const lat = mapManager.waypoints[i][0];
     const lng = mapManager.waypoints[i][1];
     const name = getEffectiveName(lat, lng) || '';
-    if (name.endsWith(' ↺') || name.endsWith('↺')) {
+    if (name.endsWith(' ↩') || name.endsWith('↩') || name.endsWith(' ↺') || name.endsWith('↺')) {
       mapManager.removeWaypoint(i);
     }
   }
@@ -2104,7 +2104,7 @@ function _applyImportedResultCore(result) {
           let cleanLabel = sd.label;
           // Strip prefix turnaround arrow
           if (cleanLabel.startsWith('↩ ')) cleanLabel = cleanLabel.substring(2);
-          // Strip suffix turnaround arrow ( ↺) or old suffix ( (回程))
+          // Strip suffix turnaround arrow ( ↩, ↺) or old suffix ( (回程))
           cleanLabel = cleanLabel.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
           waypointCustomNames[_geocodeKey(wp[0], wp[1])] = cleanLabel;
         }
@@ -2167,7 +2167,7 @@ function _applyImportedResultCore(result) {
           let cleanLabel = sd.label;
           // Strip prefix turnaround arrow
           if (cleanLabel.startsWith('↩ ')) cleanLabel = cleanLabel.substring(2);
-          // Strip suffix turnaround arrow ( ↺) or old suffix ( (回程))
+          // Strip suffix turnaround arrow ( ↩, ↺) or old suffix ( (回程))
           cleanLabel = cleanLabel.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
           waypointCustomNames[_geocodeKey(wp[0], wp[1])] = cleanLabel;
         }
@@ -3305,7 +3305,7 @@ function buildWeatherPoints() {
       outboundMidpoints.forEach(pt => {
         const returnCumMid = totalDistM - pt._cum;
         all.push({
-          label: `↩ ${pt.label}`,
+          label: `${pt.label} ↩`,
           lat: pt.lat,
           lng: pt.lng,
           isWaypoint: false,
@@ -3333,7 +3333,7 @@ function buildWeatherPoints() {
         const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
         const returnCum = totalDistM - wpCumDist[i];
         all.push({
-          label: `↩ ${outLabel}`,
+          label: `${outLabel} ↩`,
           lat, lng,
           isWaypoint: true,
           isReturn: true,
@@ -3359,7 +3359,7 @@ function buildWeatherPoints() {
       const outLabel = effectivePlaceName || '起點';
       const returnCum = totalDistM;
       all.push({
-        label: `↩ ${outLabel}`,
+        label: `${outLabel} ↩`,
         lat, lng,
         isWaypoint: true,
         isReturn: true,
