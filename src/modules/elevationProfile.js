@@ -337,7 +337,7 @@ export class ElevationProfile {
         responsive: true,
         maintainAspectRatio: false,
         layout: {
-          padding: this.isCollapsed ? { top: 0, bottom: 0, left: -5, right: -5 } : 0
+          padding: this.isCollapsed ? { top: 0, bottom: 0, left: -5, right: -5 } : { top: 30, bottom: 0, left: 0, right: 10 }
         },
         interaction: {
           mode: 'index',
@@ -385,8 +385,15 @@ export class ElevationProfile {
           const { left: cLeft, right: cRight } = chart.chartArea;
           const totalM = self.distances[self.distances.length - 1] || 1;
           let closest = null, minDist = 18;
+          const meta = chart.getDatasetMeta(0);
           markers.forEach((m) => {
-            const mxPx = cLeft + (m.cumDistM / totalM) * (cRight - cLeft);
+            let mxPx;
+            const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
+            if (ptMeta) {
+              mxPx = ptMeta.x;
+            } else {
+              mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
+            }
             const d = Math.abs(xPx - mxPx);
             if (d < minDist) { minDist = d; closest = m; }
           });
@@ -421,8 +428,15 @@ export class ElevationProfile {
             const xPx = event.native.clientX - rect.left;
             const { left: cLeft, right: cRight } = chart.chartArea;
             const totalM = self.distances[self.distances.length - 1] || 1;
+            const meta = chart.getDatasetMeta(0);
             const near = markers.some((m) => {
-              const mxPx = cLeft + (m.cumDistM / totalM) * (cRight - cLeft);
+              let mxPx;
+              const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
+              if (ptMeta) {
+                mxPx = ptMeta.x;
+              } else {
+                mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
+              }
               return Math.abs(xPx - mxPx) < 18;
             });
             chart.canvas.style.cursor = near ? 'pointer' : 'default';
