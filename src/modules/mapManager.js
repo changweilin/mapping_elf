@@ -604,6 +604,7 @@ export class MapManager {
           lineCap: 'round',
           lineJoin: 'round',
         }).addTo(this.map);
+        pl1._isReturn = false;
         this._bindRouteHoverEvents(pl1);
         this._bindGradientRouteEvents(pl1);
         this.gradientPolylines.push(pl1);
@@ -618,6 +619,7 @@ export class MapManager {
           lineCap: 'round',
           lineJoin: 'round',
         }).addTo(this.map);
+        pl2._isReturn = true;
         this._bindRouteHoverEvents(pl2);
         this._bindGradientRouteEvents(pl2);
         this.gradientPolylines.push(pl2);
@@ -648,6 +650,14 @@ export class MapManager {
         lineCap: 'round',
         lineJoin: 'round',
       }).addTo(this.map);
+      
+      const xFrac = dists[startI] / totalD;
+      if (splitD > 0) {
+        pl._isReturn = (startI >= splitIdx);
+      } else {
+        pl._isReturn = isRoundTrip && (xFrac >= 0.5);
+      }
+
       this._bindRouteHoverEvents(pl);
       this._bindGradientRouteEvents(pl);
       this.gradientPolylines.push(pl);
@@ -885,7 +895,14 @@ export class MapManager {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
       }
-      this.gradientPolylines.forEach(gpl => gpl.bringToFront());
+      // Toggle logic for round trips: switch between outbound and return legs
+      const isReturn = polyline._isReturn;
+      if (isReturn !== undefined) {
+        // If we clicked on return leg, bring outbound to front; and vice-versa
+        this.gradientPolylines.filter(pl => pl._isReturn === !isReturn).forEach(pl => pl.bringToFront());
+      } else {
+        this.gradientPolylines.forEach(gpl => gpl.bringToFront());
+      }
     });
   }
 
