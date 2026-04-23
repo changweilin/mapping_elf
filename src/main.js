@@ -733,7 +733,7 @@ function syncTrackModeUI() {
     '.segment-interval-row input',
     '.segment-interval-row select',
     '.route-mode-selector input',
-    '.pace-check-opt input', // TSP sort, Auto-name
+    '#route-section .pace-check-opt input',
     '#pace-params-panel input',
     '#pace-params-panel select'
   ];
@@ -748,7 +748,7 @@ function syncTrackModeUI() {
     '.nav-mode-row',
     '.segment-interval-row',
     '.route-mode-selector',
-    '.pace-checks-row',
+    '#route-section .pace-checks-row',
     '#pace-params-panel'
   ];
   document.querySelectorAll(frozenContainers.join(',')).forEach(c => {

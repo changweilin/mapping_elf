@@ -192,10 +192,8 @@ export class KmlExporter {
       const SNAP_M = 100;
       const trackCoords = trackPoints.map(p => [p.lat, p.lon]);
       const orderInfo = orderWaypointsAlongTrack(waypoints, trackCoords);
-      let ordered = orderInfo.map(({ index, inserted }) => {
-        const meta = inserted && segmentDates[index].label
-          ? { ...segmentDates[index], label: segmentDates[index].label + '*' }
-          : segmentDates[index];
+      let ordered = orderInfo.map(({ index }) => {
+        const meta = segmentDates[index];
         return { latlon: waypoints[index], meta };
       });
 

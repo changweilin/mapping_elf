@@ -223,10 +223,9 @@ export class GpxExporter {
       const orderInfo = orderWaypointsAlongTrack(coordsToOrder, trackCoords);
       
       const SNAP_M = 100;
-      let ordered = orderInfo.map(({ index, inserted }) => {
+      let ordered = orderInfo.map(({ index }) => {
         const m = allMeta[index];
-        const label = (inserted && m.label && !m.isInterval) ? m.label + '*' : m.label;
-        return { ...m, label };
+        return { ...m };
       });
 
       // Prepend/Append track ends if missing
