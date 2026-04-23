@@ -1114,18 +1114,33 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     mapManager.clearWaypointWeather();
 
     // Get all alternative routes (with elevation already fetched)
+    const isLoop = waypoints.length >= 3 && haversineDistance(waypoints[0], waypoints[waypoints.length - 1]) < 0.1;
     const routeWaypoints = roundTripMode && waypoints.length >= 2
       ? [...waypoints, ...waypoints.slice(0, -1).reverse()]
-      : oLoopMode && waypoints.length >= 2
+      : (oLoopMode && !isLoop && waypoints.length >= 2)
         ? [...waypoints, waypoints[0]]
         : waypoints;
     allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
 
     if (allAlternatives.length > 0) {
       // Draw all routes on map with continuous gradient coloring.
-      // For round-trip / O-loop, the last configured waypoint marks the return-leg split.
-      const hasReturn = (roundTripMode || oLoopMode) && waypoints.length >= 2;
-      const turnaroundLatLng = hasReturn ? waypoints[waypoints.length - 1] : null;
+      // For round-trip / O-loop, the calculated turnaround point marks the return-leg split.
+      let turnaroundLatLng = null;
+      const actualOLoop = oLoopMode || (isLoop && !roundTripMode);
+      if (roundTripMode && waypoints.length >= 2) {
+        turnaroundLatLng = waypoints[waypoints.length - 1];
+      } else if (actualOLoop && waypoints.length >= 2) {
+        if (isLoop) {
+          let maxD = 0;
+          for (let i = 1; i < waypoints.length - 1; i++) {
+            const d = haversineDistance(waypoints[0], waypoints[i]);
+            if (d > maxD) { maxD = d; turnaroundLatLng = waypoints[i]; }
+          }
+          if (!turnaroundLatLng) turnaroundLatLng = waypoints[Math.floor(waypoints.length / 2)];
+        } else {
+          turnaroundLatLng = waypoints[waypoints.length - 1];
+        }
+      }
       mapManager.drawMultipleRoutes(allAlternatives, 0, roundTripMode, turnaroundLatLng);
 
       // Show alternatives panel
@@ -1170,7 +1185,23 @@ function selectAlternative(index) {
 
   // Update elevation chart with pre-fetched data
   const wps = mapManager.waypoints;
-  const turnaroundLL = (roundTripMode || oLoopMode) && wps.length >= 2 ? wps[wps.length - 1] : null;
+  const isLoop = wps.length >= 3 && haversineDistance(wps[0], wps[wps.length - 1]) < 0.1;
+  const actualOLoop = oLoopMode || (isLoop && !roundTripMode);
+  let turnaroundLL = null;
+  if (roundTripMode && wps.length >= 2) {
+    turnaroundLL = wps[wps.length - 1];
+  } else if (actualOLoop && wps.length >= 2) {
+    if (isLoop) {
+      let maxD = 0;
+      for (let i = 1; i < wps.length - 1; i++) {
+        const d = haversineDistance(wps[0], wps[i]);
+        if (d > maxD) { maxD = d; turnaroundLL = wps[i]; }
+      }
+      if (!turnaroundLL) turnaroundLL = wps[Math.floor(wps.length / 2)];
+    } else {
+      turnaroundLL = wps[wps.length - 1];
+    }
+  }
   elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
 
   // Update stats from pre-calculated route data
