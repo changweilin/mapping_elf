@@ -636,6 +636,7 @@ function updateMapWeatherIconVisibility() {
   if (!mapContainer) return;
   mapContainer.classList.toggle('hide-wp-weather', !showWpIcon);
   mapContainer.classList.toggle('hide-im-weather', !showImIcon);
+  updateElevationMarkers();
 }
 
 function updateThemeIcons() {
@@ -4408,7 +4409,11 @@ function updateElevationMarkers() {
       const dateStr = container?.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
       const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
       const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] : null;
-      const weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(pt)]?.weather?.split(' ')[0] || null;
+      let weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(pt)]?.weather?.split(' ')[0] || null;
+
+      // Filter weather icons based on visibility settings
+      if (pt.isWaypoint && !showWpIcon) weatherIcon = null;
+      if (!pt.isWaypoint && !showImIcon) weatherIcon = null;
 
       markers.push({ cumDistM, dataIdx, label: pt.label, colIdx, isWaypoint: pt.isWaypoint, weatherIcon });
     }
