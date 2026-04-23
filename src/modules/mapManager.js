@@ -87,7 +87,7 @@ export class MapManager {
         this._clickTimeout = setTimeout(() => {
           this._clickTimeout = null;
           this.addWaypoint(e.latlng.lat, e.latlng.lng);
-        }, 300);
+        }, 450);
       }
     });
 
@@ -521,7 +521,7 @@ export class MapManager {
 
       pl._routeIndex = route.index;
       pl.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e);
         if (this._clickTimeout) {
           clearTimeout(this._clickTimeout);
           this._clickTimeout = null;
@@ -529,11 +529,11 @@ export class MapManager {
           this._clickTimeout = setTimeout(() => {
             this._clickTimeout = null;
             this.selectRoute(routes, route.index);
-          }, 300);
+          }, 450);
         }
       });
       pl.on('dblclick', (e) => {
-        L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e);
         if (this._clickTimeout) {
           clearTimeout(this._clickTimeout);
           this._clickTimeout = null;
@@ -866,7 +866,7 @@ export class MapManager {
 
   _bindGradientRouteEvents(polyline) {
     polyline.on('click', (e) => {
-      L.DomEvent.stopPropagation(e);
+      L.DomEvent.stop(e);
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
@@ -875,12 +875,12 @@ export class MapManager {
           this._clickTimeout = null;
           const insertIdx = this._findInsertionIndex(e.latlng);
           this.addWaypoint(e.latlng.lat, e.latlng.lng, insertIdx);
-        }, 300);
+        }, 450);
       }
     });
 
     polyline.on('dblclick', (e) => {
-      L.DomEvent.stopPropagation(e);
+      L.DomEvent.stop(e);
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
