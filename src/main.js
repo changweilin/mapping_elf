@@ -2325,12 +2325,9 @@ function deduplicateLabels(pts) {
   pts.forEach(p => {
     if (count[p.label] > 1) {
       used[p.label] = (used[p.label] || 0) + 1;
-      if (used[p.label] > 1) {
-        if (p.isReturn) {
-          p.label = `${p.label} (回程)`;
-        } else {
-          p.label = `${p.label} (${used[p.label]})`;
-        }
+      // Only add suffix to return-leg points when names conflict
+      if (used[p.label] > 1 && p.isReturn) {
+        p.label = `${p.label} (回程)`;
       }
     }
   });
@@ -3119,7 +3116,8 @@ function buildWeatherPoints() {
         const isShared = _isSharedLocation(m.lat, m.lng);
         const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
         const effectivePlaceName = (placeName === '起點' || placeName === '終點' || isShared) ? null : placeName;
-        const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
+        let label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
+        if (isRet && !label.startsWith('↩ ')) label = `↩ ${label}`;
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
           isReturn: isRet,
@@ -3127,8 +3125,10 @@ function buildWeatherPoints() {
         });
       } else {
         const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
+        let label = m.label || '—';
+        if (isRet && label !== '—' && !label.startsWith('↩ ')) label = `↩ ${label}`;
         all.push({
-          label: m.label || '—',
+          label,
           lat: m.lat, lng: m.lng, isWaypoint: false,
           isReturn: isRet,
           _cum: cum, _elapsedH: getElapsedH(cum),
