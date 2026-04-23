@@ -328,10 +328,8 @@ const elevationProfile = new ElevationProfile(
   'chart-empty',
   (lat, lng, color) => mapManager.showHoverMarker(lat, lng, color),
   (colIdx) => {
-    // Open the specific weather card for this marker (handles both outbound/return 
-    // waypoints and intermediate points accurately).
-    openWeatherCard(colIdx);
-    highlightPoint(colIdx);
+    // Open the specific weather card for this marker using collective rules.
+    handleWeatherIconInteraction(colIdx);
   }
 );
 
@@ -3927,6 +3925,31 @@ function openWeatherCard(colIdx) {
   _renderWeatherCard(colIdx);
 }
 
+/**
+ * Handle user click on a weather icon (map badge or chart marker).
+ * Applies collective operation rules.
+ */
+function handleWeatherIconInteraction(colIdx) {
+  if (colIdx < 0 || colIdx >= weatherPoints.length) return;
+
+  const collectiveCols = getCollectiveIndices(colIdx);
+  if (collectiveCols.length > 1) {
+    // Collective toggle based on the state of the target point
+    const isAlreadyOpen = _wcStates.has(colIdx);
+    if (isAlreadyOpen) {
+      collectiveCols.forEach(ci => closeWeatherCard(ci));
+    } else {
+      collectiveCols.forEach(ci => { if (!_wcStates.has(ci)) openWeatherCard(ci); });
+      // Sync highlight so keyboard/centering targets this group
+      highlightPoint(colIdx);
+    }
+  } else {
+    // Single toggle
+    openWeatherCard(colIdx);
+    highlightPoint(colIdx);
+  }
+}
+
 /** Close a specific weather card. */
 function closeWeatherCard(colIdx) {
   _wcStates.delete(colIdx);
@@ -4227,22 +4250,7 @@ mapManager.onWeatherBadgeClick = (idx, isIntermediate) => {
   }
 
   if (targetColIdx >= 0) {
-    const collectiveCols = getCollectiveIndices(targetColIdx);
-    if (collectiveCols.length > 1) {
-      // Collective toggle
-      const isAlreadyOpen = _wcStates.has(targetColIdx);
-      if (isAlreadyOpen) {
-        collectiveCols.forEach(ci => closeWeatherCard(ci));
-      } else {
-        collectiveCols.forEach(ci => { if (!_wcStates.has(ci)) openWeatherCard(ci); });
-        // Sync highlight so keyboard controls target this group immediately
-        highlightPoint(targetColIdx);
-      }
-    } else {
-      openWeatherCard(targetColIdx);
-      // Sync highlight so keyboard controls target this card immediately
-      highlightPoint(targetColIdx);
-    }
+    handleWeatherIconInteraction(targetColIdx);
   }
 };
 
