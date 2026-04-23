@@ -2099,14 +2099,16 @@ function _applyImportedResultCore(result) {
     if (result.waypoints.length > 0) {
       if (result.segmentDates) {
         result.waypoints.forEach((wp, i) => {
-          const sd = result.segmentDates[i];
-          if (sd?.label) {
-            let cleanLabel = sd.label;
-            if (cleanLabel.startsWith('↩ ')) cleanLabel = cleanLabel.substring(2);
-            if (cleanLabel.endsWith(' (回程)')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 5);
-            waypointCustomNames[_geocodeKey(wp[0], wp[1])] = cleanLabel;
-          }
-        });
+        const sd = result.segmentDates[i];
+        if (sd?.label) {
+          let cleanLabel = sd.label;
+          // Strip prefix turnaround arrow
+          if (cleanLabel.startsWith('↩ ')) cleanLabel = cleanLabel.substring(2);
+          // Strip suffix turnaround arrow ( ↺) or old suffix ( (回程))
+          cleanLabel = cleanLabel.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
+          waypointCustomNames[_geocodeKey(wp[0], wp[1])] = cleanLabel;
+        }
+      });
         try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
       }
       skipAutoGeocode = !importAutoNameMode;
@@ -2163,8 +2165,10 @@ function _applyImportedResultCore(result) {
         const sd = result.segmentDates[i];
         if (sd?.label) {
           let cleanLabel = sd.label;
+          // Strip prefix turnaround arrow
           if (cleanLabel.startsWith('↩ ')) cleanLabel = cleanLabel.substring(2);
-          if (cleanLabel.endsWith(' (回程)')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 5);
+          // Strip suffix turnaround arrow ( ↺) or old suffix ( (回程))
+          cleanLabel = cleanLabel.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
           waypointCustomNames[_geocodeKey(wp[0], wp[1])] = cleanLabel;
         }
       });
@@ -2382,7 +2386,7 @@ function deduplicateLabels(pts) {
       used[p.label] = (used[p.label] || 0) + 1;
       if (used[p.label] > 1) {
         if (p.isReturn) {
-          p.label = `↩ ${p.label}`;
+          if (!p.label.startsWith('↩ ')) p.label = `↩ ${p.label}`;
         } else {
           p.label = `${p.label} (${used[p.label]})`;
         }
@@ -3203,6 +3207,7 @@ function buildWeatherPoints() {
         : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
       all.push({
         label, lat, lng, isWaypoint: true, wpIndex: i,
+        isReturn: false,
         _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i])
       });
     }

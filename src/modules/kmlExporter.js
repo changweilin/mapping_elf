@@ -149,7 +149,11 @@ export class KmlExporter {
         const rawName = pm.querySelector('name')?.textContent?.trim() || '';
         const hasIntervalStyle = styleUrl === '#wpInterval';
         const hasIntervalPrefix = rawName.startsWith('*_');
-        const label = hasIntervalPrefix ? rawName.slice(2) : rawName;
+        let label = hasIntervalPrefix ? rawName.slice(2) : rawName;
+        
+        // Strip turnaround symbols to prevent accumulation on re-export
+        if (label.startsWith('↩ ')) label = label.substring(2);
+        label = label.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
 
         if (hasIntervalStyle || hasIntervalPrefix) {
           intermediatePoints.push({
@@ -165,7 +169,7 @@ export class KmlExporter {
 
         waypoints.push([lat, lng]);
         segmentDates.push({
-          label: rawName || null,
+          label: label || null,
           date: meta.date || null,
           time: meta.time || null,
           weather: meta.weather,

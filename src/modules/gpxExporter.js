@@ -208,7 +208,11 @@ export class GpxExporter {
       const typeEl = wpt.querySelector('type');
       const isInterval = (typeEl && typeEl.textContent.trim() === 'mel:interval') || rawName.startsWith('*_');
       const exts = this._getAllExtensions(wpt);
-      const label = isInterval && rawName.startsWith('*_') ? rawName.slice(2) : rawName;
+      let label = isInterval && rawName.startsWith('*_') ? rawName.slice(2) : rawName;
+      
+      // Strip turnaround symbols to prevent accumulation on re-export
+      if (label.startsWith('↩ ')) label = label.substring(2);
+      label = label.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
       
       allMeta.push({
         lat, lon, label, isInterval,

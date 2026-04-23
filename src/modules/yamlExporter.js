@@ -89,9 +89,15 @@ export class YamlExporter {
       const rawLabel = current.label || '';
       const hasIntervalPrefix = rawLabel.startsWith('*_');
       const isInterval = current.type === 'interval' || hasIntervalPrefix;
+      let label = hasIntervalPrefix ? rawLabel.slice(2) : rawLabel;
+
+      // Strip turnaround symbols to prevent accumulation on re-export
+      if (label.startsWith('↩ ')) label = label.substring(2);
+      label = label.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
+
       const pointData = {
         lat, lng,
-        label: hasIntervalPrefix ? rawLabel.slice(2) : rawLabel,
+        label,
         date: current.date || null,
         time: current.time || null,
         weather: current.weather || {},
