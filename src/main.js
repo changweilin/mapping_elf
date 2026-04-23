@@ -765,6 +765,15 @@ btnReplanRoute?.addEventListener('click', () => {
   syncTrackModeUI();
   // Clear the imported track polyline but keep waypoint markers
   mapManager.clearRoute();
+  // Remove return waypoints identified by ' ↺'
+  for (let i = mapManager.waypoints.length - 1; i >= 0; i--) {
+    const lat = mapManager.waypoints[i][0];
+    const lng = mapManager.waypoints[i][1];
+    const name = getEffectiveName(lat, lng) || '';
+    if (name.endsWith(' ↺') || name.endsWith('↺')) {
+      mapManager.removeWaypoint(i);
+    }
+  }
   // Trigger normal routing with the retained waypoints
   onWaypointsChanged(mapManager.waypoints);
   showNotification('重新規劃路線中…', 'info', 1500);

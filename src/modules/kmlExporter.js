@@ -56,7 +56,10 @@ export class KmlExporter {
         ? (pt.isReturn ? '#wpReturn' : '#wpGoing')
         : '#wpInterval';
       const desc = this._buildDescription(pt);
-      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      let outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      if (pt.isReturn) {
+        outLabel += ' ↺';
+      }
       kml += `    <Placemark>
       <name>${this._esc(outLabel)}</name>
       <description><![CDATA[${desc}]]></description>

@@ -22,7 +22,10 @@ export class YamlExporter {
     yaml += `points:\n`;
 
     wpData.forEach((pt) => {
-      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      let outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      if (pt.isReturn) {
+        outLabel += ' ↺';
+      }
       yaml += `  - label: ${this._yamlStr(outLabel)}\n`;
       yaml += `    type: ${pt.isWaypoint ? 'waypoint' : 'interval'}\n`;
       if (pt.isReturn) yaml += `    return: true\n`;

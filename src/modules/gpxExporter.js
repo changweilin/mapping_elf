@@ -38,7 +38,10 @@ export class GpxExporter {
       gpx += `  <wpt lat="${pt.lat.toFixed(6)}" lon="${pt.lng.toFixed(6)}">\n`;
       // Prefix intermediate labels with the `*_` marker so they survive
       // round-trips even when the <type> extension is stripped by other tools.
-      const outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      let outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
+      if (pt.isReturn) {
+        outLabel += ' ↺';
+      }
       gpx += `    <name>${this._escapeXml(outLabel)}</name>\n`;
 
       // Mark non-waypoint columns so the importer can identify them
