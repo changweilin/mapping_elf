@@ -836,17 +836,15 @@ window.addEventListener('keydown', (e) => {
     if (k === 'arrowup') {
       e.preventDefault();
       const curMode = _wcStates.get(activeColIdx) || 'compact';
-      const nextMode = curMode === 'compact' ? 'full' : 'minimized';
+      const nextMode = curMode === 'compact' ? 'full' : 'compact';
       const targets = getCollectiveIndices(activeColIdx);
       targets.forEach(idx => setWeatherCardMode(idx, nextMode));
       return;
     }
     if (k === 'arrowdown') {
       e.preventDefault();
-      const curMode = _wcStates.get(activeColIdx) || 'compact';
-      const nextMode = curMode === 'full' ? 'compact' : 'minimized';
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+      targets.forEach(idx => closeWeatherCard(idx));
       return;
     }
   }
@@ -4152,7 +4150,7 @@ function _renderWeatherCard(colIdx) {
 
   const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
   if (isTouchDevice) {
-    html += `<div class="wc-swipe-hint">↕ 上下滑動切換大小 · ↔ 左右滑動切換航點</div>`;
+    html += `<div class="wc-swipe-hint">↑ 上滑切換大小 · ↓ 下滑收起 · ↔ 左右切換點位</div>`;
   }
   html += `</div></div>`;
 
@@ -4226,14 +4224,15 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     } else if (absDy > absDx && absDy > minSwipe) {
       // Vertical swipe
       if (dy < 0) {
-        // Swipe up
+        // Swipe up: toggle between compact and full
         const curMode = _wcStates.get(colIdx) || 'compact';
-        if (curMode === 'compact') setWeatherCardMode(colIdx, 'full');
+        const nextMode = curMode === 'compact' ? 'full' : 'compact';
+        const targets = getCollectiveIndices(colIdx);
+        targets.forEach(idx => setWeatherCardMode(idx, nextMode));
       } else {
-        // Swipe down
-        const curMode = _wcStates.get(colIdx) || 'compact';
-        if (curMode === 'full') setWeatherCardMode(colIdx, 'compact');
-        else closeWeatherCard(colIdx);
+        // Swipe down: close
+        const targets = getCollectiveIndices(colIdx);
+        targets.forEach(idx => closeWeatherCard(idx));
       }
     }
   }, { passive: false });
