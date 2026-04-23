@@ -2325,7 +2325,13 @@ function deduplicateLabels(pts) {
   pts.forEach(p => {
     if (count[p.label] > 1) {
       used[p.label] = (used[p.label] || 0) + 1;
-      if (used[p.label] > 1) p.label = `${p.label} (${used[p.label]})`;
+      if (used[p.label] > 1) {
+        if (p.isReturn) {
+          p.label = `${p.label} (回程)`;
+        } else {
+          p.label = `${p.label} (${used[p.label]})`;
+        }
+      }
     }
   });
 }
@@ -2476,12 +2482,13 @@ async function geocodeWaypoints(waypoints) {
 function _applyPlaceNameToDOM() {
   if (weatherPoints.length > 0) {
     const wps = mapManager.waypoints;
-    const keyCounts = {};
-    wps.forEach(([lat, lng]) => {
-      const k = _geocodeKey(lat, lng);
-      keyCounts[k] = (keyCounts[k] || 0) + 1;
-    });
-    const sharesKey = (lat, lng) => keyCounts[_geocodeKey(lat, lng)] > 1;
+    const isSharedLocation = (lat, lng) => {
+      let matches = 0;
+      for (const wp of wps) {
+        if (haversineDistance([lat, lng], wp) < 20) matches++;
+      }
+      return matches > 1;
+    };
 
     weatherPoints.forEach((pt) => {
       if (pt.isWaypoint) {
@@ -2493,7 +2500,7 @@ function _applyPlaceNameToDOM() {
         let effectivePlaceName = customName;
         if (!effectivePlaceName) {
           // Only use geocoded name if it's not a generic start/end and not shared with another point
-          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !sharesKey(pt.lat, pt.lng)) {
+          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !isSharedLocation(pt.lat, pt.lng)) {
             effectivePlaceName = geocodedName;
           }
         }
@@ -3000,14 +3007,13 @@ function buildWeatherPoints() {
   const coords = currentRouteCoords;
   if (wps.length === 0) return [];
 
-  // When two waypoints share a _geocodeKey (≈11m), they share custom/place
-  // names — use fallback labels for those to keep start/end distinct.
-  const _wpKeyCounts = {};
-  wps.forEach(([lat, lng]) => {
-    const k = _geocodeKey(lat, lng);
-    _wpKeyCounts[k] = (_wpKeyCounts[k] || 0) + 1;
-  });
-  const _sharesKey = (lat, lng) => _wpKeyCounts[_geocodeKey(lat, lng)] > 1;
+  const _isSharedLocation = (lat, lng) => {
+    let matches = 0;
+    for (const wp of wps) {
+      if (haversineDistance([lat, lng], wp) < 20) matches++;
+    }
+    return matches > 1;
+  };
 
   // --- Compute cumulative distances for waypoints along the route ---
   let totalDistM = 0;
@@ -3079,6 +3085,18 @@ function buildWeatherPoints() {
     // Sort by original file sequence
     markers.sort((a, b) => a.fileOrder - b.fileOrder);
 
+    // Round-trip / O-loop turnaround detection for imported tracks
+    let turnaroundDistM = Infinity;
+    if ((roundTripMode || oLoopMode) && coords.length > 2) {
+      let maxDFromStart = -1, maxI = 0;
+      for (let i = 0; i < coords.length; i++) {
+        const d = haversineDistance(coords[0], coords[i]);
+        if (d > maxDFromStart) { maxDFromStart = d; maxI = i; }
+      }
+      turnaroundDistM = 0;
+      for (let j = 1; j <= maxI; j++) turnaroundDistM += haversineDistance(coords[j-1], coords[j]);
+    }
+
     // Single forward walk projection
     let searchStart = 0;
     markers.forEach(m => {
@@ -3098,16 +3116,21 @@ function buildWeatherPoints() {
         // Drop placeName when it's literally '起點/終點' OR when multiple
         // waypoints share the same geocode key — both cases would otherwise
         // leak the name across start/end and trigger '(2)' dedup suffixes.
-        const effectivePlaceName = (placeName === '起點' || placeName === '終點' || _sharesKey(m.lat, m.lng)) ? null : placeName;
+        const isShared = _isSharedLocation(m.lat, m.lng);
+        const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
+        const effectivePlaceName = (placeName === '起點' || placeName === '終點' || isShared) ? null : placeName;
         const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
+          isReturn: isRet,
           _cum: cum, _elapsedH: getElapsedH(cum)
         });
       } else {
+        const isRet = (roundTripMode || oLoopMode) && (cum > turnaroundDistM + 1);
         all.push({
           label: m.label || '—',
           lat: m.lat, lng: m.lng, isWaypoint: false,
+          isReturn: isRet,
           _cum: cum, _elapsedH: getElapsedH(cum),
           weather: m.weather,
           windyUrl: m.windyUrl,
@@ -3127,7 +3150,7 @@ function buildWeatherPoints() {
 
       let effectivePlaceName = customName;
       if (!effectivePlaceName) {
-        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng)) {
           effectivePlaceName = geocodedName;
         }
       }
@@ -3255,7 +3278,7 @@ function buildWeatherPoints() {
 
         let effectivePlaceName = customName;
         if (!effectivePlaceName) {
-          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng)) {
             effectivePlaceName = geocodedName;
           }
         }
@@ -3281,7 +3304,7 @@ function buildWeatherPoints() {
 
       let effectivePlaceName = customName;
       if (!effectivePlaceName) {
-        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_sharesKey(lat, lng)) {
+        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng)) {
           effectivePlaceName = geocodedName;
         }
       }
