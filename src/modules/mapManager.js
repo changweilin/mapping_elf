@@ -64,6 +64,7 @@ export class MapManager {
     this.dragLine = null;
     this._dragWpIndex = undefined;
     this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
+    this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -79,7 +80,22 @@ export class MapManager {
 
     this.map.on('click', (e) => {
       if (this.ignoreMapClick) return;
-      this.addWaypoint(e.latlng.lat, e.latlng.lng);
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
+      } else {
+        this._clickTimeout = setTimeout(() => {
+          this._clickTimeout = null;
+          this.addWaypoint(e.latlng.lat, e.latlng.lng);
+        }, 450);
+      }
+    });
+
+    this.map.on('dblclick', (e) => {
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
+      }
     });
   }
 
@@ -123,6 +139,25 @@ export class MapManager {
     this._dragWpIndex = undefined;
   }
 
+  _findInsertionIndex(latlng) {
+    if (this.waypoints.length < 2) return this.waypoints.length;
+    let bestIndex = 1;
+    let minDetour = Infinity;
+    for (let i = 1; i < this.waypoints.length; i++) {
+        const w1 = this.waypoints[i - 1];
+        const w2 = this.waypoints[i];
+        const d1 = L.latLng(w1[0], w1[1]).distanceTo(latlng);
+        const d2 = L.latLng(w2[0], w2[1]).distanceTo(latlng);
+        const d12 = L.latLng(w1[0], w1[1]).distanceTo(L.latLng(w2[0], w2[1]));
+        const detour = d1 + d2 - d12;
+        if (detour < minDetour) {
+            minDetour = detour;
+            bestIndex = i;
+        }
+    }
+    return bestIndex;
+  }
+
   switchLayer(layerName) {
     if (!this.tileLayers[layerName]) return;
     this.map.removeLayer(this.tileLayers[this.currentLayerName]);
@@ -130,9 +165,13 @@ export class MapManager {
     this.currentLayerName = layerName;
   }
 
-  addWaypoint(lat, lng) {
-    this.waypoints.push([lat, lng]);
-    const icon = this._createIcon(this.waypoints.length - 1);
+  addWaypoint(lat, lng, insertIndex = null) {
+    const idx = insertIndex !== null ? insertIndex : this.waypoints.length;
+    this.waypoints.splice(idx, 0, [lat, lng]);
+    this.waypointWeather.splice(idx, 0, null);
+    this.waypointColors.splice(idx, 0, null);
+    this.waypointLabels.splice(idx, 0, null);
+    const icon = this._createIcon(idx);
 
     const marker = L.marker([lat, lng], {
       icon,
@@ -345,7 +384,7 @@ export class MapManager {
       this.onWaypointChange(this.waypoints);
     });
 
-    this.waypointMarkers.push(marker);
+    this.waypointMarkers.splice(idx, 0, marker);
     this._updateMarkerIcons();
     this.onWaypointChange(this.waypoints);
   }
@@ -482,8 +521,24 @@ export class MapManager {
 
       pl._routeIndex = route.index;
       pl.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        this.selectRoute(routes, route.index);
+        L.DomEvent.stop(e);
+        if (this._clickTimeout) {
+          clearTimeout(this._clickTimeout);
+          this._clickTimeout = null;
+        } else {
+          this._clickTimeout = setTimeout(() => {
+            this._clickTimeout = null;
+            this.selectRoute(routes, route.index);
+          }, 450);
+        }
+      });
+      pl.on('dblclick', (e) => {
+        L.DomEvent.stop(e);
+        if (this._clickTimeout) {
+          clearTimeout(this._clickTimeout);
+          this._clickTimeout = null;
+        }
+        pl.bringToFront();
       });
       pl.bindTooltip(route.label, {
         sticky: true,
@@ -549,7 +604,9 @@ export class MapManager {
           lineCap: 'round',
           lineJoin: 'round',
         }).addTo(this.map);
+        pl1._isReturn = false;
         this._bindRouteHoverEvents(pl1);
+        this._bindGradientRouteEvents(pl1);
         this.gradientPolylines.push(pl1);
 
         const d2 = dists[splitIdx];
@@ -562,7 +619,9 @@ export class MapManager {
           lineCap: 'round',
           lineJoin: 'round',
         }).addTo(this.map);
+        pl2._isReturn = true;
         this._bindRouteHoverEvents(pl2);
+        this._bindGradientRouteEvents(pl2);
         this.gradientPolylines.push(pl2);
         continue;
       }
@@ -591,7 +650,16 @@ export class MapManager {
         lineCap: 'round',
         lineJoin: 'round',
       }).addTo(this.map);
+      
+      const xFrac = dists[startI] / totalD;
+      if (splitD > 0) {
+        pl._isReturn = (startI >= splitIdx);
+      } else {
+        pl._isReturn = isRoundTrip && (xFrac >= 0.5);
+      }
+
       this._bindRouteHoverEvents(pl);
+      this._bindGradientRouteEvents(pl);
       this.gradientPolylines.push(pl);
     }
   }
@@ -803,6 +871,38 @@ export class MapManager {
     });
     polyline.on('mouseout', () => {
       if (this.onRouteHover) this.onRouteHover(null, null);
+    });
+  }
+
+  _bindGradientRouteEvents(polyline) {
+    polyline.on('click', (e) => {
+      L.DomEvent.stop(e);
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
+      } else {
+        this._clickTimeout = setTimeout(() => {
+          this._clickTimeout = null;
+          const insertIdx = this._findInsertionIndex(e.latlng);
+          this.addWaypoint(e.latlng.lat, e.latlng.lng, insertIdx);
+        }, 450);
+      }
+    });
+
+    polyline.on('dblclick', (e) => {
+      L.DomEvent.stop(e);
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
+      }
+      // Toggle logic for round trips: switch between outbound and return legs
+      const isReturn = polyline._isReturn;
+      if (isReturn !== undefined) {
+        // If we clicked on return leg, bring outbound to front; and vice-versa
+        this.gradientPolylines.filter(pl => pl._isReturn === !isReturn).forEach(pl => pl.bringToFront());
+      } else {
+        this.gradientPolylines.forEach(gpl => gpl.bringToFront());
+      }
     });
   }
 
