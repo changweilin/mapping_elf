@@ -64,6 +64,7 @@ export class MapManager {
     this.dragLine = null;
     this._dragWpIndex = undefined;
     this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
+    this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -77,24 +78,23 @@ export class MapManager {
     }
     this.tileLayers.topo.addTo(this.map);
 
-    let mapClickTimeout = null;
     this.map.on('click', (e) => {
       if (this.ignoreMapClick) return;
-      if (mapClickTimeout) {
-        clearTimeout(mapClickTimeout);
-        mapClickTimeout = null;
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
       } else {
-        mapClickTimeout = setTimeout(() => {
-          mapClickTimeout = null;
+        this._clickTimeout = setTimeout(() => {
+          this._clickTimeout = null;
           this.addWaypoint(e.latlng.lat, e.latlng.lng);
         }, 300);
       }
     });
 
     this.map.on('dblclick', (e) => {
-      if (mapClickTimeout) {
-        clearTimeout(mapClickTimeout);
-        mapClickTimeout = null;
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
       }
     });
   }
@@ -519,25 +519,24 @@ export class MapManager {
         className: `route-line route-${route.index}`,
       }).addTo(this.map);
 
-      let altClickTimeout = null;
       pl._routeIndex = route.index;
       pl.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        if (altClickTimeout) {
-          clearTimeout(altClickTimeout);
-          altClickTimeout = null;
+        if (this._clickTimeout) {
+          clearTimeout(this._clickTimeout);
+          this._clickTimeout = null;
         } else {
-          altClickTimeout = setTimeout(() => {
-            altClickTimeout = null;
+          this._clickTimeout = setTimeout(() => {
+            this._clickTimeout = null;
             this.selectRoute(routes, route.index);
           }, 300);
         }
       });
       pl.on('dblclick', (e) => {
         L.DomEvent.stopPropagation(e);
-        if (altClickTimeout) {
-          clearTimeout(altClickTimeout);
-          altClickTimeout = null;
+        if (this._clickTimeout) {
+          clearTimeout(this._clickTimeout);
+          this._clickTimeout = null;
         }
         pl.bringToFront();
       });
@@ -866,15 +865,14 @@ export class MapManager {
   }
 
   _bindGradientRouteEvents(polyline) {
-    let clickTimeout = null;
     polyline.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
-      if (clickTimeout) {
-        clearTimeout(clickTimeout);
-        clickTimeout = null;
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
       } else {
-        clickTimeout = setTimeout(() => {
-          clickTimeout = null;
+        this._clickTimeout = setTimeout(() => {
+          this._clickTimeout = null;
           const insertIdx = this._findInsertionIndex(e.latlng);
           this.addWaypoint(e.latlng.lat, e.latlng.lng, insertIdx);
         }, 300);
@@ -883,9 +881,9 @@ export class MapManager {
 
     polyline.on('dblclick', (e) => {
       L.DomEvent.stopPropagation(e);
-      if (clickTimeout) {
-        clearTimeout(clickTimeout);
-        clickTimeout = null;
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
       }
       this.gradientPolylines.forEach(gpl => gpl.bringToFront());
     });
