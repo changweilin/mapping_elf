@@ -545,6 +545,24 @@ function initWaypointSettings() {
     });
   }
 
+  const importAutoSortEl = document.getElementById('import-auto-sort-enable');
+  if (importAutoSortEl) {
+    importAutoSortEl.checked = importAutoSortMode;
+    importAutoSortEl.addEventListener('change', () => {
+      importAutoSortMode = importAutoSortEl.checked;
+      localStorage.setItem(LS_IMPORT_AUTO_SORT_KEY, importAutoSortMode ? '1' : '0');
+    });
+  }
+
+  const importAutoNameEl = document.getElementById('import-auto-name-enable');
+  if (importAutoNameEl) {
+    importAutoNameEl.checked = importAutoNameMode;
+    importAutoNameEl.addEventListener('change', () => {
+      importAutoNameMode = importAutoNameEl.checked;
+      localStorage.setItem(LS_IMPORT_AUTO_NAME_KEY, importAutoNameMode ? '1' : '0');
+    });
+  }
+
   btnMinimize?.addEventListener('click', () => {
     const targetCols = getCollectiveIndices();
     if (targetCols.length === 0) {
@@ -693,6 +711,27 @@ if (btnToggleTheme) {
 }
 
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+// 手機版右滑收起側邊欄
+let panelTouchStartX = 0;
+let panelTouchStartY = 0;
+sidePanel.addEventListener('touchstart', (e) => {
+  panelTouchStartX = e.touches[0].clientX;
+  panelTouchStartY = e.touches[0].clientY;
+}, { passive: true });
+
+sidePanel.addEventListener('touchend', (e) => {
+  if (!sidePanel.classList.contains('open')) return;
+  const touchEndX = e.changedTouches[0].clientX;
+  const touchEndY = e.changedTouches[0].clientY;
+  const dx = touchEndX - panelTouchStartX;
+  const dy = touchEndY - panelTouchStartY;
+  
+  // 判斷為向右滑動 (水平位移大於 80px 且垂直位移小)
+  if (dx > 80 && Math.abs(dy) < 60) {
+    sidePanel.classList.remove('open');
+  }
+}, { passive: true });
 
 btnToggleElevation?.addEventListener('click', () => {
   const container = document.getElementById('elevation-chart-container');
@@ -1477,6 +1516,161 @@ function updateWaypointList(waypoints) {
         if (e2.key === 'Escape') { saved = true; input.removeEventListener('blur', commit); _applyPlaceNameToDOM(); }
       });
     });
+  });
+
+  // --- Drag-and-drop sorting & Removal support ---
+  let dragItem = null;
+  let dragIndex = -1;
+  let lpTimer = null;
+  let ghost = null;
+  let placeholder = null;
+
+  const startDrag = (item, idx, clientX, clientY) => {
+    dragItem = item;
+    dragIndex = idx;
+    item.classList.add('is-dragging');
+    if (navigator.vibrate) navigator.vibrate(40);
+
+    // Create placeholder
+    placeholder = document.createElement('div');
+    placeholder.className = 'waypoint-placeholder';
+    placeholder.style.height = `${item.offsetHeight}px`;
+    placeholder.style.marginBottom = '6px';
+    item.parentNode.insertBefore(placeholder, item.nextSibling);
+
+    // Create ghost for visual feedback
+    ghost = item.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    ghost.style.width = `${item.offsetWidth}px`;
+    ghost.style.position = 'fixed';
+    ghost.style.zIndex = '10000';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.opacity = '0.8';
+    document.body.appendChild(ghost);
+    updateGhostPos(clientX, clientY);
+
+    item.style.display = 'none';
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd);
+  };
+
+  const updateGhostPos = (x, y) => {
+    if (!ghost) return;
+    ghost.style.left = `${x - 20}px`;
+    ghost.style.top = `${y - 20}px`;
+  };
+
+  const onMove = (e) => {
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    updateGhostPos(cx, cy);
+
+    // Removal detection: drag out of the route planning area (side-panel)
+    const rect = sidePanel.getBoundingClientRect();
+    const out = cx < rect.left || cx > rect.right || cy < rect.top || cy > rect.bottom;
+    if (ghost) ghost.classList.toggle('drag-to-remove', out);
+
+    if (out) return;
+
+    // Sorting logic
+    const items = Array.from(waypointList.querySelectorAll('.waypoint-item:not(.is-dragging)'));
+    let bestAfter = null;
+    let minDist = Infinity;
+    items.forEach(it => {
+      const rect = it.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      const d = Math.abs(cy - mid);
+      if (d < minDist) {
+        minDist = d;
+        bestAfter = (cy < mid) ? it : it.nextSibling;
+      }
+    });
+    
+    if (bestAfter !== placeholder) {
+       waypointList.insertBefore(placeholder, bestAfter);
+    }
+  };
+
+  const onEnd = (e) => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+
+    const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    const rect = sidePanel.getBoundingClientRect();
+    const out = cx < rect.left || cx > rect.right || cy < rect.top || cy > rect.bottom;
+
+    if (out) {
+      mapManager.removeWaypoint(dragIndex);
+    } else {
+      const items = Array.from(waypointList.childNodes);
+      const newIdx = items.indexOf(placeholder);
+      // Because we inserted placeholder, we need to map back to logic index
+      const logicalItems = items.filter(n => n.nodeType === 1 && n !== placeholder && n !== dragItem);
+      let targetIdx = logicalItems.indexOf(items[newIdx]);
+      if (targetIdx === -1) targetIdx = logicalItems.length;
+
+      const offset = targetIdx - dragIndex;
+      if (offset !== 0) {
+        // Move one step at a time via manager to update everything correctly
+        // (Simplified re-sort implementation)
+        const waypointsCopy = [...mapManager.waypoints];
+        const [moved] = waypointsCopy.splice(dragIndex, 1);
+        waypointsCopy.splice(targetIdx, 0, moved);
+        mapManager.clearWaypoints();
+        // temporarily disable callback to avoid spam
+        const cb = mapManager.onWaypointChange;
+        mapManager.onWaypointChange = () => {};
+        waypointsCopy.forEach(wp => mapManager.addWaypoint(wp[0], wp[1]));
+        mapManager.onWaypointChange = cb;
+        onWaypointsChanged(mapManager.waypoints);
+      } else {
+        updateWaypointList(mapManager.waypoints);
+      }
+    }
+
+    if (ghost) ghost.remove();
+    if (placeholder) placeholder.remove();
+    dragItem = null;
+    ghost = null;
+    placeholder = null;
+  };
+
+  waypointList.querySelectorAll('.waypoint-item').forEach((item, idx) => {
+    // Shared long press logic for Mouse & Touch
+    const triggerLP = (clientX, clientY) => {
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
+        startDrag(item, idx, clientX, clientY);
+      }, 500);
+    };
+    const cancelLP = () => {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    };
+
+    item.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('.wp-actions')) return;
+      triggerLP(e.clientX, e.clientY);
+      const onUp = () => { cancelLP(); document.removeEventListener('mouseup', onUp); };
+      document.addEventListener('mouseup', onUp);
+    });
+
+    item.addEventListener('touchstart', (e) => {
+        if (e.target.closest('.wp-actions')) return;
+        const t = e.touches[0];
+        triggerLP(t.clientX, t.clientY);
+    }, { passive: true });
+    
+    item.addEventListener('touchend', cancelLP, { passive: true });
+    item.addEventListener('touchmove', (e) => {
+        // Cancel if move too much
+        cancelLP();
+    }, { passive: true });
   });
 }
 

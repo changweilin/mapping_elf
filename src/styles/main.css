@@ -749,6 +749,45 @@ html, body {
   }
 }
 
+/* Waypoint Drag & Drop Styles */
+.waypoint-placeholder {
+  background: rgba(110, 231, 183, 0.1);
+  border: 2px dashed var(--accent-primary);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  animation: pulse 1.5s infinite;
+}
+
+.drag-ghost {
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  border: 1px solid var(--accent-primary);
+  opacity: 0.9 !important;
+  pointer-events: none;
+  background: var(--bg-tertiary);
+  display: flex !important; /* Force show as it's a clone of hidden item */
+}
+
+.drag-ghost.drag-to-remove {
+  border-color: var(--danger);
+  background: rgba(248, 113, 113, 0.2);
+  filter: grayscale(0.5) contrast(0.8);
+}
+
+.drag-ghost.drag-to-remove::after {
+  content: "移除";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--danger);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-weight: bold;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
 /* Segment Interval Row */
 .segment-interval-row {
   display: flex;
