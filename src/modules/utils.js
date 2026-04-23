@@ -106,43 +106,87 @@ export function projectMileage(polyline, point, startMileage = 0) {
  * Returns `[{ index, mileage, inserted }, ...]` sorted by mileage (stable),
  * so pass-2 insertions fall between their neighbouring pass-1 entries.
  */
+/**
+ * Place each waypoint at a mileage along the track.
+ *
+ * This version is track-aware: it detects return-leg waypoints by checking for
+ * turnaround symbols (↩, ↺, ↻, (回程)) in labels.
+ *
+ * Algorithm:
+ * 1. Identify "return" waypoints via symbols.
+ * 2. Find "turnaround" point (last outbound waypoint before first return point).
+ * 3. Split track into "outbound" and "return" segments at the turnaround point.
+ * 4. Project outbound waypoints only on outbound track; return waypoints on return track.
+ * 5. Ensure monotonic mileage (mileage[i] >= mileage[i-1]) to preserve file order.
+ */
 export function orderWaypointsAlongTrack(waypoints, trackCoords, options = {}) {
-  if (waypoints.length === 0) return [];
-  if (!Array.isArray(trackCoords) || trackCoords.length < 2 || waypoints.length === 1) {
+  const n = waypoints.length;
+  if (n === 0) return [];
+  if (!Array.isArray(trackCoords) || trackCoords.length < 2) {
     return waypoints.map((_, i) => ({ index: i, mileage: 0, inserted: false }));
   }
-  const threshold = options.threshold ?? 500;
-  const n = waypoints.length;
-  const placed = new Array(n).fill(null);
-  let remaining = waypoints.map((_, i) => i);
-  let pass = 0;
-  while (remaining.length > 0) {
-    let cursor = 0;
-    const deferred = [];
-    let progress = false;
-    for (const idx of remaining) {
-      const { mileage, distance } = projectMileage(trackCoords, waypoints[idx], cursor);
-      if (distance <= threshold) {
-        placed[idx] = { mileage, inserted: pass > 0 };
-        cursor = mileage;
-        progress = true;
-      } else {
-        deferred.push(idx);
-      }
-    }
-    if (!progress) {
-      for (const idx of deferred) {
-        const { mileage } = projectMileage(trackCoords, waypoints[idx], 0);
-        placed[idx] = { mileage, inserted: true };
-      }
-      break;
-    }
-    remaining = deferred;
-    pass++;
+
+  const isReturnFlags = waypoints.map((wp, i) => {
+    // waypoint param might be [lat,lng] or a metadata object with label
+    const label = wp.label || (options.labels && options.labels[i]) || "";
+    return /\s*[↺↻↩]$|\s*\(回程\)$/.test(label);
+  });
+
+  // Find turnaround point: last waypoint that is NOT marked as return, 
+  // before the first waypoint that IS marked as return.
+  let firstReturnIdx = isReturnFlags.indexOf(true);
+  let turnaroundIdx = firstReturnIdx > 0 ? firstReturnIdx - 1 : n - 1;
+
+  // Projection logic
+  const trackDists = cumulativeDistances(trackCoords);
+  const fullDist = trackDists[trackDists.length - 1];
+
+  // Map turnaround index to track mileage
+  // we pass waypoints[turnaroundIdx] which is usually [lat,lng]
+  const snapTurnaround = projectMileage(trackCoords, waypoints[turnaroundIdx], 0);
+  const splitMileage = snapTurnaround.mileage;
+  
+  // Find the exact index in trackCoords where splitMileage lands roughly
+  let splitIdx = 0;
+  for (let i = 0; i < trackDists.length; i++) {
+    if (trackDists[i] >= splitMileage) { splitIdx = i; break; }
   }
-  const entries = placed.map((p, i) => ({ index: i, mileage: p.mileage, inserted: p.inserted }));
-  entries.sort((a, b) => a.mileage - b.mileage);
-  return entries;
+
+  const results = [];
+  let prevMileage = 0;
+
+  for (let i = 0; i < n; i++) {
+    const isRet = isReturnFlags[i];
+    let mileage = 0;
+
+    if (firstReturnIdx === -1) {
+      // One-way fallback: use existing forward-walk logic
+      const snap = projectMileage(trackCoords, waypoints[i], prevMileage);
+      mileage = snap.mileage;
+    } else {
+      // Split mode
+      if (i <= turnaroundIdx) {
+        // Outbound: search from prevMileage up to splitMileage
+        // We use a slice of trackCoords to limit the search space
+        const slice = trackCoords.slice(0, splitIdx + 1);
+        const snap = projectMileage(slice, waypoints[i], prevMileage);
+        mileage = snap.mileage;
+      } else {
+        // Return: search from wherever we are (at least splitMileage) to end
+        const startSearchAt = Math.max(prevMileage, splitMileage);
+        const snap = projectMileage(trackCoords, waypoints[i], startSearchAt);
+        mileage = snap.mileage;
+      }
+    }
+
+    // Force monotonic to preserve file order even if GPS noise suggests regression
+    if (mileage < prevMileage) mileage = prevMileage;
+    
+    results.push({ index: i, mileage, inserted: false });
+    prevMileage = mileage;
+  }
+
+  return results;
 }
 
 export function formatDistance(meters) {

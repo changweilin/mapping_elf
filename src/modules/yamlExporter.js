@@ -31,6 +31,12 @@ export class YamlExporter {
       if (pt.isReturn) yaml += `    return: true\n`;
       yaml += `    lat: ${pt.lat.toFixed(6)}\n`;
       yaml += `    lng: ${pt.lng.toFixed(6)}\n`;
+      if (typeof pt.cum === 'number' && Number.isFinite(pt.cum)) {
+        yaml += `    cumDistM: ${pt.cum.toFixed(1)}\n`;
+      }
+      if (typeof pt.ele === 'number' && Number.isFinite(pt.ele)) {
+        yaml += `    ele: ${pt.ele.toFixed(1)}\n`;
+      }
       if (pt.date) yaml += `    date: ${this._yamlStr(pt.date)}\n`;
       if (pt.time) yaml += `    time: "${pt.time}"\n`;
 
@@ -91,10 +97,6 @@ export class YamlExporter {
       const isInterval = current.type === 'interval' || hasIntervalPrefix;
       let label = hasIntervalPrefix ? rawLabel.slice(2) : rawLabel;
 
-      // Strip turnaround symbols to prevent accumulation on re-export
-      if (label.startsWith('↩ ')) label = label.substring(2);
-      label = label.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
-
       const pointData = {
         lat, lng,
         label,
@@ -102,6 +104,10 @@ export class YamlExporter {
         time: current.time || null,
         weather: current.weather || {},
         windyUrl: current.windy || null,
+        ele: current.ele != null && current.ele !== '' && !isNaN(parseFloat(current.ele))
+          ? parseFloat(current.ele) : null,
+        cumDistM: current.cumDistM != null && current.cumDistM !== '' && !isNaN(parseFloat(current.cumDistM))
+          ? parseFloat(current.cumDistM) : null,
       };
 
       if (isInterval) {
@@ -153,20 +159,8 @@ export class YamlExporter {
     }
     commitPoint();
     
-    // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
-    const uniqueWaypoints = [];
-    const uniqueSegmentDates = [];
-    for (let i = 0; i < waypoints.length; i++) {
-        const wp = waypoints[i];
-        if (uniqueWaypoints.length > 0) {
-            const prev = uniqueWaypoints[uniqueWaypoints.length - 1];
-            if (this._distM(wp[0], wp[1], prev[0], prev[1]) < 1.0) {
-                continue; // Skip almost identical consecutive point
-            }
-        }
-        uniqueWaypoints.push(wp);
-        uniqueSegmentDates.push(segmentDates[i]);
-    }
+    const uniqueWaypoints = waypoints;
+    const uniqueSegmentDates = segmentDates;
 
     return { waypoints: uniqueWaypoints, trackPoints: [], segmentDates: uniqueSegmentDates, intermediatePoints };
   }

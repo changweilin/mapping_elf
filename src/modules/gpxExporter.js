@@ -43,16 +43,21 @@ export class GpxExporter {
         outLabel += ' ↩';
       }
       gpx += `    <name>${this._escapeXml(outLabel)}</name>\n`;
+      if (typeof pt.ele === 'number' && Number.isFinite(pt.ele)) {
+        gpx += `    <ele>${pt.ele.toFixed(1)}</ele>\n`;
+      }
 
       // Mark non-waypoint columns so the importer can identify them
       if (!pt.isWaypoint) {
         gpx += `    <type>mel:interval</type>\n`;
       }
 
-      const hasExt = pt.date || pt.time || pt.windyUrl ||
+      const hasCum = typeof pt.cum === 'number' && Number.isFinite(pt.cum);
+      const hasExt = pt.date || pt.time || pt.windyUrl || hasCum ||
         (pt.weather && Object.values(pt.weather).some(v => v.value && v.value !== '—'));
       if (hasExt) {
         gpx += `    <extensions>\n`;
+        if (hasCum) gpx += `      <mel:cumDistM>${pt.cum.toFixed(1)}</mel:cumDistM>\n`;
         if (pt.date) gpx += `      <mel:date>${this._escapeXml(pt.date)}</mel:date>\n`;
         if (pt.time) gpx += `      <mel:time>${this._escapeXml(pt.time)}</mel:time>\n`;
         if (pt.weather) {
@@ -209,17 +214,21 @@ export class GpxExporter {
       const isInterval = (typeEl && typeEl.textContent.trim() === 'mel:interval') || rawName.startsWith('*_');
       const exts = this._getAllExtensions(wpt);
       let label = isInterval && rawName.startsWith('*_') ? rawName.slice(2) : rawName;
-      
-      // Strip turnaround symbols to prevent accumulation on re-export
-      if (label.startsWith('↩ ')) label = label.substring(2);
-      label = label.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
-      
+
+      const eleEl = wpt.querySelector('ele');
+      const eleText = eleEl ? eleEl.textContent.trim() : '';
+      const ele = eleText && !isNaN(parseFloat(eleText)) ? parseFloat(eleText) : null;
+      const cumDistM = exts.cumDistM != null && !isNaN(parseFloat(exts.cumDistM))
+        ? parseFloat(exts.cumDistM) : null;
+
       allMeta.push({
         lat, lon, label, isInterval,
         date: exts.date || null,
         time: exts.time || null,
         weather: exts,
-        windyUrl: exts.windyUrl || null
+        windyUrl: exts.windyUrl || null,
+        ele,
+        cumDistM,
       });
     });
 
@@ -227,7 +236,7 @@ export class GpxExporter {
       // Robust path-aware matching for ALL points together
       const trackCoords = trackPoints.map(p => [p.lat, p.lon]);
       const coordsToOrder = allMeta.map(m => [m.lat, m.lon]);
-      const orderInfo = orderWaypointsAlongTrack(coordsToOrder, trackCoords);
+      const orderInfo = orderWaypointsAlongTrack(coordsToOrder, trackCoords, { labels: allMeta.map(m => m.label) });
       
       const SNAP_M = 100;
       let ordered = orderInfo.map(({ index }) => {
@@ -245,15 +254,7 @@ export class GpxExporter {
         ordered.push({ lat: trackEnd.lat, lon: trackEnd.lon, label: null, isInterval: false, weather: {} });
       }
 
-      // De-duplicate
-      const unique = [];
-      for (const p of ordered) {
-        if (unique.length > 0) {
-          const prev = unique[unique.length - 1];
-          if (this._distM(p.lat, p.lon, prev.lat, prev.lon) < 1.0) continue;
-        }
-        unique.push(p);
-      }
+      const unique = ordered;
 
       // Distribute to return arrays with matched fileOrder
       unique.forEach((p, idx) => {
@@ -263,6 +264,8 @@ export class GpxExporter {
           time: p.time || null,
           weather: p.weather || {},
           windyUrl: p.windyUrl || null,
+          ele: p.ele ?? null,
+          cumDistM: p.cumDistM ?? null,
           fileOrder: idx * 10 // Monotonic fileOrder derived from track sequence
         };
         if (p.isInterval) {
@@ -288,12 +291,12 @@ export class GpxExporter {
         for (let i = 0; i < trackPoints.length; i += step) {
           const pt = trackPoints[i];
           waypoints.push([pt.lat, pt.lon]);
-          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, fileOrder: i });
+          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: pt.ele ?? null, cumDistM: null, fileOrder: i });
         }
         if (trackPoints.length % step !== 0) {
           const last = trackPoints[trackPoints.length - 1];
           waypoints.push([last.lat, last.lon]);
-          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, fileOrder: trackPoints.length });
+          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: last.ele ?? null, cumDistM: null, fileOrder: trackPoints.length });
         }
       }
     }

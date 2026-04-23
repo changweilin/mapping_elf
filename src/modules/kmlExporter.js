@@ -60,12 +60,22 @@ export class KmlExporter {
       if (pt.isReturn && !outLabel.endsWith(' ↩')) {
         outLabel += ' ↩';
       }
+      const eleNum = (typeof pt.ele === 'number' && Number.isFinite(pt.ele)) ? pt.ele : 0;
+      const hasCum = typeof pt.cum === 'number' && Number.isFinite(pt.cum);
+      const hasEle = typeof pt.ele === 'number' && Number.isFinite(pt.ele);
+      let extData = '';
+      if (hasCum || hasEle) {
+        extData += `      <ExtendedData>\n`;
+        if (hasCum) extData += `        <Data name="cumDistM"><value>${pt.cum.toFixed(1)}</value></Data>\n`;
+        if (hasEle) extData += `        <Data name="ele"><value>${pt.ele.toFixed(1)}</value></Data>\n`;
+        extData += `      </ExtendedData>\n`;
+      }
       kml += `    <Placemark>
       <name>${this._esc(outLabel)}</name>
       <description><![CDATA[${desc}]]></description>
       <styleUrl>${styleId}</styleUrl>
-      <Point>
-        <coordinates>${pt.lng.toFixed(6)},${pt.lat.toFixed(6)},0</coordinates>
+${extData}      <Point>
+        <coordinates>${pt.lng.toFixed(6)},${pt.lat.toFixed(6)},${eleNum.toFixed(1)}</coordinates>
       </Point>
     </Placemark>\n`;
     });
@@ -94,6 +104,12 @@ export class KmlExporter {
   static _buildDescription(pt) {
     const rows = [];
     if (pt.isReturn) rows.push(`<tr><td colspan="2" style="padding:2px 6px;color:#0077cc;font-weight:bold;">🔄 回程</td></tr>`);
+    if (typeof pt.cum === 'number' && Number.isFinite(pt.cum)) {
+      rows.push(`<tr><td style="padding:2px 8px;color:#555;">累積距離</td><td style="padding:2px 8px;">${(pt.cum / 1000).toFixed(2)} km</td></tr>`);
+    }
+    if (typeof pt.ele === 'number' && Number.isFinite(pt.ele)) {
+      rows.push(`<tr><td style="padding:2px 8px;color:#555;">高度</td><td style="padding:2px 8px;">${pt.ele.toFixed(0)} m</td></tr>`);
+    }
     if (pt.date)     rows.push(`<tr><td style="padding:2px 8px;color:#555;">日期</td><td style="padding:2px 8px;">${this._esc(pt.date)}</td></tr>`);
     if (pt.time)     rows.push(`<tr><td style="padding:2px 8px;color:#555;">時間</td><td style="padding:2px 8px;">${this._esc(pt.time)}</td></tr>`);
 
@@ -138,22 +154,32 @@ export class KmlExporter {
 
       if (pointEl) {
         const coordsText = pointEl.querySelector('coordinates')?.textContent?.trim() || '';
-        const [lngStr, latStr] = coordsText.split(',');
-        const lat = parseFloat(latStr);
-        const lng = parseFloat(lngStr);
+        const coordParts = coordsText.split(',');
+        const lng = parseFloat(coordParts[0]);
+        const lat = parseFloat(coordParts[1]);
         if (isNaN(lat) || isNaN(lng)) return;
+        const coordEle = coordParts[2] != null && !isNaN(parseFloat(coordParts[2]))
+          ? parseFloat(coordParts[2]) : null;
 
         const description = pm.querySelector('description')?.textContent || '';
         const meta = this._parseDescription(description);
+
+        const extData = {};
+        pm.querySelectorAll('ExtendedData > Data').forEach(d => {
+          const k = d.getAttribute('name');
+          const v = d.querySelector('value')?.textContent?.trim();
+          if (k && v != null) extData[k] = v;
+        });
+        const ele = extData.ele != null && !isNaN(parseFloat(extData.ele))
+          ? parseFloat(extData.ele)
+          : (coordEle && coordEle !== 0 ? coordEle : null);
+        const cumDistM = extData.cumDistM != null && !isNaN(parseFloat(extData.cumDistM))
+          ? parseFloat(extData.cumDistM) : null;
 
         const rawName = pm.querySelector('name')?.textContent?.trim() || '';
         const hasIntervalStyle = styleUrl === '#wpInterval';
         const hasIntervalPrefix = rawName.startsWith('*_');
         let label = hasIntervalPrefix ? rawName.slice(2) : rawName;
-        
-        // Strip turnaround symbols to prevent accumulation on re-export
-        if (label.startsWith('↩ ')) label = label.substring(2);
-        label = label.replace(/\s*[↺↻↩]$|\s*\(回程\)$/, '').trim();
 
         if (hasIntervalStyle || hasIntervalPrefix) {
           intermediatePoints.push({
@@ -162,6 +188,7 @@ export class KmlExporter {
             time: meta.time || null,
             weather: meta.weather,
             windyUrl: meta.windyUrl || null,
+            ele, cumDistM,
             fileOrder: fileOrderCounter++,
           });
           return;
@@ -174,6 +201,7 @@ export class KmlExporter {
           time: meta.time || null,
           weather: meta.weather,
           windyUrl: meta.windyUrl || null,
+          ele, cumDistM,
           fileOrder: fileOrderCounter++,
         });
       } else if (lineEl) {
@@ -198,7 +226,7 @@ export class KmlExporter {
       // mileage with `inserted: true`; we mark those labels with a `*`.
       const SNAP_M = 100;
       const trackCoords = trackPoints.map(p => [p.lat, p.lon]);
-      const orderInfo = orderWaypointsAlongTrack(waypoints, trackCoords);
+      const orderInfo = orderWaypointsAlongTrack(waypoints, trackCoords, { labels: segmentDates.map(m => m.label) });
       let ordered = orderInfo.map(({ index }) => {
         const meta = segmentDates[index];
         return { latlon: waypoints[index], meta };
@@ -216,17 +244,7 @@ export class KmlExporter {
         ordered.push({ latlon: [trackEnd.lat, trackEnd.lon], meta: { label: null, date: null, time: null, weather: {}, windyUrl: null } });
       }
 
-      // De-duplicate waypoints that are almost identical in coordinates (< 1.0m)
-      const unique = [];
-      for (const p of ordered) {
-        if (unique.length > 0) {
-          const prev = unique[unique.length - 1];
-          if (this._distM(p.latlon[0], p.latlon[1], prev.latlon[0], prev.latlon[1]) < 1.0) {
-            continue; // Skip almost identical consecutive point
-          }
-        }
-        unique.push(p);
-      }
+      const unique = ordered;
 
       // Re-populate original arrays
       waypoints.length = 0;

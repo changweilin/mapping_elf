@@ -2133,6 +2133,7 @@ function collectExportData() {
       isReturn: pt.isReturn || false,
       wpIndex: pt.wpIndex,
       cum: pt._cum || 0,
+      ele: pt._ele ?? null,
       date,
       time,
       hour,
@@ -2336,7 +2337,10 @@ function _applyImportedResultCore(result) {
 
     // 4. Load waypoints as decorative markers (no routing triggered)
     if (result.waypoints.length > 0) {
+      // 5. Store metadata BEFORE adding waypoints so that onWaypointsChanged callbacks
+      // (triggered at the end of the batch) find the correct segmentDates for labels.
       if (result.segmentDates) {
+        window._pendingGpxDates = result.segmentDates;
         result.waypoints.forEach((wp, i) => {
           const sd = result.segmentDates[i];
           if (sd?.label) {
@@ -2346,15 +2350,12 @@ function _applyImportedResultCore(result) {
         });
         try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
       }
+
       skipAutoGeocode = !importAutoNameMode;
-      result.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+      // Use batch setter for efficiency and consistent state
+      mapManager.setWaypointsFromImport(result.waypoints);
       skipAutoGeocode = false;
       if (importAutoNameMode) geocodeWaypoints(result.waypoints);
-    }
-
-    // 5. Apply per-waypoint dates/weather to table columns after panel renders
-    if (result.segmentDates?.some(d => d?.date || d?.time || (d?.weather && Object.keys(d.weather).length > 0))) {
-      window._pendingGpxDates = result.segmentDates;
     }
 
     // 6. Load elevation profile from track data (no elevation API call)
@@ -3358,9 +3359,9 @@ function buildWeatherPoints() {
   const sampledDists = elevationProfile.distances;
   let cumTimes = null;
   let fullTotalDistBuild = 0;
+  for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
   if ((speedIntervalMode || segmentIntervalKm > 0) && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
     cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
-    for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
   }
 
   /** Get elapsed hours for a given cumDistM (full-route metres). */
@@ -3369,6 +3370,15 @@ function buildWeatherPoints() {
     const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDistBuild));
     const mappedDist = fraction * sampledDists[sampledDists.length - 1];
     return interpolateTimeAtDist(mappedDist, sampledDists, cumTimes);
+  };
+
+  /** Get elevation (metres) at a given cumDistM (full-route metres). */
+  const getEleAt = (cumDistM) => {
+    if (!sampledDists || !sampledDists.length || !sampledElevs || !sampledElevs.length) return null;
+    const totalSampled = sampledDists[sampledDists.length - 1] || 0;
+    if (totalSampled === 0 || fullTotalDistBuild === 0) return sampledElevs[0] ?? null;
+    const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDistBuild));
+    return elevationProfile._interpolateElevAtCumM(fraction * totalSampled);
   };
 
   const all = [];
@@ -3381,7 +3391,9 @@ function buildWeatherPoints() {
       const meta = (window._pendingGpxDates && window._pendingGpxDates[i]) || {};
       markers.push({
         lat: wp[0], lng: wp[1], isWaypoint: true, wpIndex: i,
-        fileOrder: meta.fileOrder ?? (i * 1000)
+        fileOrder: meta.fileOrder ?? (i * 1000),
+        ele: meta.ele ?? null,
+        cumDistM: meta.cumDistM ?? null,
       });
     });
     importedIntermediatePoints.forEach((p, i) => {
@@ -3421,7 +3433,8 @@ function buildWeatherPoints() {
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
           isReturn: isRet,
-          _cum: cum, _elapsedH: getElapsedH(cum)
+          _cum: cum, _elapsedH: getElapsedH(cum),
+          _ele: m.ele != null ? m.ele : getEleAt(cum),
         });
       } else {
         const isRet = false; // Imported tracks always single-way
@@ -3430,6 +3443,7 @@ function buildWeatherPoints() {
           lat: m.lat, lng: m.lng, isWaypoint: false,
           isReturn: isRet,
           _cum: cum, _elapsedH: getElapsedH(cum),
+          _ele: m.ele != null ? m.ele : getEleAt(cum),
           weather: m.weather,
           windyUrl: m.windyUrl,
           _preserveLabel: !!m.label,
@@ -3459,7 +3473,8 @@ function buildWeatherPoints() {
       all.push({
         label, lat, lng, isWaypoint: true, wpIndex: i,
         isReturn: false,
-        _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i])
+        _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i]),
+        _ele: getEleAt(wpCumDist[i]),
       });
     }
   }
@@ -3491,7 +3506,8 @@ function buildWeatherPoints() {
         : `${pt.estTimeH.toFixed(1)} 小時`;
       all.push({
         label: hLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
-        _cum: mappedCum, _elapsedH: pt.estTimeH
+        _cum: mappedCum, _elapsedH: pt.estTimeH,
+        _ele: getEleAt(mappedCum),
       });
     });
   } else if (segmentIntervalKm > 0 && coords.length > 1) {
@@ -3503,7 +3519,8 @@ function buildWeatherPoints() {
         : `${(pt.cumDistM / 1000).toFixed(1)} km`;
       all.push({
         label: kmLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
-        _cum: pt.cumDistM, _elapsedH: getElapsedH(pt.cumDistM)
+        _cum: pt.cumDistM, _elapsedH: getElapsedH(pt.cumDistM),
+        _ele: getEleAt(pt.cumDistM),
       });
     });
   } else if (coords.length > 0) {
@@ -3529,7 +3546,8 @@ function buildWeatherPoints() {
       const midCum = (wpCumDist[i] + wpCumDist[i + 1]) / 2;
       all.push({
         label: `${labelA}→${labelB}`, lat: mc[0], lng: mc[1], isWaypoint: false,
-        _cum: midCum, _elapsedH: getElapsedH(midCum)
+        _cum: midCum, _elapsedH: getElapsedH(midCum),
+        _ele: getEleAt(midCum),
       });
     }
   }
@@ -3563,6 +3581,7 @@ function buildWeatherPoints() {
           isReturn: true,
           _cum: returnCumMid,
           _elapsedH: getElapsedH(returnCumMid),
+          _ele: getEleAt(returnCumMid),
         });
       });
     }
@@ -3591,6 +3610,7 @@ function buildWeatherPoints() {
           wpIndex: i,
           _cum: returnCum,
           _elapsedH: getElapsedH(returnCum),
+          _ele: getEleAt(returnCum),
         });
       }
     } else if (oLoopMode) {
@@ -3617,6 +3637,7 @@ function buildWeatherPoints() {
         wpIndex: i,
         _cum: returnCum,
         _elapsedH: getElapsedH(returnCum),
+        _ele: getEleAt(returnCum),
       });
     }
   }
