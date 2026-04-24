@@ -3290,3 +3290,25 @@ body.modal-open {
 html.light-theme .github-link { color: #24292f; }
 html.light-theme .linkedin-link { color: #0077b5; }
 
+
+/* About Me Light Mode Enhancements */
+html.light-theme .about-me-section {
+  background: #f1f5f9;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+html.light-theme .about-me-name {
+  color: #0f172a;
+}
+html.light-theme .quote-zh {
+  color: #334155;
+}
+html.light-theme .quote-en {
+  color: #64748b;
+}
+html.light-theme .quote-source {
+  color: #94a3b8;
+}
+html.light-theme .panel-bottom-logo {
+  opacity: 0.1;
+}
+
