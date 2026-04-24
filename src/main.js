@@ -3498,6 +3498,12 @@ function initWeatherControls() {
   // Helpers: save/restore panel height as a viewport ratio so portrait↔landscape
   // transitions maintain the same proportional split.
   const MIN_H = 56;
+  // Hard upper bound: divider must never hide behind the fixed toolbar.
+  const getMaxPanelH = () => {
+    const toolbar = document.querySelector('.toolbar');
+    const toolbarH = toolbar ? toolbar.offsetHeight : 0;
+    return Math.max(MIN_H, window.innerHeight - toolbarH);
+  };
   const savePanelRatio = () => {
     const ratio = panel.offsetHeight / window.innerHeight;
     localStorage.setItem(LS_PANEL_HEIGHT_RATIO_KEY, ratio);
@@ -3513,7 +3519,8 @@ function initWeatherControls() {
       h = legacyH;
     }
     if (h > 0) {
-      const clamped = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), h));
+      // Allow full range so dbl-click collapsed/expanded states persist across reloads.
+      const clamped = Math.max(0, Math.min(getMaxPanelH(), h));
       panel.style.height = `${clamped}px`;
       document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
     }
@@ -3554,7 +3561,7 @@ function initWeatherControls() {
     if (pendingClientY == null) return;
     const clientY = pendingClientY;
     pendingClientY = null;
-    const h = Math.max(MIN_H, Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - clientY));
+    const h = Math.max(MIN_H, Math.min(getMaxPanelH(), window.innerHeight - clientY));
     panel.style.height = `${h}px`;
     document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
   };
@@ -3570,6 +3577,7 @@ function initWeatherControls() {
   // Mouse
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
+    panel.style.transition = '';
     panel._resizing = true;
     document.body.classList.add('is-resizing');
     handle.classList.add('dragging');
@@ -3592,6 +3600,7 @@ function initWeatherControls() {
   // Touch
   handle.addEventListener('touchstart', (e) => {
     e.preventDefault();
+    panel.style.transition = '';
     panel._resizing = true;
     document.body.classList.add('is-resizing');
     handle.classList.add('dragging');
@@ -3610,6 +3619,42 @@ function initWeatherControls() {
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
   }, { passive: false });
+
+  // --- Double-click toggle: 0:10 ↔ 10:0 ---
+  // Collapsed state keeps the handle bar visible so it remains clickable;
+  // expanded state lets the panel fill the whole viewport.
+  const COLLAPSE_H = handle.offsetHeight || 18;
+  const togglePanel = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const viewH = window.innerHeight;
+    const expandH = getMaxPanelH();
+    const currentH = panel.offsetHeight;
+    const targetH = currentH > viewH / 2 ? COLLAPSE_H : expandH;
+    panel.style.transition = 'height 0.25s ease';
+    panel.style.height = `${targetH}px`;
+    document.documentElement.style.setProperty('--bottom-panel-height', `${targetH}px`);
+    const onEnd = () => {
+      panel.style.transition = '';
+      panel.removeEventListener('transitionend', onEnd);
+      savePanelRatio();
+      mapManager.map.invalidateSize({ animate: false });
+      requestAnimationFrame(() => elevationProfile?.chart?.resize());
+    };
+    panel.addEventListener('transitionend', onEnd);
+  };
+  handle.addEventListener('dblclick', togglePanel);
+  // Touch: detect double-tap within 300ms on the handle
+  let lastTap = 0;
+  handle.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTap < 300) {
+      togglePanel(e);
+      lastTap = 0;
+    } else {
+      lastTap = now;
+    }
+  });
 
   // Re-apply saved ratio when viewport changes (orientation change, keyboard, etc.)
   // so portrait↔landscape preserves the proportional split.
