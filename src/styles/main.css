@@ -623,6 +623,12 @@ html, body {
   transition: opacity var(--transition-normal);
 }
 
+/* Global utility to disable transitions during active resizing/dragging */
+.is-resizing .map-container,
+.is-resizing .side-panel {
+  transition: none !important;
+}
+
 /* Waypoint List */
 .waypoint-list {
   max-height: 200px;

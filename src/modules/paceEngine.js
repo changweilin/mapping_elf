@@ -3,6 +3,7 @@
  * Estimates travel time with elevation penalty, load model, and fatigue/recovery.
  * Inspired by ascent_descent.py.
  */
+import L from 'leaflet';
 
 export const ACTIVITY_PROFILES = {
   walking: { name: '步行', speedKmH: 3.5, ascentMH: 400, descentMH: 700, fatigue: false, baseMET: 3.5 },
@@ -323,9 +324,14 @@ export function computeHourlyPoints(sampledCoords, elevations, distances, activi
           if (times[j] >= nextH) {
             const span = times[j] - times[j - 1];
             const f = span > 0 ? (nextH - times[j - 1]) / span : 0;
+            const p1 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[j - 1][0], sampledCoords[j - 1][1]));
+            const p2 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[j][0], sampledCoords[j][1]));
+            const res = L.point(p1.x + f * (p2.x - p1.x), p1.y + f * (p2.y - p1.y));
+            const unp = L.Projection.SphericalMercator.unproject(res);
+
             result.push({
-              lat: sampledCoords[j - 1][0] + f * (sampledCoords[j][0] - sampledCoords[j - 1][0]),
-              lng: sampledCoords[j - 1][1] + f * (sampledCoords[j][1] - sampledCoords[j - 1][1]),
+              lat: unp.lat,
+              lng: unp.lng,
               cumDistM: distances[j - 1] + f * (distances[j] - distances[j - 1]),
               estTimeH: nextH,
             });
@@ -342,9 +348,14 @@ export function computeHourlyPoints(sampledCoords, elevations, distances, activi
         if (times[i] >= nextH) {
           const span = times[i] - times[i - 1];
           const f = span > 0 ? (nextH - times[i - 1]) / span : 0;
+          const p1 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[i - 1][0], sampledCoords[i - 1][1]));
+          const p2 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[i][0], sampledCoords[i][1]));
+          const res = L.point(p1.x + f * (p2.x - p1.x), p1.y + f * (p2.y - p1.y));
+          const unp = L.Projection.SphericalMercator.unproject(res);
+
           result.push({
-            lat: sampledCoords[i - 1][0] + f * (sampledCoords[i][0] - sampledCoords[i - 1][0]),
-            lng: sampledCoords[i - 1][1] + f * (sampledCoords[i][1] - sampledCoords[i - 1][1]),
+            lat: unp.lat,
+            lng: unp.lng,
             cumDistM: distances[i - 1] + f * (distances[i] - distances[i - 1]),
             estTimeH: nextH,
           });

@@ -3181,11 +3181,13 @@ function initWeatherControls() {
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
     panel._resizing = true;
+    document.body.classList.add('is-resizing');
     handle.classList.add('dragging');
     const onMove = (ev) => scheduleHeight(ev.clientY);
     const onUp = () => {
       cancelPending();
       panel._resizing = false;
+      document.body.classList.remove('is-resizing');
       handle.classList.remove('dragging');
       savePanelRatio();
       mapManager.map.invalidateSize({ animate: false });
@@ -3201,11 +3203,13 @@ function initWeatherControls() {
   handle.addEventListener('touchstart', (e) => {
     e.preventDefault();
     panel._resizing = true;
+    document.body.classList.add('is-resizing');
     handle.classList.add('dragging');
     const onMove = (ev) => scheduleHeight(ev.touches[0].clientY);
     const onEnd = () => {
       cancelPending();
       panel._resizing = false;
+      document.body.classList.remove('is-resizing');
       handle.classList.remove('dragging');
       savePanelRatio();
       mapManager.map.invalidateSize({ animate: false });
@@ -3240,9 +3244,20 @@ function computeIntermediatePoints(coords, intervalKm) {
     const segDist = haversineDistance(coords[i - 1], coords[i]);
     while (nextMarkM <= cumDist + segDist + 1e-6) {
       const frac = segDist > 0 ? (nextMarkM - cumDist) / segDist : 0;
+      
+      // Use Spherical Mercator projection for interpolation to ensure points 
+      // overlap perfectly with the straight lines drawn by Leaflet's polyline.
+      const p1 = L.Projection.SphericalMercator.project(L.latLng(coords[i - 1][0], coords[i - 1][1]));
+      const p2 = L.Projection.SphericalMercator.project(L.latLng(coords[i][0], coords[i][1]));
+      const projectedPoint = L.point(
+        p1.x + frac * (p2.x - p1.x),
+        p1.y + frac * (p2.y - p1.y)
+      );
+      const unprojected = L.Projection.SphericalMercator.unproject(projectedPoint);
+
       result.push({
-        lat: coords[i - 1][0] + frac * (coords[i][0] - coords[i - 1][0]),
-        lng: coords[i - 1][1] + frac * (coords[i][1] - coords[i - 1][1]),
+        lat: unprojected.lat,
+        lng: unprojected.lng,
         cumDistM: nextMarkM,
       });
       nextMarkM += intervalM;
