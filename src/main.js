@@ -4941,11 +4941,14 @@ function _renderWeatherCard(colIdx) {
   const precipProb = val('precipProb');
   const label = pt.label || (pt.isWaypoint ? `航點 ${pt.wpIndex + 1}` : '中繼點');
 
-  // Build HTML with unique ID per column card
-  let html = `<div class="weather-card${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}">`;
+  // Build HTML with unique ID per column card. Use gradient color for card accent.
+  const gradColor = _weatherPointGradColor(pt);
+  const cardStyle = `border-top: 3px solid ${gradColor};`;
+  let html = `<div class="weather-card${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}" style="${cardStyle}">`;
 
   // Header
-  html += `<div class="wc-header">`;
+  const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
+  html += `<div class="wc-header" style="${headerStyle}">`;
   html += `<span class="wc-title">${wIcon} ${label}</span>`;
   html += `<button class="wc-btn q-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
   html += `<svg viewBox="0 0 24 24"><path d="${isCompact

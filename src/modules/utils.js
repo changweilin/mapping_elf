@@ -303,10 +303,11 @@ export function tspOptimize(points) {
  */
 export function interpolateRouteColorRgb(t) {
   const stops = [
-    { t: 0, r: 110, g: 231, b: 183 }, // #6ee7b7  teal-green
-    { t: 0.33, r: 56, g: 189, b: 248 }, // #38bdf8  sky-blue
-    { t: 0.66, r: 251, g: 191, b: 36 }, // #fbbf24  amber
-    { t: 1, r: 248, g: 113, b: 113 }, // #f87171  red
+    { t: 0,    r: 0,   g: 255, b: 127 }, // #00FF7F spring-green
+    { t: 0.25, r: 255, g: 191, b: 0   }, // #FFBF00 amber
+    { t: 0.50, r: 255, g: 69,  b: 0   }, // #FF4500 orange-red
+    { t: 0.75, r: 216, g: 27,  b: 96  }, // #D81B60 magenta
+    { t: 1,    r: 111, g: 66,  b: 193 }, // #6F42C1 purple
   ];
   const tc = Math.max(0, Math.min(1, t));
   let lo = stops[0], hi = stops[stops.length - 1];
@@ -334,10 +335,10 @@ export function interpolateRouteColor(t) {
  */
 export function interpolateReturnColorRgb(t) {
   const stops = [
-    { t: 0,    r: 248, g: 113, b: 113 }, // #f87171 red (matches outbound end)
-    { t: 0.33, r: 168, g:  85, b: 247 }, // #a855f7 purple
-    { t: 0.66, r:  30, g:  64, b: 175 }, // #1e40af deep-sea blue
-    { t: 1,    r:  56, g: 189, b: 248 }, // #38bdf8 sky blue
+    { t: 0,    r: 111, g: 66,  b: 193 }, // #6F42C1 purple (matches outbound end)
+    { t: 0.33, r: 0,   g: 123, b: 255 }, // #007BFF deep-sea blue
+    { t: 0.66, r: 0,   g: 191, b: 255 }, // #00BFFF sky blue
+    { t: 1,    r: 0,   g: 255, b: 255 }, // #00FFFF aqua/cyan
   ];
   const tc = Math.max(0, Math.min(1, t));
   let lo = stops[0], hi = stops[stops.length - 1];

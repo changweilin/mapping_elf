@@ -288,29 +288,33 @@ export class ElevationProfile {
         if (!chartArea) return;
         const g = c.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
         if (self.turnaroundFrac != null) {
-          // Outbound teal→sky→amber→red up to turnaround, then red→purple→deep-sea→sky blue
+          // Outbound spring-green→amber→orange-red→magenta→purple up to turnaround, then purple→deep-sea→sky blue→aqua
           const tf = self.turnaroundFrac;
-          g.addColorStop(0, 'rgb(110,231,183)');
-          g.addColorStop(tf * 0.33, 'rgb(56,189,248)');
-          g.addColorStop(tf * 0.66, 'rgb(251,191,36)');
-          g.addColorStop(tf, 'rgb(248,113,113)');
-          g.addColorStop(tf + (1 - tf) * 0.33, 'rgb(168,85,247)');
-          g.addColorStop(tf + (1 - tf) * 0.66, 'rgb(30,64,175)');
-          g.addColorStop(1, 'rgb(56,189,248)');
+          g.addColorStop(0, 'rgb(0,255,127)');
+          g.addColorStop(tf * 0.25, 'rgb(255,191,0)');
+          g.addColorStop(tf * 0.5, 'rgb(255,69,0)');
+          g.addColorStop(tf * 0.75, 'rgb(216,27,96)');
+          g.addColorStop(tf, 'rgb(111,66,193)');
+          g.addColorStop(tf + (1 - tf) * 0.33, 'rgb(0,123,255)');
+          g.addColorStop(tf + (1 - tf) * 0.66, 'rgb(0,191,255)');
+          g.addColorStop(1, 'rgb(0,255,255)');
         } else if (self.isRoundTrip) {
-          // Legacy fallback (no turnaround info): symmetric teal→red→teal
-          g.addColorStop(0, 'rgb(110,231,183)');
-          g.addColorStop(0.165, 'rgb(56,189,248)');
-          g.addColorStop(0.33, 'rgb(251,191,36)');
-          g.addColorStop(0.5, 'rgb(248,113,113)');
-          g.addColorStop(0.67, 'rgb(251,191,36)');
-          g.addColorStop(0.835, 'rgb(56,189,248)');
-          g.addColorStop(1, 'rgb(110,231,183)');
+          // Symmetric fallback
+          g.addColorStop(0, 'rgb(0,255,127)');
+          g.addColorStop(0.125, 'rgb(255,191,0)');
+          g.addColorStop(0.25, 'rgb(255,69,0)');
+          g.addColorStop(0.375, 'rgb(216,27,96)');
+          g.addColorStop(0.5, 'rgb(111,66,193)');
+          g.addColorStop(0.625, 'rgb(0,123,255)');
+          g.addColorStop(0.75, 'rgb(0,191,255)');
+          g.addColorStop(0.875, 'rgb(0,255,255)');
+          g.addColorStop(1, 'rgb(0,255,127)');
         } else {
-          g.addColorStop(0, 'rgb(110,231,183)');
-          g.addColorStop(0.33, 'rgb(56,189,248)');
-          g.addColorStop(0.66, 'rgb(251,191,36)');
-          g.addColorStop(1, 'rgb(248,113,113)');
+          g.addColorStop(0, 'rgb(0,255,127)');
+          g.addColorStop(0.25, 'rgb(255,191,0)');
+          g.addColorStop(0.5, 'rgb(255,69,0)');
+          g.addColorStop(0.75, 'rgb(216,27,96)');
+          g.addColorStop(1, 'rgb(111,66,193)');
         }
         chart.data.datasets[0].borderColor = g;
       },
