@@ -32,7 +32,13 @@
       "Bash(npx --version)",
       "Bash(magick -version)",
       "Bash(/c/WINDOWS/system32/convert.exe /?)",
-      "Bash(npx capacitor-assets *)"
+      "Bash(npx capacitor-assets *)",
+      "Bash(git *)",
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(curl -sv http://localhost:5173/)",
+      "Bash(curl -sv http://localhost:5174/)",
+      "Bash(npm ls *)",
+      "Bash(jobs *)"
     ]
   }
 }

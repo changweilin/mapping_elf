@@ -3467,11 +3467,20 @@ function buildWeatherPoints() {
       if (m.isWaypoint) {
         wpCumDist[m.wpIndex] = cum;
         waypointCumDistM[m.wpIndex] = cum;
-        const placeName = getPlaceName(m.lat, m.lng);
-        const isShared = _isSharedLocation(m.lat, m.lng);
+        const k = _geocodeKey(m.lat, m.lng);
+        const customName = waypointCustomNames[k];
+        const geocodedName = waypointPlaceNames[k];
         const isRet = false; // Imported tracks always single-way
 
-        const effectivePlaceName = (placeName === '起點' || placeName === '終點' || isShared) ? null : placeName;
+        // Custom names (including labels restored from the imported file) are
+        // honored as-is. The 起點/終點/shared-location filter only applies to
+        // reverse-geocoded names, which can be redundant or positional-style.
+        let effectivePlaceName = customName;
+        if (!effectivePlaceName) {
+          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(m.lat, m.lng)) {
+            effectivePlaceName = geocodedName;
+          }
+        }
         const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
@@ -4144,6 +4153,15 @@ function renderWeatherPanel() {
           cells[key] = val;
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${key}"]`);
           if (cell) cell.textContent = val;
+        }
+        // The weather cell is formatted "<emoji> <desc>" — extract the emoji so
+        // downstream consumers (map marker, elevation chart) can render the icon
+        // without needing a live weather fetch.
+        if (cells.weather && cells.weather !== '—') {
+          cells._icon = cells.weather.split(' ')[0];
+          if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && cells._icon) {
+            mapManager.setWaypointWeather(pt.wpIndex, cells._icon);
+          }
         }
         if (Object.keys(cells).length > 0) {
           saveWeatherCells(getSemanticKey(pt), cells);
