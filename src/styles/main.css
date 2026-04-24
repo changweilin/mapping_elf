@@ -3029,7 +3029,14 @@ body.modal-open {
   padding: 0; /* Ensure no extra padding */
 }
 .weather-card.full {
-  width: 280px;
+  width: min(280px, calc(100vw - var(--panel-width) - 80px));
+  max-height: calc(100vh - var(--toolbar-height) - var(--bottom-panel-height) - 80px);
+  overflow-y: auto;
+}
+@media (max-width: 768px) {
+  .weather-card.full {
+    width: min(280px, calc(100vw - 48px));
+  }
 }
 .weather-card.is-highlighted {
   z-index: 1000 !important;

@@ -950,6 +950,9 @@ window.addEventListener('keydown', (e) => {
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
       const targets = getCollectiveIndices(activeColIdx);
       targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+      if (nextMode === 'full') {
+        requestAnimationFrame(() => panMapToCenterFullCard(activeColIdx));
+      }
       return;
     }
     if (k === 'arrowdown') {
@@ -4859,12 +4862,8 @@ function navigateWeatherCard(colIdx, delta) {
 
   const mode = _wcStates.get(colIdx) || 'compact';
   setWeatherCardMode(nextColIdx, mode);
-  // Ensure map pans to the next point and UI highlights it
+  // highlightPoint handles mode-aware pan/centering
   highlightPoint(nextColIdx);
-  const nextPt = weatherPoints[nextColIdx];
-  if (nextPt) {
-    mapManager.map.panTo([nextPt.lat, nextPt.lng], { animate: true });
-  }
 }
 
 /**
@@ -5165,6 +5164,55 @@ function highlightWeatherColumn(colIdx) {
 }
 
 /**
+ * Pan the map so the full weather card is centred in the safe viewport area
+ * (map container minus side-panel and floating action buttons).
+ */
+function panMapToCenterFullCard(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return;
+  const map = mapManager.map;
+  const container = map.getContainer();
+  const rect = container.getBoundingClientRect();
+
+  const cardEl = document.getElementById(`wc-root-${colIdx}`);
+  const cardW = cardEl?.offsetWidth || 280;
+  const cardH = cardEl?.offsetHeight || 260;
+  const popupOffsetY = pt.isWaypoint ? 24 : 12;
+  const tipGap = 12;
+
+  const sidePanel = document.getElementById('side-panel');
+  const panelOpen = sidePanel?.classList.contains('open');
+  const panelRect = panelOpen ? sidePanel.getBoundingClientRect() : null;
+  const panelOverlap = panelRect ? Math.max(0, rect.right - panelRect.left) : 0;
+
+  const actionBtns = document.querySelector('.map-action-btns');
+  const btnRect = actionBtns?.getBoundingClientRect();
+  const btnReservedW = btnRect ? (btnRect.right - rect.left) + 12 : 0;
+
+  const pad = rect.width < 600 ? 12 : 16;
+  const safeLeft   = Math.max(pad, btnReservedW);
+  const safeRight  = rect.width - panelOverlap - pad;
+  const safeTop    = pad;
+  const safeBottom = rect.height - pad;
+
+  if (safeRight - safeLeft < cardW + 8 || safeBottom - safeTop < cardH + popupOffsetY + tipGap) {
+    map.panTo([pt.lat, pt.lng], { animate: true });
+    return;
+  }
+
+  const cardCenterX = (safeLeft + safeRight) / 2;
+  const cardCenterY = (safeTop + safeBottom) / 2;
+  const targetX = cardCenterX;
+  const targetY = cardCenterY + cardH / 2 + popupOffsetY + tipGap;
+
+  const currentPointPx = map.latLngToContainerPoint([pt.lat, pt.lng]);
+  const dx = currentPointPx.x - targetX;
+  const dy = currentPointPx.y - targetY;
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+  map.panBy([dx, dy], { animate: true, duration: 0.25 });
+}
+
+/**
  * Unified highlight: sync weather table, elevation chart, map marker,
  * and side-panel waypoint item for the given weather-column index.
  * All columns that share the same coordinate are highlighted together.
@@ -5221,7 +5269,10 @@ function highlightPoint(colIdx) {
   }
 
   // 5. Map Centering
-  if (waypointCentering) {
+  const mode = _wcStates.get(colIdx);
+  if (mode === 'full') {
+    panMapToCenterFullCard(colIdx);
+  } else if (waypointCentering) {
     mapManager.map.panTo([pt.lat, pt.lng], { animate: true });
   }
 
