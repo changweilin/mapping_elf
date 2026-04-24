@@ -3266,3 +3266,19 @@ body.modal-open {
   transform: translateY(-2px);
 }
 
+
+.panel-bottom-logo {
+  padding: 32px 0;
+  display: flex;
+  justify-content: center;
+  opacity: 0.15;
+  filter: grayscale(0.5);
+  pointer-events: none;
+  user-select: none;
+}
+.panel-bottom-logo img {
+  width: 140px;
+  height: 140px;
+  object-fit: contain;
+}
+
