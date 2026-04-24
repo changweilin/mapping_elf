@@ -3063,40 +3063,65 @@ function _poiRank(score, dist) {
   return score + (dist || 0) / _POI_DIST_K;
 }
 
+/** Apply layer-aware offset: topo favors nature, streets favors facilities. */
+function _layerBias(layer, isNatural, isFacility) {
+  if (layer === 'topo') {
+    if (isNatural) return -2;
+    if (isFacility) return 1;
+  } else if (layer === 'streets') {
+    if (isFacility) return -3;
+    if (isNatural) return 1;
+  }
+  return 0;
+}
+
 /** Priority score for an Overpass POI element (lower = higher priority). */
-function _poiScore(tags) {
+function _poiScore(tags, layer) {
   const n = tags.natural, w = tags.waterway;
-  if (n === 'peak' || n === 'volcano') return 0;
-  if (w === 'waterfall') return 1;
-  if (n === 'spring' || n === 'cave_entrance') return 2;
-  if (n) return 3;
-  if (tags.tourism) return 4;
-  if (tags.historic) return 5;
-  if (tags.leisure) return 6;
-  if (tags.amenity) return 7;
-  if (tags.shop) return 8;
-  return 9;
+  let base;
+  if (n === 'peak' || n === 'volcano') base = 0;
+  else if (w === 'waterfall') base = 1;
+  else if (n === 'spring' || n === 'cave_entrance') base = 2;
+  else if (n) base = 3;
+  else if (tags.tourism) base = 4;
+  else if (tags.historic) base = 5;
+  else if (tags.leisure) base = 6;
+  else if (tags.amenity) base = 7;
+  else if (tags.shop) base = 8;
+  else base = 9;
+  const isNatural = !!n || w === 'waterfall';
+  const isFacility = !!(tags.amenity || tags.shop || tags.tourism || tags.historic || tags.leisure);
+  return base + _layerBias(layer, isNatural, isFacility);
 }
 
 /** Priority score for the Nominatim result's own data.name (roads/boundaries get 99). */
-function _nominatimScore(data) {
+function _nominatimScore(data, layer) {
   const cat = data.category || '', typ = data.type || '';
-  if (cat === 'natural') return (typ === 'peak' || typ === 'volcano') ? 0 : typ === 'waterfall' ? 1 : 2;
-  if (cat === 'waterway') return 1;
-  if (cat === 'tourism') return 4;
-  if (cat === 'historic') return 5;
-  if (cat === 'leisure') return 6;
-  if (cat === 'amenity') return 7;
-  if (cat === 'building') return 7;
-  if (cat === 'shop') return 8;
-  return 99; // highway, boundary, place, etc. — don't use data.name
+  let base;
+  if (cat === 'natural') base = (typ === 'peak' || typ === 'volcano') ? 0 : typ === 'waterfall' ? 1 : 2;
+  else if (cat === 'waterway') base = 1;
+  else if (cat === 'tourism') base = 4;
+  else if (cat === 'historic') base = 5;
+  else if (cat === 'leisure') base = 6;
+  else if (cat === 'amenity') base = 7;
+  else if (cat === 'building') base = 7;
+  else if (cat === 'shop') base = 8;
+  else return 99; // highway, boundary, place, etc. — don't use data.name
+  const isNatural = cat === 'natural' || cat === 'waterway';
+  const isFacility = cat === 'tourism' || cat === 'historic' || cat === 'leisure' || cat === 'amenity' || cat === 'building' || cat === 'shop';
+  return base + _layerBias(layer, isNatural, isFacility);
 }
 
 const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
 
+// Signal set by fetchPlaceName when Nominatim returns 429; the queue reads this
+// to trigger exponential backoff.
+let _geocodeRateLimitHit = false;
+
 async function fetchPlaceName(lat, lng) {
   const k = _geocodeKey(lat, lng);
   if (k in waypointPlaceNames) return waypointPlaceNames[k];
+  const layer = (typeof mapManager !== 'undefined' && mapManager?.currentLayerName) || 'topo';
 
   const latS = lat.toFixed(5), lngS = lng.toFixed(5);
 
@@ -3126,7 +3151,10 @@ out center 20;`;
     fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
       { headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' }, ...fetchOptions }
-    ).then(r => r.ok ? r.json() : null),
+    ).then(r => {
+      if (r.status === 429) { _geocodeRateLimitHit = true; return null; }
+      return r.ok ? r.json() : null;
+    }),
 
     fetch(OVERPASS_API, {
       method: 'POST',
@@ -3146,7 +3174,7 @@ out center 20;`;
       .filter(e => e.tags?.name)
       .map(e => {
         const dist = haversineDistance([lat, lng], [e.lat ?? e.center?.lat ?? lat, e.lon ?? e.center?.lon ?? lng]);
-        return { name: e.tags.name, rank: _poiRank(_poiScore(e.tags), dist) };
+        return { name: e.tags.name, rank: _poiRank(_poiScore(e.tags, layer), dist) };
       })
       .sort((a, b) => a.rank - b.rank);
     if (ranked.length) { ovpName = ranked[0].name; ovpRank = ranked[0].rank; }
@@ -3155,7 +3183,7 @@ out center 20;`;
   // --- Best Nominatim POI name (only if data.name is a landmark, not a road/boundary) ---
   let nomPOI = null, nomPOIRank = Infinity;
   if (nomData?.name) {
-    const nomScore = _nominatimScore(nomData);
+    const nomScore = _nominatimScore(nomData, layer);
     if (nomScore < 99) {
       nomPOI = nomData.name;
       const nLat = parseFloat(nomData.lat), nLon = parseFloat(nomData.lon);
@@ -3184,44 +3212,68 @@ out center 20;`;
   try { localStorage.setItem(LS_GEOCODE_KEY, JSON.stringify(waypointPlaceNames)); } catch (_) { }
   return waypointPlaceNames[k];
 }
+// Global geocode throttle: ensures Nominatim requests are >= 1s apart across
+// all call sites (batch import + rapid manual clicks share the same queue).
+const GEOCODE_MIN_INTERVAL_MS = 1000;
+let _geocodeQueue = Promise.resolve();
+let _lastGeocodeRequestTime = 0;
+let _geocode429BackoffMs = 0;
+
+/** Enqueue one point for geocoding. Returns a promise that resolves after the
+ *  fetch (or cache hit) completes. Cache hits skip the rate-limit wait. */
+function enqueueGeocode(lat, lng) {
+  const k = _geocodeKey(lat, lng);
+  if (k in waypointPlaceNames || k in waypointCustomNames) {
+    return Promise.resolve(waypointPlaceNames[k] ?? null);
+  }
+  const task = _geocodeQueue.then(async () => {
+    // Re-check cache: a prior queued task may have resolved this same point.
+    if (k in waypointPlaceNames || k in waypointCustomNames) {
+      return waypointPlaceNames[k] ?? null;
+    }
+    const now = Date.now();
+    const wait = Math.max(
+      0,
+      _lastGeocodeRequestTime + GEOCODE_MIN_INTERVAL_MS + _geocode429BackoffMs - now
+    );
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    _lastGeocodeRequestTime = Date.now();
+    _geocodeRateLimitHit = false;
+    const name = await fetchPlaceName(lat, lng);
+    if (_geocodeRateLimitHit) {
+      _geocode429BackoffMs = _geocode429BackoffMs
+        ? Math.min(_geocode429BackoffMs * 2, 30000)
+        : 2000;
+    } else {
+      _geocode429BackoffMs = 0;
+    }
+    return name;
+  });
+  _geocodeQueue = task.catch(() => {}); // don't break the chain on error
+  return task;
+}
+
 /** Geocode waypoints in background; update column labels as results arrive. */
 async function geocodeWaypoints(waypoints) {
   for (let i = 0; i < waypoints.length; i++) {
     const [lat, lng] = waypoints[i];
-    const k = _geocodeKey(lat, lng);
-    if (k in waypointPlaceNames || k in waypointCustomNames) continue; // already known
-    await fetchPlaceName(lat, lng);
+    try {
+      await enqueueGeocode(lat, lng);
+    } catch (_) { /* swallow; next point still queues */ }
     _applyPlaceNameToDOM();
-    // Nominatim rate limit: max 1 req/s
-    if (i < waypoints.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
 }
 /** Re-render labels locally after a geocode result or custom name save to avoid UI flashing */
 function _applyPlaceNameToDOM() {
   if (weatherPoints.length > 0) {
     const wps = mapManager.waypoints;
-    const isSharedLocation = (lat, lng) => {
-      let matches = 0;
-      for (const wp of wps) {
-        if (haversineDistance([lat, lng], wp) < 20) matches++;
-      }
-      return matches > 1;
-    };
     weatherPoints.forEach((pt) => {
       if (pt.isWaypoint) {
         const k = _geocodeKey(pt.lat, pt.lng);
         const customName = waypointCustomNames[k];
         const geocodedName = waypointPlaceNames[k];
         const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === wps.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
-
-        let effectivePlaceName = customName;
-        if (!effectivePlaceName) {
-          // Only use geocoded name if it's not a generic start/end and not shared with another point
-          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !isSharedLocation(pt.lat, pt.lng)) {
-            effectivePlaceName = geocodedName;
-          }
-        }
-        pt.label = effectivePlaceName || fallbackLabel;
+        pt.label = customName || geocodedName || fallbackLabel;
       }
     });
     deduplicateLabels(weatherPoints);
@@ -3784,14 +3836,6 @@ function buildWeatherPoints() {
   const coords = currentRouteCoords;
   if (wps.length === 0) return [];
 
-  const _isSharedLocation = (lat, lng) => {
-    let matches = 0;
-    for (const wp of wps) {
-      if (haversineDistance([lat, lng], wp) < 20) matches++;
-    }
-    return matches > 1;
-  };
-
   // --- Compute cumulative distances for waypoints along the route ---
   let totalDistM = 0;
   const wpCumDist = [];
@@ -3923,14 +3967,7 @@ function buildWeatherPoints() {
         // User-edited custom names win over labels restored from the imported
         // file — otherwise a fresh saveCustomName() reverts to the original
         // imported label on the next buildWeatherPoints() pass.
-        // The 起點/終點/shared-location filter only applies to reverse-geocoded
-        // names, which can be redundant or positional-style.
-        let effectivePlaceName = customName || m.label;
-        if (!effectivePlaceName) {
-          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(m.lat, m.lng)) {
-            effectivePlaceName = geocodedName;
-          }
-        }
+        const effectivePlaceName = customName || m.label || geocodedName;
         const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
@@ -3957,16 +3994,7 @@ function buildWeatherPoints() {
     for (let i = 0; i < wps.length; i++) {
       const lat = wps[i][0], lng = wps[i][1];
       const k = _geocodeKey(lat, lng);
-      const customName = waypointCustomNames[k];
-      const geocodedName = waypointPlaceNames[k];
-
-      let effectivePlaceName = customName;
-      if (!effectivePlaceName) {
-        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng)) {
-          effectivePlaceName = geocodedName;
-        }
-      }
-
+      const effectivePlaceName = waypointCustomNames[k] || waypointPlaceNames[k];
       const label = effectivePlaceName
         ? effectivePlaceName
         : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
@@ -4089,9 +4117,7 @@ function buildWeatherPoints() {
       for (let i = wps.length - 2; i >= 0; i--) {
         const lat = wps[i][0], lng = wps[i][1];
         const k = _geocodeKey(lat, lng);
-        const customName = waypointCustomNames[k];
-        const geocodedName = waypointPlaceNames[k];
-        let effectivePlaceName = customName || (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng) ? geocodedName : null);
+        const effectivePlaceName = waypointCustomNames[k] || waypointPlaceNames[k];
         const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
         const returnCum = totalDistM - wpCumDist[i];
         all.push({
@@ -4103,9 +4129,7 @@ function buildWeatherPoints() {
       const i = 0;
       const lat = wps[i][0], lng = wps[i][1];
       const k = _geocodeKey(lat, lng);
-      const customName = waypointCustomNames[k];
-      const geocodedName = waypointPlaceNames[k];
-      let effectivePlaceName = customName || (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng) ? geocodedName : null);
+      const effectivePlaceName = waypointCustomNames[k] || waypointPlaceNames[k];
       const returnCum = totalDistM;
       all.push({
         label: effectivePlaceName || '起點', lat, lng, isWaypoint: true, isReturn: true, wpIndex: i,
