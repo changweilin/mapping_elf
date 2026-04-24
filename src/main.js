@@ -708,11 +708,12 @@ function updateThemeIcons() {
 
   // Update Logos
   const suffix = isLight ? '' : '_dark';
-  const loadingLogo = document.querySelector('.loading-icon img');
-  const toolbarLogo = document.querySelector('.app-logo-icon');
-  
-  if (loadingLogo) loadingLogo.src = `./mapping_owl_cursor${suffix}.svg`;
-  if (toolbarLogo) toolbarLogo.src = `./simple_owl_cursor${suffix}.svg`;
+  document.querySelectorAll('img[src*="simple_owl_cursor"]').forEach(img => {
+    img.src = `./simple_owl_cursor${suffix}.svg`;
+  });
+  document.querySelectorAll('img[src*="mapping_owl_cursor"]').forEach(img => {
+    img.src = `./mapping_owl_cursor${suffix}.svg`;
+  });
 
   // Update Favicon (Optional but nice)
   const favicon = document.querySelector('link[rel="icon"]');

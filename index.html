@@ -25,11 +25,14 @@
         // Set logos immediately to prevent flash
         var suffix = isLight ? '' : '_dark';
         window.addEventListener('DOMContentLoaded', function () {
-          var loadingLogo = document.querySelector('.loading-icon img');
-          var toolbarLogo = document.querySelector('.app-logo-icon');
+          var suffix = isLight ? '' : '_dark';
+          document.querySelectorAll('img[src*="simple_owl_cursor"]').forEach(function(img) {
+            img.src = './simple_owl_cursor' + suffix + '.svg';
+          });
+          document.querySelectorAll('img[src*="mapping_owl_cursor"]').forEach(function(img) {
+            img.src = './mapping_owl_cursor' + suffix + '.svg';
+          });
           var favicon = document.querySelector('link[rel="icon"]');
-          if (loadingLogo) loadingLogo.src = './mapping_owl_cursor' + suffix + '.svg';
-          if (toolbarLogo) toolbarLogo.src = './simple_owl_cursor' + suffix + '.svg';
           if (favicon) favicon.href = './favicon' + suffix + '.svg';
         });
       } catch (e) { }
