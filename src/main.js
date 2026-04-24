@@ -827,6 +827,17 @@ function syncTrackModeUI() {
 }
 
 btnReplanRoute?.addEventListener('click', () => {
+  const toRemove = [];
+  if (importedTrackMode) {
+    for (let i = 0; i < mapManager.waypoints.length; i++) {
+      const meta = importedWaypointMeta[i];
+      const label = meta?.label || "";
+      if (/\s*[↺↻↩]$|\s*\(回程\)$/.test(label)) {
+        toRemove.push(i);
+      }
+    }
+  }
+
   importedTrackMode = false;
   importedIntermediatePoints = [];
   importedWaypointMeta = [];
@@ -835,22 +846,18 @@ btnReplanRoute?.addEventListener('click', () => {
   // Clear the imported track polyline but keep waypoint markers
   mapManager.clearRoute();
 
-  // Remove return waypoints identified by ' ↩', ' ↺', ' ↻', ' ↻' labels and clean their stored names
-  for (let i = mapManager.waypoints.length - 1; i >= 0; i--) {
+  // Remove identified return waypoints backwards
+  for (let i = toRemove.length - 1; i >= 0; i--) {
+    mapManager.removeWaypoint(toRemove[i]);
+  }
+
+  // Clean remaining waypoint names (backward-compat or manual renames)
+  for (let i = 0; i < mapManager.waypoints.length; i++) {
     const [lat, lng] = mapManager.waypoints[i];
     const key = _geocodeKey(lat, lng);
-    const name = waypointCustomNames[key] || waypointPlaceNames[key] || '';
-    
-    // Check for turnaround symbols in either custom or geocoded name
-    if (/\s*[↺↻↩]$|\s*\(回程\)$/.test(name)) {
-      mapManager.removeWaypoint(i);
-      // Also remove from custom names so it doesn't reappear
-      delete waypointCustomNames[key];
-    } else {
-        // For remaining waypoints, strip any turnaround arrow that might be present
-        if (waypointCustomNames[key]) {
-            waypointCustomNames[key] = waypointCustomNames[key].replace(/\s*[↺↻↩]$/, '').trim();
-        }
+    if (waypointCustomNames[key]) {
+      const old = waypointCustomNames[key];
+      waypointCustomNames[key] = old.replace(/\s*[↺↻↩]$/, '').trim();
     }
   }
   try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
@@ -2344,6 +2351,7 @@ function _applyImportedResultCore(result) {
       fileOrder: sd?.fileOrder,
       ele: sd?.ele ?? null,
       cumDistM: sd?.cumDistM ?? null,
+      label: sd?.label ?? null,
     }));
     syncTrackModeUI();
 
@@ -2358,14 +2366,6 @@ function _applyImportedResultCore(result) {
       // (triggered at the end of the batch) find the correct segmentDates for labels.
       if (result.segmentDates) {
         window._pendingGpxDates = result.segmentDates;
-        result.waypoints.forEach((wp, i) => {
-          const sd = result.segmentDates[i];
-          if (sd?.label) {
-            // Do NOT strip symbols here; let them show up in the list so Replan can find them
-            waypointCustomNames[_geocodeKey(wp[0], wp[1])] = sd.label;
-          }
-        });
-        try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
       }
 
       skipAutoGeocode = !importAutoNameMode;
@@ -3433,6 +3433,7 @@ function buildWeatherPoints() {
         fileOrder: meta.fileOrder ?? (i * 1000),
         ele: meta.ele ?? null,
         cumDistM: meta.cumDistM ?? null,
+        label: meta.label ?? null,
       });
     });
     importedIntermediatePoints.forEach((p, i) => {
@@ -3475,7 +3476,7 @@ function buildWeatherPoints() {
         // Custom names (including labels restored from the imported file) are
         // honored as-is. The 起點/終點/shared-location filter only applies to
         // reverse-geocoded names, which can be redundant or positional-style.
-        let effectivePlaceName = customName;
+        let effectivePlaceName = m.label || customName;
         if (!effectivePlaceName) {
           if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(m.lat, m.lng)) {
             effectivePlaceName = geocodedName;
