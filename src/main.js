@@ -110,7 +110,7 @@ let paceParams = (() => {
 })();
 
 const LS_FAVORITES_KEY = 'mappingElf_favorites';
-const FAVORITES_MAX = 3;
+const FAVORITES_MAX = 10;
 let favorites = (() => {
   try {
     const arr = JSON.parse(localStorage.getItem(LS_FAVORITES_KEY) || '[]');
