@@ -4953,6 +4953,12 @@ function _renderWeatherCard(colIdx) {
   const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
   html += `<div class="wc-header" style="${headerStyle}">`;
   html += `<span class="wc-title">${wIcon} ${label}</span>`;
+  if (isFull) {
+    html += `<button class="wc-btn q-prev" title="上一個點">`;
+    html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
+    html += `<button class="wc-btn q-next" title="下一個點">`;
+    html += `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg></button>`;
+  }
   html += `<button class="wc-btn q-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
   html += `<svg viewBox="0 0 24 24"><path d="${isCompact
     ? 'M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z'
@@ -5038,6 +5044,14 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
     const targets = getCollectiveIndices(colIdx);
     targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+  });
+  root.querySelector('.q-prev')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigateWeatherCard(colIdx, -1);
+  });
+  root.querySelector('.q-next')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigateWeatherCard(colIdx, +1);
   });
   // Touch gestures: swipe detection
   let _touchStartX = 0, _touchStartY = 0;
