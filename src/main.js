@@ -4928,26 +4928,15 @@ function _renderWeatherCard(colIdx) {
   const wDesc = weatherParts.slice(1).join(' ') || '—';
   const temp = val('temp');
   const precipitation = val('precipitation');
+  const precipProb = val('precipProb');
   const label = pt.label || (pt.isWaypoint ? `航點 ${pt.wpIndex + 1}` : '中繼點');
-
-  // Nav
-  const colsWithWeather = [];
-  weatherPoints.forEach((p, i) => {
-    const icon = savedWeatherCells[getSemanticKey(p)]?.weather?.split(' ')[0];
-    if (icon) colsWithWeather.push(i);
-  });
-  const canNav = colsWithWeather.length > 1;
 
   // Build HTML with unique ID per column card
   let html = `<div class="weather-card${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}">`;
 
   // Header
   html += `<div class="wc-header">`;
-  html += `<button class="wc-btn q-prev" title="上一個點"${!canNav ? ' disabled' : ''}>`;
-  html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
   html += `<span class="wc-title">${wIcon} ${label}</span>`;
-  html += `<button class="wc-btn q-next" title="下一個點"${!canNav ? ' disabled' : ''}>`;
-  html += `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg></button>`;
   html += `<button class="wc-btn q-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
   html += `<svg viewBox="0 0 24 24"><path d="${isCompact
     ? 'M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z'
@@ -4959,10 +4948,15 @@ function _renderWeatherCard(colIdx) {
 
   // Body
   html += `<div class="wc-body">`;
-  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${temp}</span></div>`;
 
   if (isCompact) {
-    html += `<div class="wc-row"><span class="wc-row-label">雨量</span><span class="wc-row-value">${precipitation}</span></div>`;
+    // Compact: 2-row grid, values only (no field labels)
+    html += `<div class="wc-compact">`;
+    html += `<div class="wc-c-row"><span class="wc-c-icon">${wIcon}</span><span class="wc-c-val">${temp}</span></div>`;
+    html += `<div class="wc-c-row"><span class="wc-c-val">${precipProb}</span><span class="wc-c-val">${precipitation}</span></div>`;
+    html += `</div>`;
+  } else {
+    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${temp}</span></div>`;
   }
   if (isFull) {
     const CARD_ROWS = [
@@ -5026,15 +5020,6 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     const targets = getCollectiveIndices(colIdx);
     targets.forEach(idx => setWeatherCardMode(idx, nextMode));
   });
-  root.querySelector('.q-prev')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    navigateWeatherCard(colIdx, -1);
-  });
-  root.querySelector('.q-next')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    navigateWeatherCard(colIdx, +1);
-  });
-
   // Touch gestures: swipe detection
   let _touchStartX = 0, _touchStartY = 0;
   let _touchStartTime = 0;

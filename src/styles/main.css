@@ -2945,28 +2945,52 @@ body.modal-open {
 
 .weather-card:not(.full) {
   width: auto;
-  min-width: 120px;
+  min-width: 0;
 }
 .weather-card:not(.full) .wc-title {
   display: none;
 }
-.weather-card:not(.full) .wc-weather-desc {
-  display: none;
-}
-.weather-card:not(.full) .wc-weather-main {
-  justify-content: center;
-  padding: 4px 0;
-}
 .weather-card:not(.full) .wc-header {
   gap: 2px;
-  padding: 4px;
+  padding: 2px 3px;
+  border-bottom: none;
+  background: transparent;
+}
+.weather-card:not(.full) .wc-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+.weather-card:not(.full) .wc-btn svg {
+  width: 11px;
+  height: 11px;
 }
 .weather-card:not(.full) .wc-body {
-  padding: 4px 6px;
+  padding: 2px 4px 3px;
 }
-.weather-card:not(.full) .wc-row {
-  padding: 2px 0;
-  font-size: 11px;
+
+/* Compact 2x2 grid: values only, no labels */
+.wc-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.wc-c-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 6px;
+  white-space: nowrap;
+  line-height: 1.1;
+}
+.wc-c-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+.wc-c-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 @keyframes weatherCardIn {
