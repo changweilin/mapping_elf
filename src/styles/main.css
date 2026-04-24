@@ -3194,3 +3194,75 @@ body.modal-open {
   opacity: 0.8;
 }
 
+
+/* ======== About Me ======== */
+.about-me-section {
+  margin-top: auto;
+  padding: 16px 14px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.05);
+}
+.about-me-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.about-me-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.about-me-logo {
+  width: 24px;
+  height: 24px;
+  opacity: 0.9;
+}
+.about-me-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+.about-me-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.about-me-quote p {
+  margin: 0;
+  line-height: 1.4;
+}
+.quote-zh {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.quote-en {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.quote-source {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: right;
+  margin-top: 2px !important;
+  opacity: 0.8;
+}
+.about-me-social {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+.social-link {
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.social-link:hover {
+  color: var(--accent-primary);
+  transform: translateY(-2px);
+}
+
