@@ -2318,8 +2318,6 @@ function deleteFavorite(id) {
 
 function openFavoritesModal() {
   if (!favoritesModal) return;
-  const input = document.getElementById('favorites-name-input');
-  if (input) input.value = buildDefaultRouteName() || '';
   renderFavoritesList();
   document.body.classList.add('modal-open');
   favoritesModal.classList.remove('hidden');
@@ -2349,33 +2347,116 @@ function renderFavoritesList() {
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
     });
     return `
-      <div class="favorite-item" data-id="${_escapeHtml(f.id)}">
+      <div class="favorite-item" data-id="${_escapeHtml(f.id)}" role="button" tabindex="0">
         <div class="fav-info">
           <div class="fav-name">${_escapeHtml(f.name || '未命名路線')}</div>
           <div class="fav-meta">${count} 個航點 · ${_escapeHtml(dateStr)}</div>
         </div>
-        <div class="fav-actions">
-          <button class="icon-btn fav-load" title="載入">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
-          </button>
-          <button class="icon-btn danger fav-delete" title="刪除">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>
-          </button>
-        </div>
       </div>`;
   }).join('');
-  container.querySelectorAll('.fav-load').forEach(btn => btn.addEventListener('click', (e) => {
-    const id = e.currentTarget.closest('.favorite-item')?.dataset.id;
-    const fav = favorites.find(f => f.id === id);
-    if (fav) {
-      closeFavoritesModal();
-      loadFavorite(fav);
-    }
-  }));
-  container.querySelectorAll('.fav-delete').forEach(btn => btn.addEventListener('click', (e) => {
-    const id = e.currentTarget.closest('.favorite-item')?.dataset.id;
-    if (id && confirm('確定要刪除此最愛?')) deleteFavorite(id);
-  }));
+  _bindFavoriteItemInteractions(container);
+}
+
+// Whole favorite item = click to load; long-press + drag outside modal box = delete.
+function _bindFavoriteItemInteractions(container) {
+  const modalBox = favoritesModal?.querySelector('.modal-box');
+  if (!modalBox) return;
+
+  container.querySelectorAll('.favorite-item').forEach(item => {
+    let pressTimer = null;
+    let dragging = false;
+    let longPressed = false;
+    let startX = 0, startY = 0;
+    let capturedPointer = null;
+
+    const resetVisual = () => {
+      item.classList.remove('dragging', 'drag-over-delete');
+      item.style.transform = '';
+    };
+    const cancelPress = () => {
+      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    };
+    const releaseCapture = () => {
+      if (capturedPointer != null) {
+        try { item.releasePointerCapture(capturedPointer); } catch (_) { }
+        capturedPointer = null;
+      }
+    };
+    const isOutsideBox = (x, y) => {
+      const r = modalBox.getBoundingClientRect();
+      return x < r.left || x > r.right || y < r.top || y > r.bottom;
+    };
+
+    item.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button > 0) return;
+      startX = e.clientX;
+      startY = e.clientY;
+      longPressed = false;
+      dragging = false;
+      cancelPress();
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        longPressed = true;
+        dragging = true;
+        item.classList.add('dragging');
+        try { item.setPointerCapture(e.pointerId); capturedPointer = e.pointerId; } catch (_) { }
+      }, 450);
+    });
+
+    item.addEventListener('pointermove', (e) => {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!dragging) {
+        // Movement before long-press triggers: cancel (user is scrolling or tap-drifting).
+        if (pressTimer && Math.hypot(dx, dy) > 10) cancelPress();
+        return;
+      }
+      item.style.transform = `translate(${dx}px, ${dy}px)`;
+      item.classList.toggle('drag-over-delete', isOutsideBox(e.clientX, e.clientY));
+    });
+
+    const endPointer = (e) => {
+      cancelPress();
+      const wasDragging = dragging;
+      dragging = false;
+      releaseCapture();
+      if (wasDragging) {
+        if (isOutsideBox(e.clientX, e.clientY)) {
+          const id = item.dataset.id;
+          resetVisual();
+          if (id) deleteFavorite(id);
+          return;
+        }
+      }
+      resetVisual();
+    };
+    item.addEventListener('pointerup', endPointer);
+    item.addEventListener('pointercancel', () => { cancelPress(); dragging = false; releaseCapture(); resetVisual(); });
+
+    item.addEventListener('click', (e) => {
+      if (longPressed) {
+        longPressed = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const id = item.dataset.id;
+      const fav = favorites.find(f => f.id === id);
+      if (fav) {
+        closeFavoritesModal();
+        loadFavorite(fav);
+      }
+    });
+
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        const id = item.dataset.id;
+        const fav = favorites.find(f => f.id === id);
+        if (fav) { closeFavoritesModal(); loadFavorite(fav); }
+      }
+    });
+  });
 }
 
 function handleAddFavorite() {
@@ -2383,8 +2464,7 @@ function handleAddFavorite() {
     showNotification('至少需 2 個航點才能加入最愛', 'warning');
     return;
   }
-  const nameInput = document.getElementById('favorites-name-input');
-  const name = (nameInput?.value || '').trim() || null;
+  const name = buildDefaultRouteName() || null;
   if (favorites.length >= FAVORITES_MAX) {
     openReplaceFlow(name);
     return;
@@ -2416,9 +2496,9 @@ function openReplaceFlow(pendingName) {
   favoritesReplaceModal.classList.remove('hidden');
 }
 
-document.getElementById('btn-favorites')?.addEventListener('click', openFavoritesModal);
+document.getElementById('btn-favorite-add')?.addEventListener('click', handleAddFavorite);
+document.getElementById('btn-favorite-open')?.addEventListener('click', openFavoritesModal);
 document.getElementById('btn-favorites-close')?.addEventListener('click', closeFavoritesModal);
-document.getElementById('btn-favorites-add')?.addEventListener('click', handleAddFavorite);
 document.getElementById('btn-favorites-replace-cancel')?.addEventListener('click', closeReplaceModal);
 
 /**
@@ -3795,10 +3875,12 @@ function buildWeatherPoints() {
         const geocodedName = waypointPlaceNames[k];
         const isRet = false; // Imported tracks always single-way
 
-        // Custom names (including labels restored from the imported file) are
-        // honored as-is. The 起點/終點/shared-location filter only applies to
-        // reverse-geocoded names, which can be redundant or positional-style.
-        let effectivePlaceName = m.label || customName;
+        // User-edited custom names win over labels restored from the imported
+        // file — otherwise a fresh saveCustomName() reverts to the original
+        // imported label on the next buildWeatherPoints() pass.
+        // The 起點/終點/shared-location filter only applies to reverse-geocoded
+        // names, which can be redundant or positional-style.
+        let effectivePlaceName = customName || m.label;
         if (!effectivePlaceName) {
           if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(m.lat, m.lng)) {
             effectivePlaceName = geocodedName;

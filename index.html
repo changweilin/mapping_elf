@@ -226,7 +226,14 @@
                 fill="currentColor" />
             </svg>
           </button>
-          <button class="icon-btn" id="btn-favorites" title="我的最愛">
+          <button class="icon-btn" id="btn-favorite-add" title="加入我的最愛">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path
+                d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"
+                fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="btn-favorite-open" title="打開我的最愛清單">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
                 d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
@@ -856,11 +863,7 @@
     <div class="modal-box">
       <h3 class="modal-title">我的最愛</h3>
       <div id="favorites-list" class="favorites-list"></div>
-      <div class="favorites-add-row">
-        <input type="text" id="favorites-name-input" class="search-input" placeholder="路線名稱" maxlength="40" />
-        <button id="btn-favorites-add" class="btn-primary">加入目前路線</button>
-      </div>
-      <div class="favorites-hint">最多 3 筆。載入後會依目前環境重新計算路線與天氣。</div>
+      <div class="favorites-hint">點擊項目直接載入。長按並拖曳到框外可移除。最多 3 筆。</div>
       <div class="modal-actions">
         <button class="btn-secondary" id="btn-favorites-close">關閉</button>
       </div>
