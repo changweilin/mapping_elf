@@ -3268,7 +3268,7 @@ body.modal-open {
 
 
 .panel-bottom-logo {
-  padding: 32px 0;
+  padding: 16px 0 8px;
   display: flex;
   justify-content: center;
   opacity: 0.15;
