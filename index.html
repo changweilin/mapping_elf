@@ -26,13 +26,13 @@
         var suffix = isLight ? '' : '_dark';
         window.addEventListener('DOMContentLoaded', function () {
           var suffix = isLight ? '' : '_dark';
-          document.querySelectorAll('.owl-logo-simple').forEach(function(img) {
+          document.querySelectorAll('.owl-logo-simple').forEach(function (img) {
             img.src = './simple_owl_cursor' + suffix + '.svg';
           });
-          document.querySelectorAll('.owl-logo-mapping').forEach(function(img) {
+          document.querySelectorAll('.owl-logo-mapping').forEach(function (img) {
             img.src = './mapping_owl_cursor' + suffix + '.svg';
           });
-          document.querySelectorAll('.loading-icon img').forEach(function(img) {
+          document.querySelectorAll('.loading-icon img').forEach(function (img) {
             img.src = './mapping_owl_cursor' + suffix + '.svg';
           });
           var favicon = document.querySelector('link[rel="icon"]');
@@ -669,24 +669,6 @@
         </svg>
       </div>
       <div class="collapsible-body collapsed" id="settings-body">
-        <div class="settings-desc"
-          style="padding: 10px 14px; font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary); opacity: 0.9;">
-          <p style="margin-bottom: 6px;">點擊高度圖左方的 <span
-              style="color: var(--accent-primary); font-weight: 500;">「更新天氣」</span> 按鈕，天氣卡可透過 <span
-              style="color: var(--text-primary); font-weight: 500;">Open-Meteo</span> 取得：
-          <ul style="margin: 4px 0; padding-left: 18px;">
-            <li><span style="color: var(--text-primary); font-weight: 500;">預報模式</span>：未來 <span
-                style="color: var(--accent-primary);">16 天</span> 內的天氣。</li>
-            <li><span style="color: var(--text-primary); font-weight: 500;">歷史模式</span>：可追溯至 <span
-                style="color: var(--accent-primary);">1940 年</span> 起的資料。</li>
-          </ul>
-          </p>
-          <p style="margin-bottom: 6px;">設定在 <span style="color: var(--text-primary); font-weight: 500;">Windy</span>
-            中開啟時預設的圖層與預報模式。</p>
-          <p style="margin: 0;"><small style="display: block; opacity: 0.8; margin-top: 2px;">註：Windy 本身的預報範圍視其版本而定
-              (免費版約 <span style="color: var(--accent-primary);">6-10 天</span>，付費版可達 <span
-                style="color: var(--accent-primary);">15 天</span>)。</small></p>
-        </div>
         <div class="settings-row">
           <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
           <select id="windy-layer-select" title="天氣圖層">
@@ -711,6 +693,24 @@
             <option value="jmaMsm">MSM</option>
             <option value="multimodel">比較預報</option>
           </select>
+        </div>
+        <div class="settings-desc"
+          style="padding: 10px 14px; font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary); opacity: 0.9; border-top: 1px solid var(--border); margin-top: 10px;">
+          <p style="margin-bottom: 6px;">點擊高度圖左方的 <span
+              style="color: var(--accent-primary); font-weight: 500;">「更新天氣」</span> 按鈕，天氣卡可透過 <span
+              style="color: var(--text-primary); font-weight: 500;">Open-Meteo</span> 取得：
+          <ul style="margin: 4px 0; padding-left: 18px;">
+            <li><span style="color: var(--text-primary); font-weight: 500;">預報模式</span>：未來 <span
+                style="color: var(--accent-primary);">16 天</span> 內的天氣。</li>
+            <li><span style="color: var(--text-primary); font-weight: 500;">歷史模式</span>：可追溯至 <span
+                style="color: var(--accent-primary);">1940 年</span> 起的資料。</li>
+          </ul>
+          </p>
+          <p style="margin-bottom: 6px;">設定在 <span style="color: var(--text-primary); font-weight: 500;">Windy</span>
+            中開啟時預設的圖層與預報模式。</p>
+          <p style="margin: 0;"><small style="display: block; opacity: 0.8; margin-top: 2px;">註：Windy 本身的預報範圍視其版本而定
+              (免費版約 <span style="color: var(--accent-primary);">6-10 天</span>，付費版可達 <span
+                style="color: var(--accent-primary);">15 天</span>)。</small></p>
         </div>
       </div>
     </section>
@@ -793,7 +793,8 @@
           <p class="quote-source">— &lt;The Old Astronomer&gt; Sarah Williams</p>
         </div>
         <div class="about-me-social">
-          <a href="https://github.com/changweilin" target="_blank" rel="noopener" class="social-link github-link" title="GitHub">
+          <a href="https://github.com/changweilin" target="_blank" rel="noopener" class="social-link github-link"
+            title="GitHub">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path
                 d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
