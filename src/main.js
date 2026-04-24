@@ -1232,6 +1232,11 @@ async function onWaypointsChanged(waypoints) {
   // Clear stale cumulative distances so the sidebar shows no labels until
   // the new route is computed and buildWeatherPoints() populates fresh values.
   waypointCumDistM = [];
+
+  // Sync labels to map markers immediately (before route calculation)
+  const labels = waypoints.map((wp, i) => getWaypointLabel(i, wp[0], wp[1]));
+  mapManager.setWaypointLabels(labels);
+
   // Update UI list immediately for responsive feel
   updateWaypointList(waypoints);
   // Geocode any waypoints not yet named (fire-and-forget)
@@ -1476,11 +1481,10 @@ function updateWaypointList(waypoints) {
       const n = waypoints.length;
       const gradColor = waypointGradColors[i]
         || interpolateRouteColor(n > 1 ? i / (n - 1) : 0);
-      // Fallback label matches weather card: 起點 / 終點 / 航點 N
-      const fallbackLabel = i === 0 ? '起點' : (i === n - 1 ? '終點' : `航點 ${i + 1}`);
-      // Find final label from weatherPoints (which has been deduplicated)
+
+      // Consistently resolve label
       const pt = weatherPoints.find(p => p.isWaypoint && !p.isReturn && p.wpIndex === i);
-      const displayName = pt ? pt.label : (placeName || fallbackLabel);
+      const displayName = pt ? pt.label : getWaypointLabel(i, wp[0], wp[1]);
       const cumM = waypointCumDistM[i];
       const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
       return `
@@ -2138,11 +2142,12 @@ function persistFavorites() {
 function captureFavorite(name) {
   const wps = mapManager.waypoints.map(([a, b]) => [a, b]);
 
-  const neededKeys = new Set(wps.map(([la, ln]) => _geocodeKey(la, ln)));
   const customNames = {};
-  for (const k of Object.keys(waypointCustomNames || {})) {
-    if (neededKeys.has(k)) customNames[k] = waypointCustomNames[k];
-  }
+  wps.forEach(([la, ln]) => {
+    const k = _geocodeKey(la, ln);
+    const eff = getEffectiveName(la, ln);
+    if (eff) customNames[k] = eff;
+  });
 
   const weather = wps.map(() => ({ date: null, time: null, weather: {} }));
   if (Array.isArray(weatherPoints)) {
@@ -3011,6 +3016,21 @@ function getEffectiveName(lat, lng) {
 function getPlaceName(lat, lng) { return getEffectiveName(lat, lng); }
 
 /**
+ * Centered naming logic for all UI components.
+ * Priority: Custom Name > Geocoded Name > Fallback (Start/End/Waypoint N)
+ */
+function getWaypointLabel(index, lat, lng, isReturn = false) {
+  const custom = getEffectiveName(lat, lng);
+  if (custom) return custom;
+
+  if (isReturn) return '回程';
+  const total = mapManager.waypoints.length;
+  if (index === 0) return '起點';
+  if (index === total - 1 && total > 1) return '終點';
+  return `航點 ${index + 1}`;
+}
+
+/**
  * Deduplicate labels in-place: if two items share a label the second becomes
  * "Name (2)", the third "Name (3)", etc.
  */
@@ -3269,11 +3289,7 @@ function _applyPlaceNameToDOM() {
     const wps = mapManager.waypoints;
     weatherPoints.forEach((pt) => {
       if (pt.isWaypoint) {
-        const k = _geocodeKey(pt.lat, pt.lng);
-        const customName = waypointCustomNames[k];
-        const geocodedName = waypointPlaceNames[k];
-        const fallbackLabel = pt.isReturn ? '回程' : (pt.wpIndex === 0 ? '起點' : (pt.wpIndex === wps.length - 1 ? '終點' : `航點 ${pt.wpIndex + 1}`));
-        pt.label = customName || geocodedName || fallbackLabel;
+        pt.label = getWaypointLabel(pt.wpIndex, pt.lat, pt.lng, pt.isReturn);
       }
     });
     deduplicateLabels(weatherPoints);
@@ -3284,8 +3300,7 @@ function _applyPlaceNameToDOM() {
   if (items.length === mapManager.waypoints.length) {
     mapManager.waypoints.forEach((wp, i) => {
       const pt = weatherPoints.find(p => p.isWaypoint && !p.isReturn && p.wpIndex === i);
-      const fallbackLabel = i === 0 ? '起點' : (i === mapManager.waypoints.length - 1 ? '終點' : `航點 ${i + 1}`);
-      const displayName = pt ? pt.label : (getPlaceName(wp[0], wp[1]) || fallbackLabel);
+      const displayName = pt ? pt.label : getWaypointLabel(i, wp[0], wp[1]);
       const nameEl = items[i].querySelector('.wp-place-name');
       if (nameEl && nameEl.textContent !== displayName) {
         nameEl.textContent = displayName;
@@ -3967,8 +3982,7 @@ function buildWeatherPoints() {
         // User-edited custom names win over labels restored from the imported
         // file — otherwise a fresh saveCustomName() reverts to the original
         // imported label on the next buildWeatherPoints() pass.
-        const effectivePlaceName = customName || m.label || geocodedName;
-        const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
+        const label = customName || m.label || geocodedName || getWaypointLabel(m.wpIndex, m.lat, m.lng, isRet);
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
           isReturn: isRet,
@@ -3993,11 +4007,7 @@ function buildWeatherPoints() {
     // Add actual waypoints
     for (let i = 0; i < wps.length; i++) {
       const lat = wps[i][0], lng = wps[i][1];
-      const k = _geocodeKey(lat, lng);
-      const effectivePlaceName = waypointCustomNames[k] || waypointPlaceNames[k];
-      const label = effectivePlaceName
-        ? effectivePlaceName
-        : (i === 0 ? '起點' : i === wps.length - 1 ? '終點' : `航點 ${i + 1}`);
+      const label = getWaypointLabel(i, lat, lng, false);
       all.push({
         label, lat, lng, isWaypoint: true, wpIndex: i,
         isReturn: false,
