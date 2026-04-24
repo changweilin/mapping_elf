@@ -3282,3 +3282,11 @@ body.modal-open {
   object-fit: contain;
 }
 
+
+/* Social Link Hover Colors */
+.github-link:hover { color: #24292f !important; }
+.linkedin-link:hover { color: #0077b5 !important; }
+
+html.light-theme .github-link { color: #24292f; }
+html.light-theme .linkedin-link { color: #0077b5; }
+
