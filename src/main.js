@@ -5361,7 +5361,7 @@ async function init() {
     const intervalModeEls = document.querySelectorAll('input[name="interval-mode"]');
     const segmentInputEl = document.getElementById('segment-interval-input');
     const speedActivityEl = document.getElementById('speed-activity-select');
-    const activityRow = document.getElementById('interval-activity-row');
+    const activityRow = document.getElementById('pace-header-actions');
     const pacePanel = document.getElementById('pace-params-panel');
 
     // Derive initial mode from saved state
@@ -5750,9 +5750,19 @@ function initKeywordSearch() {
   const resultsEl = document.getElementById('search-results');
   if (!input || !btn || !resultsEl) return;
 
+  const expandSearchBody = () => {
+    const body = document.getElementById('search-body');
+    const header = document.getElementById('search-toggle-header');
+    if (body?.classList.contains('collapsed')) {
+      body.classList.remove('collapsed');
+      header?.classList.remove('collapsed');
+    }
+  };
+
   const doSearch = async () => {
     const q = input.value.trim();
     if (!q) { resultsEl.style.display = 'none'; return; }
+    expandSearchBody();
 
     // Direct coord input — skip network
     const coords = parseLatLngInput(q);

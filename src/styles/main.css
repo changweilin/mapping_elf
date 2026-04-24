@@ -579,6 +579,100 @@ html, body {
   gap: 4px;
 }
 
+/* Compact header controls for collapsible panels (search / pace / waypoint / weather) */
+/* Title text is prioritised — never truncated; controls shrink instead. */
+#search-toggle-header h3,
+#pace-toggle-header h3,
+#waypoint-settings-toggle-header h3,
+#settings-toggle-header h3 {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.collapsible-header .h3-label {
+  white-space: nowrap;
+}
+
+.search-header-actions,
+.pace-header-actions,
+.waypoint-header-actions,
+.weather-header-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-end;
+  align-items: center;
+  margin-left: 8px;
+  margin-right: 8px;
+}
+
+/* Search input grows but can shrink */
+.search-header-actions .search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+.search-header-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+/* Pace / Weather selects shrink with ellipsis */
+.pace-header-actions .speed-activity-compact,
+.weather-header-actions select {
+  flex: 1 1 auto;
+  height: 28px;
+  padding: 2px 18px 2px 6px;
+  font-size: 11px;
+  min-width: 0;
+  max-width: 100px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+}
+.weather-header-actions .windy-favicon {
+  flex-shrink: 0;
+}
+
+/* Waypoint interval controls — the widest; allow to shrink aggressively */
+.waypoint-header-actions .interval-mode-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+.waypoint-header-actions .imode-opt {
+  padding: 2px 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.waypoint-header-actions .segment-interval-input {
+  width: 36px;
+  height: 24px;
+  padding: 2px 4px;
+  font-size: 11px;
+  flex-shrink: 1;
+  min-width: 28px;
+}
+.waypoint-header-actions .segment-interval-unit {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .icon-btn {
   display: flex;
   align-items: center;
