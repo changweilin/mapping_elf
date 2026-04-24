@@ -2268,9 +2268,23 @@ function loadFavorite(fav) {
     importedTrackMode = false;
     importedIntermediatePoints = [];
     importedWaypointMeta = [];
+    clearImportedTrackSession();
     if (typeof syncTrackModeUI === 'function') syncTrackModeUI();
     _wcStates.clear();
     mapManager.closeWeatherPopup();
+    mapManager.clearIntermediateMarkers();
+
+    // Reset stale derived state so updateWaypointList / renderWeatherPanel
+    // don't pick up the previous route's labels, distances, or colors
+    // before debouncedCalculateRoute repopulates them.
+    weatherPoints = [];
+    waypointCumDistM = [];
+    waypointGradColors = [];
+    currentRouteCoords = [];
+    currentElevations = [];
+    allAlternatives = [];
+    lastWaypoints = [];
+    pendingNewWaypointIndex = null;
 
     const cb = mapManager.onWaypointChange;
     mapManager.onWaypointChange = () => { };
@@ -2287,6 +2301,7 @@ function loadFavorite(fav) {
   skipAutoGeocode = true;
   try { onWaypointsChanged(mapManager.waypoints); }
   finally { skipAutoGeocode = false; }
+  mapManager.fitToRoute();
   _updateHistoryButtons();
   showNotification(`已載入「${fav.name}」`, 'success');
 }
