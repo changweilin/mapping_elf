@@ -3401,8 +3401,26 @@ function buildWeatherPoints() {
   const all = [];
 
   if (importedTrackMode && coords.length > 1) {
-    // Unified sequential matching for ALL imported markers (waypoints + intermediates)
-    // to correctly handle out-and-back tracks.
+    // Build cumulative distance index for the track polyline (used as
+    // projection fallback when a marker doesn't carry its own cumDistM).
+    const trackCum = [0];
+    for (let j = 1; j < coords.length; j++) {
+      trackCum.push(trackCum[j - 1] + haversineDistance(coords[j - 1], coords[j]));
+    }
+
+    // Forward-walk projection cursor — used only for markers without cumDistM.
+    let projectCursor = 0;
+    const projectCum = (lat, lng) => {
+      let minDist = Infinity, minIdx = projectCursor;
+      for (let j = projectCursor; j < coords.length; j++) {
+        const d = haversineDistance([lat, lng], coords[j]);
+        if (d < minDist) { minDist = d; minIdx = j; }
+        if (minDist === 0) break;
+      }
+      projectCursor = minIdx;
+      return trackCum[minIdx];
+    };
+
     const markers = [];
     wps.forEach((wp, i) => {
       // Prefer the persistent meta (survives across re-renders); fall back to
@@ -3424,23 +3442,27 @@ function buildWeatherPoints() {
       });
     });
 
-    // Sort by original file sequence
-    markers.sort((a, b) => a.fileOrder - b.fileOrder);
+    // Prefer the authoritative cumDistM stored in the file (Mapping-Elf
+    // exports always include this) — it's the exact distance recorded at
+    // export time, immune to projection error and ordering ambiguity.
+    // Only fall back to fileOrder + sequential projection for third-party
+    // files that lack cumDistM.
+    const allHaveCum = markers.length > 0 && markers.every(
+      m => typeof m.cumDistM === 'number' && Number.isFinite(m.cumDistM)
+    );
+    if (allHaveCum) {
+      markers.sort((a, b) => a.cumDistM - b.cumDistM);
+    } else {
+      markers.sort((a, b) => a.fileOrder - b.fileOrder);
+    }
 
     // Imported tracks are strictly processed as single-way. We do not use the UI
     // nav-mode (roundTripMode/oLoopMode) to synthesize return flags here.
 
-    // Single forward walk projection
-    let searchStart = 0;
     markers.forEach(m => {
-      let minDist = Infinity, minIdx = searchStart;
-      for (let j = searchStart; j < coords.length; j++) {
-        const d = haversineDistance([m.lat, m.lng], coords[j]);
-        if (d < minDist) { minDist = d; minIdx = j; }
-        if (minDist === 0) break;
-      }
-      let cum = 0;
-      for (let j = 1; j <= minIdx; j++) cum += haversineDistance(coords[j - 1], coords[j]);
+      const cum = (typeof m.cumDistM === 'number' && Number.isFinite(m.cumDistM))
+        ? m.cumDistM
+        : projectCum(m.lat, m.lng);
 
       if (m.isWaypoint) {
         wpCumDist[m.wpIndex] = cum;
@@ -3448,7 +3470,7 @@ function buildWeatherPoints() {
         const placeName = getPlaceName(m.lat, m.lng);
         const isShared = _isSharedLocation(m.lat, m.lng);
         const isRet = false; // Imported tracks always single-way
-        
+
         const effectivePlaceName = (placeName === '起點' || placeName === '終點' || isShared) ? null : placeName;
         const label = effectivePlaceName || (m.wpIndex === 0 ? '起點' : m.wpIndex === wps.length - 1 ? '終點' : `航點 ${m.wpIndex + 1}`);
         all.push({
@@ -3458,11 +3480,10 @@ function buildWeatherPoints() {
           _ele: m.ele != null ? m.ele : getEleAt(cum),
         });
       } else {
-        const isRet = false; // Imported tracks always single-way
         all.push({
           label: m.label || '—',
           lat: m.lat, lng: m.lng, isWaypoint: false,
-          isReturn: isRet,
+          isReturn: false,
           _cum: cum, _elapsedH: getElapsedH(cum),
           _ele: m.ele != null ? m.ele : getEleAt(cum),
           weather: m.weather,
@@ -3470,7 +3491,6 @@ function buildWeatherPoints() {
           _preserveLabel: !!m.label,
         });
       }
-      searchStart = minIdx;
     });
   } else {
     // Legacy / Non-Import Batching logic
