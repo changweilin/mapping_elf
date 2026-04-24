@@ -2,7 +2,7 @@
  * Mapping Elf — Utility Functions
  */
 
-const EARTH_RADIUS = 6371000;
+const EARTH_RADIUS = 6371000.785;
 
 export function haversineDistance(p1, p2) {
   const toRad = (deg) => (deg * Math.PI) / 180;

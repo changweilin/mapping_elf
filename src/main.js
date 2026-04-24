@@ -3399,8 +3399,9 @@ function buildWeatherPoints() {
   /** Get elapsed hours for a given cumDistM (full-route metres). */
   const getElapsedH = (cumDistM) => {
     if (!cumTimes || !sampledDists.length || fullTotalDistBuild === 0) return 0;
-    const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDistBuild));
-    const mappedDist = fraction * sampledDists[sampledDists.length - 1];
+    // Map high-res distance to sampled distance space for pace lookup
+    const fraction = Math.max(0, Math.min(1, cumDistM / (totalDistM || 1)));
+    const mappedDist = fraction * (sampledDists[sampledDists.length - 1] || 0);
     return interpolateTimeAtDist(mappedDist, sampledDists, cumTimes);
   };
 
@@ -3408,8 +3409,9 @@ function buildWeatherPoints() {
   const getEleAt = (cumDistM) => {
     if (!sampledDists || !sampledDists.length || !sampledElevs || !sampledElevs.length) return null;
     const totalSampled = sampledDists[sampledDists.length - 1] || 0;
-    if (totalSampled === 0 || fullTotalDistBuild === 0) return sampledElevs[0] ?? null;
-    const fraction = Math.max(0, Math.min(1, cumDistM / fullTotalDistBuild));
+    if (totalSampled === 0 || totalDistM === 0) return sampledElevs[0] ?? null;
+    // Map high-res distance to sampled distance space for elevation lookup
+    const fraction = Math.max(0, Math.min(1, cumDistM / (totalDistM || 1)));
     return elevationProfile._interpolateElevAtCumM(fraction * totalSampled);
   };
 
@@ -3423,17 +3425,12 @@ function buildWeatherPoints() {
       trackCum.push(trackCum[j - 1] + haversineDistance(coords[j - 1], coords[j]));
     }
 
-    // Forward-walk projection cursor — used only for markers without cumDistM.
+    // Forward-walk projection cursor.
     let projectCursor = 0;
     const projectCum = (lat, lng) => {
-      let minDist = Infinity, minIdx = projectCursor;
-      for (let j = projectCursor; j < coords.length; j++) {
-        const d = haversineDistance([lat, lng], coords[j]);
-        if (d < minDist) { minDist = d; minIdx = j; }
-        if (minDist === 0) break;
-      }
-      projectCursor = minIdx;
-      return trackCum[minIdx];
+      const snap = projectMileage(coords, [lat, lng], projectCursor);
+      projectCursor = snap.mileage;
+      return snap.mileage;
     };
 
     const markers = [];
@@ -3550,160 +3547,132 @@ function buildWeatherPoints() {
   if (hasImportedIntersects) {
     // Imported intermediates were already merged in the unified sequential pass above.
     // Skip generating dynamic intervals.
-  } else if (speedIntervalMode && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
-    // Speed mode: intermediate points every 1 hour of travel time
-    let wpTimes = null;
-    if (perSegmentMode) {
-      const allWpCumDists = [...wpCumDist];
-      if (roundTripMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
-        for (let i = wps.length - 2; i >= 0; i--) {
-          allWpCumDists.push(totalDistM - wpCumDist[i]);
-        }
-      }
-      wpTimes = allWpCumDists.map(cum => getElapsedH(cum));
+  } else if (coords.length > 1) {
+    // Construct integrated (full-trip) high-resolution track for interval calculations.
+    // This ensures markers stay on-track even during mirroring / O-loops and avoids
+    // the "sampled shortcut" deviation seen with 80-point elevation profiles.
+    let integratedCoords = [...coords];
+    if (roundTripMode && !importedTrackMode) {
+      for (let i = coords.length - 2; i >= 0; i--) integratedCoords.push(coords[i]);
+    } else if (oLoopMode && !importedTrackMode) {
+      integratedCoords.push(coords[0]);
     }
 
-    const hourlyPts = computeHourlyPoints(sampledPts, sampledElevs, sampledDists, speedActivity, 1.0, paceParams, wpTimes);
-    hourlyPts.forEach((pt) => {
-      const fraction = pt.cumDistM / (sampledDists[sampledDists.length - 1] || 1);
-      const mappedCum = fraction * fullTotalDistBuild;
-      const hLabel = Number.isInteger(pt.estTimeH)
-        ? `第 ${pt.estTimeH} 小時`
-        : `${pt.estTimeH.toFixed(1)} 小時`;
-      all.push({
-        label: hLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
-        _cum: mappedCum, _elapsedH: pt.estTimeH,
-        _ele: getEleAt(mappedCum),
-      });
-    });
-  } else if (segmentIntervalKm > 0 && coords.length > 1) {
-    // km-interval intermediate points
-    const intermediates = computeIntermediatePoints(coords, segmentIntervalKm);
-    intermediates.forEach((pt) => {
-      const kmLabel = (pt.cumDistM / 1000 % 1 === 0)
-        ? `${pt.cumDistM / 1000 | 0} km`
-        : `${(pt.cumDistM / 1000).toFixed(1)} km`;
-      all.push({
-        label: kmLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
-        _cum: pt.cumDistM, _elapsedH: getElapsedH(pt.cumDistM),
-        _ele: getEleAt(pt.cumDistM),
-      });
-    });
-  } else if (coords.length > 0) {
-    // Fallback: auto-midpoints between each waypoint pair
-    const wpIndices = [];
-    let searchStart = 0;
-    for (let i = 0; i < wps.length; i++) {
-      let minDist = Infinity, minIdx = searchStart;
-      for (let j = searchStart; j < coords.length; j++) {
-        const d = haversineDistance(wps[i], coords[j]);
-        if (d < minDist) { minDist = d; minIdx = j; }
-        if (minDist === 0) break;
+    if (speedIntervalMode) {
+      // Speed mode: intermediate points every 1 hour of travel time.
+      // We pass the high-res integratedCoords + interpolated high-res elevations
+      // so the pace engine calculates exact positions along the real track.
+      const integratedDists = [0];
+      for (let j = 1; j < integratedCoords.length; j++) {
+        integratedDists.push(integratedDists[j - 1] + haversineDistance(integratedCoords[j - 1], integratedCoords[j]));
       }
-      wpIndices.push(minIdx);
-      searchStart = minIdx;
-    }
-    for (let i = 0; i < wps.length - 1; i++) {
-      const si = wpIndices[i];
-      const ei = wpIndices[i + 1] ?? coords.length - 1;
-      const mc = coords[Math.max(0, Math.min(Math.floor((si + ei) / 2), coords.length - 1))];
-      const labelA = i === 0 ? '起點' : `航點 ${i + 1}`;
-      const labelB = (i + 1 === wps.length - 1) ? '終點' : `航點 ${i + 2}`;
-      const midCum = (wpCumDist[i] + wpCumDist[i + 1]) / 2;
-      all.push({
-        label: `${labelA}→${labelB}`, lat: mc[0], lng: mc[1], isWaypoint: false,
-        _cum: midCum, _elapsedH: getElapsedH(midCum),
-        _ele: getEleAt(midCum),
+      const integratedElevs = integratedCoords.map((_, i) => getEleAt(integratedDists[i]));
+
+      let wpTimes = null;
+      if (perSegmentMode) {
+        const allWpCumDists = [...wpCumDist];
+        if (roundTripMode && wps.length >= 2 && totalDistM > 0) {
+          for (let i = wps.length - 2; i >= 0; i--) allWpCumDists.push(totalDistM - wpCumDist[i]);
+        } else if (oLoopMode && wps.length >= 2 && totalDistM > 0) {
+          allWpCumDists.push(totalDistM);
+        }
+        wpTimes = allWpCumDists.map(cum => getElapsedH(cum));
+      }
+
+      const hourlyPts = computeHourlyPoints(integratedCoords, integratedElevs, integratedDists, speedActivity, 1.0, paceParams, wpTimes);
+      hourlyPts.forEach((pt) => {
+        const hLabel = Number.isInteger(pt.estTimeH) ? `第 ${pt.estTimeH} 小時` : `${pt.estTimeH.toFixed(1)} 小時`;
+        all.push({
+          label: hLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
+          isReturn: pt.cumDistM > (wpCumDist[wps.length - 1] + 1e-3),
+          _cum: pt.cumDistM, _elapsedH: pt.estTimeH,
+          _ele: pt._ele ?? getEleAt(pt.cumDistM),
+        });
       });
+    } else if (segmentIntervalKm > 0) {
+      // km-interval intermediate points using high-res integrated track
+      const intermediates = computeIntermediatePoints(integratedCoords, segmentIntervalKm);
+      intermediates.forEach((pt) => {
+        const kmLabel = (pt.cumDistM / 1000 % 1 === 0)
+          ? `${pt.cumDistM / 1000 | 0} km`
+          : `${(pt.cumDistM / 1000).toFixed(1)} km`;
+        all.push({
+          label: kmLabel, lat: pt.lat, lng: pt.lng, isWaypoint: false,
+          isReturn: pt.cumDistM > (wpCumDist[wps.length - 1] + 1e-3),
+          _cum: pt.cumDistM, _elapsedH: getElapsedH(pt.cumDistM),
+          _ele: getEleAt(pt.cumDistM),
+        });
+      });
+    } else {
+      // Fallback: auto-midpoints between each waypoint pair
+      const wpIndices = [];
+      let searchStart = 0;
+      for (let i = 0; i < wps.length; i++) {
+        let minDist = Infinity, minIdx = searchStart;
+        for (let j = searchStart; j < coords.length; j++) {
+          const d = haversineDistance(wps[i], coords[j]);
+          if (d < minDist) { minDist = d; minIdx = j; }
+          if (minDist === 0) break;
+        }
+        wpIndices.push(minIdx);
+        searchStart = minIdx;
+      }
+      for (let i = 0; i < wps.length - 1; i++) {
+        const si = wpIndices[i];
+        const ei = wpIndices[i + 1] ?? coords.length - 1;
+        const mc = coords[Math.max(0, Math.min(Math.floor((si + ei) / 2), coords.length - 1))];
+        const labelA = i === 0 ? '起點' : `航點 ${i + 1}`;
+        const labelB = (i + 1 === wps.length - 1) ? '終點' : `航點 ${i + 2}`;
+        const midCum = (wpCumDist[i] + wpCumDist[i + 1]) / 2;
+        all.push({
+          label: `${labelA}→${labelB}`, lat: mc[0], lng: mc[1], isWaypoint: false,
+          _cum: midCum, _elapsedH: getElapsedH(midCum),
+          _ele: getEleAt(midCum),
+        });
+
+        if ((roundTripMode || oLoopMode) && !importedTrackMode) {
+          const returnCumMid = totalDistM - midCum;
+          all.push({
+            label: `${labelA}→${labelB}`,
+            lat: mc[0], lng: mc[1], // For round-trip, lat/lng is the same
+            isWaypoint: false,
+            isReturn: true,
+            _cum: returnCumMid,
+            _elapsedH: getElapsedH(returnCumMid),
+            _ele: getEleAt(returnCumMid),
+          });
+        }
+      }
     }
   }
 
-  // Round-trip / O-loop: mark return-leg interval points, add missing fallback
-  // midpoints, then add return waypoints (reversed for round-trip; just the
-  // start point for O-loop).
+  // --- Add Return Waypoints (Outbound already added above) ---
   if ((roundTripMode || oLoopMode) && !importedTrackMode && wps.length >= 2 && totalDistM > 0 && wpCumDist.length === wps.length) {
-    // Distance to the turnaround point (last outbound waypoint).
-    const oneWayDistM = wpCumDist[wps.length - 1];
-
-    // Speed/km modes: computeHourlyPoints / computeIntermediatePoints already
-    // produced return-leg interval points (they process the full round-trip
-    // route). Mark them so firstReturnIdx resolves at the turnaround, not at
-    // the first return waypoint further along the return leg.
-    all.forEach(pt => {
-      if (!pt.isWaypoint && (pt._cum ?? 0) > oneWayDistM) pt.isReturn = true;
-    });
-
-    // Fallback mode: outbound midpoints only span 0 → oneWayDistM. Mirror
-    // each one onto the return leg so both sides have equal interval density.
-    if (!speedIntervalMode && segmentIntervalKm === 0) {
-      const outboundMidpoints = all.filter(pt => !pt.isWaypoint);
-      outboundMidpoints.forEach(pt => {
-        const returnCumMid = totalDistM - pt._cum;
-        all.push({
-          label: pt.label,
-          lat: pt.lat,
-          lng: pt.lng,
-          isWaypoint: false,
-          isReturn: true,
-          _cum: returnCumMid,
-          _elapsedH: getElapsedH(returnCumMid),
-          _ele: getEleAt(returnCumMid),
-        });
-      });
-    }
-
-    // Out-and-back Return waypoints (reversed, excluding turning point).
     if (roundTripMode) {
       for (let i = wps.length - 2; i >= 0; i--) {
         const lat = wps[i][0], lng = wps[i][1];
         const k = _geocodeKey(lat, lng);
         const customName = waypointCustomNames[k];
         const geocodedName = waypointPlaceNames[k];
-
-        let effectivePlaceName = customName;
-        if (!effectivePlaceName) {
-          if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng)) {
-            effectivePlaceName = geocodedName;
-          }
-        }
+        let effectivePlaceName = customName || (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng) ? geocodedName : null);
         const outLabel = effectivePlaceName || (i === 0 ? '起點' : `航點 ${i + 1}`);
         const returnCum = totalDistM - wpCumDist[i];
         all.push({
-          label: outLabel,
-          lat, lng,
-          isWaypoint: true,
-          isReturn: true,
-          wpIndex: i,
-          _cum: returnCum,
-          _elapsedH: getElapsedH(returnCum),
-          _ele: getEleAt(returnCum),
+          label: outLabel, lat, lng, isWaypoint: true, isReturn: true, wpIndex: i,
+          _cum: returnCum, _elapsedH: getElapsedH(returnCum), _ele: getEleAt(returnCum),
         });
       }
     } else if (oLoopMode) {
-      // O-Loop: just add the start point back at the very end.
       const i = 0;
       const lat = wps[i][0], lng = wps[i][1];
       const k = _geocodeKey(lat, lng);
       const customName = waypointCustomNames[k];
       const geocodedName = waypointPlaceNames[k];
-
-      let effectivePlaceName = customName;
-      if (!effectivePlaceName) {
-        if (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng)) {
-          effectivePlaceName = geocodedName;
-        }
-      }
-      const outLabel = effectivePlaceName || '起點';
+      let effectivePlaceName = customName || (geocodedName && geocodedName !== '起點' && geocodedName !== '終點' && !_isSharedLocation(lat, lng) ? geocodedName : null);
       const returnCum = totalDistM;
       all.push({
-        label: outLabel,
-        lat, lng,
-        isWaypoint: true,
-        isReturn: true,
-        wpIndex: i,
-        _cum: returnCum,
-        _elapsedH: getElapsedH(returnCum),
-        _ele: getEleAt(returnCum),
+        label: effectivePlaceName || '起點', lat, lng, isWaypoint: true, isReturn: true, wpIndex: i,
+        _cum: returnCum, _elapsedH: getElapsedH(returnCum), _ele: getEleAt(returnCum),
       });
     }
   }
