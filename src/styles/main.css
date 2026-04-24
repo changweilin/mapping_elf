@@ -2802,6 +2802,101 @@ body.modal-open {
 .flex-1 { flex: 1; }
 .mt-2 { margin-top: 8px; }
 
+/* ======== Favorites Modal ======== */
+.favorites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.favorite-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  background: var(--bg-glass-sub, rgba(255, 255, 255, 0.04));
+}
+.fav-info {
+  flex: 1;
+  min-width: 0;
+}
+.fav-name {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.fav-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.fav-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.fav-actions .icon-btn {
+  width: 30px;
+  height: 30px;
+}
+.favorites-add-row {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+  align-items: stretch;
+}
+.favorites-add-row input {
+  flex: 1;
+  height: 38px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.favorites-add-row .btn-primary {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.favorites-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 4px 2px 0;
+}
+.empty-hint {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 24px 0;
+  font-size: 13px;
+}
+.favorites-replace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+.favorites-replace-list .replace-target {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.replace-target-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.replace-target-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
 /* ======== Weather Card Popup ======== */
 
 /* Strip Leaflet default popup skin */

@@ -109,6 +109,15 @@ let paceParams = (() => {
   catch { return { ...DEFAULT_PACE_PARAMS }; }
 })();
 
+const LS_FAVORITES_KEY = 'mappingElf_favorites';
+const FAVORITES_MAX = 3;
+let favorites = (() => {
+  try {
+    const arr = JSON.parse(localStorage.getItem(LS_FAVORITES_KEY) || '[]');
+    return Array.isArray(arr) ? arr.slice(0, FAVORITES_MAX) : [];
+  } catch { return []; }
+})();
+
 // Gradient colors per waypoint index (teal→sky→amber→red), updated after each route build.
 // Used by the sidebar list and map waypoint icons to match the elevation chart.
 let waypointGradColors = [];
@@ -2110,6 +2119,292 @@ btnExportConfirm?.addEventListener('click', () => {
   closeExportModal();
   doExport(fmt);
 });
+
+// =========== Favorites ===========
+
+const favoritesModal = document.getElementById('favorites-modal');
+const favoritesReplaceModal = document.getElementById('favorites-replace-modal');
+
+function _escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function persistFavorites() {
+  try { localStorage.setItem(LS_FAVORITES_KEY, JSON.stringify(favorites)); } catch (_) { }
+}
+
+function captureFavorite(name) {
+  const wps = mapManager.waypoints.map(([a, b]) => [a, b]);
+
+  const neededKeys = new Set(wps.map(([la, ln]) => _geocodeKey(la, ln)));
+  const customNames = {};
+  for (const k of Object.keys(waypointCustomNames || {})) {
+    if (neededKeys.has(k)) customNames[k] = waypointCustomNames[k];
+  }
+
+  const weather = wps.map(() => ({ date: null, time: null, weather: {} }));
+  if (Array.isArray(weatherPoints)) {
+    weatherPoints.forEach((pt, colIdx) => {
+      if (!pt?.isWaypoint || pt.isReturn || pt.wpIndex == null) return;
+      const wpIdx = pt.wpIndex;
+      if (wpIdx < 0 || wpIdx >= weather.length) return;
+      const di = document.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`);
+      const ts = document.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`);
+      if (di?.value) weather[wpIdx].date = di.value;
+      if (ts?.value) weather[wpIdx].time = `${String(ts.value).padStart(2, '0')}:00`;
+
+      const cellMap = savedWeatherCells[getSemanticKey(pt)];
+      if (cellMap) {
+        const labelled = {};
+        WEATHER_ROWS.forEach(r => {
+          const v = cellMap[r.key];
+          if (v && v !== '—') labelled[r.label] = v;
+        });
+        if (Object.keys(labelled).length) weather[wpIdx].weather = labelled;
+      }
+    });
+  }
+
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name: name || buildDefaultRouteName() || '未命名路線',
+    savedAt: Date.now(),
+    waypoints: wps,
+    customNames,
+    weather,
+    settings: {
+      routeMode: routeEngine.mode,
+      roundTripMode,
+      oLoopMode,
+      speedIntervalMode,
+      speedActivity,
+      paceParams: JSON.parse(JSON.stringify(paceParams)),
+      paceUnit,
+      segmentIntervalKm,
+      perSegmentMode,
+      strictLinearMode,
+    },
+  };
+}
+
+// applySettingsFromStorage() covers most UI sync; this handles the rest:
+// nav-mode radios, speed-activity/pace-unit selects, pace-params form inputs,
+// segment-interval input, pace-params panel visibility.
+function _syncExtraSettingsUI() {
+  const navVal = roundTripMode ? 'roundtrip' : (oLoopMode ? 'oloop' : 'single');
+  const navRadio = document.getElementById(`nav-mode-${navVal}`);
+  if (navRadio) navRadio.checked = true;
+
+  const speedActivityEl = document.getElementById('speed-activity-select');
+  if (speedActivityEl) speedActivityEl.value = speedActivity;
+
+  const puSel = document.getElementById('pace-unit-select');
+  if (puSel) puSel.value = paceUnit;
+
+  const segEl = document.getElementById('segment-interval-input');
+  if (segEl && segmentIntervalKm > 0) segEl.value = String(segmentIntervalKm);
+
+  const paceFlat = document.getElementById('pace-flat-input');
+  const paceBody = document.getElementById('pace-body-weight');
+  const pacePack = document.getElementById('pace-pack-weight');
+  const paceFatigue = document.getElementById('pace-fatigue-level');
+  const paceRestE = document.getElementById('pace-rest-every');
+  const paceRestM = document.getElementById('pace-rest-minutes');
+  if (paceFlat) {
+    const kmh = paceParams.flatPaceKmH;
+    paceFlat.value = (kmh != null && typeof kmhToDisplay === 'function')
+      ? String(kmhToDisplay(kmh)) : '';
+  }
+  if (paceBody) paceBody.value = paceParams.bodyWeightKg ?? 70;
+  if (pacePack) pacePack.value = paceParams.packWeightKg ?? 0;
+  if (paceFatigue) paceFatigue.value = paceParams.fatigueLevel ?? 'general';
+  if (paceRestE) paceRestE.value = paceParams.restEveryH ?? 1.0;
+  if (paceRestM) paceRestM.value = paceParams.restMinutes ?? 10;
+
+  const paceParamsPanel = document.getElementById('pace-params-panel');
+  if (paceParamsPanel) paceParamsPanel.style.display = speedIntervalMode ? '' : 'none';
+
+  if (typeof updateFlatPlaceholder === 'function') updateFlatPlaceholder();
+}
+
+function loadFavorite(fav) {
+  if (!fav || !Array.isArray(fav.waypoints) || fav.waypoints.length < 2) {
+    showNotification('最愛資料無效', 'error');
+    return;
+  }
+  history.suppressed = true;
+  try {
+    const s = fav.settings || {};
+    const rtMode = !!s.roundTripMode;
+    let oLoop = !!s.oLoopMode;
+    if (rtMode && oLoop) oLoop = false;
+    localStorage.setItem(LS_ROUTE_MODE_KEY, s.routeMode || 'hiking');
+    localStorage.setItem(LS_ROUNDTRIP_KEY, rtMode ? '1' : '0');
+    localStorage.setItem(LS_OLOOP_KEY, oLoop ? '1' : '0');
+    localStorage.setItem(LS_SPEED_MODE_KEY, s.speedIntervalMode ? '1' : '0');
+    localStorage.setItem(LS_SPEED_ACTIVITY_KEY, s.speedActivity || 'hiking');
+    const mergedPace = { ...DEFAULT_PACE_PARAMS, ...(s.paceParams || {}) };
+    localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(mergedPace));
+    localStorage.setItem(LS_PACE_UNIT_KEY, s.paceUnit || 'kmh');
+    localStorage.setItem(LS_SEGMENT_KEY, String(Number(s.segmentIntervalKm) || 0));
+    localStorage.setItem(LS_PER_SEGMENT_KEY, s.perSegmentMode ? '1' : '0');
+    localStorage.setItem(LS_STRICT_LINEAR_KEY, s.strictLinearMode !== false ? '1' : '0');
+
+    applySettingsFromStorage();
+    _syncExtraSettingsUI();
+
+    Object.keys(waypointCustomNames).forEach(k => delete waypointCustomNames[k]);
+    Object.assign(waypointCustomNames, fav.customNames || {});
+    try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+
+    if (fav.weather && fav.weather.some(w => w && (w.date || w.time || Object.keys(w.weather || {}).length))) {
+      window._pendingGpxDates = fav.weather;
+    } else {
+      delete window._pendingGpxDates;
+    }
+
+    importedTrackMode = false;
+    importedIntermediatePoints = [];
+    importedWaypointMeta = [];
+    if (typeof syncTrackModeUI === 'function') syncTrackModeUI();
+    _wcStates.clear();
+    mapManager.closeWeatherPopup();
+
+    const cb = mapManager.onWaypointChange;
+    mapManager.onWaypointChange = () => { };
+    try {
+      mapManager.clearWaypoints();
+      fav.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+    } finally {
+      mapManager.onWaypointChange = cb;
+    }
+  } finally {
+    history.suppressed = false;
+  }
+  history.current = _captureSnapshot();
+  skipAutoGeocode = true;
+  try { onWaypointsChanged(mapManager.waypoints); }
+  finally { skipAutoGeocode = false; }
+  _updateHistoryButtons();
+  showNotification(`已載入「${fav.name}」`, 'success');
+}
+
+function deleteFavorite(id) {
+  const n = favorites.length;
+  favorites = favorites.filter(f => f.id !== id);
+  if (favorites.length !== n) {
+    persistFavorites();
+    renderFavoritesList();
+    showNotification('已刪除', 'info', 1200);
+  }
+}
+
+function openFavoritesModal() {
+  if (!favoritesModal) return;
+  const input = document.getElementById('favorites-name-input');
+  if (input) input.value = buildDefaultRouteName() || '';
+  renderFavoritesList();
+  document.body.classList.add('modal-open');
+  favoritesModal.classList.remove('hidden');
+}
+
+function closeFavoritesModal() {
+  if (!favoritesModal) return;
+  document.body.classList.remove('modal-open');
+  favoritesModal.classList.add('hidden');
+}
+
+function closeReplaceModal() {
+  if (!favoritesReplaceModal) return;
+  favoritesReplaceModal.classList.add('hidden');
+}
+
+function renderFavoritesList() {
+  const container = document.getElementById('favorites-list');
+  if (!container) return;
+  if (favorites.length === 0) {
+    container.innerHTML = '<div class="empty-hint">尚未加入任何最愛</div>';
+    return;
+  }
+  container.innerHTML = favorites.map(f => {
+    const count = Array.isArray(f.waypoints) ? f.waypoints.length : 0;
+    const dateStr = new Date(f.savedAt || Date.now()).toLocaleString('zh-TW', {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    return `
+      <div class="favorite-item" data-id="${_escapeHtml(f.id)}">
+        <div class="fav-info">
+          <div class="fav-name">${_escapeHtml(f.name || '未命名路線')}</div>
+          <div class="fav-meta">${count} 個航點 · ${_escapeHtml(dateStr)}</div>
+        </div>
+        <div class="fav-actions">
+          <button class="icon-btn fav-load" title="載入">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+          </button>
+          <button class="icon-btn danger fav-delete" title="刪除">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+  container.querySelectorAll('.fav-load').forEach(btn => btn.addEventListener('click', (e) => {
+    const id = e.currentTarget.closest('.favorite-item')?.dataset.id;
+    const fav = favorites.find(f => f.id === id);
+    if (fav) {
+      closeFavoritesModal();
+      loadFavorite(fav);
+    }
+  }));
+  container.querySelectorAll('.fav-delete').forEach(btn => btn.addEventListener('click', (e) => {
+    const id = e.currentTarget.closest('.favorite-item')?.dataset.id;
+    if (id && confirm('確定要刪除此最愛?')) deleteFavorite(id);
+  }));
+}
+
+function handleAddFavorite() {
+  if (mapManager.waypoints.length < 2) {
+    showNotification('至少需 2 個航點才能加入最愛', 'warning');
+    return;
+  }
+  const nameInput = document.getElementById('favorites-name-input');
+  const name = (nameInput?.value || '').trim() || null;
+  if (favorites.length >= FAVORITES_MAX) {
+    openReplaceFlow(name);
+    return;
+  }
+  favorites.unshift(captureFavorite(name));
+  persistFavorites();
+  renderFavoritesList();
+  showNotification('已加入我的最愛', 'success');
+}
+
+function openReplaceFlow(pendingName) {
+  if (!favoritesReplaceModal) return;
+  const pending = captureFavorite(pendingName);
+  const list = document.getElementById('favorites-replace-list');
+  if (!list) return;
+  list.innerHTML = favorites.map(f => `
+    <button class="btn-secondary replace-target" data-id="${_escapeHtml(f.id)}">
+      <div class="replace-target-name">取代「${_escapeHtml(f.name || '未命名路線')}」</div>
+      <div class="replace-target-meta">${_escapeHtml(new Date(f.savedAt).toLocaleString('zh-TW'))}</div>
+    </button>`).join('');
+  list.querySelectorAll('.replace-target').forEach(btn => btn.addEventListener('click', (e) => {
+    const id = e.currentTarget.dataset.id;
+    favorites = favorites.map(f => f.id === id ? pending : f);
+    persistFavorites();
+    renderFavoritesList();
+    closeReplaceModal();
+    showNotification('已取代最愛', 'success');
+  }));
+  favoritesReplaceModal.classList.remove('hidden');
+}
+
+document.getElementById('btn-favorites')?.addEventListener('click', openFavoritesModal);
+document.getElementById('btn-favorites-close')?.addEventListener('click', closeFavoritesModal);
+document.getElementById('btn-favorites-add')?.addEventListener('click', handleAddFavorite);
+document.getElementById('btn-favorites-replace-cancel')?.addEventListener('click', closeReplaceModal);
 
 /**
  * Collect all weather-column data for export (date, time, weather rows).

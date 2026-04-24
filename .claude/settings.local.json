@@ -38,7 +38,15 @@
       "Bash(curl -sv http://localhost:5173/)",
       "Bash(curl -sv http://localhost:5174/)",
       "Bash(npm ls *)",
-      "Bash(jobs *)"
+      "Bash(jobs *)",
+      "Bash(npx eslint *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5174/)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(curl -s -L http://localhost:5173/)",
+      "Bash(curl -s -L \"http://localhost:5173/src/main.js\")",
+      "Bash(curl -s -L -H \"Accept: application/javascript\" \"http://localhost:5173/src/main.js\")",
+      "Bash(curl -s \"http://localhost:5173/mapping_elf/src/main.js\")"
     ]
   }
 }

@@ -226,6 +226,13 @@
                 fill="currentColor" />
             </svg>
           </button>
+          <button class="icon-btn" id="btn-favorites" title="我的最愛">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path
+                d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
+                fill="currentColor" />
+            </svg>
+          </button>
           <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
@@ -840,6 +847,34 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="btn-mappack-import-cancel">取消</button>
         <button class="btn-primary" id="btn-mappack-import-confirm">套用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Favorites Modal -->
+  <div id="favorites-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 class="modal-title">我的最愛</h3>
+      <div id="favorites-list" class="favorites-list"></div>
+      <div class="favorites-add-row">
+        <input type="text" id="favorites-name-input" class="search-input" placeholder="路線名稱" maxlength="40" />
+        <button id="btn-favorites-add" class="btn-primary">加入目前路線</button>
+      </div>
+      <div class="favorites-hint">最多 3 筆。載入後會依目前環境重新計算路線與天氣。</div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="btn-favorites-close">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Favorites Replace Modal -->
+  <div id="favorites-replace-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 class="modal-title">已達 3 筆上限</h3>
+      <p class="favorites-hint" style="margin: 0 0 12px;">請選擇要取代的最愛:</p>
+      <div id="favorites-replace-list" class="favorites-replace-list"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="btn-favorites-replace-cancel">取消</button>
       </div>
     </div>
   </div>
