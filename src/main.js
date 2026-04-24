@@ -2942,10 +2942,10 @@ const WEATHER_ROWS = [
   { key: 'weather', label: '天氣' },
   { key: 'temp', label: '溫度' },
   { key: 'precipitation', label: '雨量' },
+  { key: 'precipProb', label: '降雨機率' },
   { key: 'tempRange', label: '高/低' },
   { key: 'feelsLike', label: '體感' },
   { key: 'humidity', label: '濕度' },
-  { key: 'precipProb', label: '機率' },
   { key: 'dewPoint', label: '露點' },
   { key: 'cloudCover', label: '雲量' },
   { key: 'windSpeed', label: '風速' },
@@ -4960,10 +4960,13 @@ function _renderWeatherCard(colIdx) {
   html += `<div class="wc-body">`;
 
   if (isCompact) {
-    // Compact: 2-row grid, values only (no field labels)
+    // Compact: Single row grid for values
     html += `<div class="wc-compact">`;
-    html += `<div class="wc-c-row"><span class="wc-c-icon">${wIcon}</span><span class="wc-c-val">${temp}</span></div>`;
-    html += `<div class="wc-c-row"><span class="wc-c-val">${precipProb}</span><span class="wc-c-val">${precipitation}</span></div>`;
+    html += `<div class="wc-c-row">`;
+    html += `<span class="wc-c-val">${temp}</span>`;
+    html += `<span class="wc-c-val">${precipitation}</span>`;
+    html += `<span class="wc-c-val">${precipProb}</span>`;
+    html += `</div>`;
     html += `</div>`;
   } else {
     html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${temp}</span></div>`;
