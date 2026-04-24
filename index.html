@@ -26,10 +26,13 @@
         var suffix = isLight ? '' : '_dark';
         window.addEventListener('DOMContentLoaded', function () {
           var suffix = isLight ? '' : '_dark';
-          document.querySelectorAll('img[src*="simple_owl_cursor"]').forEach(function(img) {
+          document.querySelectorAll('.owl-logo-simple').forEach(function(img) {
             img.src = './simple_owl_cursor' + suffix + '.svg';
           });
-          document.querySelectorAll('img[src*="mapping_owl_cursor"]').forEach(function(img) {
+          document.querySelectorAll('.owl-logo-mapping').forEach(function(img) {
+            img.src = './mapping_owl_cursor' + suffix + '.svg';
+          });
+          document.querySelectorAll('.loading-icon img').forEach(function(img) {
             img.src = './mapping_owl_cursor' + suffix + '.svg';
           });
           var favicon = document.querySelector('link[rel="icon"]');
@@ -59,7 +62,7 @@
   <header id="toolbar" class="toolbar">
     <div class="toolbar-left">
       <div class="app-logo">
-        <img src="./simple_owl_cursor.svg" alt="" width="28" height="28" class="app-logo-icon" />
+        <img src="./simple_owl_cursor.svg" alt="" width="28" height="28" class="app-logo-icon owl-logo-simple" />
         <span class="app-title">Mapping Elf</span>
       </div>
     </div>
@@ -781,7 +784,7 @@
     <section class="panel-section about-me-section">
       <div class="about-me-content">
         <div class="about-me-header">
-          <img src="./simple_owl_cursor.svg" alt="LOGO" class="about-me-logo app-logo-icon" />
+          <img src="./simple_owl_cursor.svg" alt="LOGO" class="about-me-logo owl-logo-simple" />
           <div class="about-me-name">Chang Wei Lin</div>
         </div>
         <div class="about-me-quote">
@@ -806,7 +809,7 @@
         </div>
       </div>
       <div class="panel-bottom-logo">
-        <img src="./mapping_owl_cursor.svg" alt="Large LOGO" />
+        <img src="./mapping_owl_cursor.svg" alt="Large LOGO" class="owl-logo-mapping" />
       </div>
     </section>
   </aside>

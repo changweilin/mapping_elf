@@ -708,10 +708,13 @@ function updateThemeIcons() {
 
   // Update Logos
   const suffix = isLight ? '' : '_dark';
-  document.querySelectorAll('img[src*="simple_owl_cursor"]').forEach(img => {
+  document.querySelectorAll('.owl-logo-simple').forEach(img => {
     img.src = `./simple_owl_cursor${suffix}.svg`;
   });
-  document.querySelectorAll('img[src*="mapping_owl_cursor"]').forEach(img => {
+  document.querySelectorAll('.owl-logo-mapping').forEach(img => {
+    img.src = `./mapping_owl_cursor${suffix}.svg`;
+  });
+  document.querySelectorAll('.loading-icon img').forEach(img => {
     img.src = `./mapping_owl_cursor${suffix}.svg`;
   });
 
