@@ -823,7 +823,15 @@ export class MapManager {
     // repeated route recalculations and weather panel re-renders during import.
     const cb = this.onWaypointChange;
     this.onWaypointChange = () => { };
-    this.clearWaypoints();
+    // Clear waypoint markers only. Do NOT call clearWaypoints() here: it also
+    // clears the route polyline, wiping the imported track that was drawn
+    // just before this call in _applyImportedResultCore / restoreImportedTrack.
+    this.waypointMarkers.forEach((m) => this.map.removeLayer(m));
+    this.waypoints = [];
+    this.waypointMarkers = [];
+    this.waypointWeather = [];
+    this.waypointColors = [];
+    this.waypointLabels = [];
     coords.forEach(([lat, lng]) => this.addWaypoint(lat, lng));
     this.onWaypointChange = cb;
     this.fitToRoute();

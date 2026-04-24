@@ -40,6 +40,11 @@ let importedTrackMode = false;
 // from an imported file. Used only while importedTrackMode is active; cleared on
 // re-plan / clear-route so the auto-computed markers take over.
 let importedIntermediatePoints = [];
+// Per-waypoint metadata (fileOrder, ele, cumDistM) carried from the imported
+// file for use by buildWeatherPoints across every render in importedTrackMode.
+// Distinct from window._pendingGpxDates, which is consumed once and cleared
+// after the first renderWeatherPanel applies date/time/weather to cells.
+let importedWaypointMeta = [];
 let lastWaypoints = [];
 let pendingNewWaypointIndex = null;
 let isInitialLoad = false;
@@ -182,7 +187,7 @@ function _restoreSnapshot(snap) {
 
     // Track mode flag (polyline isn't snapshotted — best-effort)
     importedTrackMode = snap.importedTrackMode;
-    if (!importedTrackMode) importedIntermediatePoints = [];
+    if (!importedTrackMode) { importedIntermediatePoints = []; importedWaypointMeta = []; }
     if (typeof syncTrackModeUI === 'function') syncTrackModeUI();
 
     // Custom names
@@ -824,6 +829,7 @@ function syncTrackModeUI() {
 btnReplanRoute?.addEventListener('click', () => {
   importedTrackMode = false;
   importedIntermediatePoints = [];
+  importedWaypointMeta = [];
   clearImportedTrackSession();
   syncTrackModeUI();
   // Clear the imported track polyline but keep waypoint markers
@@ -857,6 +863,7 @@ btnReplanRoute?.addEventListener('click', () => {
 btnClearRoute.addEventListener('click', () => {
   importedTrackMode = false;
   importedIntermediatePoints = [];
+  importedWaypointMeta = [];
   clearImportedTrackSession();
   syncTrackModeUI();
   _wcStates.clear();
@@ -1230,6 +1237,7 @@ async function onWaypointsChanged(waypoints) {
       // 0 waypoints -> Definitely not in imported track mode anymore
       importedTrackMode = false;
       importedIntermediatePoints = [];
+      importedWaypointMeta = [];
       clearImportedTrackSession();
       syncTrackModeUI();
 
@@ -2231,6 +2239,7 @@ function saveImportedTrackSession() {
       coords: currentRouteCoords,
       elevations: currentElevations,
       waypoints: mapManager.waypoints,
+      waypointMeta: importedWaypointMeta,
       intermediates: importedIntermediatePoints,
     };
     localStorage.setItem(LS_IMPORTED_TRACK_KEY, JSON.stringify(payload));
@@ -2250,10 +2259,12 @@ function restoreImportedTrack(session) {
   const elevations = Array.isArray(session.elevations) ? session.elevations : [];
   const waypoints = Array.isArray(session.waypoints) ? session.waypoints : [];
   const intermediates = Array.isArray(session.intermediates) ? session.intermediates : [];
+  const waypointMeta = Array.isArray(session.waypointMeta) ? session.waypointMeta : [];
   if (coords.length < 2) return false;
 
   importedTrackMode = true;
   importedIntermediatePoints = intermediates;
+  importedWaypointMeta = waypointMeta;
   syncTrackModeUI();
 
   mapManager.drawRoute(coords);
@@ -2322,12 +2333,18 @@ function _applyImportedResultCore(result) {
     //    onWaypointsChanged([]) runs its usual clear path)
     importedTrackMode = false;
     importedIntermediatePoints = [];
+    importedWaypointMeta = [];
     mapManager.clearWaypoints();
     mapManager.clearIntermediateMarkers();
 
     // 2. Enter track mode — from here, onWaypointsChanged skips routing
     importedTrackMode = true;
     importedIntermediatePoints = result.intermediatePoints || [];
+    importedWaypointMeta = (result.segmentDates || []).map(sd => ({
+      fileOrder: sd?.fileOrder,
+      ele: sd?.ele ?? null,
+      cumDistM: sd?.cumDistM ?? null,
+    }));
     syncTrackModeUI();
 
     // 3. Draw the track polyline directly
@@ -3388,7 +3405,11 @@ function buildWeatherPoints() {
     // to correctly handle out-and-back tracks.
     const markers = [];
     wps.forEach((wp, i) => {
-      const meta = (window._pendingGpxDates && window._pendingGpxDates[i]) || {};
+      // Prefer the persistent meta (survives across re-renders); fall back to
+      // _pendingGpxDates for back-compat / edge cases where meta wasn't set.
+      const meta = importedWaypointMeta[i]
+        || (window._pendingGpxDates && window._pendingGpxDates[i])
+        || {};
       markers.push({
         lat: wp[0], lng: wp[1], isWaypoint: true, wpIndex: i,
         fileOrder: meta.fileOrder ?? (i * 1000),
