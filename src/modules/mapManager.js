@@ -67,6 +67,7 @@ export class MapManager {
     this._dragWpIndex = undefined;
     this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
+    this._intermediateFrontIsReturn = null; // Which leg's intermediate markers should sit on top (null = no preference)
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -674,6 +675,7 @@ export class MapManager {
   clearGradientRoute() {
     this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
     this.gradientPolylines = [];
+    this._intermediateFrontIsReturn = null;
   }
 
   /**
@@ -710,6 +712,16 @@ export class MapManager {
 
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
       marker._colIdx = pt.colIdx;
+      if (typeof pt.isReturn === 'boolean') {
+        marker._isReturn = pt.isReturn;
+      } else if (turnaroundDistM && turnaroundDistM > 0 && totalDistM > turnaroundDistM) {
+        marker._isReturn = pt.cumDistM > turnaroundDistM;
+      } else if (this.isRoundTrip && totalDistM > 0) {
+        marker._isReturn = pt.cumDistM > totalDistM / 2;
+      }
+      if (this._intermediateFrontIsReturn !== null && marker._isReturn !== undefined) {
+        marker.setZIndexOffset(marker._isReturn === this._intermediateFrontIsReturn ? 1000 : 0);
+      }
 
       marker.on('click', (e) => {
         // Detect click on weather badge
@@ -915,7 +927,14 @@ export class MapManager {
       const isReturn = polyline._isReturn;
       if (isReturn !== undefined) {
         // If we clicked on return leg, bring outbound to front; and vice-versa
-        this.gradientPolylines.filter(pl => pl._isReturn === !isReturn).forEach(pl => pl.bringToFront());
+        const targetFrontIsReturn = !isReturn;
+        this.gradientPolylines.filter(pl => pl._isReturn === targetFrontIsReturn).forEach(pl => pl.bringToFront());
+        // Mirror the swap for along-route intermediate markers
+        this._intermediateFrontIsReturn = targetFrontIsReturn;
+        this.intermediateMarkers.forEach(m => {
+          if (m._isReturn === undefined) return;
+          m.setZIndexOffset(m._isReturn === targetFrontIsReturn ? 1000 : 0);
+        });
       } else {
         this.gradientPolylines.forEach(gpl => gpl.bringToFront());
       }

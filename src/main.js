@@ -3832,7 +3832,8 @@ function updateIntermediateMarkers() {
         cumDistM: x.pt._cum,
         label: x.pt.label,
         colIdx: x.i,
-        weatherIcon
+        weatherIcon,
+        isReturn: !!x.pt.isReturn,
       };
     });
 
