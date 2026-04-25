@@ -5988,8 +5988,7 @@ function initKeywordSearch() {
   if (gmapsLink) {
     const updateGmapsHref = () => {
       const c = mapManager.map.getCenter();
-      const z = Math.round(mapManager.map.getZoom());
-      gmapsLink.href = `https://www.google.com/maps/@${c.lat.toFixed(6)},${c.lng.toFixed(6)},${z}z`;
+      gmapsLink.href = `https://www.google.com/maps/search/?api=1&query=${c.lat.toFixed(6)},${c.lng.toFixed(6)}`;
     };
     updateGmapsHref();
     mapManager.map.on('moveend zoomend', updateGmapsHref);
