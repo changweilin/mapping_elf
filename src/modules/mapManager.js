@@ -579,6 +579,13 @@ export class MapManager {
     const dists = cumulativeDistances(routeCoords);
     const totalD = dists[N - 1] || 1;
 
+    // Compute leg IDs across the whole route — used for cycling overlapping
+    // passes via dblclick. A leg boundary is detected at U-turns and at points
+    // where the route revisits previously-traversed territory (laps, figure-8).
+    const legIds = this._computeLegIds(routeCoords, dists);
+    this._currentRouteLegIds = legIds;
+    this._currentRouteCum = dists;
+
     // Find split distance closest to turnaround waypoint
     let splitD = -1;
     let splitIdx = -1;
@@ -612,6 +619,7 @@ export class MapManager {
           lineJoin: 'round',
         }).addTo(this.map);
         pl1._isReturn = false;
+        pl1._legId = legIds[Math.floor((startI + splitIdx) / 2)] ?? 0;
         this._bindRouteHoverEvents(pl1);
         this._bindGradientRouteEvents(pl1);
         this.gradientPolylines.push(pl1);
@@ -627,6 +635,7 @@ export class MapManager {
           lineJoin: 'round',
         }).addTo(this.map);
         pl2._isReturn = true;
+        pl2._legId = legIds[Math.floor((splitIdx + endI) / 2)] ?? 0;
         this._bindRouteHoverEvents(pl2);
         this._bindGradientRouteEvents(pl2);
         this.gradientPolylines.push(pl2);
@@ -664,11 +673,104 @@ export class MapManager {
       } else {
         pl._isReturn = isRoundTrip && (xFrac >= 0.5);
       }
+      pl._legId = legIds[Math.floor((startI + endI) / 2)] ?? 0;
 
       this._bindRouteHoverEvents(pl);
       this._bindGradientRouteEvents(pl);
       this.gradientPolylines.push(pl);
     }
+  }
+
+  /**
+   * Compute leg IDs along a route. A leg boundary is detected at:
+   *   1) U-turns: heading change > 120° within a ~25m window.
+   *   2) Loop closes: the route revisits territory (within 30m) that was
+   *      previously traversed in the same leg, with sufficient gap (>250m)
+   *      so tight switchbacks don't trip it.
+   * Returns an array of integers (one per coord) where chunks/markers within
+   * the same leg share the same id.
+   */
+  _computeLegIds(routeCoords, cumDists) {
+    const N = routeCoords.length;
+    if (N < 6) return new Array(N).fill(0);
+
+    // Equirectangular meters approximation — good enough for short distances.
+    const distM = (a, b) => {
+      const dLat = (b[0] - a[0]) * 111320;
+      const meanLat = ((a[0] + b[0]) / 2) * Math.PI / 180;
+      const dLng = (b[1] - a[1]) * 111320 * Math.cos(meanLat);
+      return Math.sqrt(dLat * dLat + dLng * dLng);
+    };
+    const cum = cumDists;
+    const legIds = new Array(N).fill(0);
+    let currentLeg = 0;
+
+    const WINDOW_M = 25;
+    const U_TURN_DEG = 120;
+    const LOOP_PROX_M = 35;
+    const LOOP_MIN_GAP_M = 250;
+    const SAMPLE_INTERVAL_M = 40;
+    const MIN_LEG_LEN_M = 30;
+
+    const idxBack = (i, d) => {
+      let j = i - 1;
+      while (j > 0 && cum[i] - cum[j] < d) j--;
+      return j;
+    };
+    const idxFwd = (i, d) => {
+      let j = i + 1;
+      while (j < N - 1 && cum[j] - cum[i] < d) j++;
+      return j;
+    };
+
+    const samples = [];
+    let lastSampleCum = -Infinity;
+    let lastBoundaryCum = -Infinity;
+
+    for (let i = 0; i < N; i++) {
+      let isBoundary = false;
+
+      // U-turn detection
+      if (i > 0 && i < N - 1) {
+        const ja = idxBack(i, WINDOW_M);
+        const jb = idxFwd(i, WINDOW_M);
+        if (cum[i] - cum[ja] >= WINDOW_M * 0.6 && cum[jb] - cum[i] >= WINDOW_M * 0.6) {
+          const a = routeCoords[ja], b = routeCoords[i], c = routeCoords[jb];
+          const h1 = Math.atan2(b[1] - a[1], b[0] - a[0]);
+          const h2 = Math.atan2(c[1] - b[1], c[0] - b[0]);
+          let diff = (h2 - h1) * 180 / Math.PI;
+          while (diff > 180) diff -= 360;
+          while (diff < -180) diff += 360;
+          if (Math.abs(diff) > U_TURN_DEG) isBoundary = true;
+        }
+      }
+
+      // Loop close detection (only against same-leg samples that are far enough behind)
+      if (!isBoundary) {
+        for (let s = samples.length - 1; s >= 0; s--) {
+          const sample = samples[s];
+          if (sample.leg !== currentLeg) break;
+          if (cum[i] - sample.cum < LOOP_MIN_GAP_M) continue;
+          if (distM(routeCoords[i], sample.coord) < LOOP_PROX_M) {
+            isBoundary = true;
+            break;
+          }
+        }
+      }
+
+      if (isBoundary && cum[i] - lastBoundaryCum >= MIN_LEG_LEN_M) {
+        currentLeg++;
+        lastBoundaryCum = cum[i];
+      }
+      legIds[i] = currentLeg;
+
+      if (cum[i] - lastSampleCum >= SAMPLE_INTERVAL_M) {
+        samples.push({ coord: routeCoords[i], idx: i, cum: cum[i], leg: currentLeg });
+        lastSampleCum = cum[i];
+      }
+    }
+
+    return legIds;
   }
 
   clearGradientRoute() {
@@ -711,6 +813,7 @@ export class MapManager {
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
       marker._colIdx = pt.colIdx;
       marker._addOrder = this.intermediateMarkers.length;
+      marker._legId = this._legIdAtCumDist(pt.cumDistM);
 
       marker.on('click', (e) => {
         // Detect click on weather badge
@@ -917,17 +1020,46 @@ export class MapManager {
   }
 
   /**
-   * Send the clicked polyline (plus its contiguous chunk-siblings of the same
-   * pass through this point) to the back, exposing whatever overlapping leg sat
-   * underneath. Repeated dblclicks rotate through any number of overlapping
-   * passes — works for round trips, multi-turnaround, figure-8, repeated laps,
-   * and arbitrary self-crossing tracks. Spatial-only: no _isReturn dependency.
+   * Look up the leg id at a given cumulative distance along the current route.
+   * Uses binary search on this._currentRouteCum (cumulative distance per coord).
+   */
+  _legIdAtCumDist(cumDistM) {
+    const cum = this._currentRouteCum;
+    const legs = this._currentRouteLegIds;
+    if (!cum || !legs || cumDistM == null) return 0;
+    let lo = 0, hi = cum.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] < cumDistM) lo = mid + 1;
+      else hi = mid;
+    }
+    return legs[lo] ?? 0;
+  }
+
+  /**
+   * On dblclick: send the entire leg the clicked chunk belongs to (all chunks
+   * sharing the same _legId) to the back, exposing whatever leg sat underneath.
+   * Repeated dblclicks rotate through any number of overlapping passes — round
+   * trips, multi-turnaround, figure-8, repeated laps, arbitrary self-crossings.
+   * Falls back to spatial proximity grouping if leg ids weren't computed.
    */
   _cycleOverlappingLayers(clickedPolyline, latlng) {
     if (!this.gradientPolylines.length) return;
+    const targetLeg = clickedPolyline._legId;
+
+    if (targetLeg !== undefined) {
+      const sameLegPolylines = this.gradientPolylines.filter(pl => pl._legId === targetLeg);
+      const otherLegsExist = this.gradientPolylines.some(pl => pl._legId !== targetLeg);
+      if (otherLegsExist) {
+        sameLegPolylines.forEach(pl => pl.bringToBack());
+      }
+      this._sendLegMarkersToBack(targetLeg);
+      return;
+    }
+
+    // Fallback (no leg ids available): spatial contiguous-run grouping.
     const clickPx = this.map.latLngToContainerPoint(latlng);
     const PROX_PX = 10;
-
     const passesNear = (pl) => {
       const coords = pl.getLatLngs();
       if (!coords.length) return false;
@@ -940,57 +1072,34 @@ export class MapManager {
       }
       return false;
     };
-
     const overlapSet = new Set(this.gradientPolylines.filter(passesNear));
     overlapSet.add(clickedPolyline);
-
-    // Find the contiguous run in array order containing the clicked chunk —
-    // chunks are emitted sequentially along the route, so a single physical leg
-    // through the click point shows up as one contiguous run.
     const idx = this.gradientPolylines.indexOf(clickedPolyline);
     if (idx < 0) return;
     let lo = idx, hi = idx;
     while (lo > 0 && overlapSet.has(this.gradientPolylines[lo - 1])) lo--;
     while (hi < this.gradientPolylines.length - 1 && overlapSet.has(this.gradientPolylines[hi + 1])) hi++;
-
-    // No other overlapping leg present — nothing to cycle to.
-    if (overlapSet.size === (hi - lo + 1)) {
-      // still mirror markers in case there are stacked markers without a sibling polyline
-      this._cycleOverlappingMarkers(clickPx);
-      return;
-    }
-
-    for (let i = lo; i <= hi; i++) {
-      this.gradientPolylines[i].bringToBack();
-    }
-
-    this._cycleOverlappingMarkers(clickPx);
+    if (overlapSet.size === (hi - lo + 1)) return;
+    for (let i = lo; i <= hi; i++) this.gradientPolylines[i].bringToBack();
   }
 
   /**
-   * Rotate z-order of intermediate markers stacked near the click point so the
-   * along-route marker layer mirrors the trajectory swap.
+   * Push every intermediate marker on `legId` below all others on the map by
+   * dropping its zIndexOffset under the current minimum. Repeated calls cycle
+   * across legs naturally because the most recently demoted leg ends up at the
+   * very bottom while the others rise relative to it.
    */
-  _cycleOverlappingMarkers(clickPx) {
-    if (this.intermediateMarkers.length < 2) return;
-    const PROX_PX = 28;
-    const nearby = [];
+  _sendLegMarkersToBack(legId) {
+    const sameLeg = this.intermediateMarkers.filter(m => m._legId === legId);
+    if (!sameLeg.length) return;
+    const otherLegsExist = this.intermediateMarkers.some(m => m._legId !== legId);
+    if (!otherLegsExist) return;
+    let minOffset = Infinity;
     for (const m of this.intermediateMarkers) {
-      const px = this.map.latLngToContainerPoint(m.getLatLng());
-      if (Math.hypot(px.x - clickPx.x, px.y - clickPx.y) <= PROX_PX) nearby.push(m);
-    }
-    if (nearby.length < 2) return;
-
-    // Effective z = zIndexOffset + tiny tiebreak by add-order (later-added is on top by default).
-    const effZ = (m) => (m.options.zIndexOffset || 0) + (m._addOrder || 0) * 0.001;
-    let top = nearby[0];
-    let minOffset = top.options.zIndexOffset || 0;
-    for (const m of nearby) {
-      if (effZ(m) > effZ(top)) top = m;
       const off = m.options.zIndexOffset || 0;
       if (off < minOffset) minOffset = off;
     }
-    top.setZIndexOffset(minOffset - 100);
+    sameLeg.forEach(m => m.setZIndexOffset(minOffset - 100));
   }
 
   getCurrentLayerInfo() {
