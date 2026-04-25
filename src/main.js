@@ -5215,15 +5215,11 @@ function panMapToCenterFullCard(colIdx) {
   const panelRect = panelOpen ? sidePanel.getBoundingClientRect() : null;
   const panelOverlap = panelRect ? Math.max(0, rect.right - panelRect.left) : 0;
 
-  const actionBtns = document.querySelector('.map-action-btns');
-  const btnRect = actionBtns?.getBoundingClientRect();
-  const btnReservedW = btnRect ? (btnRect.right - rect.left) + 12 : 0;
-
   const pad = rect.width < 600 ? 12 : 16;
-  const safeLeft   = Math.max(pad, btnReservedW);
+  const safeLeft   = pad;
   const safeRight  = rect.width - panelOverlap - pad;
   const safeTop    = pad;
-  const safeBottom = rect.height - pad;
+  const safeBottom = rect.height;
 
   if (safeRight - safeLeft < cardW + 8 || safeBottom - safeTop < cardH + popupOffsetY + tipGap) {
     map.panTo([pt.lat, pt.lng], { animate: true });
