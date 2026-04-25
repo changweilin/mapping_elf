@@ -5758,14 +5758,155 @@ function parseLatLngInput(q) {
   return [lat, lng];
 }
 
-async function searchByKeyword(query) {
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=10&addressdetails=1`;
-  const res = await fetch(url, {
-    headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
-  return res.json();
+/**
+ * Resolve the ISO country code at (lat, lng) via Nominatim reverse-geocoding.
+ * Cached on a ~11 km grid so a panning user doesn't trigger repeated lookups.
+ */
+const _viewCountryCache = new Map();
+async function fetchViewCountryCode(lat, lng) {
+  const k = `${lat.toFixed(1)},${lng.toFixed(1)}`;
+  if (_viewCountryCache.has(k)) return _viewCountryCache.get(k);
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=3`,
+      {
+        headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+    if (!r.ok) { _viewCountryCache.set(k, null); return null; }
+    const data = await r.json();
+    const cc = data?.address?.country_code || null;
+    _viewCountryCache.set(k, cc);
+    return cc;
+  } catch {
+    _viewCountryCache.set(k, null);
+    return null;
+  }
+}
+
+/**
+ * Three-tier keyword search, all sorted by distance from the current view center:
+ *   1. In view (Nominatim viewbox+bounded + Overpass bbox name regex)
+ *   2. Same country as view center (Nominatim countrycodes=XX) — preference layer
+ *   3. Global (unrestricted Nominatim)
+ * Each lower tier only fires when the prior tier returned nothing.
+ */
+async function searchByKeyword(query, bounds) {
+  const west = bounds.getWest(), east = bounds.getEast();
+  const south = bounds.getSouth(), north = bounds.getNorth();
+  const viewbox = `${west},${north},${east},${south}`;
+  const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1&viewbox=${viewbox}&bounded=1`;
+
+  // Escape regex metacharacters before embedding into Overpass name filter
+  const safeQ = query.replace(/[\\^$.|?*+(){}[\]]/g, '\\$&');
+  const ovpQuery = `[out:json][timeout:6];
+(
+  node["name"~"${safeQ}",i](${south},${west},${north},${east});
+  way["name"~"${safeQ}",i](${south},${west},${north},${east});
+);
+out center 30;`;
+
+  const fetchOptions = { signal: AbortSignal.timeout(8000) };
+  const [nomRes, ovpRes] = await Promise.allSettled([
+    fetch(nomUrl, {
+      headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+      ...fetchOptions,
+    }).then(r => r.ok ? r.json() : []),
+    fetch(OVERPASS_API, {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(ovpQuery),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      ...fetchOptions,
+    }).then(r => r.ok ? r.json() : null),
+  ]);
+
+  const nomItems = nomRes.status === 'fulfilled' && Array.isArray(nomRes.value) ? nomRes.value : [];
+  const ovpData = ovpRes.status === 'fulfilled' ? ovpRes.value : null;
+
+  const items = nomItems.map(it => ({
+    lat: parseFloat(it.lat),
+    lon: parseFloat(it.lon),
+    name: it.name || (it.display_name?.split(',')[0]) || '',
+    display_name: it.display_name,
+  }));
+
+  if (ovpData?.elements) {
+    for (const e of ovpData.elements) {
+      const lat = e.lat ?? e.center?.lat;
+      const lon = e.lon ?? e.center?.lon;
+      const name = e.tags?.name;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !name) continue;
+      const cat = e.tags.natural || e.tags.tourism || e.tags.historic
+               || e.tags.leisure || e.tags.amenity || e.tags.shop || e.tags.waterway || '';
+      items.push({ lat, lon, name, display_name: cat ? `${name} (${cat})` : name });
+    }
+  }
+
+  // Dedupe: same first-token name within ~30m
+  const dedup = [];
+  for (const it of items) {
+    const head = (it.name || '').split(',')[0];
+    if (!head) continue;
+    const dup = dedup.find(d =>
+      d.name.split(',')[0] === head &&
+      haversineDistance([d.lat, d.lon], [it.lat, it.lon]) < 30
+    );
+    if (!dup) dedup.push(it);
+  }
+
+  const pushNomItems = (arr) => {
+    if (!Array.isArray(arr)) return;
+    for (const it of arr) {
+      dedup.push({
+        lat: parseFloat(it.lat),
+        lon: parseFloat(it.lon),
+        name: it.name || (it.display_name?.split(',')[0]) || '',
+        display_name: it.display_name,
+      });
+    }
+  };
+  const fetchNom = async (url) => {
+    const r = await fetch(url, {
+      headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+      signal: AbortSignal.timeout(8000),
+    });
+    return r.ok ? r.json() : null;
+  };
+
+  // Tier 2: same-country fallback (preference layer based on view center)
+  if (dedup.length === 0) {
+    const c2 = bounds.getCenter();
+    const cc = await fetchViewCountryCode(c2.lat, c2.lng);
+    if (cc) {
+      try {
+        pushNomItems(await fetchNom(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1&countrycodes=${cc}`
+        ));
+      } catch (err) {
+        console.warn('Country-scoped fallback search failed:', err);
+      }
+    }
+  }
+
+  // Tier 3: global fallback (still distance-sorted from view center below)
+  if (dedup.length === 0) {
+    try {
+      pushNomItems(await fetchNom(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1`
+      ));
+    } catch (err) {
+      console.warn('Global fallback search failed:', err);
+    }
+  }
+
+  // Sort by distance from view center
+  const center = bounds.getCenter();
+  const c = [center.lat, center.lng];
+  for (const it of dedup) it._dist = haversineDistance(c, [it.lat, it.lon]);
+  dedup.sort((a, b) => a._dist - b._dist);
+
+  return dedup;
 }
 
 function renderSearchResults(items, resultsEl) {
@@ -5781,10 +5922,16 @@ function renderSearchResults(items, resultsEl) {
     row.className = 'search-result-item';
     const lat = parseFloat(it.lat), lng = parseFloat(it.lon);
     const name = it.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    const distLabel = Number.isFinite(it._dist)
+      ? (it._dist < 1000 ? `${Math.round(it._dist)} m` : `${(it._dist / 1000).toFixed(1)} km`)
+      : '';
+    const coordLine = distLabel
+      ? `${lat.toFixed(5)}, ${lng.toFixed(5)} · ${distLabel}`
+      : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     row.innerHTML = `
       <div class="search-result-text">
         <div class="search-result-name" title="${name.replace(/"/g, '&quot;')}">${name}</div>
-        <div class="search-result-coord">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+        <div class="search-result-coord">${coordLine}</div>
       </div>
       <button class="search-result-add" title="加入為航點" ${frozen ? 'disabled' : ''}>+ 航點</button>
     `;
@@ -5842,7 +5989,7 @@ function initKeywordSearch() {
     resultsEl.innerHTML = '<div class="search-result-loading">搜尋中…</div>';
     resultsEl.style.display = '';
     try {
-      const items = await searchByKeyword(q);
+      const items = await searchByKeyword(q, mapManager.map.getBounds());
       renderSearchResults(items, resultsEl);
     } catch (err) {
       console.error('Keyword search failed:', err);
