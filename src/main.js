@@ -5889,9 +5889,19 @@ async function searchByKeyword(query, bounds) {
 
 
 
+function expandSearchSection() {
+  const body = document.getElementById('search-body');
+  const header = document.getElementById('search-toggle-header');
+  if (body?.classList.contains('collapsed')) {
+    body.classList.remove('collapsed');
+    header?.classList.remove('collapsed');
+  }
+}
+
 function renderSearchResults(items, resultsEl) {
   const frozen = !!importedTrackMode;
   resultsEl.innerHTML = '';
+  expandSearchSection();
   if (!items.length) {
     resultsEl.innerHTML = '<div class="search-result-empty">查無結果</div>';
     resultsEl.style.display = '';
@@ -5942,19 +5952,10 @@ function initKeywordSearch() {
   const resultsEl = document.getElementById('search-results');
   if (!input || !btn || !resultsEl) return;
 
-  const expandSearchBody = () => {
-    const body = document.getElementById('search-body');
-    const header = document.getElementById('search-toggle-header');
-    if (body?.classList.contains('collapsed')) {
-      body.classList.remove('collapsed');
-      header?.classList.remove('collapsed');
-    }
-  };
-
   const doSearch = async () => {
     const q = input.value.trim();
     if (!q) { resultsEl.style.display = 'none'; return; }
-    expandSearchBody();
+    expandSearchSection();
 
     // Direct coord input — skip network
     const coords = parseLatLngInput(q);
@@ -5982,6 +5983,35 @@ function initKeywordSearch() {
     if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
     else if (e.key === 'Escape') { resultsEl.style.display = 'none'; }
   });
+
+  const gmapsLink = document.getElementById('search-gmaps-link');
+  if (gmapsLink) {
+    const updateGmapsHref = () => {
+      const c = mapManager.map.getCenter();
+      const z = Math.round(mapManager.map.getZoom());
+      gmapsLink.href = `https://www.google.com/maps/@${c.lat.toFixed(6)},${c.lng.toFixed(6)},${z}z`;
+    };
+    updateGmapsHref();
+    mapManager.map.on('moveend zoomend', updateGmapsHref);
+  }
+
+  const coordInput = document.getElementById('search-coord-input');
+  const coordBtn = document.getElementById('btn-coord-go');
+  if (coordInput && coordBtn) {
+    const goToCoord = () => {
+      const coords = parseLatLngInput(coordInput.value.trim());
+      if (!coords) {
+        showNotification('座標格式錯誤,請輸入「緯度, 經度」', 'warning');
+        return;
+      }
+      const [lat, lng] = coords;
+      mapManager.map.setView([lat, lng], Math.max(mapManager.map.getZoom(), 14));
+    };
+    coordBtn.addEventListener('click', goToCoord);
+    coordInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); goToCoord(); }
+    });
+  }
 }
 
 function resetToDefaults() {

@@ -203,6 +203,22 @@
       <div class="collapsible-body collapsed" id="search-body">
         <div class="search-controls">
           <div class="search-results" id="search-results" style="display:none;"></div>
+          <div class="search-tools">
+            <a id="search-gmaps-link" class="search-gmaps-link" href="#" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/>
+              </svg>
+              <span>在 Google Maps 開啟目前位置</span>
+            </a>
+            <div class="search-coord-row">
+              <input type="text" id="search-coord-input" class="search-input" placeholder="緯度, 經度 (e.g. 25.034, 121.564)" autocomplete="off" />
+              <button class="icon-btn" id="btn-coord-go" title="定位至座標">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" fill="currentColor"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </section>
