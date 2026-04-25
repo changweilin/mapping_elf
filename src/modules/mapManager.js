@@ -67,7 +67,6 @@ export class MapManager {
     this._dragWpIndex = undefined;
     this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
-    this._intermediateFrontIsReturn = null; // Which leg's intermediate markers should sit on top (null = no preference)
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -675,7 +674,6 @@ export class MapManager {
   clearGradientRoute() {
     this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
     this.gradientPolylines = [];
-    this._intermediateFrontIsReturn = null;
   }
 
   /**
@@ -712,16 +710,7 @@ export class MapManager {
 
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
       marker._colIdx = pt.colIdx;
-      if (typeof pt.isReturn === 'boolean') {
-        marker._isReturn = pt.isReturn;
-      } else if (turnaroundDistM && turnaroundDistM > 0 && totalDistM > turnaroundDistM) {
-        marker._isReturn = pt.cumDistM > turnaroundDistM;
-      } else if (this.isRoundTrip && totalDistM > 0) {
-        marker._isReturn = pt.cumDistM > totalDistM / 2;
-      }
-      if (this._intermediateFrontIsReturn !== null && marker._isReturn !== undefined) {
-        marker.setZIndexOffset(marker._isReturn === this._intermediateFrontIsReturn ? 1000 : 0);
-      }
+      marker._addOrder = this.intermediateMarkers.length;
 
       marker.on('click', (e) => {
         // Detect click on weather badge
@@ -923,22 +912,85 @@ export class MapManager {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
       }
-      // Toggle logic for round trips: switch between outbound and return legs
-      const isReturn = polyline._isReturn;
-      if (isReturn !== undefined) {
-        // If we clicked on return leg, bring outbound to front; and vice-versa
-        const targetFrontIsReturn = !isReturn;
-        this.gradientPolylines.filter(pl => pl._isReturn === targetFrontIsReturn).forEach(pl => pl.bringToFront());
-        // Mirror the swap for along-route intermediate markers
-        this._intermediateFrontIsReturn = targetFrontIsReturn;
-        this.intermediateMarkers.forEach(m => {
-          if (m._isReturn === undefined) return;
-          m.setZIndexOffset(m._isReturn === targetFrontIsReturn ? 1000 : 0);
-        });
-      } else {
-        this.gradientPolylines.forEach(gpl => gpl.bringToFront());
-      }
+      this._cycleOverlappingLayers(polyline, e.latlng);
     });
+  }
+
+  /**
+   * Send the clicked polyline (plus its contiguous chunk-siblings of the same
+   * pass through this point) to the back, exposing whatever overlapping leg sat
+   * underneath. Repeated dblclicks rotate through any number of overlapping
+   * passes — works for round trips, multi-turnaround, figure-8, repeated laps,
+   * and arbitrary self-crossing tracks. Spatial-only: no _isReturn dependency.
+   */
+  _cycleOverlappingLayers(clickedPolyline, latlng) {
+    if (!this.gradientPolylines.length) return;
+    const clickPx = this.map.latLngToContainerPoint(latlng);
+    const PROX_PX = 10;
+
+    const passesNear = (pl) => {
+      const coords = pl.getLatLngs();
+      if (!coords.length) return false;
+      const sampleCount = Math.min(coords.length, 12);
+      const step = sampleCount > 1 ? (coords.length - 1) / (sampleCount - 1) : 0;
+      for (let i = 0; i < sampleCount; i++) {
+        const idx = Math.round(i * step);
+        const px = this.map.latLngToContainerPoint(coords[idx]);
+        if (Math.hypot(px.x - clickPx.x, px.y - clickPx.y) <= PROX_PX) return true;
+      }
+      return false;
+    };
+
+    const overlapSet = new Set(this.gradientPolylines.filter(passesNear));
+    overlapSet.add(clickedPolyline);
+
+    // Find the contiguous run in array order containing the clicked chunk —
+    // chunks are emitted sequentially along the route, so a single physical leg
+    // through the click point shows up as one contiguous run.
+    const idx = this.gradientPolylines.indexOf(clickedPolyline);
+    if (idx < 0) return;
+    let lo = idx, hi = idx;
+    while (lo > 0 && overlapSet.has(this.gradientPolylines[lo - 1])) lo--;
+    while (hi < this.gradientPolylines.length - 1 && overlapSet.has(this.gradientPolylines[hi + 1])) hi++;
+
+    // No other overlapping leg present — nothing to cycle to.
+    if (overlapSet.size === (hi - lo + 1)) {
+      // still mirror markers in case there are stacked markers without a sibling polyline
+      this._cycleOverlappingMarkers(clickPx);
+      return;
+    }
+
+    for (let i = lo; i <= hi; i++) {
+      this.gradientPolylines[i].bringToBack();
+    }
+
+    this._cycleOverlappingMarkers(clickPx);
+  }
+
+  /**
+   * Rotate z-order of intermediate markers stacked near the click point so the
+   * along-route marker layer mirrors the trajectory swap.
+   */
+  _cycleOverlappingMarkers(clickPx) {
+    if (this.intermediateMarkers.length < 2) return;
+    const PROX_PX = 28;
+    const nearby = [];
+    for (const m of this.intermediateMarkers) {
+      const px = this.map.latLngToContainerPoint(m.getLatLng());
+      if (Math.hypot(px.x - clickPx.x, px.y - clickPx.y) <= PROX_PX) nearby.push(m);
+    }
+    if (nearby.length < 2) return;
+
+    // Effective z = zIndexOffset + tiny tiebreak by add-order (later-added is on top by default).
+    const effZ = (m) => (m.options.zIndexOffset || 0) + (m._addOrder || 0) * 0.001;
+    let top = nearby[0];
+    let minOffset = top.options.zIndexOffset || 0;
+    for (const m of nearby) {
+      if (effZ(m) > effZ(top)) top = m;
+      const off = m.options.zIndexOffset || 0;
+      if (off < minOffset) minOffset = off;
+    }
+    top.setZIndexOffset(minOffset - 100);
   }
 
   getCurrentLayerInfo() {
