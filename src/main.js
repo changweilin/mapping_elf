@@ -6036,10 +6036,16 @@ function initKeywordSearch() {
   const gmapsLink = document.getElementById('search-gmaps-link');
   if (gmapsLink) {
     const updateGmapsHref = () => {
-      const c = mapManager.map.getCenter();
-      gmapsLink.href = `https://www.google.com/maps/search/?api=1&query=${c.lat.toFixed(6)},${c.lng.toFixed(6)}`;
+      const q = input.value.trim();
+      if (q) {
+        gmapsLink.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+      } else {
+        const c = mapManager.map.getCenter();
+        gmapsLink.href = `https://www.google.com/maps/search/?api=1&query=${c.lat.toFixed(6)},${c.lng.toFixed(6)}`;
+      }
     };
     updateGmapsHref();
+    input.addEventListener('input', updateGmapsHref);
     mapManager.map.on('moveend zoomend', updateGmapsHref);
   }
 
