@@ -456,6 +456,20 @@ html, body {
   to { transform: scale(1.3); box-shadow: 0 0 25px #fbbf24; }
 }
 
+/* Return-leg waypoint markers — same size/shape/position as outbound, but
+   distinguished by a dashed border and the return-gradient color (set inline).
+   At stacked locations both outbound and return share lat/lng; the marker on
+   top is whichever has the higher Leaflet zIndexOffset (return rests at +100
+   so it shows by default; either rises to +1000 when its weather column is
+   highlighted via highlightWaypoint / highlightReturnWaypoint). */
+.custom-waypoint-icon.return-leg .wp-icon-inner {
+  border-style: dashed;
+  border-color: rgba(255,255,255,0.92);
+}
+.custom-waypoint-icon.return-leg:hover .wp-icon-inner {
+  transform: scale(1.18);
+}
+
 
 
 /* Intermediate (km-interval) markers — non-interactive, smaller */

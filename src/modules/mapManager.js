@@ -61,6 +61,8 @@ export class MapManager {
     this.hoverMarker = null;
     this.currentLayerName = 'topo';
     this.intermediateMarkers = [];
+    this.returnWaypointMarkers = []; // Markers for round-trip return waypoints (same shape as outbound, dashed border)
+    this.stackedWaypointFlags = []; // Per-waypoint flag: outbound marker shares lat/lng with a return marker
     this.ignoreMapClick = false;
     this.dragLine = null;
     this.dragLine = null;
@@ -835,12 +837,86 @@ export class MapManager {
     this.intermediateMarkers = [];
   }
 
+  /**
+   * Render markers for round-trip return-leg waypoints. Same size/shape as
+   * outbound waypoint markers but with a dashed border, return-gradient
+   * background, and a small "↩" badge so the two legs are easy to tell apart.
+   * Markers whose lat/lng coincides with an outbound waypoint are anchor-
+   * offset to the bottom-right and both ends get an `is-stacked` class so the
+   * pair gets a yellow dotted halo to flag the overlap.
+   *
+   * @param {Array<{lat,lng,wpIndex,label,color,colIdx,weather}>} points
+   */
+  setReturnWaypoints(points) {
+    this.clearReturnWaypoints();
+    const list = points || [];
+
+    const eq = (a, b) => Math.abs(a - b) < 1e-6;
+    const newFlags = this.waypoints.map(([la, ln]) =>
+      list.some((pt) => eq(pt.lat, la) && eq(pt.lng, ln))
+    );
+    const flagsChanged =
+      newFlags.length !== this.stackedWaypointFlags.length ||
+      newFlags.some((f, i) => f !== this.stackedWaypointFlags[i]);
+    this.stackedWaypointFlags = newFlags;
+    if (flagsChanged) this._updateMarkerIcons();
+
+    list.forEach((pt) => {
+      const isStacked = this.waypoints.some(([la, ln]) => eq(la, pt.lat) && eq(ln, pt.lng));
+      const icon = this._createReturnIcon(pt, isStacked);
+      const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
+      marker._colIdx = pt.colIdx;
+      marker._wpIndex = pt.wpIndex;
+      // Sit on top of the (now hidden) outbound marker at stacked locations so
+      // clicks land on the return circle.
+      marker.setZIndexOffset(100);
+
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+      });
+
+      this.returnWaypointMarkers.push(marker);
+    });
+  }
+
+  clearReturnWaypoints() {
+    this.returnWaypointMarkers.forEach((m) => this.map.removeLayer(m));
+    this.returnWaypointMarkers = [];
+    if (this.stackedWaypointFlags.some(Boolean)) {
+      this.stackedWaypointFlags = this.waypoints.map(() => false);
+      this._updateMarkerIcons();
+    }
+  }
+
+  _createReturnIcon(pt, isStacked) {
+    const total = this.waypoints.length;
+    const isEndpoint = (pt.wpIndex === 0 || pt.wpIndex === total - 1) && total > 1;
+    const size = isEndpoint ? 40 : 36;
+    const num = (pt.wpIndex ?? 0) + 1;
+    const weatherHtml = pt.weather ? `<div class="wp-weather-badge">${pt.weather}</div>` : '';
+    const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
+    const innerStyle = pt.color
+      ? `style="background:${pt.color}; box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${pt.color}55;"`
+      : '';
+    const cls = `custom-waypoint-icon return-leg${isStacked ? ' is-stacked' : ''}`;
+    return L.divIcon({
+      className: cls,
+      html:
+        `<div class="wp-icon-inner" ${innerStyle}>${weatherHtml}` +
+        `<span>${num}</span></div>${labelHtml}`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
+  }
+
   clearAllRoutes() {
     this.routePolylines.forEach((pl) => this.map.removeLayer(pl));
     this.routePolylines = [];
     this.selectedRouteIndex = 0;
     this.clearHoverMarker();
     this.clearIntermediateMarkers();
+    this.clearReturnWaypoints();
     this.clearGradientRoute();
   }
 
@@ -947,11 +1023,13 @@ export class MapManager {
     let cls = '';
     if (index === 0 && total > 1) cls = 'start';
     else if (index === total - 1 && total > 1) cls = 'end';
+    if (this.stackedWaypointFlags?.[index]) cls += (cls ? ' ' : '') + 'is-stacked';
 
     const weather = this.waypointWeather[index];
     const weatherHtml = weather ? `<div class="wp-weather-badge">${weather}</div>` : '';
 
-    const size = cls ? 40 : 36;
+    const isEndpoint = (index === 0 || index === total - 1) && total > 1;
+    const size = isEndpoint ? 40 : 36;
     const labelText = this.waypointLabels[index];
     const externalLabel = labelText ? `<div class="marker-external-label">${labelText}</div>` : '';
 
@@ -1113,16 +1191,47 @@ export class MapManager {
     return null;
   }
 
-  /** Highlight a waypoint marker by index (adds .is-selected class). */
-  highlightWaypoint(wpIndex) {
-    this.waypointMarkers.forEach(m => m.getElement()?.classList.remove('is-selected'));
-    const m = this.waypointMarkers[wpIndex];
-    if (m) m.getElement()?.classList.add('is-selected');
+  /** Reset all waypoint markers to their resting z-index offset and remove
+   *  any .is-selected class. Outbound rests at 0; return rests at 100 so that
+   *  by default the (dashed) return circle is the one the user sees at stacked
+   *  locations — only when an outbound marker is highlighted does it rise
+   *  above its return counterpart. */
+  _resetWaypointMarkerZ() {
+    this.waypointMarkers.forEach((m) => {
+      m.getElement()?.classList.remove('is-selected');
+      m.setZIndexOffset(0);
+    });
+    this.returnWaypointMarkers.forEach((m) => {
+      m.getElement()?.classList.remove('is-selected');
+      m.setZIndexOffset(100);
+    });
   }
 
-  /** Remove all waypoint selection highlights. */
+  /** Highlight an outbound waypoint marker by index. Bumps the marker's
+   *  Leaflet zIndexOffset so it rises above any colocated return marker
+   *  (which sits at +100 by default). */
+  highlightWaypoint(wpIndex) {
+    this._resetWaypointMarkerZ();
+    const m = this.waypointMarkers[wpIndex];
+    if (m) {
+      m.getElement()?.classList.add('is-selected');
+      m.setZIndexOffset(1000);
+    }
+  }
+
+  /** Highlight a return-leg waypoint marker by wpIndex. */
+  highlightReturnWaypoint(wpIndex) {
+    this._resetWaypointMarkerZ();
+    const m = this.returnWaypointMarkers.find((x) => x._wpIndex === wpIndex);
+    if (m) {
+      m.getElement()?.classList.add('is-selected');
+      m.setZIndexOffset(1000);
+    }
+  }
+
+  /** Remove all waypoint selection highlights (outbound + return). */
   clearWaypointHighlight() {
-    this.waypointMarkers.forEach(m => m.getElement()?.classList.remove('is-selected'));
+    this._resetWaypointMarkerZ();
   }
 
   /**

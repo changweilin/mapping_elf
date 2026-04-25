@@ -3867,6 +3867,34 @@ function updateIntermediateMarkers() {
   }
 
   mapManager.setIntermediateMarkers(pts, totalDistM, turnaroundDistM);
+  updateReturnWaypointMarkers();
+}
+
+function updateReturnWaypointMarkers() {
+  if (!weatherPoints || weatherPoints.length === 0) {
+    mapManager.clearReturnWaypoints();
+    return;
+  }
+  const container = document.getElementById('weather-table-container');
+  const pts = weatherPoints
+    .map((p, i) => ({ pt: p, i }))
+    .filter((x) => x.pt.isWaypoint && x.pt.isReturn)
+    .map((x) => {
+      const dateStr = container?.querySelector(`.wt-th-date[data-idx="${x.i}"] .wt-date-input`)?.value;
+      const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${x.i}"] .wt-time-select`)?.value ?? '0');
+      const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, dateStr, hour)] : null;
+      const weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(x.pt)]?.weather?.split(' ')[0] || null;
+      return {
+        lat: x.pt.lat,
+        lng: x.pt.lng,
+        wpIndex: x.pt.wpIndex,
+        label: x.pt.label,
+        colIdx: x.i,
+        color: _weatherPointGradColor(x.pt),
+        weather: weatherIcon,
+      };
+    });
+  mapManager.setReturnWaypoints(pts);
 }
 
 function buildWeatherPoints() {
@@ -5325,9 +5353,12 @@ function highlightPoint(colIdx) {
     }
   }
 
-  // 3. Map — highlight the physical waypoint marker (only one per wpIndex)
+  // 3. Map — highlight the physical waypoint marker (one per wpIndex per leg)
   if (pt.isWaypoint && pt.wpIndex !== undefined && !pt.isReturn) {
     mapManager.highlightWaypoint(pt.wpIndex);
+    mapManager.clearHoverMarker();
+  } else if (pt.isWaypoint && pt.isReturn && pt.wpIndex !== undefined) {
+    mapManager.highlightReturnWaypoint(pt.wpIndex);
     mapManager.clearHoverMarker();
   } else {
     mapManager.clearWaypointHighlight();
