@@ -3037,7 +3037,8 @@ body.modal-open {
 }
 
 /* Card container */
-.weather-card {
+.weather-popup .weather-card {
+  position: relative;
   width: 240px;
   background: var(--bg-glass);
   backdrop-filter: blur(24px) saturate(1.5);
@@ -3050,19 +3051,49 @@ body.modal-open {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  padding: 0; /* Ensure no extra padding */
+  padding: 0;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
-.weather-card.full {
+/* Top accent stripe — uses pseudo so border-radius stays uniform on all sides */
+.weather-popup .weather-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--wc-accent, transparent);
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+}
+.weather-popup .weather-card.full {
   width: min(280px, calc(100vw - var(--panel-width) - 80px));
   max-height: calc(100vh - var(--toolbar-height) - var(--bottom-panel-height) - 80px);
   overflow-y: auto;
 }
 @media (max-width: 768px) {
-  .weather-card.full {
+  .weather-popup .weather-card.full {
     width: min(280px, calc(100vw - 48px));
   }
 }
-.weather-card.is-highlighted {
+/* Hover: pull the card forward so overlapping cards become distinguishable.
+   Uses the card's own --wc-accent so it never clashes with the green
+   highlight color reserved for the table-selected card. */
+.weather-popup .weather-card:hover {
+  z-index: 1001;
+  transform: translateY(-2px) scale(1.04);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 0 18px var(--wc-accent, rgba(255, 255, 255, 0.25));
+}
+.leaflet-popup.weather-popup:has(.weather-card:hover) {
+  z-index: 1001 !important;
+}
+.weather-popup .weather-card.is-highlighted {
   z-index: 1000 !important;
   border-color: var(--accent-primary);
   box-shadow: var(--shadow-lg), 0 0 15px rgba(110, 231, 183, 0.4);

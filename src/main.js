@@ -4876,7 +4876,11 @@ function navigateWeatherCard(colIdx, delta) {
   const nextColIdx = colsWithWeather[nextPos];
   if (nextColIdx === colIdx) return;
 
+  // Cyclic switch: close the current card so prev/next feels like the
+  // viewport is moving along the route (start ↔ end wraps around) rather
+  // than stacking new popups on top of the old one.
   const mode = _wcStates.get(colIdx) || 'compact';
+  closeWeatherCard(colIdx);
   setWeatherCardMode(nextColIdx, mode);
   // highlightPoint handles mode-aware pan/centering
   highlightPoint(nextColIdx);
@@ -4962,7 +4966,7 @@ function _renderWeatherCard(colIdx) {
 
   // Build HTML with unique ID per column card. Use gradient color for card accent.
   const gradColor = _weatherPointGradColor(pt);
-  const cardStyle = `border-top: 3px solid ${gradColor};`;
+  const cardStyle = `--wc-accent: ${gradColor};`;
   let html = `<div class="weather-card${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}" style="${cardStyle}">`;
 
   // Header
