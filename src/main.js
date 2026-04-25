@@ -5786,86 +5786,33 @@ async function fetchViewCountryCode(lat, lng) {
 }
 
 /**
- * Three-tier keyword search, all sorted by distance from the current view center:
- *   1. In view (Nominatim viewbox+bounded + Overpass bbox name regex)
- *   2. Same country as view center (Nominatim countrycodes=XX) — preference layer
- *   3. Global (unrestricted Nominatim)
+ * Two-tier keyword search, sorted by distance from the current view center:
+ *   1. Same country as view center (Nominatim countrycodes=XX) — preference layer
+ *   2. Global (unrestricted Nominatim)
  * Each lower tier only fires when the prior tier returned nothing.
  */
 async function searchByKeyword(query, bounds) {
-  const west = bounds.getWest(), east = bounds.getEast();
-  const south = bounds.getSouth(), north = bounds.getNorth();
-  const viewbox = `${west},${north},${east},${south}`;
-  const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1&viewbox=${viewbox}&bounded=1`;
-
-  // Escape regex metacharacters before embedding into Overpass name filter
-  const safeQ = query.replace(/[\\^$.|?*+(){}[\]]/g, '\\$&');
-  const ovpQuery = `[out:json][timeout:6];
-(
-  node["name"~"${safeQ}",i](${south},${west},${north},${east});
-  way["name"~"${safeQ}",i](${south},${west},${north},${east});
-);
-out center 30;`;
-
-  const fetchOptions = { signal: AbortSignal.timeout(8000) };
-  const [nomRes, ovpRes] = await Promise.allSettled([
-    fetch(nomUrl, {
-      headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
-      ...fetchOptions,
-    }).then(r => r.ok ? r.json() : []),
-    fetch(OVERPASS_API, {
-      method: 'POST',
-      body: 'data=' + encodeURIComponent(ovpQuery),
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      ...fetchOptions,
-    }).then(r => r.ok ? r.json() : null),
-  ]);
-
-  const nomItems = nomRes.status === 'fulfilled' && Array.isArray(nomRes.value) ? nomRes.value : [];
-  const ovpData = ovpRes.status === 'fulfilled' ? ovpRes.value : null;
-
-  const items = nomItems.map(it => ({
-    lat: parseFloat(it.lat),
-    lon: parseFloat(it.lon),
-    name: it.name || (it.display_name?.split(',')[0]) || '',
-    display_name: it.display_name,
-  }));
-
-  if (ovpData?.elements) {
-    for (const e of ovpData.elements) {
-      const lat = e.lat ?? e.center?.lat;
-      const lon = e.lon ?? e.center?.lon;
-      const name = e.tags?.name;
-      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !name) continue;
-      const cat = e.tags.natural || e.tags.tourism || e.tags.historic
-               || e.tags.leisure || e.tags.amenity || e.tags.shop || e.tags.waterway || '';
-      items.push({ lat, lon, name, display_name: cat ? `${name} (${cat})` : name });
-    }
-  }
-
-  // Dedupe: same first-token name within ~30m
   const dedup = [];
-  for (const it of items) {
-    const head = (it.name || '').split(',')[0];
-    if (!head) continue;
-    const dup = dedup.find(d =>
-      d.name.split(',')[0] === head &&
-      haversineDistance([d.lat, d.lon], [it.lat, it.lon]) < 30
-    );
-    if (!dup) dedup.push(it);
-  }
 
   const pushNomItems = (arr) => {
     if (!Array.isArray(arr)) return;
     for (const it of arr) {
-      dedup.push({
-        lat: parseFloat(it.lat),
-        lon: parseFloat(it.lon),
-        name: it.name || (it.display_name?.split(',')[0]) || '',
-        display_name: it.display_name,
-      });
+      const lat = parseFloat(it.lat);
+      const lon = parseFloat(it.lon);
+      const name = it.name || (it.display_name?.split(',')[0]) || '';
+      const head = name.split(',')[0];
+      if (!head) continue;
+
+      const dup = dedup.find(d =>
+        d.name.split(',')[0] === head &&
+        haversineDistance([d.lat, d.lon], [lat, lon]) < 30
+      );
+      if (!dup) {
+        dedup.push({ lat, lon, name, display_name: it.display_name });
+      }
     }
   };
+
   const fetchNom = async (url) => {
     const r = await fetch(url, {
       headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
@@ -5874,40 +5821,40 @@ out center 30;`;
     return r.ok ? r.json() : null;
   };
 
-  // Tier 2: same-country fallback (preference layer based on view center)
-  if (dedup.length === 0) {
-    const c2 = bounds.getCenter();
-    const cc = await fetchViewCountryCode(c2.lat, c2.lng);
-    if (cc) {
-      try {
-        pushNomItems(await fetchNom(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1&countrycodes=${cc}`
-        ));
-      } catch (err) {
-        console.warn('Country-scoped fallback search failed:', err);
-      }
+  // Tier 1: same-country (preference layer based on view center)
+  const center = bounds.getCenter();
+  const cc = await fetchViewCountryCode(center.lat, center.lng);
+  if (cc) {
+    try {
+      const items = await fetchNom(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1&countrycodes=${cc}`
+      );
+      pushNomItems(items);
+    } catch (err) {
+      console.warn('Country-scoped search failed:', err);
     }
   }
 
-  // Tier 3: global fallback (still distance-sorted from view center below)
+  // Tier 2: global fallback
   if (dedup.length === 0) {
     try {
-      pushNomItems(await fetchNom(
+      const items = await fetchNom(
         `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1`
-      ));
+      );
+      pushNomItems(items);
     } catch (err) {
-      console.warn('Global fallback search failed:', err);
+      console.warn('Global search failed:', err);
     }
   }
 
   // Sort by distance from view center
-  const center = bounds.getCenter();
   const c = [center.lat, center.lng];
   for (const it of dedup) it._dist = haversineDistance(c, [it.lat, it.lon]);
   dedup.sort((a, b) => a._dist - b._dist);
 
   return dedup;
 }
+
 
 function renderSearchResults(items, resultsEl) {
   const frozen = !!importedTrackMode;
