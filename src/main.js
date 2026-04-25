@@ -5797,11 +5797,13 @@ async function searchByKeyword(query, bounds) {
     const c = it.class || '';
     if (c === 'natural' || c === 'waterway') return 1;
     if (c === 'tourism' || c === 'historic') return 2;
-    if (c === 'place' || c === 'boundary' || c === 'man_made') return 3;
+    if (c === 'man_made') return 3; // Landmarks
     if (c === 'building') return 4;
     if (c === 'shop' || c === 'amenity') return 5;
-    return 6;
+    if (c === 'place' || c === 'boundary') return 7; // Administrative regions
+    return 6; // Others
   };
+
 
   const pushNomItems = (arr) => {
     if (!Array.isArray(arr)) return;
