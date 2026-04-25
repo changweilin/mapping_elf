@@ -5786,13 +5786,22 @@ async function fetchViewCountryCode(lat, lng) {
 }
 
 /**
- * Two-tier keyword search, sorted by distance from the current view center:
- *   1. Same country as view center (Nominatim countrycodes=XX) — preference layer
- *   2. Global (unrestricted Nominatim)
- * Each lower tier only fires when the prior tier returned nothing.
+ * Two-tier keyword search, sorted by category priority, then distance from center:
+ * Priority: 自然景觀 (natural/waterway) > 景點 (tourism/historic) > 地標 (place/boundary/man_made)
+ *          > 建築 (building) > 店家 (shop/amenity) > 其他
  */
 async function searchByKeyword(query, bounds) {
   const dedup = [];
+
+  const getSearchPriority = (it) => {
+    const c = it.class || '';
+    if (c === 'natural' || c === 'waterway') return 1;
+    if (c === 'tourism' || c === 'historic') return 2;
+    if (c === 'place' || c === 'boundary' || c === 'man_made') return 3;
+    if (c === 'building') return 4;
+    if (c === 'shop' || c === 'amenity') return 5;
+    return 6;
+  };
 
   const pushNomItems = (arr) => {
     if (!Array.isArray(arr)) return;
@@ -5808,7 +5817,13 @@ async function searchByKeyword(query, bounds) {
         haversineDistance([d.lat, d.lon], [lat, lon]) < 30
       );
       if (!dup) {
-        dedup.push({ lat, lon, name, display_name: it.display_name });
+        dedup.push({
+          lat, lon, name,
+          display_name: it.display_name,
+          class: it.class,
+          type: it.type,
+          _priority: getSearchPriority(it)
+        });
       }
     }
   };
@@ -5827,7 +5842,7 @@ async function searchByKeyword(query, bounds) {
   if (cc) {
     try {
       const items = await fetchNom(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1&countrycodes=${cc}`
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=25&addressdetails=1&countrycodes=${cc}`
       );
       pushNomItems(items);
     } catch (err) {
@@ -5839,7 +5854,7 @@ async function searchByKeyword(query, bounds) {
   if (dedup.length === 0) {
     try {
       const items = await fetchNom(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=15&addressdetails=1`
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=25&addressdetails=1`
       );
       pushNomItems(items);
     } catch (err) {
@@ -5847,13 +5862,17 @@ async function searchByKeyword(query, bounds) {
     }
   }
 
-  // Sort by distance from view center
+  // Sort by priority, then distance from view center
   const c = [center.lat, center.lng];
   for (const it of dedup) it._dist = haversineDistance(c, [it.lat, it.lon]);
-  dedup.sort((a, b) => a._dist - b._dist);
+  dedup.sort((a, b) => {
+    if (a._priority !== b._priority) return a._priority - b._priority;
+    return a._dist - b._dist;
+  });
 
   return dedup;
 }
+
 
 
 function renderSearchResults(items, resultsEl) {
