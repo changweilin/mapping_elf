@@ -5194,44 +5194,91 @@ function highlightWeatherColumn(colIdx) {
 }
 
 /**
- * Pan the map so the full weather card is centred in the safe viewport area
- * (map container minus side-panel and floating action buttons).
+ * Compute the safe viewport area inside the map container, excluding the
+ * regions occluded by the side-panel (right) and the bottom-panel (bottom).
+ * The vertical safe area is therefore bounded above by the toolbar/container
+ * top and below by the bottom-panel divider line.
  */
-function panMapToCenterFullCard(colIdx) {
-  const pt = weatherPoints[colIdx];
-  if (!pt) return;
+function _getMapSafeArea() {
   const map = mapManager.map;
   const container = map.getContainer();
   const rect = container.getBoundingClientRect();
-
-  const cardEl = document.getElementById(`wc-root-${colIdx}`);
-  const cardW = cardEl?.offsetWidth || 280;
-  const cardH = cardEl?.offsetHeight || 260;
-  const popupOffsetY = pt.isWaypoint ? 24 : 12;
-  const tipGap = 12;
 
   const sidePanel = document.getElementById('side-panel');
   const panelOpen = sidePanel?.classList.contains('open');
   const panelRect = panelOpen ? sidePanel.getBoundingClientRect() : null;
   const panelOverlap = panelRect ? Math.max(0, rect.right - panelRect.left) : 0;
 
-  const pad = rect.width < 600 ? 12 : 16;
-  const safeLeft   = pad;
-  const safeRight  = rect.width - panelOverlap - pad;
-  const safeTop    = pad;
-  const safeBottom = rect.height;
+  const bottomPanel = document.getElementById('bottom-panel');
+  const bpRect = bottomPanel?.getBoundingClientRect();
+  const bottomOverlap = bpRect ? Math.max(0, rect.bottom - bpRect.top) : 0;
 
-  if (safeRight - safeLeft < cardW + 8 || safeBottom - safeTop < cardH + popupOffsetY + tipGap) {
+  const isMobile = rect.width < 768;
+  const padX = isMobile ? 12 : 16;
+  // Extra top padding on mobile so the card-header buttons stay clear of
+  // the toolbar edge and remain easy to tap.
+  const padTop = isMobile ? 20 : 16;
+  const padBottom = isMobile ? 8 : 12;
+
+  return {
+    rect,
+    safeLeft:   padX,
+    safeRight:  rect.width - panelOverlap - padX,
+    safeTop:    padTop,
+    safeBottom: rect.height - bottomOverlap - padBottom,
+  };
+}
+
+/**
+ * Pan the map so the weather card popup is centred in the safe viewport
+ * area — vertically the centre is determined by the bottom-panel divider
+ * line (i.e. the visible map area), so the card sits midway between the
+ * toolbar and the divider, with its top buttons clear of the toolbar edge.
+ */
+function panMapToCenterFullCard(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return;
+  const map = mapManager.map;
+
+  const cardEl = document.getElementById(`wc-root-${colIdx}`);
+  const cardW = cardEl?.offsetWidth || 280;
+  const cardH = cardEl?.offsetHeight || 260;
+  const popupOffsetY = pt.isWaypoint ? 24 : 12;
+
+  const { safeLeft, safeRight, safeTop, safeBottom } = _getMapSafeArea();
+
+  if (safeRight - safeLeft < cardW + 8 || safeBottom - safeTop < cardH + popupOffsetY) {
     map.panTo([pt.lat, pt.lng], { animate: true });
     return;
   }
 
-  const cardCenterX = (safeLeft + safeRight) / 2;
-  const cardCenterY = (safeTop + safeBottom) / 2;
-  const targetX = cardCenterX;
-  const targetY = cardCenterY + cardH / 2 + popupOffsetY + tipGap;
+  // The popup wrapper sits with its bottom at marker_y - popupOffsetY (the
+  // tip is hidden via CSS, so no extra gap is needed). Centre the card
+  // vertically in the safe area, then place the marker directly below:
+  //   card_center = marker_y - popupOffsetY - cardH/2 = safeCenterY
+  const safeCenterX = (safeLeft + safeRight) / 2;
+  const safeCenterY = (safeTop + safeBottom) / 2;
+  const targetX = safeCenterX;
+  const targetY = safeCenterY + cardH / 2 + popupOffsetY;
 
   const currentPointPx = map.latLngToContainerPoint([pt.lat, pt.lng]);
+  const dx = currentPointPx.x - targetX;
+  const dy = currentPointPx.y - targetY;
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+  map.panBy([dx, dy], { animate: true, duration: 0.25 });
+}
+
+/**
+ * Pan so the marker lands at the visible centre of the safe area
+ * (used when no full card needs vertical room). On mobile this keeps
+ * the marker above the bottom-panel divider rather than hidden behind it.
+ */
+function panMapToVisibleCenter(latlng) {
+  const map = mapManager.map;
+  const { safeLeft, safeRight, safeTop, safeBottom } = _getMapSafeArea();
+  const targetX = (safeLeft + safeRight) / 2;
+  const targetY = (safeTop + safeBottom) / 2;
+  const currentPointPx = map.latLngToContainerPoint(latlng);
   const dx = currentPointPx.x - targetX;
   const dy = currentPointPx.y - targetY;
   if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
@@ -5294,12 +5341,14 @@ function highlightPoint(colIdx) {
     }
   }
 
-  // 5. Map Centering
+  // 5. Map Centering — when a card is open, centre the card in the visible
+  // safe area (so its top buttons stay clear of the toolbar and it sits
+  // above the bottom-panel divider). Otherwise just centre the marker.
   const mode = _wcStates.get(colIdx);
-  if (mode === 'full') {
+  if (mode === 'full' || mode === 'compact') {
     panMapToCenterFullCard(colIdx);
   } else if (waypointCentering) {
-    mapManager.map.panTo([pt.lat, pt.lng], { animate: true });
+    panMapToVisibleCenter([pt.lat, pt.lng]);
   }
 
   // 6. Weather Card — Highlight the card and bring to front
