@@ -207,6 +207,9 @@ export class RouteEngine {
           descent: Math.round(descent),
           maxElev: maxElev === -Infinity ? 0 : Math.round(maxElev),
           minElev: minElev === Infinity ? 0 : Math.round(minElev),
+          startElev: Math.round(elevations[0] || 0),
+          endElev: Math.round(elevations[elevations.length - 1] || 0),
+          turnaroundElev: null, // calculated in main.js if needed
           score: 0, // will be calculated below
           label: '',
           index: idx,

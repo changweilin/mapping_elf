@@ -421,7 +421,6 @@ mapManager.onIntermediateSelect = (lat, lng) => {
 const loadingScreen = document.getElementById('loading-screen');
 const sidePanel = document.getElementById('side-panel');
 const waypointList = document.getElementById('waypoint-list');
-const alternativesSection = document.getElementById('alternatives-section');
 const alternativesList = document.getElementById('alternatives-list');
 const altCount = document.getElementById('alt-count');
 
@@ -447,6 +446,11 @@ const statDistance = document.getElementById('stat-distance');
 const statAscent = document.getElementById('stat-ascent');
 const statDescent = document.getElementById('stat-descent');
 const statMaxElev = document.getElementById('stat-max-elev');
+const statMinElev = document.getElementById('stat-min-elev');
+const statStartElev = document.getElementById('stat-start-elev');
+const statEndElev = document.getElementById('stat-end-elev');
+const labelStartElev = document.getElementById('label-start-elev');
+const labelEndElev = document.getElementById('label-end-elev');
 const statTime = document.getElementById('stat-time');
 const statTimeCard = document.getElementById('stat-time-card');
 const statKcal = document.getElementById('stat-kcal');
@@ -1393,10 +1397,9 @@ function selectAlternative(index) {
   elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
 
   // Update stats from pre-calculated route data
+  const epStats = elevationProfile._calcStats();
   statDistance.textContent = formatDistance(route.distance);
-  statAscent.textContent = formatElevation(route.ascent);
-  statDescent.textContent = formatElevation(route.descent);
-  statMaxElev.textContent = formatElevation(route.maxElev);
+  updateElevationStats(epStats);
 
   // Update card selection highlight
   renderAlternatives(allAlternatives, index);
@@ -1423,29 +1426,16 @@ function renderAlternatives(routes, selectedIdx) {
     return;
   }
 
-  alternativesSection.style.display = '';
-  altCount.textContent = `${routes.length} 條`;
+  alternativesList.style.display = routes.length > 1 ? 'flex' : 'none';
+  altCount.style.display = routes.length > 1 ? 'inline-block' : 'none';
+  altCount.textContent = `${routes.length} 條方案`;
 
   alternativesList.innerHTML = routes.map((r, i) => `
     <div class="alt-card ${i === selectedIdx ? 'selected' : ''}" data-color="${i}" data-index="${i}">
-      <div class="alt-card-header">
+      <div class="alt-card-header" style="margin-bottom: 0;">
         <span class="alt-color-dot"></span>
         <span class="alt-card-label">${r.label}</span>
         ${i === 0 ? '<span class="alt-badge">推薦</span>' : ''}
-      </div>
-      <div class="alt-stats">
-        <div class="alt-stat">
-          <span class="alt-stat-label">距離</span>
-          <span class="alt-stat-value">${formatDistance(r.distance)}</span>
-        </div>
-        <div class="alt-stat">
-          <span class="alt-stat-label">爬升</span>
-          <span class="alt-stat-value">${formatElevation(r.ascent)}</span>
-        </div>
-        <div class="alt-stat">
-          <span class="alt-stat-label">下降</span>
-          <span class="alt-stat-value">${formatElevation(r.descent)}</span>
-        </div>
       </div>
     </div>
   `).join('');
@@ -1460,7 +1450,8 @@ function renderAlternatives(routes, selectedIdx) {
 }
 
 function hideAlternatives() {
-  alternativesSection.style.display = 'none';
+  alternativesList.style.display = 'none';
+  altCount.style.display = 'none';
   alternativesList.innerHTML = '';
   allAlternatives = [];
   selectedAltIndex = 0;
@@ -1739,9 +1730,38 @@ function resetStats() {
   statAscent.textContent = '—';
   statDescent.textContent = '—';
   statMaxElev.textContent = '—';
+  statMinElev.textContent = '—';
+  if (statStartElev) statStartElev.textContent = '—';
+  if (statEndElev) statEndElev.textContent = '—';
   if (statTime) statTime.textContent = '—';
   if (statKcal) statKcal.textContent = '—';
   if (statIntake) statIntake.textContent = '—';
+}
+
+/** Update the elevation stats in the side panel grid */
+function updateElevationStats(stats) {
+  if (!stats) return;
+  
+  if (statAscent) statAscent.textContent = formatElevation(stats.ascent);
+  if (statDescent) statDescent.textContent = formatElevation(stats.descent);
+  if (statMaxElev) statMaxElev.textContent = formatElevation(stats.maxElev);
+  if (statMinElev) statMinElev.textContent = formatElevation(stats.minElev);
+
+  if (statStartElev && statEndElev) {
+    if (stats.turnaroundElev !== null) {
+      // Loop or Round-trip
+      if (labelStartElev) labelStartElev.textContent = '起終點海拔';
+      if (labelEndElev) labelEndElev.textContent = '折返點海拔';
+      statStartElev.textContent = formatElevation(stats.startElev);
+      statEndElev.textContent = formatElevation(stats.turnaroundElev);
+    } else {
+      // One-way
+      if (labelStartElev) labelStartElev.textContent = '起點海拔';
+      if (labelEndElev) labelEndElev.textContent = '終點海拔';
+      statStartElev.textContent = formatElevation(stats.startElev);
+      statEndElev.textContent = formatElevation(stats.endElev);
+    }
+  }
 }
 
 // =========== Pace / Speed Interval ===========
@@ -2690,9 +2710,7 @@ function restoreImportedTrack(session) {
   const totalDist = elevationProfile.distances.at(-1) || 0;
   const epStats = elevationProfile._calcStats();
   statDistance.textContent = formatDistance(totalDist);
-  statAscent.textContent = formatElevation(epStats.ascent);
-  statDescent.textContent = formatElevation(epStats.descent);
-  statMaxElev.textContent = formatElevation(epStats.maxElev);
+  updateElevationStats(epStats);
 
   mapManager.fitToRoute();
   updateTimeStat();
@@ -2784,9 +2802,7 @@ function _applyImportedResultCore(result) {
     const totalDist = elevationProfile.distances.at(-1) || 0;
     const epStats = elevationProfile._calcStats();
     statDistance.textContent = formatDistance(totalDist);
-    statAscent.textContent = formatElevation(epStats.ascent);
-    statDescent.textContent = formatElevation(epStats.descent);
-    statMaxElev.textContent = formatElevation(epStats.maxElev);
+    updateElevationStats(epStats);
 
     mapManager.fitToRoute();
     updateTimeStat();

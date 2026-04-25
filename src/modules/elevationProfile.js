@@ -177,11 +177,23 @@ export class ElevationProfile {
       }
     }
 
+    const startElev = this.elevations[0] || 0;
+    const endElev = this.elevations[this.elevations.length - 1] || 0;
+    let turnaroundElev = null;
+    if (this.turnaroundFrac != null) {
+      const totalDist = this.distances[this.distances.length - 1] || 1;
+      const targetDist = totalDist * this.turnaroundFrac;
+      turnaroundElev = this._interpolateElevAtCumM(targetDist);
+    }
+
     return {
       ascent: Math.round(ascent),
       descent: Math.round(descent),
       maxElev: maxElev === -Infinity ? 0 : Math.round(maxElev),
       minElev: minElev === Infinity ? 0 : Math.round(minElev),
+      startElev: Math.round(startElev),
+      endElev: Math.round(endElev),
+      turnaroundElev: turnaroundElev != null ? Math.round(turnaroundElev) : null,
     };
   }
 
