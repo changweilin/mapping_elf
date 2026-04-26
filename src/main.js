@@ -356,12 +356,14 @@ const elevationProfile = new ElevationProfile(
 mapManager.onRouteSelect = (idx) => selectAlternative(idx);
 
 // When user clicks a waypoint marker on the map → cross-view highlight
-mapManager.onWaypointSelect = (wpIndex) => {
-  const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIndex);
+mapManager.onWaypointSelect = (wpIndex, isReturn = false) => {
+  const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.isReturn === isReturn && p.wpIndex === wpIndex);
   if (colIdx >= 0) {
     highlightPoint(colIdx);
   } else {
-    mapManager.highlightWaypoint(wpIndex);
+    if (isReturn) mapManager.highlightReturnWaypoint(wpIndex);
+    else mapManager.highlightWaypoint(wpIndex);
+    
     waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
     const item = waypointList.querySelectorAll('.waypoint-item')[wpIndex];
     if (item) {

@@ -63,6 +63,7 @@ export class MapManager {
     this.intermediateMarkers = [];
     this.returnWaypointMarkers = []; // Markers for round-trip return waypoints (same shape as outbound, dashed border)
     this.stackedWaypointFlags = []; // Per-waypoint flag: outbound marker shares lat/lng with a return marker
+    this.waypointLayerSwapped = []; // true if outbound is on top of return at this index
     this.ignoreMapClick = false;
     this.dragLine = null;
     this.dragLine = null;
@@ -467,6 +468,7 @@ export class MapManager {
   addWaypoint(lat, lng, insertIndex = null) {
     const idx = insertIndex !== null ? insertIndex : this.waypoints.length;
     this.waypoints.splice(idx, 0, [lat, lng]);
+    this.waypointLayerSwapped.splice(idx, 0, false);
     this.waypointWeather.splice(idx, 0, null);
     this.waypointColors.splice(idx, 0, null);
     this.waypointLabels.splice(idx, 0, null);
@@ -530,7 +532,15 @@ export class MapManager {
         document.removeEventListener('mousemove', onMoveGuard);
         document.removeEventListener('mouseup', cancelLP);
         _mouseLPTimer = null;
+
+        // Long-press on overlapping waypoint toggles display level independently of track
+        const wpIdx = this.waypointMarkers.indexOf(marker);
+        if (wpIdx >= 0 && this.stackedWaypointFlags?.[wpIdx]) {
+          this._toggleWaypointLayer(wpIdx);
+        }
+
         _dragModeActive = true;
+        _justDragged = true; // Prevent subsequent click from triggering redundant highlight
         marker.getElement()?.classList.add('is-dragging');
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
@@ -592,7 +602,15 @@ export class MapManager {
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
+
+        // Long-press on overlapping waypoint toggles display level independently of track
+        const wpIdx = this.waypointMarkers.indexOf(marker);
+        if (wpIdx >= 0 && this.stackedWaypointFlags?.[wpIdx]) {
+          this._toggleWaypointLayer(wpIdx);
+        }
+
         _dragModeActive = true;
+        _justDragged = true; // Prevent subsequent click from triggering redundant highlight
         marker.getElement()?.classList.add('is-dragging');
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
@@ -746,6 +764,7 @@ export class MapManager {
   removeWaypoint(index) {
     this.map.removeLayer(this.waypointMarkers[index]);
     this.waypoints.splice(index, 1);
+    this.waypointLayerSwapped.splice(index, 1);
     this.waypointMarkers.splice(index, 1);
     this.waypointWeather.splice(index, 1);
     this._updateMarkerIcons();
@@ -1229,6 +1248,47 @@ export class MapManager {
         if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
       });
 
+      // Long-press (500ms) to cycle overlapping layers
+      let _lpTimer = null;
+      let _startX = 0, _startY = 0;
+      
+      const startLP = (e) => {
+        if (this.isFrozen) return;
+        const oe = e.originalEvent;
+        if (oe.button !== undefined && oe.button !== 0) return;
+        const touch = oe.touches ? oe.touches[0] : oe;
+        _startX = touch.clientX;
+        _startY = touch.clientY;
+        
+        _lpTimer = setTimeout(() => {
+          _lpTimer = null;
+          if (navigator.vibrate) navigator.vibrate(40);
+          this._toggleWaypointLayer(marker._wpIndex);
+        }, 500);
+      };
+      
+      const moveLP = (e) => {
+        if (!_lpTimer) return;
+        const oe = e.originalEvent;
+        const touch = oe.touches ? oe.touches[0] : oe;
+        if (Math.hypot(touch.clientX - _startX, touch.clientY - _startY) > 10) {
+          clearTimeout(_lpTimer);
+          _lpTimer = null;
+        }
+      };
+      
+      const endLP = () => {
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+      };
+
+      marker.on('mousedown touchstart', startLP);
+      marker.on('mousemove touchmove', moveLP);
+      marker.on('mouseup touchend mouseleave touchcancel', endLP);
+      marker.on('contextmenu', (e) => {
+        L.DomEvent.stop(e);
+        this._toggleWaypointLayer(marker._wpIndex);
+      });
+
       this.returnWaypointMarkers.push(marker);
     });
   }
@@ -1520,9 +1580,9 @@ export class MapManager {
    * trips, multi-turnaround, figure-8, repeated laps, arbitrary self-crossings.
    * Falls back to spatial proximity grouping if leg ids weren't computed.
    */
-  _cycleOverlappingLayers(clickedPolyline, latlng) {
+  _cycleOverlappingLayers(clickedObject, latlng) {
     if (!this.gradientPolylines.length) return;
-    const targetLeg = clickedPolyline._legId;
+    const targetLeg = clickedObject._legId;
 
     // Refresh leg IDs on all markers to ensure they match current route state
     this._syncAllMarkerLegIds();
@@ -1554,8 +1614,20 @@ export class MapManager {
       return false;
     };
     const overlapSet = new Set(this.gradientPolylines.filter(passesNear));
-    overlapSet.add(clickedPolyline);
-    const idx = this.gradientPolylines.indexOf(clickedPolyline);
+    let idx = -1;
+    if (clickedObject.getLatLngs) {
+      overlapSet.add(clickedObject);
+      idx = this.gradientPolylines.indexOf(clickedObject);
+    } else {
+      // If a marker was clicked, find the closest polyline segment to act as the pivot
+      let minD = Infinity;
+      this.gradientPolylines.forEach((pl, i) => {
+        if (passesNear(pl)) {
+          overlapSet.add(pl);
+          if (idx < 0) idx = i;
+        }
+      });
+    }
     if (idx < 0) return;
     let lo = idx, hi = idx;
     while (lo > 0 && overlapSet.has(this.gradientPolylines[lo - 1])) lo--;
@@ -1678,14 +1750,42 @@ export class MapManager {
    *  by default the (dashed) return circle is the one the user sees at stacked
    *  locations — only when an outbound marker is highlighted does it rise
    *  above its return counterpart. */
+  _toggleWaypointLayer(idx) {
+    if (idx === undefined || idx < 0 || !this.stackedWaypointFlags?.[idx]) return;
+    
+    // Toggle the swap state for this specific waypoint index
+    this.waypointLayerSwapped[idx] = !this.waypointLayerSwapped[idx];
+    this._resetWaypointMarkerZ();
+    
+    // Now highlight the one that has been brought to the top
+    const isOutboundOnTop = this.waypointLayerSwapped[idx];
+    if (isOutboundOnTop) {
+      this.highlightWaypoint(idx);
+      this.onWaypointSelect?.(idx, false);
+    } else {
+      this.highlightReturnWaypoint(idx, true); // True to bypass onWaypointSelect circularity
+      this.onWaypointSelect?.(idx, true);
+    }
+  }
+
+  /**
+   * Reset all marker z-indices to their default stack order.
+   * Default: Return leg (100) is above Outbound leg (0).
+   * Overridden by waypointLayerSwapped[idx].
+   */
   _resetWaypointMarkerZ() {
-    this.waypointMarkers.forEach((m) => {
+    this.waypointMarkers.forEach((m, i) => {
       m.getElement()?.classList.remove('is-selected');
-      m.setZIndexOffset(0);
+      // If swapped, outbound is at 100. Default is 0.
+      const offset = this.waypointLayerSwapped[i] ? 100 : 0;
+      m.setZIndexOffset(offset);
     });
     this.returnWaypointMarkers.forEach((m) => {
       m.getElement()?.classList.remove('is-selected');
-      m.setZIndexOffset(100);
+      const i = m._wpIndex;
+      // If swapped, return is at 0. Default is 100.
+      const offset = (i !== undefined && this.waypointLayerSwapped[i]) ? 0 : 100;
+      m.setZIndexOffset(offset);
     });
   }
 
