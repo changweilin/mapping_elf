@@ -1937,13 +1937,29 @@ function cascadeWeatherTimes() {
   if (!speedIntervalMode || weatherPoints.length === 0) return;
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  const startDate = container.querySelector('.wt-th-date[data-idx="0"] .wt-date-input')?.value || '';
-  const startHour = parseInt(container.querySelector('.wt-th-time[data-idx="0"] .wt-time-select')?.value ?? '8');
-  if (!startDate) return;
+
+  const saved = loadWeatherSettings();
+  const col0 = getSavedCol(weatherPoints[0], 0, saved);
+  
+  let anchorDate = col0?.date || container.querySelector('.wt-th-date[data-idx="0"] .wt-date-input')?.value || '';
+  let anchorHour = parseInt(col0?.hour ?? container.querySelector('.wt-th-time[data-idx="0"] .wt-time-select')?.value ?? '8');
+  let anchorElapsedH = 0;
+  if (!anchorDate) return;
 
   weatherPoints.forEach((pt, i) => {
     if (i === 0) return;
-    const { date, hour } = addHoursToDateTime(startDate, startHour, pt._elapsedH || 0);
+
+    const sv = getSavedCol(pt, i, saved);
+    if (pt.isWaypoint && sv && sv.date) {
+      anchorDate = sv.date;
+      anchorHour = parseInt(sv.hour);
+      anchorElapsedH = pt._elapsedH || 0;
+      // Already populated in DOM by renderWeatherPanel, but we update anchor to stop at this waypoint
+      return;
+    }
+
+    const deltaH = (pt._elapsedH || 0) - anchorElapsedH;
+    const { date, hour } = addHoursToDateTime(anchorDate, anchorHour, deltaH);
     const di = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`);
     const hs = container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`);
     if (di) di.value = date;
@@ -4416,15 +4432,14 @@ function handleWeatherTimeChange(idx, th) {
   }
 
   if (strictLinearMode) {
-    if (speedIntervalMode) {
-      const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
-      const deltaMs = colToMs(th) - prevMs;
-      if (deltaMs !== 0) {
-        for (let j = idx + 1; j < heads.length; j++) {
-          setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
-        }
+    const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
+    const deltaMs = colToMs(th) - prevMs;
+    if (deltaMs !== 0) {
+      for (let j = idx + 1; j < heads.length; j++) {
+        setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
       }
-    } else {
+    }
+    if (!speedIntervalMode) {
       syncIntervalTimesFromWP();
     }
   }
