@@ -3504,7 +3504,10 @@ body.modal-open {
   font-size: 11px;
   border-bottom: 1px solid var(--border);
 }
-.wc-info-item:nth-last-child(-n+2) {
+.wc-info-item.is-wide {
+  padding: 5px 0;
+}
+.wc-info-item:last-child {
   border-bottom: none;
 }
 .wc-info-label {
@@ -3513,6 +3516,18 @@ body.modal-open {
 .wc-info-value {
   color: var(--text-primary);
   font-weight: 500;
+}
+.wc-info-value.clickable-coords {
+  cursor: pointer;
+  transition: color var(--transition-fast), transform var(--transition-fast);
+  position: relative;
+}
+.wc-info-value.clickable-coords:hover {
+  color: var(--accent-primary);
+  transform: scale(1.02);
+}
+.wc-info-value.clickable-coords:active {
+  transform: scale(0.96);
 }
 
 /* Windy link button */

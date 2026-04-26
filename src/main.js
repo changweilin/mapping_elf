@@ -5072,6 +5072,8 @@ function _renderWeatherCard(colIdx) {
 
   // Resolve display values
   const val = (key) => {
+    if (key === 'elevation') return formatElevation(pt._ele);
+    if (key === 'coords') return formatCoords(pt.lat, pt.lng);
     if (data) return getCellValue(data, key);
     if (cells && cells[key]) return cells[key];
     return '—';
@@ -5141,14 +5143,23 @@ function _renderWeatherCard(colIdx) {
       { key: 'visibility', label: '能見度' },
       { key: 'sunshineHours', label: '日照' },
       { key: 'radiation', label: '輻射' },
+      { key: 'elevation', label: '海拔' },
       { key: 'sunrise', label: '日出' },
       { key: 'sunset', label: '日落' },
+      { key: 'coords', label: '坐標' },
       { key: 'forecastTime', label: '預報時間' },
     ];
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
-      const fullWidth = row.key === 'forecastTime' ? ' style="grid-column: span 2;"' : '';
-      html += `<div class="wc-info-item"${fullWidth}><span class="wc-info-label">${row.label}</span><span class="wc-info-value">${val(row.key)}</span></div>`;
+      const isWide = ['coords', 'forecastTime'].includes(row.key);
+      const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
+      const isCoords = row.key === 'coords';
+      const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
+      const displayVal = val(row.key);
+      html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
+      html += `<span class="wc-info-label">${row.label}</span>`;
+      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${displayVal}</span>`;
+      html += `</div>`;
     });
     html += `</div>`;
 
@@ -5195,6 +5206,27 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   root.querySelector('.q-next')?.addEventListener('click', (e) => {
     e.stopPropagation();
     navigateWeatherCard(colIdx, +1);
+  });
+  // Click to copy coordinates
+  root.querySelector('.clickable-coords')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const text = e.currentTarget.dataset.coords;
+    if (!text) return;
+    const done = (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    } else {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        done(true);
+      } catch (err) { done(false); }
+    }
   });
   // Touch gestures: swipe detection
   let _touchStartX = 0, _touchStartY = 0;
