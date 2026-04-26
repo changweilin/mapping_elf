@@ -159,6 +159,7 @@ export class MapManager {
       interactive: false,
     }).addTo(this.map);
     this._updateRubberBand(marker.getLatLng());
+    this.showTrashZone('map');
   }
 
   _updateRubberBand(latlng) {
@@ -193,9 +194,14 @@ export class MapManager {
     return el;
   }
 
-  showTrashZone() {
+  showTrashZone(type = 'map') {
     const el = this.ensureTrashZone();
-    el.classList.remove('hidden', 'is-hover');
+    el.classList.remove('hidden', 'is-hover', 'is-map-drag', 'is-list-drag');
+    if (type === 'map') {
+      el.classList.add('is-map-drag');
+    } else if (type === 'list') {
+      el.classList.add('is-list-drag');
+    }
   }
 
   hideTrashZone() {
@@ -579,7 +585,6 @@ export class MapManager {
         this.map.dragging.disable();
 
         this._startRubberBand(marker);
-        this.showTrashZone();
 
         const onMove = (ev) => {
           const latlng = this.map.mouseEventToLatLng(ev);
@@ -649,7 +654,6 @@ export class MapManager {
         this.map.dragging.disable();
 
         this._startRubberBand(marker);
-        this.showTrashZone();
 
         let lastTouchClientX = null, lastTouchClientY = null;
 
@@ -744,7 +748,6 @@ export class MapManager {
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
     marker.on('dragstart', () => {
       this._startRubberBand(marker);
-      this.showTrashZone();
     });
     marker.on('drag', (e) => {
       this._updateRubberBand(e.target.getLatLng());

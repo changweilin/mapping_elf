@@ -535,13 +535,38 @@ body {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  z-index: 10001;
+  z-index: 10005;
   pointer-events: none;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
   transition: all 0.2s ease;
   animation: trashZoneIn 0.25s ease-out;
+}
+
+/* Position for map-based dragging: Top of the map area */
+.waypoint-trash-zone.is-map-drag {
+  left: 0;
+  right: auto;
+  width: calc(100% - var(--panel-width));
+}
+
+/* If side panel is closed, map trash zone should be full width */
+.side-panel:not(.open) ~ .waypoint-trash-zone.is-map-drag {
+  width: 100%;
+}
+
+@media (max-width: 1024px) {
+  .waypoint-trash-zone.is-map-drag {
+    width: 100% !important;
+  }
+}
+
+/* Position for list-based dragging: Top of the side panel (above route planning) */
+.waypoint-trash-zone.is-list-drag {
+  right: 0;
+  left: auto;
+  width: var(--panel-width);
 }
 
 .waypoint-trash-zone.hidden {
@@ -559,7 +584,7 @@ body {
 }
 
 .waypoint-trash-zone.is-hover {
-  background: rgba(248, 113, 113, 0.95);
+  background: rgba(248, 113, 113, 0.7);
   border-bottom-color: #fff;
   border-bottom-style: solid;
   color: #fff;
@@ -591,7 +616,7 @@ html.light-theme .waypoint-trash-zone {
 }
 
 html.light-theme .waypoint-trash-zone.is-hover {
-  background: rgba(239, 68, 68, 0.95);
+  background: rgba(239, 68, 68, 0.7);
   color: #fff;
 }
 

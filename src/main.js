@@ -1669,7 +1669,7 @@ function updateWaypointList(waypoints) {
     ghost.classList.add('drag-ghost');
     ghost.style.width = `${item.offsetWidth}px`;
     ghost.style.position = 'fixed';
-    ghost.style.zIndex = '10000';
+    ghost.style.zIndex = '10010';
     ghost.style.pointerEvents = 'none';
     ghost.style.opacity = '0.8';
     document.body.appendChild(ghost);
@@ -1683,7 +1683,7 @@ function updateWaypointList(waypoints) {
     document.addEventListener('touchend', onEnd);
 
     // Show trash zone when sidebar drag starts
-    mapManager.showTrashZone();
+    mapManager.showTrashZone('list');
   };
 
   const updateGhostPos = (x, y) => {
