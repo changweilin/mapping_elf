@@ -302,10 +302,14 @@ export class MapManager {
       className: 'map-cursor-icon',
       html:
         '<div class="map-cursor-pulse"></div>' +
-        '<div class="map-cursor-ring"></div>' +
-        '<div class="map-cursor-cross"></div>',
-      iconSize: [44, 44],
-      iconAnchor: [22, 22],
+        '<div class="map-cursor-pin">' +
+        '<svg viewBox="0 0 24 24" width="36" height="36">' +
+        '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="currentColor"/>' +
+        '<circle cx="12" cy="9" r="3" fill="rgba(255,255,255,0.9)"/>' +
+        '</svg>' +
+        '</div>',
+      iconSize: [36, 36],
+      iconAnchor: [18, 36],
     });
   }
 

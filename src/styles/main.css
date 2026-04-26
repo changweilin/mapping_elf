@@ -609,41 +609,38 @@ html.light-theme .waypoint-trash-zone.is-hover {
   top: 50%;
 }
 
-.map-cursor-icon .map-cursor-ring {
-  width: 28px;
-  height: 28px;
-  margin-left: -14px;
-  margin-top: -14px;
-  border-radius: 50%;
-  border: 2px solid var(--accent-primary, #00FF7F);
-  background: rgba(0, 255, 127, 0.12);
-  box-shadow: 0 0 12px rgba(0, 255, 127, 0.55), 0 1px 4px rgba(0, 0, 0, 0.4);
+.map-cursor-icon .map-cursor-pin {
+  width: 36px;
+  height: 36px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--accent-primary, #00FF7F);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
   cursor: pointer;
   pointer-events: auto;
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transform-origin: bottom center;
 }
 
-.map-cursor-icon .map-cursor-cross {
-  width: 18px;
-  height: 18px;
-  margin-left: -9px;
-  margin-top: -9px;
-  background:
-    linear-gradient(to right, transparent 8px, var(--accent-primary, #00FF7F) 8px 10px, transparent 10px) center/100% 100% no-repeat,
-    linear-gradient(to bottom, transparent 8px, var(--accent-primary, #00FF7F) 8px 10px, transparent 10px) center/100% 100% no-repeat;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
-  pointer-events: none;
+.map-cursor-icon:hover .map-cursor-pin {
+  transform: scale(1.15) translateY(-2px);
 }
 
 .map-cursor-icon .map-cursor-pulse {
-  width: 28px;
-  height: 28px;
-  margin-left: -14px;
-  margin-top: -14px;
+  width: 20px;
+  height: 20px;
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  margin-left: -10px;
+  margin-top: -10px;
   border-radius: 50%;
   border: 2px solid var(--accent-primary, #00FF7F);
   animation: mapCursorPulse 1.6s ease-out infinite;
   opacity: 0.7;
   pointer-events: none;
+  z-index: -1;
 }
 
 @keyframes mapCursorPulse {
