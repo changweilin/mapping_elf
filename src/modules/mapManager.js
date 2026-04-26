@@ -98,7 +98,7 @@ export class MapManager {
         this._clickTimeout = setTimeout(() => {
           this._clickTimeout = null;
           this.addWaypoint(e.latlng.lat, e.latlng.lng);
-        }, 450);
+        }, 300);
       }
     });
 
@@ -888,7 +888,7 @@ export class MapManager {
           this._clickTimeout = setTimeout(() => {
             this._clickTimeout = null;
             this.selectRoute(routes, route.index);
-          }, 450);
+          }, 300);
         }
       });
       pl.on('dblclick', (e) => {
@@ -1427,18 +1427,58 @@ export class MapManager {
   }
 
   _bindGradientRouteEvents(polyline) {
+    let lpTimer = null;
+    let lpTriggered = false;
+    let startX = 0, startY = 0;
+
+    polyline.on('mousedown touchstart', (e) => {
+      if (this.isFrozen) return;
+      const oe = e.originalEvent;
+      if (oe.button !== undefined && oe.button !== 0) return;
+      lpTriggered = false;
+      const touch = oe.touches ? oe.touches[0] : oe;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
+        lpTriggered = true;
+        if (navigator.vibrate) navigator.vibrate(40);
+        this._cycleOverlappingLayers(polyline, e.latlng);
+      }, 500);
+    });
+
+    polyline.on('mousemove touchmove', (e) => {
+      if (!lpTimer) return;
+      const oe = e.originalEvent;
+      const touch = oe.touches ? oe.touches[0] : oe;
+      if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > 10) {
+        clearTimeout(lpTimer);
+        lpTimer = null;
+      }
+    });
+
+    polyline.on('mouseup touchend mouseleave touchcancel', () => {
+      if (lpTimer) {
+        clearTimeout(lpTimer);
+        lpTimer = null;
+      }
+    });
+
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
-      if (this.isFrozen) return;
+      if (this.isFrozen || lpTriggered) return;
+      
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
       } else {
         this._clickTimeout = setTimeout(() => {
           this._clickTimeout = null;
+          // 單擊恢復為新增航點
           const insertIdx = this._findInsertionIndex(e.latlng);
           this.addWaypoint(e.latlng.lat, e.latlng.lng, insertIdx);
-        }, 450);
+        }, 300);
       }
     });
 
@@ -1448,6 +1488,7 @@ export class MapManager {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
       }
+      // 雙擊保留切換功能
       this._cycleOverlappingLayers(polyline, e.latlng);
     });
   }
