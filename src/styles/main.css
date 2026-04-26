@@ -523,27 +523,25 @@ body {
    dragged. Drop the waypoint inside the circle to remove it. */
 .waypoint-trash-zone {
   position: fixed;
-  top: 72px;
-  left: 50%;
-  transform: translateX(-50%) scale(1);
-  width: 84px;
-  height: 84px;
-  border-radius: 50%;
-  background: rgba(15, 17, 23, 0.78);
-  border: 2px dashed rgba(248, 113, 113, 0.65);
+  top: var(--toolbar-height);
+  right: 0;
+  width: var(--panel-width);
+  height: 72px;
+  background: rgba(248, 113, 113, 0.15);
+  border-bottom: 2px dashed rgba(248, 113, 113, 0.5);
   color: #f87171;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 4px;
   z-index: 10001;
   pointer-events: none;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, color 0.18s ease;
-  animation: trashZoneIn 0.22s ease-out;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  animation: trashZoneIn 0.25s ease-out;
 }
 
 .waypoint-trash-zone.hidden {
@@ -551,49 +549,50 @@ body {
 }
 
 .waypoint-trash-zone .waypoint-trash-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   line-height: 1;
   white-space: nowrap;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .waypoint-trash-zone.is-hover {
-  background: rgba(248, 113, 113, 0.92);
-  border-color: #fff;
-  border-style: solid;
+  background: rgba(248, 113, 113, 0.95);
+  border-bottom-color: #fff;
+  border-bottom-style: solid;
   color: #fff;
-  transform: translateX(-50%) scale(1.18);
-  box-shadow: 0 0 32px rgba(248, 113, 113, 0.7), 0 0 0 8px rgba(248, 113, 113, 0.22);
+  height: 84px;
+  box-shadow: 0 8px 32px rgba(248, 113, 113, 0.4);
 }
 
 .waypoint-trash-zone.is-hover .waypoint-trash-label {
   opacity: 1;
+  transform: scale(1.1);
 }
 
 @keyframes trashZoneIn {
   from {
     opacity: 0;
-    transform: translateX(-50%) scale(0.6);
+    transform: translateY(-20px);
   }
 
   to {
     opacity: 1;
-    transform: translateX(-50%) scale(1);
+    transform: translateY(0);
   }
 }
 
 html.light-theme .waypoint-trash-zone {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.55);
+  border-bottom-color: rgba(239, 68, 68, 0.4);
 }
 
 html.light-theme .waypoint-trash-zone.is-hover {
   background: rgba(239, 68, 68, 0.95);
   color: #fff;
-  border-color: #fff;
 }
 
 /* Map cursor — temporary marker placed by GPS button (goToMyLocation).

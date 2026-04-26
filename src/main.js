@@ -1677,6 +1677,9 @@ function updateWaypointList(waypoints) {
     document.addEventListener('mouseup', onEnd);
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
+
+    // Show trash zone when sidebar drag starts
+    mapManager.showTrashZone();
   };
 
   const updateGhostPos = (x, y) => {
@@ -1690,29 +1693,33 @@ function updateWaypointList(waypoints) {
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
     updateGhostPos(cx, cy);
 
-    // Removal detection: drag out of the route planning area (side-panel)
+    // Removal detection: use the central trash zone logic from mapManager
+    const overTrash = mapManager.updateTrashZoneHover(cx, cy);
+    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
+
+    if (overTrash) return;
+
+    // Sorting logic (only if not over trash)
     const rect = sidePanel.getBoundingClientRect();
-    const out = cx < rect.left || cx > rect.right || cy < rect.top || cy > rect.bottom;
-    if (ghost) ghost.classList.toggle('drag-to-remove', out);
-
-    if (out) return;
-
-    // Sorting logic
-    const items = Array.from(waypointList.querySelectorAll('.waypoint-item:not(.is-dragging)'));
-    let bestAfter = null;
-    let minDist = Infinity;
-    items.forEach(it => {
-      const rect = it.getBoundingClientRect();
-      const mid = rect.top + rect.height / 2;
-      const d = Math.abs(cy - mid);
-      if (d < minDist) {
-        minDist = d;
-        bestAfter = (cy < mid) ? it : it.nextSibling;
-      }
-    });
+    const inSidePanel = cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom;
     
-    if (bestAfter !== placeholder) {
-       waypointList.insertBefore(placeholder, bestAfter);
+    if (inSidePanel) {
+      const items = Array.from(waypointList.querySelectorAll('.waypoint-item:not(.is-dragging)'));
+      let bestAfter = null;
+      let minDist = Infinity;
+      items.forEach(it => {
+        const r = it.getBoundingClientRect();
+        const mid = r.top + r.height / 2;
+        const d = Math.abs(cy - mid);
+        if (d < minDist) {
+          minDist = d;
+          bestAfter = (cy < mid) ? it : it.nextSibling;
+        }
+      });
+      
+      if (bestAfter !== placeholder) {
+        waypointList.insertBefore(placeholder, bestAfter);
+      }
     }
   };
 
@@ -1724,10 +1731,12 @@ function updateWaypointList(waypoints) {
 
     const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
-    const rect = sidePanel.getBoundingClientRect();
-    const out = cx < rect.left || cx > rect.right || cy < rect.top || cy > rect.bottom;
+    
+    const isOverTrash = mapManager.isOverTrashZone(cx, cy);
+    mapManager.hideTrashZone();
 
-    if (out) {
+    if (isOverTrash) {
+      if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
       mapManager.removeWaypoint(dragIndex);
     } else {
       const items = Array.from(waypointList.childNodes);
@@ -1740,7 +1749,6 @@ function updateWaypointList(waypoints) {
       const offset = targetIdx - dragIndex;
       if (offset !== 0) {
         // Move one step at a time via manager to update everything correctly
-        // (Simplified re-sort implementation)
         const waypointsCopy = [...mapManager.waypoints];
         const [moved] = waypointsCopy.splice(dragIndex, 1);
         waypointsCopy.splice(targetIdx, 0, moved);
@@ -1764,35 +1772,54 @@ function updateWaypointList(waypoints) {
   };
 
   waypointList.querySelectorAll('.waypoint-item').forEach((item, idx) => {
-    // Shared long press logic for Mouse & Touch
+    let startX = 0, startY = 0;
+    
     const triggerLP = (clientX, clientY) => {
+      startX = clientX;
+      startY = clientY;
       lpTimer = setTimeout(() => {
         lpTimer = null;
         startDrag(item, idx, clientX, clientY);
       }, 500);
     };
+    
     const cancelLP = () => {
       if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    };
+
+    const checkMove = (clientX, clientY) => {
+      if (!lpTimer) return;
+      const dx = clientX - startX;
+      const dy = clientY - startY;
+      if (dx * dx + dy * dy > 64) cancelLP();
     };
 
     item.addEventListener('mousedown', (e) => {
       if (frozen || e.button !== 0 || e.target.closest('.wp-actions')) return;
       triggerLP(e.clientX, e.clientY);
-      const onUp = () => { cancelLP(); document.removeEventListener('mouseup', onUp); };
+      
+      const onMoveGuard = (ev) => checkMove(ev.clientX, ev.clientY);
+      const onUp = () => { 
+        cancelLP(); 
+        document.removeEventListener('mousemove', onMoveGuard);
+        document.removeEventListener('mouseup', onUp); 
+      };
+      document.addEventListener('mousemove', onMoveGuard);
       document.addEventListener('mouseup', onUp);
     });
 
     item.addEventListener('touchstart', (e) => {
-        if (frozen || e.target.closest('.wp-actions')) return;
-        const t = e.touches[0];
-        triggerLP(t.clientX, t.clientY);
+      if (frozen || e.target.closest('.wp-actions')) return;
+      const t = e.touches[0];
+      triggerLP(t.clientX, t.clientY);
     }, { passive: true });
     
-    item.addEventListener('touchend', cancelLP, { passive: true });
     item.addEventListener('touchmove', (e) => {
-        // Cancel if move too much
-        cancelLP();
+      const t = e.touches[0];
+      checkMove(t.clientX, t.clientY);
     }, { passive: true });
+
+    item.addEventListener('touchend', cancelLP, { passive: true });
   });
 }
 
@@ -4381,6 +4408,7 @@ function renderWeatherPanel() {
 
   // Update intermediate markers on the map
   updateIntermediateMarkers();
+  mapManager.setWaypointDistances(waypointCumDistM);
 
   const saved = loadWeatherSettings();
   const now = new Date();

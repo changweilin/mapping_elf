@@ -150,8 +150,8 @@ export class MapManager {
     this._dragWpIndex = undefined;
   }
 
-  _ensureTrashZone() {
-    if (this._trashZoneEl) return this._trashZoneEl;
+  ensureTrashZone() {
+    if (this.trashZoneEl) return this.trashZoneEl;
     const el = document.createElement('div');
     el.className = 'waypoint-trash-zone hidden';
     el.innerHTML =
@@ -160,36 +160,37 @@ export class MapManager {
       '</svg>' +
       '<span class="waypoint-trash-label">拖曳至此刪除</span>';
     document.body.appendChild(el);
-    this._trashZoneEl = el;
+    this.trashZoneEl = el;
     return el;
   }
 
-  _showTrashZone() {
-    const el = this._ensureTrashZone();
+  showTrashZone() {
+    const el = this.ensureTrashZone();
     el.classList.remove('hidden', 'is-hover');
   }
 
-  _hideTrashZone() {
-    if (!this._trashZoneEl) return;
-    this._trashZoneEl.classList.add('hidden');
-    this._trashZoneEl.classList.remove('is-hover');
+  hideTrashZone() {
+    if (!this.trashZoneEl) return;
+    this.trashZoneEl.classList.add('hidden');
+    this.trashZoneEl.classList.remove('is-hover');
   }
 
-  _isOverTrashZone(clientX, clientY) {
+  isOverTrashZone(clientX, clientY) {
     if (clientX == null || clientY == null) return false;
-    if (!this._trashZoneEl || this._trashZoneEl.classList.contains('hidden')) return false;
-    const rect = this._trashZoneEl.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const dx = clientX - cx;
-    const dy = clientY - cy;
-    const radius = Math.max(rect.width, rect.height) / 2 + 16;
-    return dx * dx + dy * dy <= radius * radius;
+    if (!this.trashZoneEl || this.trashZoneEl.classList.contains('hidden')) return false;
+    const rect = this.trashZoneEl.getBoundingClientRect();
+    // Use rectangular bounds check with a small buffer
+    return (
+      clientX >= rect.left - 10 &&
+      clientX <= rect.right + 10 &&
+      clientY >= rect.top - 10 &&
+      clientY <= rect.bottom + 10
+    );
   }
 
-  _updateTrashZoneHover(clientX, clientY) {
-    const isOver = this._isOverTrashZone(clientX, clientY);
-    if (this._trashZoneEl) this._trashZoneEl.classList.toggle('is-hover', isOver);
+  updateTrashZoneHover(clientX, clientY) {
+    const isOver = this.isOverTrashZone(clientX, clientY);
+    if (this.trashZoneEl) this.trashZoneEl.classList.toggle('is-hover', isOver);
     return isOver;
   }
 
@@ -535,21 +536,21 @@ export class MapManager {
         this.map.dragging.disable();
 
         this._startRubberBand(marker);
-        this._showTrashZone();
+        this.showTrashZone();
 
         const onMove = (ev) => {
           const latlng = this.map.mouseEventToLatLng(ev);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
-          this._updateTrashZoneHover(ev.clientX, ev.clientY);
+          this.updateTrashZoneHover(ev.clientX, ev.clientY);
         };
         const onUp = (ev) => {
-          const isOverTrash = this._isOverTrashZone(ev?.clientX, ev?.clientY);
+          const isOverTrash = this.isOverTrashZone(ev?.clientX, ev?.clientY);
           _dragModeActive = false;
           _justDragged = true;
           this._blockMapClick();
           this._stopRubberBand();
-          this._hideTrashZone();
+          this.hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           this.map.dragging.enable();
@@ -597,7 +598,7 @@ export class MapManager {
         this.map.dragging.disable();
 
         this._startRubberBand(marker);
-        this._showTrashZone();
+        this.showTrashZone();
 
         let lastTouchClientX = null, lastTouchClientY = null;
 
@@ -613,19 +614,19 @@ export class MapManager {
           const latlng = this.map.containerPointToLatLng([x, y]);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
-          this._updateTrashZoneHover(t.clientX, t.clientY);
+          this.updateTrashZoneHover(t.clientX, t.clientY);
         };
         const onTouchEnd = (ev) => {
           const ct = ev?.changedTouches?.[0];
           const cx = ct?.clientX ?? lastTouchClientX;
           const cy = ct?.clientY ?? lastTouchClientY;
-          const isOverTrash = this._isOverTrashZone(cx, cy);
+          const isOverTrash = this.isOverTrashZone(cx, cy);
           _dragModeActive = false;
           _isTouchActive = false;
           _justDragged = true;
           this._blockMapClick();
           this._stopRubberBand();
-          this._hideTrashZone();
+          this.hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           this.map.dragging.enable();
@@ -692,7 +693,7 @@ export class MapManager {
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
     marker.on('dragstart', () => {
       this._startRubberBand(marker);
-      this._showTrashZone();
+      this.showTrashZone();
     });
     marker.on('drag', (e) => {
       this._updateRubberBand(e.target.getLatLng());
@@ -700,12 +701,12 @@ export class MapManager {
       const cx = oe?.clientX ?? oe?.touches?.[0]?.clientX;
       const cy = oe?.clientY ?? oe?.touches?.[0]?.clientY;
       if (cx != null && cy != null) {
-        this._updateTrashZoneHover(cx, cy);
+        this.updateTrashZoneHover(cx, cy);
       } else {
         // Fallback: derive screen coords from marker's lat/lng
         const cp = this.map.latLngToContainerPoint(e.target.getLatLng());
         const r = this.map.getContainer().getBoundingClientRect();
-        this._updateTrashZoneHover(cp.x + r.left, cp.y + r.top);
+        this.updateTrashZoneHover(cp.x + r.left, cp.y + r.top);
       }
     });
 
@@ -719,10 +720,10 @@ export class MapManager {
         dropX = cp.x + r.left;
         dropY = cp.y + r.top;
       }
-      const isOverTrash = this._isOverTrashZone(dropX, dropY);
+      const isOverTrash = this.isOverTrashZone(dropX, dropY);
       this._blockMapClick();
       this._stopRubberBand();
-      this._hideTrashZone();
+      this.hideTrashZone();
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
       _disableDrag();
@@ -932,6 +933,7 @@ export class MapManager {
     const legIds = this._computeLegIds(routeCoords, dists);
     this._currentRouteLegIds = legIds;
     this._currentRouteCum = dists;
+    this._syncAllMarkerLegIds();
 
     // Find split distance closest to turnaround waypoint
     let splitD = -1;
@@ -1160,6 +1162,8 @@ export class MapManager {
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
       marker._colIdx = pt.colIdx;
       marker._addOrder = this.intermediateMarkers.length;
+      marker._cumDistM = pt.cumDistM;
+      marker._isReturn = pt.isReturn;
       marker._legId = this._legIdAtCumDist(pt.cumDistM);
 
       marker.on('click', (e) => {
@@ -1212,6 +1216,10 @@ export class MapManager {
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
       marker._colIdx = pt.colIdx;
       marker._wpIndex = pt.wpIndex;
+      marker._cumDistM = pt._cum;
+      marker._isReturn = true;
+      marker._legId = this._legIdAtCumDist(pt._cum);
+
       // Sit on top of the (now hidden) outbound marker at stacked locations so
       // clicks land on the return circle.
       marker.setZIndexOffset(100);
@@ -1516,13 +1524,17 @@ export class MapManager {
     if (!this.gradientPolylines.length) return;
     const targetLeg = clickedPolyline._legId;
 
+    // Refresh leg IDs on all markers to ensure they match current route state
+    this._syncAllMarkerLegIds();
+
     if (targetLeg !== undefined) {
       const sameLegPolylines = this.gradientPolylines.filter(pl => pl._legId === targetLeg);
       const otherLegsExist = this.gradientPolylines.some(pl => pl._legId !== targetLeg);
       if (otherLegsExist) {
         sameLegPolylines.forEach(pl => pl.bringToBack());
       }
-      this._sendLegMarkersToBack(targetLeg);
+      // Pass the click latlng for boundary proximity detection
+      this._sendLegMarkersToBack(targetLeg, latlng);
       return;
     }
 
@@ -1548,27 +1560,106 @@ export class MapManager {
     let lo = idx, hi = idx;
     while (lo > 0 && overlapSet.has(this.gradientPolylines[lo - 1])) lo--;
     while (hi < this.gradientPolylines.length - 1 && overlapSet.has(this.gradientPolylines[hi + 1])) hi++;
-    if (overlapSet.size === (hi - lo + 1)) return;
-    for (let i = lo; i <= hi; i++) this.gradientPolylines[i].bringToBack();
+    
+    // Cycle both polylines and markers in fallback case
+    const otherPassesExist = overlapSet.size < this.gradientPolylines.length;
+    for (let i = lo; i <= hi; i++) {
+      const pl = this.gradientPolylines[i];
+      if (otherPassesExist) pl.bringToBack();
+      // Try to sync associated markers if they have some leg affinity
+      if (pl._legId !== undefined) this._sendLegMarkersToBack(pl._legId, latlng);
+      else if (pl._isReturn !== undefined) this._sendLegMarkersToBack(pl._isReturn, latlng);
+    }
   }
 
   /**
-   * Push every intermediate marker on `legId` below all others on the map by
-   * dropping its zIndexOffset under the current minimum. Repeated calls cycle
-   * across legs naturally because the most recently demoted leg ends up at the
-   * very bottom while the others rise relative to it.
+   * Send all markers belonging to a specific leg (or direction flag) to the 
+   * back by lowering their z-index relative to all other markers.
+   * @param {number|boolean} idOrFlag
+   * @param {L.LatLng} clickLatLng - optional proximity check for boundary waypoints
    */
-  _sendLegMarkersToBack(legId) {
-    const sameLeg = this.intermediateMarkers.filter(m => m._legId === legId);
+  _sendLegMarkersToBack(idOrFlag, clickLatLng = null) {
+    const allMarkers = [
+      ...this.intermediateMarkers,
+      ...this.waypointMarkers,
+      ...this.returnWaypointMarkers
+    ];
+    
+    // Explicit comparison to handle numeric leg IDs and boolean direction flags correctly.
+    // Also checks m._legIds (plural) for markers that sit at leg boundaries.
+    const isTarget = (m) => {
+      // 1. Primary match (flag or specific ID)
+      if (typeof idOrFlag === 'boolean' && m._isReturn === idOrFlag) return true;
+      if (m._legId === idOrFlag) return true;
+      if (m._legIds && m._legIds.includes(idOrFlag)) return true;
+
+      // 2. Boundary proximity fallback: if a marker is extremely close to the click point,
+      // it should likely switch with the clicked segment regardless of strict leg ID.
+      if (clickLatLng) {
+        const dist = m.getLatLng().distanceTo(clickLatLng);
+        if (dist < 15) return true; // 15 meters tolerance
+      }
+
+      return false;
+    };
+
+    const sameLeg = allMarkers.filter(isTarget);
     if (!sameLeg.length) return;
-    const otherLegsExist = this.intermediateMarkers.some(m => m._legId !== legId);
-    if (!otherLegsExist) return;
-    let minOffset = Infinity;
-    for (const m of this.intermediateMarkers) {
+
+    // Check if there are markers NOT in this group to avoid unnecessary z-index reduction
+    const othersExist = allMarkers.some(m => !isTarget(m));
+    if (!othersExist) return;
+
+    let minOffset = 0;
+    for (const m of allMarkers) {
       const off = m.options.zIndexOffset || 0;
       if (off < minOffset) minOffset = off;
     }
     sameLeg.forEach(m => m.setZIndexOffset(minOffset - 100));
+  }
+
+  /**
+   * Update the cumulative distances for outbound waypoints and sync their leg IDs.
+   * Called by main.js when route calculation finishes.
+   */
+  setWaypointDistances(dists) {
+    this.waypointMarkers.forEach((m, i) => {
+      m._cumDistM = dists[i];
+      m._isReturn = false;
+    });
+    this._syncAllMarkerLegIds();
+  }
+
+  /**
+   * Refresh _legId on all markers (waypoint, return, intermediate) based on their 
+   * stored _cumDistM and the current route's leg ID mapping.
+   */
+  _syncAllMarkerLegIds() {
+    const all = [...this.waypointMarkers, ...this.returnWaypointMarkers, ...this.intermediateMarkers];
+    const cum = this._currentRouteCum;
+    const legs = this._currentRouteLegIds;
+    if (!cum || !legs) return;
+
+    all.forEach(m => {
+      if (m._cumDistM !== undefined) {
+        let lo = 0, hi = cum.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (cum[mid] < m._cumDistM) lo = mid + 1;
+          else hi = mid;
+        }
+        
+        const ids = new Set();
+        ids.add(legs[lo] ?? 0);
+        // If at a boundary between legs, associate with both so it switches with either
+        if (lo > 0 && Math.abs(m._cumDistM - cum[lo]) < 2.0) {
+          ids.add(legs[lo - 1] ?? 0);
+        }
+        
+        m._legId = legs[lo] ?? 0;
+        m._legIds = Array.from(ids);
+      }
+    });
   }
 
   getCurrentLayerInfo() {
