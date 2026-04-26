@@ -3536,6 +3536,7 @@ function getCellValue(data, key) {
     case 'radiation': return v(data.radiation, '—');
     case 'sunrise': return v(data.sunrise, '—');
     case 'sunset': return v(data.sunset, '—');
+    case 'elevation': return v(data.elevation, '—');
     default: return '—';
   }
 }
@@ -5226,8 +5227,13 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
   const temp = val('temp');
   const title = 'GPS 游標';
 
-  let html = `<div class="weather-card full cursor-weather-card" data-cursor-card="1">`;
-  html += `<div class="wc-header">`;
+  const accentColor = '#6366f1';
+  const cardStyle = `--wc-accent: ${accentColor};`;
+  const headerBg = 'rgba(99, 102, 241, 0.1)';
+  const headerStyle = `background: ${headerBg};`;
+
+  let html = `<div class="weather-card full cursor-weather-card" data-cursor-card="1" style="${cardStyle}">`;
+  html += `<div class="wc-header" style="${headerStyle}">`;
   html += `<span class="wc-title">${wIcon} ${title}</span>`;
   html += `<button class="wc-btn q-close" title="關閉">`;
   html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
@@ -5251,6 +5257,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
       { key: 'visibility', label: '能見度' },
       { key: 'sunshineHours', label: '日照' },
       { key: 'radiation', label: '輻射' },
+      { key: 'elevation', label: '海拔' },
       { key: 'sunrise', label: '日出' },
       { key: 'sunset', label: '日落' },
       { key: 'coords', label: '坐標' },

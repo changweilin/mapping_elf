@@ -281,6 +281,7 @@ export class WeatherService {
       cloudCover: n(cloudCover, '%'),
       sunrise: fmtDT(d.sunrise?.[0]),
       sunset:  fmtDT(d.sunset?.[0]),
+      elevation: n(json.elevation, ' m'),
       forecastTime: (h && h.time && hour >= 0 && hour < 24) ? h.time[hour].replace('T', ' ') : d.time?.[0],
     };
   }
