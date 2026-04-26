@@ -74,6 +74,7 @@ export class MapManager {
     this._mapCursor = null;
     this._mapCursorLatLng = null;
     this._mapCursorMenuPopup = null;
+    this._cursorWeatherPopup = null; // Ad-hoc weather card anchored at the cursor (independent of weatherPoints)
     this.onMapCursorAction = null; // callback(action, lat, lng)
 
     this.map = L.map(containerId, {
@@ -197,6 +198,7 @@ export class MapManager {
   setMapCursor(lat, lng) {
     this._mapCursorLatLng = [lat, lng];
     this._closeMapCursorMenu();
+    this.closeCursorWeatherPopup();
     if (!this._mapCursor) {
       const icon = this._createMapCursorIcon();
       this._mapCursor = L.marker([lat, lng], {
@@ -213,11 +215,57 @@ export class MapManager {
 
   clearMapCursor() {
     this._closeMapCursorMenu();
+    this.closeCursorWeatherPopup();
     if (this._mapCursor) {
       this.map.removeLayer(this._mapCursor);
       this._mapCursor = null;
     }
     this._mapCursorLatLng = null;
+  }
+
+  /**
+   * Open an ad-hoc weather card popup anchored at the GPS cursor's location.
+   * Independent of `_weatherPopups` (which keys by weatherPoints colIdx).
+   */
+  openCursorWeatherPopup(htmlContent, onReady) {
+    if (!this._mapCursor || !this._mapCursorLatLng) return null;
+    if (!this._cursorWeatherPopup) {
+      this._cursorWeatherPopup = L.popup({
+        className: 'weather-popup cursor-weather-popup',
+        closeButton: false,
+        closeOnClick: false,
+        autoClose: false,
+        autoPan: true,
+        autoPanPaddingTopLeft: [20, 60],
+        autoPanPaddingBottomRight: [20, 20],
+        offset: [0, -28],
+        maxWidth: 320,
+        minWidth: 200,
+      });
+    }
+    this._cursorWeatherPopup
+      .setLatLng(this._mapCursorLatLng)
+      .setContent(htmlContent)
+      .openOn(this.map);
+
+    const wrapper = this._cursorWeatherPopup.getElement();
+    if (wrapper) {
+      L.DomEvent.disableClickPropagation(wrapper);
+      L.DomEvent.disableScrollPropagation(wrapper);
+    }
+    if (onReady) onReady(wrapper);
+    return wrapper;
+  }
+
+  closeCursorWeatherPopup() {
+    if (this._cursorWeatherPopup) {
+      this.map.closePopup(this._cursorWeatherPopup);
+      this._cursorWeatherPopup = null;
+    }
+  }
+
+  isCursorWeatherPopupOpen() {
+    return !!(this._cursorWeatherPopup && this._cursorWeatherPopup.isOpen?.());
   }
 
   _createMapCursorIcon() {
@@ -320,13 +368,19 @@ export class MapManager {
           '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
             '<path d="M19.36 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.64-4.96z" fill="currentColor"/>' +
           '</svg>' +
-          '<span>開啟天氣卡</span>' +
+          '<span>開啟大格天氣卡</span>' +
         '</button>' +
         '<button class="cursor-menu-btn" data-action="windy">' +
           '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
             '<path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/>' +
           '</svg>' +
           '<span>開啟 Windy</span>' +
+        '</button>' +
+        '<button class="cursor-menu-btn" data-action="clear">' +
+          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+            '<path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zM11 17H9v-8h2v8zm4 0h-2v-8h2v8z" fill="currentColor"/>' +
+          '</svg>' +
+          '<span>清除 GPS 游標</span>' +
         '</button>' +
         '<button class="cursor-menu-btn cursor-menu-cancel" data-action="dismiss">' +
           '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +

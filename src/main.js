@@ -433,22 +433,17 @@ mapManager.onMapCursorAction = (action, lat, lng) => {
     return;
   }
   if (action === 'weather') {
-    if (!weatherPoints || weatherPoints.length === 0) {
-      showNotification('尚無天氣資料,請先更新天氣', 'warning', 1800);
-      return;
-    }
-    let minD = Infinity, closestIdx = 0;
-    for (let i = 0; i < weatherPoints.length; i++) {
-      const d = haversineDistance([lat, lng], [weatherPoints[i].lat, weatherPoints[i].lng]);
-      if (d < minD) { minD = d; closestIdx = i; }
-    }
-    highlightPoint(closestIdx);
-    setWeatherCardMode(closestIdx, _wcLastMode);
+    openCursorWeatherCard(lat, lng);
     return;
   }
   if (action === 'windy') {
     const url = buildWindyUrl(lat, lng);
     window.open(url, '_blank', 'noopener');
+    return;
+  }
+  if (action === 'clear') {
+    mapManager.clearMapCursor();
+    showNotification('已清除 GPS 游標', 'info', 1200);
     return;
   }
 };
@@ -5174,6 +5169,137 @@ function _renderWeatherCard(colIdx) {
   mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
     _bindWeatherCardEvents(colIdx, wrapper);
   }, !pt.isWaypoint, pt.wpIndex);
+}
+
+/**
+ * Open a weather card for the GPS cursor's exact coordinates (independent of
+ * the route's weatherPoints). Fetches today's data at the current hour.
+ * Toggles closed if already open.
+ */
+async function openCursorWeatherCard(lat, lng) {
+  if (mapManager.isCursorWeatherPopupOpen?.()) {
+    mapManager.closeCursorWeatherPopup();
+    return;
+  }
+
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const hour = now.getHours();
+  const cacheKey = weatherCoordKey(lat, lng, dateStr, hour);
+
+  const renderCard = (data, status) => {
+    const html = _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status);
+    mapManager.openCursorWeatherPopup(html, (wrapper) => {
+      _bindCursorWeatherCardEvents(wrapper, lat, lng);
+    });
+  };
+
+  let data = cachedWeatherData[cacheKey] || null;
+  if (data) {
+    renderCard(data, 'ok');
+    return;
+  }
+
+  // Show loading state, then fetch
+  renderCard(null, 'loading');
+  try {
+    data = await weatherService.getWeatherAtPoint(lat, lng, dateStr, hour);
+    cachedWeatherData[cacheKey] = data;
+    try { localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData)); } catch {}
+    if (mapManager.isCursorWeatherPopupOpen?.()) renderCard(data, 'ok');
+  } catch (err) {
+    console.warn('Cursor weather fetch failed:', err.message);
+    if (mapManager.isCursorWeatherPopupOpen?.()) renderCard(null, 'error');
+  }
+}
+
+function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
+  const val = (key) => {
+    if (key === 'coords') return formatCoords(lat, lng);
+    if (data) return getCellValue(data, key);
+    return '—';
+  };
+  const weatherStr = val('weather');
+  const weatherParts = weatherStr.split(' ');
+  const wIcon = (data && weatherParts[0]) || (status === 'loading' ? '⏳' : status === 'error' ? '⚠️' : '❓');
+  const wDesc = (data && weatherParts.slice(1).join(' ')) || (status === 'loading' ? '取得天氣中…' : status === 'error' ? '取得失敗' : '—');
+  const temp = val('temp');
+  const title = 'GPS 游標';
+
+  let html = `<div class="weather-card full cursor-weather-card" data-cursor-card="1">`;
+  html += `<div class="wc-header">`;
+  html += `<span class="wc-title">${wIcon} ${title}</span>`;
+  html += `<button class="wc-btn q-close" title="關閉">`;
+  html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
+  html += `</div>`;
+
+  html += `<div class="wc-body">`;
+  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${temp}</span></div>`;
+
+  if (status === 'ok') {
+    const CARD_ROWS = [
+      { key: 'tempRange', label: '高/低溫' },
+      { key: 'feelsLike', label: '體感溫度' },
+      { key: 'precipitation', label: '雨量' },
+      { key: 'precipProb', label: '降雨機率' },
+      { key: 'humidity', label: '濕度' },
+      { key: 'dewPoint', label: '露點' },
+      { key: 'cloudCover', label: '雲量' },
+      { key: 'windSpeed', label: '風速' },
+      { key: 'windGust', label: '陣風' },
+      { key: 'uvIndex', label: 'UV' },
+      { key: 'visibility', label: '能見度' },
+      { key: 'sunshineHours', label: '日照' },
+      { key: 'radiation', label: '輻射' },
+      { key: 'sunrise', label: '日出' },
+      { key: 'sunset', label: '日落' },
+      { key: 'coords', label: '坐標' },
+      { key: 'forecastTime', label: '預報時間' },
+    ];
+    html += `<div class="wc-info-grid">`;
+    CARD_ROWS.forEach(row => {
+      const isWide = ['coords', 'forecastTime'].includes(row.key);
+      const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
+      const isCoords = row.key === 'coords';
+      const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
+      const displayVal = val(row.key);
+      html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
+      html += `<span class="wc-info-label">${row.label}</span>`;
+      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${displayVal}</span>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+
+    const windyUrl = buildWindyUrl(lat, lng, dateStr, hour);
+    html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
+    html += `<img src="https://www.windy.com/favicon.ico" alt="Windy"><span>在 Windy 開啟</span>`;
+    html += `<svg viewBox="0 0 24 24" width="12" height="12" style="opacity:0.6"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg></a>`;
+  } else {
+    html += `<div class="wc-info-grid"><div class="wc-info-item is-wide" style="grid-column: span 2;">`;
+    html += `<span class="wc-info-label">坐標</span><span class="wc-info-value clickable-coords" data-coords="${formatCoords(lat, lng)}" title="點擊複製">${formatCoords(lat, lng)}</span>`;
+    html += `</div></div>`;
+  }
+
+  html += `</div></div>`;
+  return html;
+}
+
+function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
+  if (!wrapper) return;
+  wrapper.querySelector('.q-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    mapManager.closeCursorWeatherPopup();
+  });
+  wrapper.querySelector('.clickable-coords')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const text = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => showNotification(`已複製座標 ${text}`, 'success', 1500),
+        () => showNotification('複製失敗', 'error', 1500),
+      );
+    }
+  });
 }
 
 /** Bind click and touch events to the weather card DOM. */
