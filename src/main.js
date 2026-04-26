@@ -1300,9 +1300,11 @@ async function onWaypointsChanged(waypoints) {
   }
   lastWaypoints = waypoints.map(w => [...w]);
 
-  // In imported-track mode, update the sidebar list but skip routing entirely.
-  // The track polyline is managed directly; waypoints are decorative markers only.
   if (importedTrackMode) {
+    // Re-render labels locally and sync to map markers
+    const labels = waypoints.map((wp, i) => getWaypointLabel(i, wp[0], wp[1]));
+    mapManager.setWaypointLabels(labels);
+
     updateWaypointList(waypoints);
     if (!skipAutoGeocode) geocodeWaypoints(waypoints);
     // Re-render weather table and elevation chart markers when waypoints change
@@ -2890,7 +2892,7 @@ function _applyImportedResultCore(result) {
 
       skipAutoGeocode = !importAutoNameMode;
       // Use batch setter for efficiency and consistent state
-      mapManager.setWaypointsFromImport(result.waypoints);
+      mapManager.setWaypointsFromImport(result.waypoints, result.segmentDates);
       skipAutoGeocode = false;
       if (importAutoNameMode) geocodeWaypoints(result.waypoints);
     }
@@ -3458,6 +3460,15 @@ function _applyPlaceNameToDOM() {
       }
     });
   }
+
+  // Sync labels back to map markers to ensure map, sidebar, and chart match
+  const finalLabels = mapManager.waypoints.map((wp, i) => {
+    const pt = weatherPoints.find(p => p.isWaypoint && !p.isReturn && p.wpIndex === i);
+    return pt ? pt.label : getWaypointLabel(i, wp[0], wp[1]);
+  });
+  mapManager.setWaypointLabels(finalLabels);
+  updateElevationMarkers();
+  updateIntermediateMarkers();
 }
 
 /**
@@ -4101,11 +4112,8 @@ function buildWeatherPoints() {
 
     const markers = [];
     wps.forEach((wp, i) => {
-      // Prefer the persistent meta (survives across re-renders); fall back to
-      // _pendingGpxDates for back-compat / edge cases where meta wasn't set.
-      const meta = importedWaypointMeta[i]
-        || (window._pendingGpxDates && window._pendingGpxDates[i])
-        || {};
+      // Use metadata stored in mapManager (keeps labels/elevations in sync during moves/edits)
+      const meta = mapManager.getWaypointMetadata(i);
       markers.push({
         lat: wp[0], lng: wp[1], isWaypoint: true, wpIndex: i,
         fileOrder: meta.fileOrder ?? (i * 1000),

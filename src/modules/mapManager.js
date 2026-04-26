@@ -55,6 +55,7 @@ export class MapManager {
     this.waypointWeather = []; // Weather emoji per waypoint index
     this.waypointColors = [];  // Gradient color strings per waypoint index
     this.waypointLabels = [];  // Custom labels for each waypoint index
+    this.waypointMetadata = []; // Arbitrary metadata (ele, time, fileOrder) per waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
     this.gradientPolylines = []; // Gradient chunks for selected route
     this.selectedRouteIndex = 0;
@@ -503,6 +504,7 @@ export class MapManager {
     this.waypointWeather.splice(idx, 0, null);
     this.waypointColors.splice(idx, 0, null);
     this.waypointLabels.splice(idx, 0, null);
+    this.waypointMetadata.splice(idx, 0, {});
     const icon = this._createIcon(idx);
 
     const marker = L.marker([lat, lng], {
@@ -798,6 +800,9 @@ export class MapManager {
     this.waypointLayerSwapped.splice(index, 1);
     this.waypointMarkers.splice(index, 1);
     this.waypointWeather.splice(index, 1);
+    this.waypointColors.splice(index, 1);
+    this.waypointLabels.splice(index, 1);
+    this.waypointMetadata.splice(index, 1);
     this._updateMarkerIcons();
     this.onWaypointChange(this.waypoints);
   }
@@ -820,6 +825,26 @@ export class MapManager {
     this.waypointMarkers[index] = this.waypointMarkers[newIndex];
     this.waypointMarkers[newIndex] = tempMarker;
 
+    const tempLabel = this.waypointLabels[index];
+    this.waypointLabels[index] = this.waypointLabels[newIndex];
+    this.waypointLabels[newIndex] = tempLabel;
+
+    const tempWeather = this.waypointWeather[index];
+    this.waypointWeather[index] = this.waypointWeather[newIndex];
+    this.waypointWeather[newIndex] = tempWeather;
+
+    const tempColor = this.waypointColors[index];
+    this.waypointColors[index] = this.waypointColors[newIndex];
+    this.waypointColors[newIndex] = tempColor;
+
+    const tempMetadata = this.waypointMetadata[index];
+    this.waypointMetadata[index] = this.waypointMetadata[newIndex];
+    this.waypointMetadata[newIndex] = tempMetadata;
+
+    const tempSwapped = this.waypointLayerSwapped[index];
+    this.waypointLayerSwapped[index] = this.waypointLayerSwapped[newIndex];
+    this.waypointLayerSwapped[newIndex] = tempSwapped;
+
     this._updateMarkerIcons();
     this.onWaypointChange(this.waypoints);
   }
@@ -829,6 +854,9 @@ export class MapManager {
     this.waypoints = [];
     this.waypointMarkers = [];
     this.waypointWeather = [];
+    this.waypointColors = [];
+    this.waypointLabels = [];
+    this.waypointMetadata = [];
     this.clearAllRoutes();
     this.onWaypointChange(this.waypoints);
   }
@@ -854,6 +882,16 @@ export class MapManager {
   setWaypointColors(colors) {
     this.waypointColors = colors || [];
     this._updateMarkerIcons();
+  }
+
+  setWaypointMetadata(index, meta) {
+    if (index >= 0 && index < this.waypointMetadata.length) {
+      this.waypointMetadata[index] = meta || {};
+    }
+  }
+
+  getWaypointMetadata(index) {
+    return this.waypointMetadata[index] || {};
   }
 
   /**
@@ -1453,7 +1491,7 @@ export class MapManager {
     );
   }
 
-  setWaypointsFromImport(coords) {
+  setWaypointsFromImport(coords, metadata = null) {
     // Suppress per-waypoint callbacks — fire once at the end to avoid
     // repeated route recalculations and weather panel re-renders during import.
     const cb = this.onWaypointChange;
@@ -1467,7 +1505,13 @@ export class MapManager {
     this.waypointWeather = [];
     this.waypointColors = [];
     this.waypointLabels = [];
-    coords.forEach(([lat, lng]) => this.addWaypoint(lat, lng));
+    this.waypointMetadata = [];
+    coords.forEach((c, i) => {
+      const [lat, lng] = Array.isArray(c) ? c : [c.lat, c.lng];
+      const meta = (Array.isArray(c) ? null : c.meta) || (metadata ? metadata[i] : null);
+      this.addWaypoint(lat, lng);
+      if (meta) this.setWaypointMetadata(this.waypoints.length - 1, meta);
+    });
     this.onWaypointChange = cb;
     this.fitToRoute();
     cb(this.waypoints);

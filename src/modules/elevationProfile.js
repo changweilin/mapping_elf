@@ -277,13 +277,23 @@ export class ElevationProfile {
           c.lineWidth = 1.5;
           c.stroke();
 
-          // Draw weather icon emoji if available
-          if (m.weatherIcon && !self.isCollapsed) {
-            c.font = '16px serif';
+          // Draw weather icon emoji and label if available
+          if (!self.isCollapsed) {
             c.textAlign = 'center';
             c.textBaseline = 'bottom';
-            // Draw slightly above the dot
-            c.fillText(m.weatherIcon, xPx, yPx - r - 5);
+            
+            if (m.weatherIcon) {
+              c.font = '16px serif';
+              c.fillStyle = 'white';
+              c.fillText(m.weatherIcon, xPx, yPx - r - 5);
+            }
+            
+            if (m.isWaypoint && m.label) {
+              c.font = 'bold 10px Inter, sans-serif';
+              c.fillStyle = 'rgba(255,255,255,0.8)';
+              const yOffset = m.weatherIcon ? r + 22 : r + 5;
+              c.fillText(m.label, xPx, yPx - yOffset);
+            }
           }
 
           c.restore();
@@ -371,7 +381,12 @@ export class ElevationProfile {
             padding: 10,
             cornerRadius: 8,
             callbacks: {
-              title: (items) => `距離: ${items[0].label} km`,
+              title: (items) => {
+                const item = items[0];
+                const marker = self._markers.find(m => m.dataIdx === item.dataIndex);
+                if (marker && marker.label) return `${marker.label} (${item.label} km)`;
+                return `距離: ${item.label} km`;
+              },
               label: (item) => `海拔: ${formatElevation(this.elevations[item.dataIndex])}`,
             },
           },
