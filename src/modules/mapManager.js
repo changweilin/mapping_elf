@@ -143,6 +143,49 @@ export class MapManager {
     this._dragWpIndex = undefined;
   }
 
+  _ensureTrashZone() {
+    if (this._trashZoneEl) return this._trashZoneEl;
+    const el = document.createElement('div');
+    el.className = 'waypoint-trash-zone hidden';
+    el.innerHTML =
+      '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true">' +
+      '<path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span class="waypoint-trash-label">拖曳至此刪除</span>';
+    document.body.appendChild(el);
+    this._trashZoneEl = el;
+    return el;
+  }
+
+  _showTrashZone() {
+    const el = this._ensureTrashZone();
+    el.classList.remove('hidden', 'is-hover');
+  }
+
+  _hideTrashZone() {
+    if (!this._trashZoneEl) return;
+    this._trashZoneEl.classList.add('hidden');
+    this._trashZoneEl.classList.remove('is-hover');
+  }
+
+  _isOverTrashZone(clientX, clientY) {
+    if (clientX == null || clientY == null) return false;
+    if (!this._trashZoneEl || this._trashZoneEl.classList.contains('hidden')) return false;
+    const rect = this._trashZoneEl.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const radius = Math.max(rect.width, rect.height) / 2 + 16;
+    return dx * dx + dy * dy <= radius * radius;
+  }
+
+  _updateTrashZoneHover(clientX, clientY) {
+    const isOver = this._isOverTrashZone(clientX, clientY);
+    if (this._trashZoneEl) this._trashZoneEl.classList.toggle('is-hover', isOver);
+    return isOver;
+  }
+
   _findInsertionIndex(latlng) {
     if (this.waypoints.length < 2) return this.waypoints.length;
     let bestIndex = 1;
@@ -245,17 +288,21 @@ export class MapManager {
         this.map.dragging.disable();
 
         this._startRubberBand(marker);
+        this._showTrashZone();
 
         const onMove = (ev) => {
           const latlng = this.map.mouseEventToLatLng(ev);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
+          this._updateTrashZoneHover(ev.clientX, ev.clientY);
         };
-        const onUp = () => {
+        const onUp = (ev) => {
+          const isOverTrash = this._isOverTrashZone(ev?.clientX, ev?.clientY);
           _dragModeActive = false;
           _justDragged = true;
           this._blockMapClick();
           this._stopRubberBand();
+          this._hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           this.map.dragging.enable();
@@ -264,8 +311,13 @@ export class MapManager {
           const pos = marker.getLatLng();
           const idx = this.waypointMarkers.indexOf(marker);
           if (idx >= 0) {
-            this.waypoints[idx] = [pos.lat, pos.lng];
-            this.onWaypointChange(this.waypoints);
+            if (isOverTrash) {
+              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+              this.removeWaypoint(idx);
+            } else {
+              this.waypoints[idx] = [pos.lat, pos.lng];
+              this.onWaypointChange(this.waypoints);
+            }
           }
         };
         document.addEventListener('mousemove', onMove);
@@ -298,10 +350,15 @@ export class MapManager {
         this.map.dragging.disable();
 
         this._startRubberBand(marker);
+        this._showTrashZone();
+
+        let lastTouchClientX = null, lastTouchClientY = null;
 
         const onTouchMove = (ev) => {
           ev.preventDefault();
           const t = ev.touches[0];
+          lastTouchClientX = t.clientX;
+          lastTouchClientY = t.clientY;
           // 在手機版加入 Y 軸負偏移(-40px)，讓圖標浮在手指上方避免被遮擋
           const rect = this.map.getContainer().getBoundingClientRect();
           const x = t.clientX - rect.left;
@@ -309,13 +366,19 @@ export class MapManager {
           const latlng = this.map.containerPointToLatLng([x, y]);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
+          this._updateTrashZoneHover(t.clientX, t.clientY);
         };
-        const onTouchEnd = () => {
+        const onTouchEnd = (ev) => {
+          const ct = ev?.changedTouches?.[0];
+          const cx = ct?.clientX ?? lastTouchClientX;
+          const cy = ct?.clientY ?? lastTouchClientY;
+          const isOverTrash = this._isOverTrashZone(cx, cy);
           _dragModeActive = false;
           _isTouchActive = false;
           _justDragged = true;
           this._blockMapClick();
           this._stopRubberBand();
+          this._hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           this.map.dragging.enable();
@@ -324,8 +387,13 @@ export class MapManager {
           const pos = marker.getLatLng();
           const idx = this.waypointMarkers.indexOf(marker);
           if (idx >= 0) {
-            this.waypoints[idx] = [pos.lat, pos.lng];
-            this.onWaypointChange(this.waypoints);
+            if (isOverTrash) {
+              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+              this.removeWaypoint(idx);
+            } else {
+              this.waypoints[idx] = [pos.lat, pos.lng];
+              this.onWaypointChange(this.waypoints);
+            }
           }
         };
         document.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -377,19 +445,49 @@ export class MapManager {
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
     marker.on('dragstart', () => {
       this._startRubberBand(marker);
+      this._showTrashZone();
     });
     marker.on('drag', (e) => {
       this._updateRubberBand(e.target.getLatLng());
+      const oe = e.originalEvent;
+      const cx = oe?.clientX ?? oe?.touches?.[0]?.clientX;
+      const cy = oe?.clientY ?? oe?.touches?.[0]?.clientY;
+      if (cx != null && cy != null) {
+        this._updateTrashZoneHover(cx, cy);
+      } else {
+        // Fallback: derive screen coords from marker's lat/lng
+        const cp = this.map.latLngToContainerPoint(e.target.getLatLng());
+        const r = this.map.getContainer().getBoundingClientRect();
+        this._updateTrashZoneHover(cp.x + r.left, cp.y + r.top);
+      }
     });
 
     marker.on('dragend', (e) => {
+      const oe = e.originalEvent;
+      let dropX = oe?.clientX ?? oe?.changedTouches?.[0]?.clientX;
+      let dropY = oe?.clientY ?? oe?.changedTouches?.[0]?.clientY;
+      if (dropX == null || dropY == null) {
+        const cp = this.map.latLngToContainerPoint(e.target.getLatLng());
+        const r = this.map.getContainer().getBoundingClientRect();
+        dropX = cp.x + r.left;
+        dropY = cp.y + r.top;
+      }
+      const isOverTrash = this._isOverTrashZone(dropX, dropY);
       this._blockMapClick();
       this._stopRubberBand();
+      this._hideTrashZone();
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
-      this.waypoints[idx] = [pos.lat, pos.lng];
       _disableDrag();
-      this.onWaypointChange(this.waypoints);
+      if (idx >= 0) {
+        if (isOverTrash) {
+          if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+          this.removeWaypoint(idx);
+        } else {
+          this.waypoints[idx] = [pos.lat, pos.lng];
+          this.onWaypointChange(this.waypoints);
+        }
+      }
     });
 
     this.waypointMarkers.splice(idx, 0, marker);

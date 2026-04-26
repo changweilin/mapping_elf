@@ -456,6 +456,69 @@ html, body {
   to { transform: scale(1.3); box-shadow: 0 0 25px #fbbf24; }
 }
 
+/* Drag-to-delete drop zone — appears at top-center when a waypoint is being
+   dragged. Drop the waypoint inside the circle to remove it. */
+.waypoint-trash-zone {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%) scale(1);
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: rgba(15, 17, 23, 0.78);
+  border: 2px dashed rgba(248, 113, 113, 0.65);
+  color: #f87171;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  z-index: 10001;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, color 0.18s ease;
+  animation: trashZoneIn 0.22s ease-out;
+}
+.waypoint-trash-zone.hidden {
+  display: none;
+}
+.waypoint-trash-zone .waypoint-trash-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.waypoint-trash-zone.is-hover {
+  background: rgba(248, 113, 113, 0.92);
+  border-color: #fff;
+  border-style: solid;
+  color: #fff;
+  transform: translateX(-50%) scale(1.18);
+  box-shadow: 0 0 32px rgba(248, 113, 113, 0.7), 0 0 0 8px rgba(248, 113, 113, 0.22);
+}
+.waypoint-trash-zone.is-hover .waypoint-trash-label {
+  opacity: 1;
+}
+@keyframes trashZoneIn {
+  from { opacity: 0; transform: translateX(-50%) scale(0.6); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+html.light-theme .waypoint-trash-zone {
+  background: rgba(255, 255, 255, 0.92);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.55);
+}
+html.light-theme .waypoint-trash-zone.is-hover {
+  background: rgba(239, 68, 68, 0.95);
+  color: #fff;
+  border-color: #fff;
+}
+
 /* Return-leg waypoint markers — same size/shape/position as outbound, but
    distinguished by a dashed border and the return-gradient color (set inline).
    At stacked locations both outbound and return share lat/lng; the marker on
