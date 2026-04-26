@@ -2491,6 +2491,19 @@ html.light-theme .waypoint-trash-zone.is-hover {
 
 /* ======== Bottom Panel ======== */
 
+/* Performance optimization during layout resizing */
+body.is-resizing .map-container,
+body.is-resizing .side-panel,
+body.is-resizing .map-action-btns,
+body.is-resizing #bottom-panel {
+  transition: none !important;
+  will-change: height, bottom;
+}
+body.is-resizing {
+  user-select: none;
+  cursor: ns-resize !important;
+}
+
 #bottom-panel {
   position: fixed;
   bottom: 0;
