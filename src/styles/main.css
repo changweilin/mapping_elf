@@ -2147,8 +2147,27 @@ html.light-theme .waypoint-trash-zone.is-hover {
   .app-title {
     font-size: 15px;
   }
+  /* Mobile: collapse to a single cyclable button (tap or swipe to switch) */
   .layer-switcher {
+    padding: 2px;
+    gap: 0;
+    touch-action: pan-y;
+  }
+  .layer-switcher .layer-btn {
+    padding: 5px 6px;
+    gap: 3px;
+  }
+  .layer-switcher .layer-btn span {
     display: none;
+  }
+  .layer-switcher .layer-btn:not(.active) {
+    display: none;
+  }
+  .layer-switcher .layer-btn.active::after {
+    content: '⇄';
+    opacity: 0.75;
+    font-size: 11px;
+    line-height: 1;
   }
   .tool-btn {
     width: 34px;

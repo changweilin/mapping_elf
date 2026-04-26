@@ -1233,14 +1233,56 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
   }
 });
 
+const LAYER_CYCLE_ORDER = ['streets', 'topo', 'satellite'];
+const isMobileLayerMode = () => window.matchMedia('(max-width: 768px)').matches;
+function applyLayerSelection(name) {
+  if (!LAYER_CYCLE_ORDER.includes(name)) return;
+  mapManager.switchLayer(name);
+  localStorage.setItem(LS_MAP_LAYER_KEY, name);
+  layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === name));
+}
+function cycleLayer(step) {
+  const cur = mapManager.currentLayerName;
+  const i = LAYER_CYCLE_ORDER.indexOf(cur);
+  const next = LAYER_CYCLE_ORDER[(i + step + LAYER_CYCLE_ORDER.length) % LAYER_CYCLE_ORDER.length];
+  applyLayerSelection(next);
+}
+
 layerBtns.forEach((btn) => {
   btn.addEventListener('click', () => {
-    mapManager.switchLayer(btn.dataset.layer);
-    localStorage.setItem(LS_MAP_LAYER_KEY, btn.dataset.layer);
-    layerBtns.forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
+    // On mobile only the active button is visible — tapping it cycles to the next layer.
+    if (isMobileLayerMode() && btn.dataset.layer === mapManager.currentLayerName) {
+      cycleLayer(1);
+      return;
+    }
+    applyLayerSelection(btn.dataset.layer);
   });
 });
+
+// Mobile: swipe left/right on the switcher to cycle layers.
+const layerSwitcherEl = document.getElementById('layer-switcher');
+if (layerSwitcherEl) {
+  let tStartX = 0, tStartY = 0, tStartT = 0, tracking = false;
+  layerSwitcherEl.addEventListener('touchstart', (e) => {
+    if (!isMobileLayerMode() || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    tStartX = t.clientX; tStartY = t.clientY; tStartT = Date.now();
+    tracking = true;
+  }, { passive: true });
+  layerSwitcherEl.addEventListener('touchend', (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - tStartX;
+    const dy = t.clientY - tStartY;
+    const dt = Date.now() - tStartT;
+    if (Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 600) {
+      cycleLayer(dx < 0 ? 1 : -1);
+      e.preventDefault();
+    }
+  });
+  layerSwitcherEl.addEventListener('touchcancel', () => { tracking = false; });
+}
 
 routeModeRadios.forEach((radio) => {
   radio.addEventListener('change', (e) => {
