@@ -4871,7 +4871,7 @@ let _wcLastMode = 'full';
 
 /**
  * Open (or toggle) the weather card popup for a point.
- * Default opens in compact mode.
+ * Reopens at the size the user last had open (tracked in _wcLastMode).
  */
 function openWeatherCard(colIdx) {
   // If already open, close it (toggle behavior)
@@ -4879,7 +4879,7 @@ function openWeatherCard(colIdx) {
     closeWeatherCard(colIdx);
     return;
   }
-  _wcStates.set(colIdx, 'compact');
+  _wcStates.set(colIdx, _wcLastMode);
   _renderWeatherCard(colIdx);
 }
 
