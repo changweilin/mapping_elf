@@ -202,6 +202,26 @@ export function formatCoords(lat, lng) {
   return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
+export function copyToClipboard(text, onDone) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => onDone(true), () => onDone(false));
+  } else {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      onDone(true);
+    } catch (e) {
+      onDone(false);
+    }
+  }
+}
+
 export function showNotification(message, type = 'info', duration = 3500) {
   const container = document.getElementById('notifications');
   const el = document.createElement('div');

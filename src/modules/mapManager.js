@@ -351,18 +351,12 @@ export class MapManager {
 
     const html =
       '<div class="map-cursor-menu">' +
-      `<div class="map-cursor-coords">${latStr}, ${lngStr}</div>` +
+      `<div class="map-cursor-coords clickable-coords" data-coords="${latStr}, ${lngStr}" title="點擊複製座標">${latStr}, ${lngStr}</div>` +
       '<button class="cursor-menu-btn" data-action="waypoint">' +
       '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
       '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/>' +
       '</svg>' +
       '<span>設為航點</span>' +
-      '</button>' +
-      '<button class="cursor-menu-btn" data-action="copy">' +
-      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
-      '<path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>' +
-      '</svg>' +
-      '<span>複製座標</span>' +
       '</button>' +
       '<button class="cursor-menu-btn" data-action="weather">' +
       '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
@@ -412,10 +406,11 @@ export class MapManager {
     L.DomEvent.disableClickPropagation(wrapper);
     L.DomEvent.disableScrollPropagation(wrapper);
 
-    wrapper.querySelectorAll('.cursor-menu-btn').forEach((btn) => {
+    wrapper.querySelectorAll('.cursor-menu-btn, .clickable-coords').forEach((btn) => {
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        const action = btn.dataset.action;
+        const action = btn.dataset.action || (btn.classList.contains('clickable-coords') ? 'copy' : null);
+        if (!action) return;
         this._closeMapCursorMenu();
         if (action === 'dismiss') {
           // Just close the menu — keep the cursor on the map.

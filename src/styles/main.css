@@ -4262,3 +4262,18 @@ html.light-theme .quote-source {
 html.light-theme .panel-bottom-logo {
   opacity: 0.1;
 }
+
+/* Global clickable coordinates styling */
+.clickable-coords {
+  cursor: pointer;
+  transition: color var(--transition-fast), transform var(--transition-fast);
+  position: relative;
+}
+
+.clickable-coords:hover {
+  color: var(--accent-primary) !important;
+}
+
+.clickable-coords:active {
+  transform: scale(0.98);
+}

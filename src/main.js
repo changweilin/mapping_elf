@@ -14,7 +14,7 @@ import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
-import { formatDistance, formatElevation, formatCoords, showNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
@@ -415,21 +415,7 @@ mapManager.onMapCursorAction = (action, lat, lng) => {
   }
   if (action === 'copy') {
     const text = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-    const done = (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500);
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
-    } else {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        done(true);
-      } catch (e) { done(false); }
-    }
+    copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
     return;
   }
   if (action === 'weather') {
@@ -1573,7 +1559,7 @@ function updateWaypointList(waypoints) {
       return `
         <div class="waypoint-item ${frozen ? 'is-frozen' : ''}">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
-          <span class="wp-coords" title="${coords}" style="color:${gradColor}">
+          <span class="wp-coords clickable-coords" data-coords="${coords}" title="點擊複製座標" style="color:${gradColor}">
             <span class="wp-place-name">${displayName}</span>
             ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
@@ -5300,12 +5286,7 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
   wrapper.querySelector('.clickable-coords')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const text = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(
-        () => showNotification(`已複製座標 ${text}`, 'success', 1500),
-        () => showNotification('複製失敗', 'error', 1500),
-      );
-    }
+    copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
   });
 }
 
@@ -5725,6 +5706,16 @@ function updateElevationMarkers() {
 // =========== Init ===========
 
 async function init() {
+  // Global listener for clickable coordinates
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('.clickable-coords');
+    if (!el) return;
+    const text = el.dataset.coords || el.innerText;
+    if (!text) return;
+    e.stopPropagation();
+    copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
+  });
+
   isInitialLoad = true;
   await offlineManager.register();
   initWeatherControls();
@@ -6265,7 +6256,7 @@ function renderSearchResults(items, resultsEl) {
     row.innerHTML = `
       <div class="search-result-text">
         <div class="search-result-name" title="${name.replace(/"/g, '&quot;')}">${name}</div>
-        <div class="search-result-coord">${coordLine}</div>
+        <div class="search-result-coord clickable-coords" data-coords="${lat.toFixed(5)}, ${lng.toFixed(5)}" title="點擊複製座標">${coordLine}</div>
       </div>
       <button class="search-result-add" title="加入為航點" ${frozen ? 'disabled' : ''}>+ 航點</button>
     `;
