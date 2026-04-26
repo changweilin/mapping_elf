@@ -351,43 +351,43 @@ export class MapManager {
 
     const html =
       '<div class="map-cursor-menu">' +
-        `<div class="map-cursor-coords">${latStr}, ${lngStr}</div>` +
-        '<button class="cursor-menu-btn" data-action="waypoint">' +
-          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
-            '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/>' +
-          '</svg>' +
-          '<span>設為航點</span>' +
-        '</button>' +
-        '<button class="cursor-menu-btn" data-action="copy">' +
-          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
-            '<path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>' +
-          '</svg>' +
-          '<span>複製座標</span>' +
-        '</button>' +
-        '<button class="cursor-menu-btn" data-action="weather">' +
-          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
-            '<path d="M19.36 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.64-4.96z" fill="currentColor"/>' +
-          '</svg>' +
-          '<span>開啟大格天氣卡</span>' +
-        '</button>' +
-        '<button class="cursor-menu-btn" data-action="windy">' +
-          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
-            '<path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/>' +
-          '</svg>' +
-          '<span>開啟 Windy</span>' +
-        '</button>' +
-        '<button class="cursor-menu-btn" data-action="clear">' +
-          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
-            '<path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zM11 17H9v-8h2v8zm4 0h-2v-8h2v8z" fill="currentColor"/>' +
-          '</svg>' +
-          '<span>清除 GPS 游標</span>' +
-        '</button>' +
-        '<button class="cursor-menu-btn cursor-menu-cancel" data-action="dismiss">' +
-          '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
-            '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>' +
-          '</svg>' +
-          '<span>關閉選單</span>' +
-        '</button>' +
+      `<div class="map-cursor-coords">${latStr}, ${lngStr}</div>` +
+      '<button class="cursor-menu-btn" data-action="waypoint">' +
+      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+      '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span>設為航點</span>' +
+      '</button>' +
+      '<button class="cursor-menu-btn" data-action="copy">' +
+      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+      '<path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span>複製座標</span>' +
+      '</button>' +
+      '<button class="cursor-menu-btn" data-action="weather">' +
+      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+      '<path d="M19.36 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.64-4.96z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span>開啟天氣卡</span>' +
+      '</button>' +
+      '<button class="cursor-menu-btn" data-action="windy">' +
+      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+      '<path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span>開啟 Windy</span>' +
+      '</button>' +
+      '<button class="cursor-menu-btn" data-action="clear">' +
+      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+      '<path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zM11 17H9v-8h2v8zm4 0h-2v-8h2v8z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span>清除 GPS 游標</span>' +
+      '</button>' +
+      '<button class="cursor-menu-btn cursor-menu-cancel" data-action="dismiss">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+      '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span>關閉選單</span>' +
+      '</button>' +
       '</div>';
 
     this._closeMapCursorMenu();
@@ -443,16 +443,16 @@ export class MapManager {
     let bestIndex = 1;
     let minDetour = Infinity;
     for (let i = 1; i < this.waypoints.length; i++) {
-        const w1 = this.waypoints[i - 1];
-        const w2 = this.waypoints[i];
-        const d1 = L.latLng(w1[0], w1[1]).distanceTo(latlng);
-        const d2 = L.latLng(w2[0], w2[1]).distanceTo(latlng);
-        const d12 = L.latLng(w1[0], w1[1]).distanceTo(L.latLng(w2[0], w2[1]));
-        const detour = d1 + d2 - d12;
-        if (detour < minDetour) {
-            minDetour = detour;
-            bestIndex = i;
-        }
+      const w1 = this.waypoints[i - 1];
+      const w2 = this.waypoints[i];
+      const d1 = L.latLng(w1[0], w1[1]).distanceTo(latlng);
+      const d2 = L.latLng(w2[0], w2[1]).distanceTo(latlng);
+      const d12 = L.latLng(w1[0], w1[1]).distanceTo(L.latLng(w2[0], w2[1]));
+      const detour = d1 + d2 - d12;
+      if (detour < minDetour) {
+        minDetour = detour;
+        bestIndex = i;
+      }
     }
     return bestIndex;
   }
@@ -1018,7 +1018,7 @@ export class MapManager {
         lineCap: 'round',
         lineJoin: 'round',
       }).addTo(this.map);
-      
+
       const xFrac = dists[startI] / totalD;
       if (splitD > 0) {
         pl._isReturn = (startI >= splitIdx);
@@ -1439,7 +1439,7 @@ export class MapManager {
       const touch = oe.touches ? oe.touches[0] : oe;
       startX = touch.clientX;
       startY = touch.clientY;
-      
+
       lpTimer = setTimeout(() => {
         lpTimer = null;
         lpTriggered = true;
@@ -1468,7 +1468,7 @@ export class MapManager {
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
       if (this.isFrozen || lpTriggered) return;
-      
+
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
@@ -1639,10 +1639,10 @@ export class MapManager {
    * @param {boolean} isIntermediate - if true, attach to intermediate markers
    */
   openWeatherPopup(colIdx, htmlContent, onReady, isIntermediate = false, waypointIndex = -1) {
-    const marker = isIntermediate 
+    const marker = isIntermediate
       ? this.intermediateMarkers.find(m => m.options.colIdx === colIdx) // We'll need to store colIdx on marker options
       : this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx]; // fallback for legacy logic
-    
+
     // Better: let the caller provide the marker or latlng. 
     // But since we want to attach to the marker, let's find it.
     let targetMarker = null;
@@ -1653,7 +1653,7 @@ export class MapManager {
     } else {
       targetMarker = this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx];
     }
-    
+
     if (!targetMarker) return;
 
     // If already open for this index, update it instead of recreating (prevents flashing)

@@ -206,15 +206,18 @@
           <div class="search-tools">
             <a id="search-gmaps-link" class="search-gmaps-link" href="#" target="_blank" rel="noopener">
               <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/>
+                <path
+                  d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"
+                  fill="currentColor" />
               </svg>
               <span>在 Google Maps 搜尋關鍵字</span>
             </a>
             <div class="search-coord-row">
-              <input type="text" id="search-coord-input" class="search-input" placeholder="緯度, 經度 (e.g. 25.034, 121.564)" autocomplete="off" />
+              <input type="text" id="search-coord-input" class="search-input"
+                placeholder="緯度, 經度 (e.g. 25.034, 121.564)" autocomplete="off" />
               <button class="icon-btn" id="btn-coord-go" title="定位至座標">
                 <svg viewBox="0 0 24 24" width="16" height="16">
-                  <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" fill="currentColor"/>
+                  <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" fill="currentColor" />
                 </svg>
               </button>
             </div>
@@ -395,7 +398,7 @@
             </select>
           </div>
         </div>
-        <!-- 按段重算 + 嚴格線性時間 並排 -->
+        <!-- 按段重算 + 配速時間 並排 -->
         <div class="pace-checks-row">
           <label class="pace-check-opt" title="勾選後,各段中繼點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
             <input type="checkbox" id="pace-per-segment-enable">
@@ -403,7 +406,7 @@
           </label>
           <label class="pace-check-opt" title="強制航點時間沿路線單調遞增,避免後段時間早於前段">
             <input type="checkbox" id="strict-linear-enable">
-            <span>嚴格線性</span>
+            <span>配速時間</span>
           </label>
         </div>
         <!-- 體重 + 負重 -->
@@ -760,40 +763,68 @@
       </div>
       <div class="collapsible-body collapsed" id="instructions-body">
         <div class="instructions-content" style="padding: 12px 14px; font-size: 0.85rem; color: var(--text-secondary);">
-          <div class="instr-group" style="margin-bottom: 16px;">
-            <div class="instr-title"
-              style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
-              📱 手機版天氣卡</div>
-            <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
-              <li><span class="instr-badge">上滑</span>：切換 詳細/簡要 模式</li>
-              <li><span class="instr-badge">下滑</span>：關閉天氣卡</li>
-              <li><span class="instr-badge">左右輕掃</span>：切換下一個/上一個點位</li>
-              <li>標籤與卡片均支援集體連動</li>
-            </ul>
+          <div class="instr-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                📱 手機版天氣卡</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li><span class="instr-badge">上滑</span>：切換 詳細/簡要 模式</li>
+                <li><span class="instr-badge">下滑</span>：關閉天氣卡</li>
+                <li><span class="instr-badge">左右輕掃</span>：切換點位</li>
+                <li>標籤與卡片均支援集體連動</li>
+              </ul>
+            </div>
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                💻 電腦版快捷鍵</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li><span class="instr-badge">↑</span> / <span class="instr-badge">↓</span>：展開/縮放或關閉卡片</li>
+                <li><span class="instr-badge">←</span> / <span class="instr-badge">→</span>：左右切換點位</li>
+                <li><span class="instr-badge">Ctrl+Z</span>：復原 / <span class="instr-badge">Ctrl+Shift+Z</span>：重做</li>
+                <li><span class="instr-badge">Esc</span>：關閉搜尋結果或選單</li>
+              </ul>
+            </div>
           </div>
-          <div class="instr-group" style="margin-bottom: 16px;">
-            <div class="instr-title"
-              style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
-              💻 電腦版快捷鍵</div>
-            <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
-              <li><span class="instr-badge">↑</span> / <span class="instr-badge">↓</span>：展開/縮小或關閉天氣卡</li>
-              <li><span class="instr-badge">←</span> / <span class="instr-badge">→</span>：切換點位</li>
-              <li><span class="instr-badge">Ctrl+Z</span>：復原 / <span class="instr-badge">Ctrl+Shift+Z</span>：重做</li>
-            </ul>
+
+          <div class="instr-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                📍 GPS 游標與定位</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li>點擊右側 <span style="color: var(--accent-primary);">定位按鈕</span> 放置游標</li>
+                <li>點擊/長按游標可 <span style="color: var(--accent-primary);">設為航點</span> 或查詢天氣</li>
+              </ul>
+            </div>
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                ⭐ 我的最愛與匯出</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li>點擊 <span style="color: var(--accent-primary);">星號</span> 儲存路線，上限 10 筆</li>
+                <li>支援匯出 GPX、KML 與離線地圖包</li>
+              </ul>
+            </div>
           </div>
-          <div class="instr-group">
+
+          <div class="instr-group" style="margin-bottom: 16px;">
             <div class="instr-title"
               style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
               💡 實用小秘訣</div>
             <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
-              <li>雙擊 <span style="color: var(--accent-primary);">高度圖</span> 可快速收縮/展開面板</li>
-              <li>雙擊 <span style="color: var(--accent-primary);">航點名稱</span> (側欄或表頭) 可編輯</li>
-              <li>雙擊 <span style="color: var(--accent-primary);">重疊軌跡</span> 可更換上下層</li>
-              <li>右鍵點擊 <span style="color: var(--accent-primary);">地圖航點</span> 可啟用拖曳移動</li>
-              <li>長按 <span style="color: var(--accent-primary);">地圖航點</span> 拖曳，拖到頂部 <span
-                  style="color: var(--danger);">垃圾桶</span> 即可刪除</li>
-              <li>長按側欄項目可 <span style="color: var(--accent-primary);">拖曳排序</span>，拖出側欄外可 <span
-                  style="color: var(--accent-primary);">刪除</span></li>
+              <li><span style="font-weight: 500; color: var(--text-primary);">側欄收合功能</span>：側欄收起時，頂部標題仍可進行搜尋、切換運動或天氣模式
+              </li>
+              <li><span style="font-weight: 500; color: var(--text-primary);">高度圖互動</span>：雙擊高度圖可快速收放面板；滑動高度圖時地圖會同步顯示對應點
+              </li>
+              <li><span style="font-weight: 500; color: var(--text-primary);">航點編輯</span>：雙擊側欄或表頭的 <span
+                  style="color: var(--accent-primary);">名稱</span> 可編輯；右鍵點擊地圖航點可啟用拖曳</li>
+              <li><span style="font-weight: 500; color: var(--text-primary);">軌跡層級</span>：來回/O繞路線重疊時，雙擊或長按軌跡可更換上下層</li>
+              <li><span style="font-weight: 500; color: var(--text-primary);">集體操作</span>：在「航點設置」中勾選連動對象，即可一次操作所有天氣卡
+              </li>
+              <li><span style="font-weight: 500; color: var(--text-primary);">刪除項目</span>：在地圖上將航點拖至頂部 <span
+                  style="color: var(--danger);">垃圾桶</span>，或將側欄/最愛項目向外拖曳即可刪除</li>
             </ul>
           </div>
         </div>
