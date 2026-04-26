@@ -2648,7 +2648,7 @@ function collectExportData() {
     const weather = {};
     if (cached) {
       WEATHER_ROWS.forEach(row => {
-        const val = getCellValue(cached, row.key);
+        const val = getCellValue(cached, row.key, pt);
         if (val && val !== '—') weather[row.key] = { label: row.label, value: val };
       });
     } else {
@@ -3066,8 +3066,8 @@ const WEATHER_ROWS = [
   { key: 'temp', label: '溫度' },
   { key: 'precipitation', label: '雨量' },
   { key: 'precipProb', label: '降雨機率' },
-  { key: 'tempRange', label: '高/低' },
-  { key: 'feelsLike', label: '體感' },
+  { key: 'tempRange', label: '高/低溫' },
+  { key: 'feelsLike', label: '體感溫度' },
   { key: 'humidity', label: '濕度' },
   { key: 'dewPoint', label: '露點' },
   { key: 'cloudCover', label: '雲量' },
@@ -3077,8 +3077,10 @@ const WEATHER_ROWS = [
   { key: 'visibility', label: '能見度' },
   { key: 'sunshineHours', label: '日照' },
   { key: 'radiation', label: '輻射' },
+  { key: 'elevation', label: '海拔' },
   { key: 'sunrise', label: '日出' },
   { key: 'sunset', label: '日落' },
+  { key: 'coords', label: '坐標' },
   { key: 'forecastTime', label: '預報時間' },
 ];
 
@@ -3529,15 +3531,14 @@ let cachedWeatherData = (() => {
 const weatherCoordKey = (lat, lng, date, hour) =>
   `${lat.toFixed(4)},${lng.toFixed(4)},${date},${hour}`;
 
-function getCellValue(data, key) {
-  if (!data) return '—';
+function getCellValue(data, key, pt) {
   const v = (a, b) => a != null ? a : (b != null ? b : '—');
+  if (key === 'elevation' && pt && pt._ele != null) return formatElevation(pt._ele);
+  if (key === 'coords' && pt) return formatCoords(pt.lat, pt.lng);
+  if (!data) return '—';
   switch (key) {
     case 'forecastTime': return v(data.forecastTime, '—');
-    case 'weather': {
-      const icon = data.weatherIcon ? `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${data.weatherIcon}</span>` : '';
-      return `${icon} ${data.weatherDesc || '—'}`.trim();
-    }
+    case 'weather': return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
     case 'temp': return v(data.temp, data.tempMax);
     case 'tempRange': return (data.tempMax || data.tempMin) ? `${v(data.tempMax, '—')} / ${v(data.tempMin, '—')}` : '—';
     case 'feelsLike': return v(data.feelsLike, '—');
@@ -3556,6 +3557,22 @@ function getCellValue(data, key) {
     case 'sunset': return v(data.sunset, '—');
     case 'elevation': return v(data.elevation, '—');
     default: return '—';
+  }
+}
+
+/**
+ * Update a specific cell in the weather table with content and trigger logic.
+ * Specifically wraps the weather icon in a trigger span for popup expansion.
+ */
+function updateWeatherTableCell(cell, key, val) {
+  if (!cell) return;
+  if (key === 'weather') {
+    const parts = val.split(' ');
+    const icon = parts[0];
+    const desc = parts.slice(1).join(' ');
+    cell.innerHTML = `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${icon}</span> ${desc}`;
+  } else {
+    cell.textContent = val;
   }
 }
 
@@ -4677,10 +4694,10 @@ function renderWeatherPanel() {
     if (cached) {
       const cells = {};
       WEATHER_ROWS.forEach(row => {
-        const val = getCellValue(cached, row.key);
+        const val = getCellValue(cached, row.key, pt);
         cells[row.key] = val;
         const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
-        if (cell) cell.textContent = val;
+        updateWeatherTableCell(cell, row.key, val);
       });
       saveWeatherCells(getSemanticKey(pt), cells);
       if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && cached.weatherIcon) {
@@ -4692,7 +4709,8 @@ function renderWeatherPanel() {
       if (saved) {
         WEATHER_ROWS.forEach(row => {
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
-          if (cell && saved[row.key]) cell.textContent = saved[row.key];
+          const val = saved[row.key];
+          if (cell && val) updateWeatherTableCell(cell, row.key, val);
         });
       }
     }
@@ -4856,10 +4874,13 @@ async function fetchAllWeatherData(options = {}) {
       if (data) {
         const cells = { _icon: data.weatherIcon };
         WEATHER_ROWS.forEach(row => {
-          const val = getCellValue(data, row.key);
+          const val = getCellValue(data, row.key, pt);
           cells[row.key] = val;
           const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-          if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
+          if (cell) {
+            updateWeatherTableCell(cell, row.key, val);
+            cell.classList.remove('loading', 'error');
+          }
         });
         saveWeatherCells(getSemanticKey(pt), cells);
         if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
@@ -4900,10 +4921,13 @@ async function fetchAllWeatherData(options = {}) {
       localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
       const cells = { _icon: data.weatherIcon };
       WEATHER_ROWS.forEach(row => {
-        const val = getCellValue(data, row.key);
+        const val = getCellValue(data, row.key, pt);
         cells[row.key] = val;
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) { cell.textContent = val; cell.classList.remove('loading', 'error'); }
+        if (cell) {
+          updateWeatherTableCell(cell, row.key, val);
+          cell.classList.remove('loading', 'error');
+        }
       });
       saveWeatherCells(getSemanticKey(pt), cells);
       // Update map icon (shared between outbound/return return markers)
@@ -5102,7 +5126,7 @@ function _renderWeatherCard(colIdx) {
   const val = (key) => {
     if (key === 'elevation') return formatElevation(pt._ele);
     if (key === 'coords') return formatCoords(pt.lat, pt.lng);
-    if (data) return getCellValue(data, key);
+    if (data) return getCellValue(data, key, pt);
     if (cells && cells[key]) return cells[key];
     return '—';
   };
@@ -5249,7 +5273,7 @@ async function openCursorWeatherCard(lat, lng) {
 function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
   const val = (key) => {
     if (key === 'coords') return formatCoords(lat, lng);
-    if (data) return getCellValue(data, key);
+    if (data) return getCellValue(data, key, { lat, lng }); // GPS cursor has no elevation, so pt._ele will be undefined
     return '—';
   };
   const weatherStr = val('weather');
