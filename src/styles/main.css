@@ -3094,6 +3094,22 @@ body.is-resizing {
   white-space: nowrap;
 }
 
+.wt-weather-icon-trigger {
+  cursor: pointer;
+  display: inline-block;
+  padding: 0 2px;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+  font-size: 1.2em;
+  vertical-align: middle;
+}
+
+.wt-weather-icon-trigger:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.2);
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
 .wt-label-cell {
   font-size: 11px;
   color: var(--text-muted);

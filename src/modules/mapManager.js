@@ -1245,7 +1245,13 @@ export class MapManager {
 
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+        // Detect click on weather badge
+        const target = e.originalEvent?.target;
+        if (target && target.closest && target.closest('.wp-weather-badge')) {
+          if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+          return;
+        }
+        if (pt.wpIndex !== undefined) this.onWaypointSelect?.(pt.wpIndex, true);
       });
 
       // Long-press (500ms) to cycle overlapping layers

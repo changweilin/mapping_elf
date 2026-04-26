@@ -3534,7 +3534,10 @@ function getCellValue(data, key) {
   const v = (a, b) => a != null ? a : (b != null ? b : '—');
   switch (key) {
     case 'forecastTime': return v(data.forecastTime, '—');
-    case 'weather': return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
+    case 'weather': {
+      const icon = data.weatherIcon ? `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${data.weatherIcon}</span>` : '';
+      return `${icon} ${data.weatherDesc || '—'}`.trim();
+    }
     case 'temp': return v(data.temp, data.tempMax);
     case 'tempRange': return (data.tempMax || data.tempMin) ? `${v(data.tempMax, '—')} / ${v(data.tempMin, '—')}` : '—';
     case 'feelsLike': return v(data.feelsLike, '—');
@@ -4724,6 +4727,19 @@ function renderWeatherPanel() {
   container.querySelectorAll('.wt-data-cell').forEach(td => {
     td.style.cursor = 'pointer';
     td.addEventListener('click', () => highlightPoint(parseInt(td.dataset.col)));
+  });
+
+  // Weather table icon click -> Expand card
+  container.querySelectorAll('.wt-weather-icon-trigger').forEach(span => {
+    span.style.cursor = 'pointer';
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const td = span.closest('td');
+      if (td) {
+        const colIdx = parseInt(td.dataset.col);
+        if (!isNaN(colIdx)) handleWeatherIconInteraction(colIdx);
+      }
+    });
   });
 
   // Sync elevation chart markers with weather columns
