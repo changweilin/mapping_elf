@@ -433,6 +433,20 @@ mapManager.onMapCursorAction = (action, lat, lng) => {
     return;
   }
   if (action === 'weather') {
+    if (!weatherPoints || weatherPoints.length === 0) {
+      showNotification('尚無天氣資料,請先更新天氣', 'warning', 1800);
+      return;
+    }
+    let minD = Infinity, closestIdx = 0;
+    for (let i = 0; i < weatherPoints.length; i++) {
+      const d = haversineDistance([lat, lng], [weatherPoints[i].lat, weatherPoints[i].lng]);
+      if (d < minD) { minD = d; closestIdx = i; }
+    }
+    highlightPoint(closestIdx);
+    setWeatherCardMode(closestIdx, 'full');
+    return;
+  }
+  if (action === 'windy') {
     const url = buildWindyUrl(lat, lng);
     window.open(url, '_blank', 'noopener');
     return;
@@ -925,6 +939,7 @@ btnClearRoute.addEventListener('click', () => {
   syncTrackModeUI();
   _wcStates.clear();
   mapManager.closeWeatherPopup();
+  mapManager.clearMapCursor();
   mapManager.clearWaypoints();
   mapManager.clearIntermediateMarkers();
   elevationProfile.clear();
