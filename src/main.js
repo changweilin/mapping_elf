@@ -443,7 +443,7 @@ mapManager.onMapCursorAction = (action, lat, lng) => {
       if (d < minD) { minD = d; closestIdx = i; }
     }
     highlightPoint(closestIdx);
-    setWeatherCardMode(closestIdx, 'full');
+    setWeatherCardMode(closestIdx, _wcLastMode);
     return;
   }
   if (action === 'windy') {
@@ -4865,6 +4865,9 @@ async function fetchAllWeatherData(options = {}) {
 
 // Map of colIdx -> state ('compact' | 'full') for currently open weather cards
 let _wcStates = new Map();
+// Last-seen card mode at close time — used so the cursor's "open weather card"
+// re-uses the size the user last had open.
+let _wcLastMode = 'full';
 
 /**
  * Open (or toggle) the weather card popup for a point.
@@ -4907,6 +4910,8 @@ function handleWeatherIconInteraction(colIdx) {
 
 /** Close a specific weather card. */
 function closeWeatherCard(colIdx) {
+  const prev = _wcStates.get(colIdx);
+  if (prev === 'compact' || prev === 'full') _wcLastMode = prev;
   _wcStates.delete(colIdx);
   mapManager.closeWeatherPopup(colIdx);
 }
