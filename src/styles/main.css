@@ -4079,6 +4079,42 @@ body.modal-open {
   font-weight: 500;
 }
 
+.wc-time-edit-wrap {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.wc-info-item .wc-date-input,
+.wc-info-item .wc-time-select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.wc-info-item .wc-date-input:hover,
+.wc-info-item .wc-time-select:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-hover);
+}
+
+.wc-info-item .wc-date-input:focus,
+.wc-info-item .wc-time-select:focus {
+  border-color: var(--accent-primary);
+  background: var(--bg-tertiary);
+  box-shadow: 0 0 0 2px rgba(110, 231, 183, 0.15);
+}
+
+.wc-info-item .wc-date-input {
+  max-width: 105px;
+}
+
 .wc-info-value.clickable-coords {
   cursor: pointer;
   transition: color var(--transition-fast), transform var(--transition-fast);

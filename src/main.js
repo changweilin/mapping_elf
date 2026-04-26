@@ -2068,7 +2068,12 @@ function updateDateConstraints() {
     if (!pt?.isWaypoint) continue;
     const prevDi = heads[i - 1].querySelector('.wt-date-input');
     const di = heads[i].querySelector('.wt-date-input');
-    if (di && prevDi?.value) di.min = prevDi.value;
+    if (di && prevDi?.value) {
+      di.min = prevDi.value;
+      // Sync to open weather card
+      const cardDi = document.querySelector(`.weather-card[data-col-idx="${i}"] .wc-date-input`);
+      if (cardDi) cardDi.min = prevDi.value;
+    }
   }
 }
 
@@ -3652,6 +3657,7 @@ function shiftAllDates(deltaDays, deltaHours) {
 
   syncIntervalTimes();
   saveWeatherSettings();
+  refreshOpenWeatherCards();
 }
 
 /**
@@ -4383,6 +4389,68 @@ function computeWeatherPointPositions() {
   return weatherPoints.map(pt => (pt._cum || 0) / totalDist);
 }
 
+function handleWeatherTimeChange(idx, th) {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const heads = Array.from(container.querySelectorAll('.wt-th-date'));
+  if (!th) th = heads[idx];
+  if (!th) return;
+
+  if (strictLinearMode) {
+    if (idx > 0) {
+      const prevDate = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"] .wt-date-input`)?.value;
+      const curDate = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value;
+      const prevH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx - 1}"] .wt-time-select`)?.value ?? '0');
+      const curH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
+
+      if (prevDate && curDate && prevDate === curDate && curH < prevH) {
+        const d = new Date(curDate + 'T12:00:00');
+        d.setDate(d.getDate() + 1);
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const dy = String(d.getDate()).padStart(2, '0');
+        const di = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`);
+        if (di) di.value = `${y}-${mo}-${dy}`;
+      }
+    }
+  }
+
+  if (strictLinearMode) {
+    if (speedIntervalMode) {
+      const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
+      const deltaMs = colToMs(th) - prevMs;
+      if (deltaMs !== 0) {
+        for (let j = idx + 1; j < heads.length; j++) {
+          setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
+        }
+      }
+    } else {
+      syncIntervalTimesFromWP();
+    }
+  }
+  updateDateConstraints();
+  saveWeatherSettings();
+  th.dataset.prevMs = String(colToMs(th));
+  refreshWindyLinks();
+  fetchAllWeatherData({ onlyColIndex: idx });
+
+  // Re-render any open weather cards to reflect the new time/date/weather
+  refreshOpenWeatherCards();
+}
+
+/** Re-render all currently open weather cards (Map Popups). */
+function refreshOpenWeatherCards() {
+  if (typeof _wcStates !== 'undefined' && _wcStates.size > 0) {
+    _wcStates.forEach((state, cIdx) => {
+      _renderWeatherCard(cIdx);
+    });
+  }
+}
+
+const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
+  `<option value="${h}"${h === sel ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
+).join('');
+
 function renderWeatherPanel() {
   weatherPoints = buildWeatherPoints();
   const container = document.getElementById('weather-table-container');
@@ -4638,52 +4706,11 @@ function renderWeatherPanel() {
 
   // On change: speed mode → delta-shift subsequent columns; otherwise → cascade interval
   // times from col-0; all modes → enforce waypoint ordering → save
-  const onTimeChange = (e) => {
-    const th = e.target.closest('th');
-    if (!th) return;
-
-    if (strictLinearMode) {
-      const idx = parseInt(th.dataset.idx);
-      if (idx > 0) {
-        const prevDate = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"] .wt-date-input`)?.value;
-        const curDate = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value;
-        const prevH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx - 1}"] .wt-time-select`)?.value ?? '0');
-        const curH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
-
-        if (prevDate && curDate && prevDate === curDate && curH < prevH) {
-          const d = new Date(curDate + 'T12:00:00');
-          d.setDate(d.getDate() + 1);
-          const y = d.getFullYear();
-          const mo = String(d.getMonth() + 1).padStart(2, '0');
-          const dy = String(d.getDate()).padStart(2, '0');
-          const di = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`);
-          if (di) di.value = `${y}-${mo}-${dy}`;
-        }
-      }
-    }
-
-    if (strictLinearMode) {
-      if (speedIntervalMode) {
-        const idx = parseInt(th.dataset.idx);
-        const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
-        const deltaMs = colToMs(th) - prevMs;
-        if (deltaMs !== 0) {
-          for (let j = idx + 1; j < heads.length; j++) {
-            setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
-          }
-        }
-      } else {
-        syncIntervalTimesFromWP();
-      }
-    }
-    updateDateConstraints();
-    saveWeatherSettings();
-    th.dataset.prevMs = String(colToMs(th));
-    refreshWindyLinks();
-    fetchAllWeatherData({ onlyColIndex: parseInt(th.dataset.idx) });
-  };
   container.querySelectorAll('.wt-date-input, .wt-time-select').forEach(el =>
-    el.addEventListener('change', onTimeChange)
+    el.addEventListener('change', (e) => {
+      const th = e.target.closest('th');
+      if (th) handleWeatherTimeChange(parseInt(th.dataset.idx), th);
+    })
   );
 
   // Initial cascade + enforce on first render
@@ -4897,6 +4924,7 @@ async function fetchAllWeatherData(options = {}) {
         // Update chart markers to show icon immediately
         updateElevationMarkers();
         updateIntermediateMarkers();
+        if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
         continue;
       }
       
@@ -4952,6 +4980,7 @@ async function fetchAllWeatherData(options = {}) {
         if (cell) { cell.textContent = '—'; cell.classList.remove('loading'); cell.classList.add('error'); }
       });
     }
+    if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
 
     if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
   }
@@ -5190,6 +5219,7 @@ function _renderWeatherCard(colIdx) {
   }
   if (isFull) {
     const CARD_ROWS = [
+      { key: 'forecastTime', label: '預報時間' },
       { key: 'tempRange', label: '高/低溫' },
       { key: 'feelsLike', label: '體感溫度' },
       { key: 'precipitation', label: '雨量' },
@@ -5207,18 +5237,31 @@ function _renderWeatherCard(colIdx) {
       { key: 'sunrise', label: '日出' },
       { key: 'sunset', label: '日落' },
       { key: 'coords', label: '坐標' },
-      { key: 'forecastTime', label: '預報時間' },
     ];
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
       const isWide = ['coords', 'forecastTime'].includes(row.key);
       const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
       const isCoords = row.key === 'coords';
+      const isForecast = row.key === 'forecastTime';
       const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
       const displayVal = val(row.key);
       html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
       html += `<span class="wc-info-label">${row.label}</span>`;
-      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${displayVal}</span>`;
+      if (isForecast) {
+        const locked = strictLinearMode && !pt.isWaypoint;
+        let minAttr = '';
+        if (strictLinearMode && colIdx > 0) {
+          const prevDateInput = document.querySelector(`#weather-table-container .wt-th-date[data-idx="${colIdx - 1}"] .wt-date-input`);
+          if (prevDateInput?.value) minAttr = ` min="${prevDateInput.value}"`;
+        }
+        html += `<div class="wc-time-edit-wrap">`;
+        html += `<input type="date" class="wc-date-input" value="${dateStr}"${locked ? ' disabled' : ''}${minAttr}>`;
+        html += `<select class="wc-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>`;
+        html += `</div>`;
+      } else {
+        html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${displayVal}</span>`;
+      }
       html += `</div>`;
     });
     html += `</div>`;
@@ -5308,6 +5351,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   if (status === 'ok') {
     const CARD_ROWS = [
+      { key: 'forecastTime', label: '預報時間' },
       { key: 'tempRange', label: '高/低溫' },
       { key: 'feelsLike', label: '體感溫度' },
       { key: 'precipitation', label: '雨量' },
@@ -5325,7 +5369,6 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
       { key: 'sunrise', label: '日出' },
       { key: 'sunset', label: '日落' },
       { key: 'coords', label: '坐標' },
-      { key: 'forecastTime', label: '預報時間' },
     ];
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
@@ -5420,6 +5463,31 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
       } catch (err) { done(false); }
     }
   });
+
+  // Sync changes back to the weather table
+  root.querySelectorAll('.wc-date-input, .wc-time-select').forEach(el => {
+    el.addEventListener('change', (e) => {
+      e.stopPropagation();
+      const container = document.getElementById('weather-table-container');
+      if (!container) return;
+      const isDate = e.target.classList.contains('wc-date-input');
+      const tableInput = isDate
+        ? container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)
+        : container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`);
+
+      if (tableInput) {
+        // Before changing, snapshot for delta shift logic if speed mode is on
+        const th = container.querySelector(`.wt-th-date[data-idx="${colIdx}"]`);
+        if (th) th.dataset.prevMs = String(colToMs(th));
+
+        tableInput.value = e.target.value;
+        handleWeatherTimeChange(colIdx);
+        // Re-render card immediately so the user sees their changes (and eventually new weather data)
+        _renderWeatherCard(colIdx);
+      }
+    });
+  });
+
   // Touch gestures: swipe detection
   let _touchStartX = 0, _touchStartY = 0;
   let _touchStartTime = 0;
