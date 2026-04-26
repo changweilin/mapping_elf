@@ -406,6 +406,39 @@ mapManager.onRouteHover = (lat, lng) => {
   mapManager.showHoverMarker(lat, lng, color);
 };
 
+// Map-cursor action menu (placed by GPS button — set as waypoint / copy / weather)
+mapManager.onMapCursorAction = (action, lat, lng) => {
+  if (action === 'waypoint') {
+    mapManager.addWaypoint(lat, lng);
+    showNotification('已設為航點', 'success', 1200);
+    return;
+  }
+  if (action === 'copy') {
+    const text = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    const done = (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    } else {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        done(true);
+      } catch (e) { done(false); }
+    }
+    return;
+  }
+  if (action === 'weather') {
+    const url = buildWindyUrl(lat, lng);
+    window.open(url, '_blank', 'noopener');
+    return;
+  }
+};
+
 // Handle clicks on intermediate markers on the map
 mapManager.onIntermediateSelect = (lat, lng) => {
   if (!weatherPoints || weatherPoints.length === 0) return;

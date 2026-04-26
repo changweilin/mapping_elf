@@ -519,6 +519,133 @@ html.light-theme .waypoint-trash-zone.is-hover {
   border-color: #fff;
 }
 
+/* Map cursor — temporary marker placed by GPS button (goToMyLocation).
+   Long-press / click on this cursor opens an action menu. */
+.map-cursor-icon {
+  pointer-events: none;
+}
+.map-cursor-icon .map-cursor-ring,
+.map-cursor-icon .map-cursor-cross,
+.map-cursor-icon .map-cursor-pulse {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+.map-cursor-icon .map-cursor-ring {
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  margin-top: -14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-primary, #00FF7F);
+  background: rgba(0, 255, 127, 0.12);
+  box-shadow: 0 0 12px rgba(0, 255, 127, 0.55), 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.map-cursor-icon .map-cursor-cross {
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  background:
+    linear-gradient(to right, transparent 8px, var(--accent-primary, #00FF7F) 8px 10px, transparent 10px) center/100% 100% no-repeat,
+    linear-gradient(to bottom, transparent 8px, var(--accent-primary, #00FF7F) 8px 10px, transparent 10px) center/100% 100% no-repeat;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+  pointer-events: none;
+}
+.map-cursor-icon .map-cursor-pulse {
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  margin-top: -14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-primary, #00FF7F);
+  animation: mapCursorPulse 1.6s ease-out infinite;
+  opacity: 0.7;
+  pointer-events: none;
+}
+@keyframes mapCursorPulse {
+  0%   { transform: scale(0.6); opacity: 0.85; }
+  80%  { transform: scale(2.0); opacity: 0;    }
+  100% { transform: scale(2.0); opacity: 0;    }
+}
+
+/* Action menu popup attached to the cursor */
+.leaflet-popup.map-cursor-popup .leaflet-popup-content-wrapper {
+  background: var(--bg-glass, rgba(22, 24, 34, 0.92));
+  color: var(--text-primary, #e8eaf0);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 12px);
+  box-shadow: var(--shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.5));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 6px;
+}
+.leaflet-popup.map-cursor-popup .leaflet-popup-content {
+  margin: 0;
+  width: auto !important;
+}
+.leaflet-popup.map-cursor-popup .leaflet-popup-tip {
+  background: var(--bg-glass, rgba(22, 24, 34, 0.92));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.map-cursor-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 168px;
+}
+.map-cursor-menu .map-cursor-coords {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-secondary, #9ca3af);
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  margin-bottom: 4px;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.map-cursor-menu .cursor-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 8px);
+  color: var(--text-primary, #e8eaf0);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s ease), color var(--transition-fast, 0.15s ease);
+}
+.map-cursor-menu .cursor-menu-btn svg {
+  flex-shrink: 0;
+  color: var(--accent-primary, #00FF7F);
+}
+.map-cursor-menu .cursor-menu-btn:hover,
+.map-cursor-menu .cursor-menu-btn:focus-visible {
+  background: var(--bg-glass-hover, rgba(30, 32, 48, 0.95));
+  outline: none;
+}
+.map-cursor-menu .cursor-menu-btn:active {
+  transform: translateY(1px);
+}
+.map-cursor-menu .cursor-menu-cancel {
+  margin-top: 4px;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 0 0 var(--radius-sm, 8px) var(--radius-sm, 8px);
+  color: var(--text-secondary, #9ca3af);
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.map-cursor-menu .cursor-menu-cancel svg {
+  color: var(--text-muted, #6b7280);
+}
+
 /* Return-leg waypoint markers — same size/shape/position as outbound, but
    distinguished by a dashed border and the return-gradient color (set inline).
    At stacked locations both outbound and return share lat/lng; the marker on

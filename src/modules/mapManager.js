@@ -69,6 +69,12 @@ export class MapManager {
     this._dragWpIndex = undefined;
     this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
+    // Map cursor — placed by GPS button (goToMyLocation). Long-press / click
+    // on the cursor opens an action menu (set as waypoint / copy coords / weather).
+    this._mapCursor = null;
+    this._mapCursorLatLng = null;
+    this._mapCursorMenuPopup = null;
+    this.onMapCursorAction = null; // callback(action, lat, lng)
 
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
@@ -184,6 +190,192 @@ export class MapManager {
     const isOver = this._isOverTrashZone(clientX, clientY);
     if (this._trashZoneEl) this._trashZoneEl.classList.toggle('is-hover', isOver);
     return isOver;
+  }
+
+  // ===== Map cursor (placed by GPS button — not a waypoint) =====
+
+  setMapCursor(lat, lng) {
+    this._mapCursorLatLng = [lat, lng];
+    this._closeMapCursorMenu();
+    if (!this._mapCursor) {
+      const icon = this._createMapCursorIcon();
+      this._mapCursor = L.marker([lat, lng], {
+        icon,
+        interactive: true,
+        keyboard: false,
+        zIndexOffset: 800,
+      }).addTo(this.map);
+      this._attachMapCursorEvents(this._mapCursor);
+    } else {
+      this._mapCursor.setLatLng([lat, lng]);
+    }
+  }
+
+  clearMapCursor() {
+    this._closeMapCursorMenu();
+    if (this._mapCursor) {
+      this.map.removeLayer(this._mapCursor);
+      this._mapCursor = null;
+    }
+    this._mapCursorLatLng = null;
+  }
+
+  _createMapCursorIcon() {
+    return L.divIcon({
+      className: 'map-cursor-icon',
+      html:
+        '<div class="map-cursor-pulse"></div>' +
+        '<div class="map-cursor-ring"></div>' +
+        '<div class="map-cursor-cross"></div>',
+      iconSize: [44, 44],
+      iconAnchor: [22, 22],
+    });
+  }
+
+  _attachMapCursorEvents(marker) {
+    let lpTimer = null;
+    let touchStartX = 0, touchStartY = 0;
+    let mouseStartX = 0, mouseStartY = 0;
+
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      this._openMapCursorMenu();
+    });
+
+    marker.on('mousedown', (e) => {
+      if (e.originalEvent.button !== 0) return;
+      L.DomEvent.stopPropagation(e);
+      mouseStartX = e.originalEvent.clientX;
+      mouseStartY = e.originalEvent.clientY;
+      const cancel = () => {
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', cancel);
+      };
+      const onMove = (ev) => {
+        const dx = ev.clientX - mouseStartX, dy = ev.clientY - mouseStartY;
+        if (dx * dx + dy * dy > 64) cancel();
+      };
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', cancel);
+        if (navigator.vibrate) navigator.vibrate(40);
+        this._openMapCursorMenu();
+      }, 500);
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', cancel);
+    });
+
+    marker.on('touchstart', (e) => {
+      const t = e.originalEvent.touches[0];
+      touchStartX = t.clientX;
+      touchStartY = t.clientY;
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
+        if (navigator.vibrate) navigator.vibrate(40);
+        this._openMapCursorMenu();
+      }, 500);
+    });
+    marker.on('touchmove', (e) => {
+      if (!lpTimer) return;
+      const t = e.originalEvent.touches[0];
+      const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
+      if (dx * dx + dy * dy > 64) {
+        clearTimeout(lpTimer); lpTimer = null;
+      }
+    });
+    marker.on('touchend', () => {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    });
+    marker.on('contextmenu', (e) => {
+      L.DomEvent.stopPropagation(e);
+      L.DomEvent.preventDefault(e);
+      this._openMapCursorMenu();
+    });
+  }
+
+  _openMapCursorMenu() {
+    if (!this._mapCursor || !this._mapCursorLatLng) return;
+    const [lat, lng] = this._mapCursorLatLng;
+    const latStr = lat.toFixed(5);
+    const lngStr = lng.toFixed(5);
+
+    const html =
+      '<div class="map-cursor-menu">' +
+        `<div class="map-cursor-coords">${latStr}, ${lngStr}</div>` +
+        '<button class="cursor-menu-btn" data-action="waypoint">' +
+          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+            '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/>' +
+          '</svg>' +
+          '<span>設為航點</span>' +
+        '</button>' +
+        '<button class="cursor-menu-btn" data-action="copy">' +
+          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+            '<path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>' +
+          '</svg>' +
+          '<span>複製座標</span>' +
+        '</button>' +
+        '<button class="cursor-menu-btn" data-action="weather">' +
+          '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+            '<path d="M19.36 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.64-4.96z" fill="currentColor"/>' +
+          '</svg>' +
+          '<span>顯示大格天氣卡</span>' +
+        '</button>' +
+        '<button class="cursor-menu-btn cursor-menu-cancel" data-action="dismiss">' +
+          '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+            '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>' +
+          '</svg>' +
+          '<span>取消</span>' +
+        '</button>' +
+      '</div>';
+
+    this._closeMapCursorMenu();
+    const popup = L.popup({
+      className: 'map-cursor-popup',
+      closeButton: false,
+      closeOnClick: true,
+      autoClose: true,
+      autoPan: true,
+      offset: [0, -20],
+      maxWidth: 220,
+      minWidth: 180,
+    })
+      .setLatLng([lat, lng])
+      .setContent(html)
+      .openOn(this.map);
+
+    this._mapCursorMenuPopup = popup;
+
+    const wrapper = popup.getElement();
+    if (!wrapper) return;
+    L.DomEvent.disableClickPropagation(wrapper);
+    L.DomEvent.disableScrollPropagation(wrapper);
+
+    wrapper.querySelectorAll('.cursor-menu-btn').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const action = btn.dataset.action;
+        this._closeMapCursorMenu();
+        if (action === 'dismiss') {
+          this.clearMapCursor();
+          return;
+        }
+        if (this.onMapCursorAction) {
+          this.onMapCursorAction(action, lat, lng);
+        }
+        if (action === 'waypoint') {
+          this.clearMapCursor();
+        }
+      });
+    });
+  }
+
+  _closeMapCursorMenu() {
+    if (this._mapCursorMenuPopup) {
+      this.map.closePopup(this._mapCursorMenuPopup);
+      this._mapCursorMenuPopup = null;
+    }
   }
 
   _findInsertionIndex(latlng) {
@@ -1090,7 +1282,12 @@ export class MapManager {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        this.map.setView([pos.coords.latitude, pos.coords.longitude], 14);
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14));
+        // Drop a map cursor at the GPS fix instead of adding a waypoint —
+        // user can long-press the cursor to set as waypoint / copy / show weather.
+        this.setMapCursor(lat, lng);
       },
       () => { }
     );
