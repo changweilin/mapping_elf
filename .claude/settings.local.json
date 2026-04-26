@@ -46,7 +46,9 @@
       "Bash(curl -s -L http://localhost:5173/)",
       "Bash(curl -s -L \"http://localhost:5173/src/main.js\")",
       "Bash(curl -s -L -H \"Accept: application/javascript\" \"http://localhost:5173/src/main.js\")",
-      "Bash(curl -s \"http://localhost:5173/mapping_elf/src/main.js\")"
+      "Bash(curl -s \"http://localhost:5173/mapping_elf/src/main.js\")",
+      "Bash(curl *)",
+      "Bash(pkill -f \"vite\")"
     ]
   }
 }

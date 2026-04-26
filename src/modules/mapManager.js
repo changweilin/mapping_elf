@@ -109,6 +109,33 @@ export class MapManager {
         this._clickTimeout = null;
       }
     });
+
+    // Prevent waypoint creation on map pan/movement
+    this.map.on('movestart', () => {
+      this.ignoreMapClick = true;
+    });
+    this.map.on('moveend', () => {
+      this._blockMapClick();
+    });
+
+    // Prevent waypoint creation on long-press ( > 500ms )
+    let mapPressStartTime = 0;
+    const handlePressStart = () => { mapPressStartTime = Date.now(); };
+    const handlePressEnd = () => {
+      if (Date.now() - mapPressStartTime > 500) {
+        this._blockMapClick();
+      }
+    };
+
+    this.map.on('mousedown', handlePressStart);
+    this.map.on('touchstart', handlePressStart);
+    this.map.on('mouseup', handlePressEnd);
+    this.map.on('touchend', handlePressEnd);
+
+    // Context menu on map (often triggered by long-press on mobile) should also block waypoint creation
+    this.map.on('contextmenu', () => {
+      this._blockMapClick();
+    });
   }
 
   _blockMapClick() {
