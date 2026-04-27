@@ -562,8 +562,10 @@ export class MapManager {
       if (wpIdx >= 0 && (this.highlightedWpIndex !== wpIdx || this.highlightedIsReturn !== false)) {
         this.highlightWaypoint(wpIdx);
         this.onWaypointSelect?.(wpIdx, false);
+        this._markerJustHighlighted = true;
         return;
       }
+      this._markerJustHighlighted = false;
 
       _mouseStartX = e.originalEvent.clientX;
       _mouseStartY = e.originalEvent.clientY;
@@ -655,8 +657,10 @@ export class MapManager {
       if (wpIdx >= 0 && (this.highlightedWpIndex !== wpIdx || this.highlightedIsReturn !== false)) {
         this.highlightWaypoint(wpIdx);
         this.onWaypointSelect?.(wpIdx, false);
+        this._markerJustHighlighted = true;
         return;
       }
+      this._markerJustHighlighted = false;
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
@@ -761,8 +765,15 @@ export class MapManager {
         }
         return;
       }
+      if (this._markerJustHighlighted) {
+        this._markerJustHighlighted = false;
+        return;
+      }
       const idx = this.waypointMarkers.indexOf(marker);
-      if (idx >= 0) this.onWaypointSelect?.(idx);
+      if (idx >= 0) {
+        // Requirement 1: Toggle highlight on single click
+        this.onWaypointSelect?.(idx, false, true);
+      }
     });
 
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件

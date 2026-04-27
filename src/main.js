@@ -347,7 +347,7 @@ const elevationProfile = new ElevationProfile(
       handleWeatherIconInteraction(colIdx);
     } else {
       // Dot click: only highlight the point on the map/sidebar
-      highlightPoint(colIdx);
+      highlightPoint(colIdx, true); // Requirement 2: Toggle on single click
     }
   }
 );
@@ -356,10 +356,10 @@ const elevationProfile = new ElevationProfile(
 mapManager.onRouteSelect = (idx) => selectAlternative(idx);
 
 // When user clicks a waypoint marker on the map → cross-view highlight
-mapManager.onWaypointSelect = (wpIndex, isReturn = false) => {
+mapManager.onWaypointSelect = (wpIndex, isReturn = false, shouldToggle = false) => {
   const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.isReturn === isReturn && p.wpIndex === wpIndex);
   if (colIdx >= 0) {
-    highlightPoint(colIdx);
+    highlightPoint(colIdx, shouldToggle);
   } else {
     if (isReturn) mapManager.highlightReturnWaypoint(wpIndex);
     else mapManager.highlightWaypoint(wpIndex);
@@ -1580,9 +1580,14 @@ function updateWaypointList(waypoints) {
   waypointList.querySelectorAll('.waypoint-item').forEach((item, wpIndex) => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('.wp-actions')) return;
+      if (item._justHighlighted) {
+        item._justHighlighted = false;
+        return;
+      }
       const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === wpIndex);
       if (colIdx >= 0) {
-        highlightPoint(colIdx);
+        // Requirement 4: Toggle highlight on single click
+        highlightPoint(colIdx, true);
       } else {
         // Route not yet calculated — still highlight map + panel
         mapManager.highlightWaypoint(wpIndex);
@@ -1789,6 +1794,7 @@ function updateWaypointList(waypoints) {
           waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
           item.classList.add('wp-highlight');
         }
+        item._justHighlighted = true; // Set flag to prevent immediate toggle-off in subsequent click event
         return; // Block the long-press drag
       }
 
@@ -4693,8 +4699,14 @@ function renderWeatherPanel() {
     if (!pt.isWaypoint) thClass += ' wt-interval-col';
     if (i === firstReturnIdx) thClass += ' wt-return-start';
 
+    let minAttr = '';
+    if (strictLinearMode && i > 0) {
+      const prevVal = getSavedCol(weatherPoints[i - 1], i - 1, saved)?.date || todayStr;
+      if (prevVal) minAttr = ` min="${prevVal}"`;
+    }
+
     html += `<th class="${thClass}" data-idx="${i}">
-      <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}>
+      <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
     </th>`;
 
     // Initialize colTimes for later use in Windy links
@@ -4844,9 +4856,10 @@ function renderWeatherPanel() {
     const colIdx = parseInt(th.dataset.idx);
     const pt = weatherPoints[colIdx];
     th.addEventListener('click', (e) => {
-      // Direct click on input/label is an exception (单击例外) but we still want to highlight.
-      // We don't return anymore, so the highlightPoint(colIdx) will run.
-      highlightPoint(colIdx);
+      // Requirement: Don't highlight when clicking inputs/selects (opening dropdowns)
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      // Requirement 3: Toggle on single click
+      highlightPoint(colIdx, true);
     });
     const labelEl = th.querySelector('.wt-col-label');
     if (labelEl) {
@@ -4854,7 +4867,7 @@ function renderWeatherPanel() {
       // Guard: ignore clicks that originate from the inline edit input
       labelEl.addEventListener('click', (e) => {
         if (e.target.tagName === 'INPUT') return;
-        highlightPoint(colIdx);
+        highlightPoint(colIdx, true);
       });
       if (pt.isWaypoint) {
         labelEl.title = '單擊高亮 · 雙擊編輯名稱';
@@ -4866,7 +4879,12 @@ function renderWeatherPanel() {
   });
   container.querySelectorAll('.wt-data-cell').forEach(td => {
     td.style.cursor = 'pointer';
-    td.addEventListener('click', () => highlightPoint(parseInt(td.dataset.col)));
+    td.addEventListener('click', (e) => {
+      // Requirement: Don't highlight when clicking inputs (though cells usually don't have them, for safety)
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      // Requirement 3: Toggle on single click
+      highlightPoint(parseInt(td.dataset.col), true);
+    });
   });
 
   // Weather table icon click -> Expand card
@@ -5504,7 +5522,9 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   if (!root) return;
 
   // Clicking the card highlights the point
-  root.addEventListener('click', () => {
+  root.addEventListener('click', (e) => {
+    // Requirement: Don't highlight when clicking inputs/selects in the card
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     highlightPoint(colIdx);
   });
 
@@ -5796,9 +5816,17 @@ function panMapToVisibleCenter(latlng) {
  * and side-panel waypoint item for the given weather-column index.
  * All columns that share the same coordinate are highlighted together.
  */
-function highlightPoint(colIdx) {
+function highlightPoint(colIdx, toggle = false) {
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
   const pt = weatherPoints[colIdx];
+
+  // If toggle is true and this column is already highlighted, clear everything
+  const container = document.getElementById('weather-table-container');
+  const isAlreadyHighlighted = container?.querySelector(`.wt-col-highlight[data-idx="${colIdx}"]`) !== null;
+  if (toggle && isAlreadyHighlighted) {
+    clearAllHighlights();
+    return;
+  }
 
   // 1. Weather table — highlight exactly the clicked column
   highlightWeatherColumn(colIdx);
