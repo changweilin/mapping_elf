@@ -1783,6 +1783,15 @@ function updateWaypointList(waypoints) {
       } else {
         updateWaypointList(mapManager.waypoints);
       }
+      
+      // Highlight the moved/dropped waypoint at its new position
+      const itemsAfter = Array.from(waypointList.querySelectorAll('.waypoint-item'));
+      const finalIdx = itemsAfter.indexOf(dragItem);
+      if (finalIdx >= 0) {
+        const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === finalIdx);
+        if (colIdx >= 0) highlightPoint(colIdx);
+        else mapManager.highlightWaypoint(finalIdx);
+      }
     }
 
     if (ghost) ghost.remove();
@@ -1796,20 +1805,6 @@ function updateWaypointList(waypoints) {
     let startX = 0, startY = 0;
     
     const triggerLP = (clientX, clientY) => {
-      // Rule: Highlight first if not already highlighted
-      if (!item.classList.contains('wp-highlight')) {
-        const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === idx);
-        if (colIdx >= 0) {
-          highlightPoint(colIdx);
-        } else {
-          mapManager.highlightWaypoint(idx);
-          waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
-          item.classList.add('wp-highlight');
-        }
-        item._justHighlighted = true; // Set flag to prevent immediate toggle-off in subsequent click event
-        return; // Block the long-press drag
-      }
-
       startX = clientX;
       startY = clientY;
       lpTimer = setTimeout(() => {
@@ -1838,6 +1833,19 @@ function updateWaypointList(waypoints) {
         cancelLP(); 
         document.removeEventListener('mousemove', onMoveGuard);
         document.removeEventListener('mouseup', onUp); 
+
+        // If not already highlighted, highlight on release
+        if (!item.classList.contains('wp-highlight')) {
+          const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === idx);
+          if (colIdx >= 0) {
+            highlightPoint(colIdx);
+          } else {
+            mapManager.highlightWaypoint(idx);
+            waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
+            item.classList.add('wp-highlight');
+          }
+          item._justHighlighted = true;
+        }
       };
       document.addEventListener('mousemove', onMoveGuard);
       document.addEventListener('mouseup', onUp);

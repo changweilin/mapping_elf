@@ -584,16 +584,6 @@ export class MapManager {
     marker.on('mousedown', (e) => {
       if (this.isFrozen || e.originalEvent.button !== 0 || _dragModeActive) return;
 
-      // Rule: Highlight first if not already highlighted
-      const wpIdx = this.waypointMarkers.indexOf(marker);
-      if (wpIdx >= 0 && (this.highlightedWpIndex !== wpIdx || this.highlightedIsReturn !== false)) {
-        this.highlightWaypoint(wpIdx);
-        this.onWaypointSelect?.(wpIdx, false);
-        this._markerJustHighlighted = true;
-        return;
-      }
-      this._markerJustHighlighted = false;
-
       _mouseStartX = e.originalEvent.clientX;
       _mouseStartY = e.originalEvent.clientY;
 
@@ -654,6 +644,8 @@ export class MapManager {
             } else {
               this.waypoints[idx] = [pos.lat, pos.lng];
               this.onWaypointChange(this.waypoints);
+              // Post-drag highlight (on release)
+              this.onWaypointSelect?.(idx, false);
             }
           }
         };
@@ -678,16 +670,6 @@ export class MapManager {
       const touch = e.originalEvent.touches[0];
       _touchStartX = touch.clientX;
       _touchStartY = touch.clientY;
-
-      // Rule: Highlight first if not already highlighted
-      const wpIdx = this.waypointMarkers.indexOf(marker);
-      if (wpIdx >= 0 && (this.highlightedWpIndex !== wpIdx || this.highlightedIsReturn !== false)) {
-        this.highlightWaypoint(wpIdx);
-        this.onWaypointSelect?.(wpIdx, false);
-        this._markerJustHighlighted = true;
-        return;
-      }
-      this._markerJustHighlighted = false;
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
@@ -747,6 +729,8 @@ export class MapManager {
             } else {
               this.waypoints[idx] = [pos.lat, pos.lng];
               this.onWaypointChange(this.waypoints);
+              // Post-drag highlight (on release)
+              this.onWaypointSelect?.(idx, false);
             }
           }
         };
@@ -792,13 +776,18 @@ export class MapManager {
         }
         return;
       }
-      if (this._markerJustHighlighted) {
-        this._markerJustHighlighted = false;
-        return;
-      }
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
         // Requirement 1: Toggle highlight on single click
+        this.onWaypointSelect?.(idx, false, true);
+      }
+    });
+
+    // Double-click on marker: highlight and center
+    marker.on('dblclick', (e) => {
+      L.DomEvent.stopPropagation(e);
+      const idx = this.waypointMarkers.indexOf(marker);
+      if (idx >= 0) {
         this.onWaypointSelect?.(idx, false, true);
       }
     });
@@ -1368,13 +1357,6 @@ export class MapManager {
         const touch = oe.touches ? oe.touches[0] : oe;
         _startX = touch.clientX;
         _startY = touch.clientY;
-
-        // Rule: Highlight first if not already highlighted
-        if (marker._wpIndex !== undefined && (this.highlightedWpIndex !== marker._wpIndex || this.highlightedIsReturn !== true)) {
-          this.highlightReturnWaypoint(marker._wpIndex);
-          this.onWaypointSelect?.(marker._wpIndex, true);
-          return;
-        }
         
         _lpTimer = setTimeout(() => {
           _lpTimer = null;
