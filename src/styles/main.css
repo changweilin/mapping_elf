@@ -666,6 +666,34 @@ html.light-theme .waypoint-trash-zone.is-hover {
   color: #fff;
 }
 
+/* Trash zone for weather-table column drag — anchored to the bottom-panel
+   divider line via inline `top`/`height` set in JS (mapManager._positionTrashZoneTable).
+   Inline height overrides the .is-hover height, so it stays clamped inside
+   the bottom panel even when the elevation chart is collapsed. */
+.waypoint-trash-zone.is-table-drag {
+  border-bottom: none;
+  border-top: 2px dashed rgba(248, 113, 113, 0.5);
+}
+
+.waypoint-trash-zone.is-table-drag.is-hover {
+  border-top-color: #fff;
+  border-top-style: solid;
+}
+
+/* Drop indicator on the weather-table column header during a column drag.
+   Inset border on the side the dragged column will land. */
+.wt-col-head.wt-drop-target {
+  box-shadow: inset 4px 0 0 var(--accent-primary);
+}
+
+.wt-col-head.wt-drop-target.wt-drop-target-after {
+  box-shadow: inset -4px 0 0 var(--accent-primary);
+}
+
+.wt-col-head.wt-col-dragging {
+  opacity: 0.4;
+}
+
 /* Map cursor — temporary marker placed by GPS button (goToMyLocation).
    Long-press / click on this cursor opens an action menu. */
 .map-cursor-icon {
@@ -3337,7 +3365,8 @@ body.is-resizing {
 }
 
 .wt-date-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 2px 3px;
   border-radius: 3px;
   border: 1px solid var(--border);
@@ -3345,7 +3374,6 @@ body.is-resizing {
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
-  margin-bottom: 3px;
   box-sizing: border-box;
 }
 
@@ -3357,18 +3385,49 @@ html.light-theme .wt-date-input {
   color-scheme: light;
 }
 
+.wt-adj-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  margin-bottom: 3px;
+}
+
+.wt-adj-btn {
+  width: 18px;
+  height: 20px;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wt-adj-btn:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: #000;
+  border-color: var(--accent-primary);
+}
+
+.wt-adj-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .wt-time-row {
   display: flex;
   align-items: center;
   gap: 3px;
   margin-top: 1px;
-}
-
-.wt-time-label {
-  font-size: 10px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 .wt-time-select {

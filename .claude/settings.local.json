@@ -48,7 +48,9 @@
       "Bash(curl -s -L -H \"Accept: application/javascript\" \"http://localhost:5173/src/main.js\")",
       "Bash(curl -s \"http://localhost:5173/mapping_elf/src/main.js\")",
       "Bash(curl *)",
-      "Bash(pkill -f \"vite\")"
+      "Bash(pkill -f \"vite\")",
+      "Bash(mkdir -p \"/c/Users/user/.claude/projects/C--Users-user-Documents-app-mapping-elf/memory\")",
+      "Read(//c/Users/user/.claude/projects/C--Users-user-Documents-app-mapping-elf/memory//**)"
     ]
   }
 }

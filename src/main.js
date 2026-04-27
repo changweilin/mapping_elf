@@ -3801,6 +3801,37 @@ function shiftAllDates(deltaDays, deltaHours) {
 }
 
 /**
+ * Shift a single waypoint's time by deltaMs.
+ * Respects strictLinearMode by checking neighbors.
+ */
+function shiftWaypointTime(idx, deltaMs) {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+
+  const thDate = container.querySelector(`.wt-th-date[data-idx="${idx}"]`);
+  const di = thDate?.querySelector('.wt-date-input');
+  if (!di || di.disabled) return;
+
+  const curMs = colToMs(thDate);
+  const newMs = curMs + deltaMs;
+
+  if (strictLinearMode && deltaMs < 0) {
+    // For manual shifts, we block going earlier than previous if it's a DATE shift.
+    // For HOUR shifts, we let handleWeatherTimeChange handle the bumping.
+    if (Math.abs(deltaMs) >= 86400000 && idx > 0) {
+       const prevTh = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"]`);
+       if (prevTh && newMs < colToMs(prevTh)) return;
+    }
+  }
+
+  // Snapshot before change for delta-shift logic in handleWeatherTimeChange
+  thDate.dataset.prevMs = String(curMs);
+  setColToMs(thDate, newMs);
+  handleWeatherTimeChange(idx, thDate);
+  refreshOpenWeatherCards();
+}
+
+/**
  * Align the highlighted weather column to "now" and shift every other waypoint
  * column by the same delta so their relative spacing stays intact.
  * Falls back to column 0 when nothing is highlighted.
@@ -4760,7 +4791,9 @@ function renderWeatherPanel() {
     <th class="wt-label-cell wt-th">
       <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
         <button class="wt-ctrl-adj" data-action="day-minus">−</button>
-        <button class="wt-ctrl-now" data-action="day-now" title="將目前選取欄位設為今日,其他欄位同步對齊">今日</button>
+        <button class="wt-ctrl-now" data-action="day-now" title="將目前選取欄位設為今日,其他欄位同步對齊">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z" fill="currentColor"/></svg>
+        </button>
         <button class="wt-ctrl-adj" data-action="day-plus">+</button>
       </div>
     </th>`;
@@ -4781,8 +4814,21 @@ function renderWeatherPanel() {
       if (prevVal) minAttr = ` min="${prevVal}"`;
     }
 
+    let canMinus = !locked;
+    let canPlus = !locked;
+    if (strictLinearMode && !locked && i > 0) {
+      const prevSv = getSavedCol(weatherPoints[i - 1], i - 1, saved);
+      const curDateMs = new Date(date + 'T00:00:00').getTime();
+      const prevDateMs = new Date((prevSv?.date || todayStr) + 'T00:00:00').getTime();
+      if (curDateMs - 86400000 < prevDateMs) canMinus = false;
+    }
+
     html += `<th class="${thClass}" data-idx="${i}">
-      <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
+      <div class="wt-adj-wrap">
+        <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
+        <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
+        <button class="wt-adj-btn wt-adj-day-plus" title="後一天"${canPlus ? '' : ' disabled'}>+</button>
+      </div>
     </th>`;
 
     // Initialize colTimes for later use in Windy links
@@ -4795,7 +4841,9 @@ function renderWeatherPanel() {
     <th class="wt-label-cell wt-th">
       <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
         <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
-        <button class="wt-ctrl-now" data-action="hour-now" title="將目前選取欄位設為現在時刻,其他欄位同步對齊">此時</button>
+        <button class="wt-ctrl-now" data-action="hour-now" title="將目前選取欄位設為現在時刻,其他欄位同步對齊">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z" fill="currentColor"/><path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="currentColor"/></svg>
+        </button>
         <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
       </div>
     </th>`;
@@ -4810,10 +4858,29 @@ function renderWeatherPanel() {
     if (!pt.isWaypoint) thClass += ' wt-interval-col';
     if (i === firstReturnIdx) thClass += ' wt-return-start';
 
+    let canMinus = !locked;
+    let canPlus = !locked;
+    if (strictLinearMode && !locked) {
+      const curMs = new Date((sv?.date || todayStr) + 'T00:00:00').getTime() + hour * 3600000;
+      if (i > 0) {
+        const prevPt = weatherPoints[i - 1];
+        const prevSv = getSavedCol(prevPt, i - 1, saved);
+        const prevMs = new Date((prevSv?.date || todayStr) + 'T00:00:00').getTime() + (prevSv?.hour != null ? parseInt(prevSv.hour) : nowHour) * 3600000;
+        if (curMs - 86400000 < prevMs) canMinus = false;
+      }
+      if (i < N - 1) {
+        const nextPt = weatherPoints[i + 1];
+        const nextSv = getSavedCol(nextPt, i + 1, saved);
+        const nextMs = new Date((nextSv?.date || todayStr) + 'T00:00:00').getTime() + (nextSv?.hour != null ? parseInt(nextSv.hour) : nowHour) * 3600000;
+        if (curMs + 86400000 > nextMs) canPlus = false;
+      }
+    }
+
     html += `<th class="${thClass}" data-idx="${i}">
       <div class="wt-time-row">
-        <span class="wt-time-label">時:</span>
+        <button class="wt-adj-btn wt-adj-hour-minus" title="前一小時"${locked ? ' disabled' : ''}>−</button>
         <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
+        <button class="wt-adj-btn wt-adj-hour-plus" title="後一小時"${locked ? ' disabled' : ''}>+</button>
       </div>
     </th>`;
 
@@ -4899,6 +4966,34 @@ function renderWeatherPanel() {
     })
   );
 
+  container.querySelectorAll('.wt-adj-day-minus').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const th = e.target.closest('th');
+      if (th) shiftWaypointTime(parseInt(th.dataset.idx), -86400000);
+    });
+  });
+
+  container.querySelectorAll('.wt-adj-day-plus').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const th = e.target.closest('th');
+      if (th) shiftWaypointTime(parseInt(th.dataset.idx), 86400000);
+    });
+  });
+
+  container.querySelectorAll('.wt-adj-hour-minus').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const th = e.target.closest('th');
+      if (th) shiftWaypointTime(parseInt(th.dataset.idx), -3600000);
+    });
+  });
+
+  container.querySelectorAll('.wt-adj-hour-plus').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const th = e.target.closest('th');
+      if (th) shiftWaypointTime(parseInt(th.dataset.idx), 3600000);
+    });
+  });
+
   // Initial cascade + enforce on first render
   if (speedIntervalMode) cascadeWeatherTimes();
   else syncIntervalTimes();
@@ -4975,6 +5070,12 @@ function renderWeatherPanel() {
     });
   });
 
+  // --- Long-press drag on primary-waypoint label cells: reorder or remove ---
+  // Mirror the side-panel waypoint-list flow (main.js line ~1665) but on the
+  // weather-table label row. The trash zone uses the 'table' variant so it
+  // appears at the elevation-chart area, anchored to the bottom-panel divider.
+  bindWeatherTableColumnDrag(container);
+
   // Weather table icon click -> Expand card
   container.querySelectorAll('.wt-weather-icon-trigger').forEach(span => {
     span.style.cursor = 'pointer';
@@ -5047,6 +5148,230 @@ function renderWeatherPanel() {
   // Always persist the rendered state so page reload restores it correctly
   // (covers the case where user never manually changes any date/time input)
   saveWeatherSettings();
+}
+
+/**
+ * Long-press drag on the weather-table label-row column heads of primary
+ * waypoints. Drop on another primary column → reorder; drop on the trash
+ * zone (rendered above the elevation chart, clamped to the bottom-panel
+ * divider) → remove that waypoint. Mirrors the side-panel waypoint-list
+ * flow in updateWaypointList().
+ */
+function bindWeatherTableColumnDrag(container) {
+  const LP_MS = 500;
+  const MOVE_TOL_SQ = 64;
+
+  let lpTimer = null;
+  let dragOriginTh = null;   // <th> the drag started on (for click suppression)
+  let dragWpIdx = -1;        // mapManager.waypoints index being dragged
+  let ghost = null;
+  let targetTh = null;
+  let targetAfter = false;
+
+  const updateGhost = (x, y) => {
+    if (!ghost) return;
+    ghost.style.left = `${x - 20}px`;
+    ghost.style.top = `${y - 20}px`;
+  };
+
+  const clearTargetHighlight = () => {
+    if (targetTh) {
+      targetTh.classList.remove('wt-drop-target', 'wt-drop-target-after');
+    }
+    targetTh = null;
+    targetAfter = false;
+  };
+
+  const findDropTarget = (cx) => {
+    let bestTh = null;
+    let after = false;
+    container.querySelectorAll('.wt-header-row-label .wt-col-head').forEach(th => {
+      const idx = parseInt(th.dataset.idx);
+      const pt = weatherPoints[idx];
+      if (!pt?.isWaypoint || pt.isReturn) return;
+      if (th === dragOriginTh) return;
+      const r = th.getBoundingClientRect();
+      if (cx >= r.left && cx <= r.right) {
+        bestTh = th;
+        after = cx > r.left + r.width / 2;
+      }
+    });
+    return { th: bestTh, after };
+  };
+
+  const onMove = (e) => {
+    if (e.cancelable) e.preventDefault();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    updateGhost(cx, cy);
+
+    const overTrash = mapManager.updateTrashZoneHover(cx, cy);
+    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
+    if (overTrash) { clearTargetHighlight(); return; }
+
+    const found = findDropTarget(cx);
+    if (found.th !== targetTh) {
+      clearTargetHighlight();
+      if (found.th) found.th.classList.add('wt-drop-target');
+    }
+    targetTh = found.th;
+    targetAfter = found.after;
+    if (targetTh) targetTh.classList.toggle('wt-drop-target-after', targetAfter);
+  };
+
+  const suppressNextClick = (th) => {
+    if (!th) return;
+    const handler = (ev) => {
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+      ev.preventDefault();
+      th.removeEventListener('click', handler, true);
+    };
+    th.addEventListener('click', handler, true);
+    setTimeout(() => th.removeEventListener('click', handler, true), 350);
+  };
+
+  const onEnd = (e) => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+
+    const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+
+    const overTrash = mapManager.isOverTrashZone(cx, cy);
+    mapManager.hideTrashZone();
+
+    const _draggedWpIdx = dragWpIdx;
+    const _targetTh = targetTh;
+    const _targetAfter = targetAfter;
+    const _originTh = dragOriginTh;
+
+    clearTargetHighlight();
+    if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
+    dragOriginTh = null;
+    dragWpIdx = -1;
+    if (ghost) { ghost.remove(); ghost = null; }
+
+    // Suppress the click that would otherwise toggle the highlight
+    suppressNextClick(_originTh);
+
+    if (overTrash) {
+      if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+      mapManager.removeWaypoint(_draggedWpIdx); // triggers full re-render
+      return;
+    }
+
+    if (!_targetTh) return; // dropped on nothing → no-op
+
+    const targetColIdx = parseInt(_targetTh.dataset.idx);
+    const targetWpIdx = weatherPoints[targetColIdx]?.wpIndex;
+    if (targetWpIdx == null) return;
+
+    const wps = [...mapManager.waypoints];
+    if (_draggedWpIdx < 0 || _draggedWpIdx >= wps.length) return;
+    const [moved] = wps.splice(_draggedWpIdx, 1);
+
+    let insertAt = targetWpIdx;
+    if (_draggedWpIdx < targetWpIdx) insertAt -= 1;
+    if (_targetAfter) insertAt += 1;
+    insertAt = Math.max(0, Math.min(wps.length, insertAt));
+
+    if (insertAt === _draggedWpIdx) return; // no positional change
+    wps.splice(insertAt, 0, moved);
+
+    // Rebuild waypoints in one shot, suppressing intermediate change callbacks
+    mapManager.clearWaypoints();
+    const cb = mapManager.onWaypointChange;
+    mapManager.onWaypointChange = () => {};
+    wps.forEach(wp => mapManager.addWaypoint(wp[0], wp[1]));
+    mapManager.onWaypointChange = cb;
+    onWaypointsChanged(mapManager.waypoints);
+  };
+
+  const startDrag = (th, clientX, clientY) => {
+    dragOriginTh = th;
+    const colIdx = parseInt(th.dataset.idx);
+    const pt = weatherPoints[colIdx];
+    if (!pt?.isWaypoint || pt.isReturn || pt.wpIndex == null) {
+      dragOriginTh = null;
+      return;
+    }
+    dragWpIdx = pt.wpIndex;
+
+    th.classList.add('wt-col-dragging');
+    if (navigator.vibrate) navigator.vibrate(40);
+
+    ghost = th.cloneNode(true);
+    ghost.classList.remove('wt-col-dragging');
+    ghost.style.position = 'fixed';
+    ghost.style.zIndex = '10010';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.opacity = '0.85';
+    ghost.style.width = `${th.offsetWidth}px`;
+    ghost.style.background = 'var(--bg-tertiary)';
+    ghost.style.boxShadow = '0 4px 16px rgba(0,0,0,0.35)';
+    ghost.style.borderRadius = '4px';
+    document.body.appendChild(ghost);
+    updateGhost(clientX, clientY);
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd);
+
+    mapManager.showTrashZone('table');
+  };
+
+  // Bind long-press detection to each primary-waypoint label-row header
+  container.querySelectorAll('.wt-header-row-label .wt-col-head').forEach(th => {
+    const colIdx = parseInt(th.dataset.idx);
+    const pt = weatherPoints[colIdx];
+    if (!pt?.isWaypoint || pt.isReturn) return;
+
+    let startX = 0, startY = 0;
+    const triggerLP = (cx, cy) => {
+      startX = cx; startY = cy;
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
+        startDrag(th, cx, cy);
+      }, LP_MS);
+    };
+    const cancelLP = () => {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    };
+    const checkMove = (cx, cy) => {
+      if (!lpTimer) return;
+      const dx = cx - startX, dy = cy - startY;
+      if (dx * dx + dy * dy > MOVE_TOL_SQ) cancelLP();
+    };
+
+    th.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      triggerLP(e.clientX, e.clientY);
+      const guardMove = (ev) => checkMove(ev.clientX, ev.clientY);
+      const guardUp = () => {
+        cancelLP();
+        document.removeEventListener('mousemove', guardMove);
+        document.removeEventListener('mouseup', guardUp);
+      };
+      document.addEventListener('mousemove', guardMove);
+      document.addEventListener('mouseup', guardUp);
+    });
+
+    th.addEventListener('touchstart', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      const t = e.touches[0];
+      triggerLP(t.clientX, t.clientY);
+    }, { passive: true });
+    th.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      checkMove(t.clientX, t.clientY);
+    }, { passive: true });
+    th.addEventListener('touchend', cancelLP, { passive: true });
+  });
 }
 
 /**

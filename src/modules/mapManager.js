@@ -200,12 +200,39 @@ export class MapManager {
 
   showTrashZone(type = 'map') {
     const el = this.ensureTrashZone();
-    el.classList.remove('hidden', 'is-hover', 'is-map-drag', 'is-list-drag');
+    el.classList.remove('hidden', 'is-hover', 'is-map-drag', 'is-list-drag', 'is-table-drag');
+    // Clear inline positioning from a previous 'table' show
+    el.style.top = '';
+    el.style.left = '';
+    el.style.right = '';
+    el.style.width = '';
+    el.style.height = '';
     if (type === 'map') {
       el.classList.add('is-map-drag');
     } else if (type === 'list') {
       el.classList.add('is-list-drag');
+    } else if (type === 'table') {
+      el.classList.add('is-table-drag');
+      this._positionTrashZoneTable();
     }
+  }
+
+  // Anchor the trash zone to the top of #bottom-panel (the divider line) so its
+  // upper edge never crosses above. Height fits inside the panel — important
+  // because the elevation chart can be expanded or collapsed.
+  _positionTrashZoneTable() {
+    const bp = document.getElementById('bottom-panel');
+    if (!bp || !this.trashZoneEl) return;
+    const rect = bp.getBoundingClientRect();
+    // Cap height to the panel's own height so the bottom edge never extends
+    // below the panel (which would push it off-screen on a fully collapsed
+    // panel). Min 18px keeps it minimally visible.
+    const height = Math.max(18, Math.min(72, rect.height - 2));
+    this.trashZoneEl.style.top = `${rect.top}px`;
+    this.trashZoneEl.style.left = '0';
+    this.trashZoneEl.style.right = '0';
+    this.trashZoneEl.style.width = '100%';
+    this.trashZoneEl.style.height = `${height}px`;
   }
 
   hideTrashZone() {
