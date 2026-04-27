@@ -3156,9 +3156,10 @@ function refreshWindyLinks() {
   container.querySelectorAll('.wt-windy-link').forEach(a => {
     const col = parseInt(a.closest('td')?.dataset.col);
     if (isNaN(col) || !weatherPoints[col]) return;
-    const th = container.querySelector(`.wt-col-head[data-idx="${col}"]`);
-    const date = th?.querySelector('.wt-date-input')?.value || '';
-    const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
+    const thDate = container.querySelector(`.wt-th-date[data-idx="${col}"]`);
+    const thTime = container.querySelector(`.wt-th-time[data-idx="${col}"]`);
+    const date = thDate?.querySelector('.wt-date-input')?.value || '';
+    const hour = parseInt(thTime?.querySelector('.wt-time-select')?.value ?? '0');
     a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng, date, hour);
   });
   // Per-cell row icons: link uses each cell's own column coords + date/hour
@@ -3167,9 +3168,10 @@ function refreshWindyLinks() {
     const col = parseInt(td?.dataset.col);
     const layer = a.dataset.layer;
     if (!layer || isNaN(col) || !weatherPoints[col]) return;
-    const th = container.querySelector(`.wt-col-head[data-idx="${col}"]`);
-    const date = th?.querySelector('.wt-date-input')?.value || '';
-    const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
+    const thDate = container.querySelector(`.wt-th-date[data-idx="${col}"]`);
+    const thTime = container.querySelector(`.wt-th-time[data-idx="${col}"]`);
+    const date = thDate?.querySelector('.wt-date-input')?.value || '';
+    const hour = parseInt(thTime?.querySelector('.wt-time-select')?.value ?? '0');
     a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng, date, hour, layer);
   });
 }
@@ -3717,7 +3719,29 @@ function getCellValue(data, key, pt) {
  */
 function updateWeatherTableCell(cell, key, val) {
   if (!cell) return;
-  const valueEl = cell.querySelector('.wt-cell-value');
+  let valueEl = cell.querySelector('.wt-cell-value');
+  const layerForRow = ROW_KEY_TO_WINDY_LAYER[key];
+
+  // If the cell should have an icon but it's missing (e.g. cleared by textContent), restore it
+  if (layerForRow && !cell.querySelector('.row-windy-link')) {
+    const col = parseInt(cell.dataset.col);
+    const pt = weatherPoints[col];
+    if (pt) {
+      const container = document.getElementById('weather-table-container');
+      const thDate = container?.querySelector(`.wt-th-date[data-idx="${col}"]`);
+      const thTime = container?.querySelector(`.wt-th-time[data-idx="${col}"]`);
+      const dateStr = thDate?.querySelector('.wt-date-input')?.value || '';
+      const hour = parseInt(thTime?.querySelector('.wt-time-select')?.value ?? '8');
+      const iconHtml = buildRowWindyIconHtml(
+        layerForRow,
+        buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layerForRow),
+        12
+      );
+      cell.innerHTML = `${iconHtml}<span class="wt-cell-value">${val}</span>`;
+      return;
+    }
+  }
+
   if (key === 'weather') {
     const parts = val.split(' ');
     const icon = parts[0];
@@ -5413,7 +5437,11 @@ async function fetchAllWeatherData(options = {}) {
     }
     if (onlyColIndex !== null && i !== onlyColIndex) continue;
 
-    if (fetchBtn) fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
+    if (fetchBtn) {
+      const labelSpan = fetchBtn.querySelector('span');
+      if (labelSpan) labelSpan.textContent = `${i + 1}/${weatherPoints.length}`;
+      else fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
+    }
 
     const dateStr = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`)?.value;
     const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`)?.value ?? '8');
@@ -5465,7 +5493,13 @@ async function fetchAllWeatherData(options = {}) {
 
     WEATHER_ROWS.forEach(row => {
       const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-      if (cell) { cell.textContent = '...'; cell.classList.remove('error'); cell.classList.add('loading'); }
+      if (cell) {
+        const valueEl = cell.querySelector('.wt-cell-value');
+        if (valueEl) valueEl.textContent = '...';
+        else cell.textContent = '...';
+        cell.classList.remove('error');
+        cell.classList.add('loading');
+      }
     });
 
     try {
@@ -5495,7 +5529,13 @@ async function fetchAllWeatherData(options = {}) {
       console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
       WEATHER_ROWS.forEach(row => {
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) { cell.textContent = '—'; cell.classList.remove('loading'); cell.classList.add('error'); }
+        if (cell) {
+          const valueEl = cell.querySelector('.wt-cell-value');
+          if (valueEl) valueEl.textContent = '—';
+          else cell.textContent = '—';
+          cell.classList.remove('loading');
+          cell.classList.add('error');
+        }
       });
     }
     if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
