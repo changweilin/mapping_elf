@@ -1468,6 +1468,44 @@ html.light-theme .waypoint-trash-zone.is-hover {
   color: #818cf8;
 }
 
+/* Pace header actions alignment */
+.pace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Pace reset button */
+.btn-pace-reset {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 8px;
+  height: 28px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.btn-pace-reset:hover {
+  background: var(--accent-gradient-subtle);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-pace-reset svg {
+  flex-shrink: 0;
+}
+
 /* Pace parameters panel */
 .pace-section-header {
   margin-bottom: 10px;

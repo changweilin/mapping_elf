@@ -1919,7 +1919,7 @@ function setColToMs(th, ms) {
 function addHoursToDateTime(dateStr, startHour, elapsedH) {
   const totalMins = startHour * 60 + Math.round(elapsedH * 60);
   const addDays = Math.floor(totalMins / (24 * 60));
-  const finalHour = Math.floor(totalMins / 60) % 24;
+  const finalHour = ((Math.floor(totalMins / 60) % 24) + 24) % 24;
   // Use noon to avoid DST-boundary issues
   const d = new Date(dateStr + 'T12:00:00');
   d.setDate(d.getDate() + addDays);
@@ -1927,6 +1927,61 @@ function addHoursToDateTime(dateStr, startHour, elapsedH) {
   const mo = String(d.getMonth() + 1).padStart(2, '0');
   const dy = String(d.getDate()).padStart(2, '0');
   return { date: `${y}-${mo}-${dy}`, hour: finalHour };
+}
+
+/**
+ * Reset all waypoint dates/times based on a reference anchor (highlighted col
+ * or col 0) using the pace-derived elapsed times. Overrides all manual edits
+ * to bring the trip back to its "calculated" timing.
+ */
+function resetPaceToAnchor() {
+  const container = document.getElementById('weather-table-container');
+  if (!container || weatherPoints.length === 0) return;
+
+  // 1. Identify anchor: Highlighted col OR col 0
+  const highlightedTh = container.querySelector('.wt-col-head.wt-col-highlight');
+  let anchorIdx = 0;
+  if (highlightedTh) {
+    anchorIdx = parseInt(highlightedTh.dataset.idx);
+  }
+
+  const anchorPt = weatherPoints[anchorIdx];
+  const anchorDate = container.querySelector(`.wt-th-date[data-idx="${anchorIdx}"] .wt-date-input`)?.value;
+  const hsSelect = container.querySelector(`.wt-th-time[data-idx="${anchorIdx}"] .wt-time-select`);
+  const anchorHour = parseInt(hsSelect?.value ?? '8');
+  const anchorElapsedH = anchorPt._elapsedH || 0;
+
+  if (!anchorDate) {
+    showNotification('請先設定基準航點的日期', 'warning');
+    return;
+  }
+
+  // 2. Cascade to all points
+  weatherPoints.forEach((pt, i) => {
+    // We update every point (waypoint or interval) to match the global pace timeline
+    const deltaH = (pt._elapsedH || 0) - anchorElapsedH;
+    const { date, hour } = addHoursToDateTime(anchorDate, anchorHour, deltaH);
+
+    const di = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`);
+    const hs = container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`);
+
+    if (di) di.value = date;
+    if (hs) hs.value = String(hour);
+  });
+
+  // 3. Sync and Save
+  saveWeatherSettings();
+  refreshWindyLinks();
+  fetchAllWeatherData({ force: false });
+
+  // Refresh weather cards if any are open
+  if (typeof _wcStates !== 'undefined') {
+    _wcStates.forEach((mode, colIdx) => _renderWeatherCard(colIdx));
+  }
+
+  const label = anchorPt.label || (anchorPt.isWaypoint ? `航點 ${anchorPt.wpIndex + 1}` : '中繼點');
+  showNotification(`已依據「${label}」重置配速時間`, 'success');
+  historyRecord();
 }
 
 /**
@@ -2655,6 +2710,7 @@ document.getElementById('btn-favorite-add')?.addEventListener('click', handleAdd
 document.getElementById('btn-favorite-open')?.addEventListener('click', openFavoritesModal);
 document.getElementById('btn-favorites-close')?.addEventListener('click', closeFavoritesModal);
 document.getElementById('btn-favorites-replace-cancel')?.addEventListener('click', closeReplaceModal);
+document.getElementById('btn-pace-reset')?.addEventListener('click', resetPaceToAnchor);
 
 /**
  * Collect all weather-column data for export (date, time, weather rows).
