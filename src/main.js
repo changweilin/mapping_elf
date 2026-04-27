@@ -1767,12 +1767,18 @@ function updateWaypointList(waypoints) {
         const waypointsCopy = [...mapManager.waypoints];
         const [moved] = waypointsCopy.splice(dragIndex, 1);
         waypointsCopy.splice(targetIdx, 0, moved);
-        mapManager.clearWaypoints();
-        // temporarily disable callback to avoid spam
+        
+        const _wasSuppressed = history.suppressed;
+        history.suppressed = true;
         const cb = mapManager.onWaypointChange;
         mapManager.onWaypointChange = () => {};
-        waypointsCopy.forEach(wp => mapManager.addWaypoint(wp[0], wp[1]));
-        mapManager.onWaypointChange = cb;
+        try {
+          mapManager.clearWaypoints();
+          waypointsCopy.forEach(wp => mapManager.addWaypoint(wp[0], wp[1]));
+        } finally {
+          mapManager.onWaypointChange = cb;
+          history.suppressed = _wasSuppressed;
+        }
         onWaypointsChanged(mapManager.waypoints);
       } else {
         updateWaypointList(mapManager.waypoints);
