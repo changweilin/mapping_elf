@@ -1787,8 +1787,13 @@ export class MapManager {
       if (m._legId === idOrFlag) return true;
       if (m._legIds && m._legIds.includes(idOrFlag)) return true;
 
-      // 2. Boundary proximity fallback: if a marker is extremely close to the click point,
-      // it should likely switch with the clicked segment regardless of strict leg ID.
+      // 2. If the marker already has an explicit, non-matching leg affinity,
+      // it belongs to the leg that just rose to the top — do NOT sweep it
+      // via proximity. Without this guard, two stacked markers from opposing
+      // legs would both go to back and never visually swap.
+      if (m._legId !== undefined) return false;
+
+      // 3. Proximity fallback for markers without leg info (legacy / edge cases).
       if (clickLatLng) {
         const dist = m.getLatLng().distanceTo(clickLatLng);
         if (dist < 15) return true; // 15 meters tolerance
