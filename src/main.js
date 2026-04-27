@@ -102,15 +102,6 @@ let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY
 let collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1'; // default false
 let waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0'; // default true
 
-// --- UI Drag-and-Drop State (Global) ---
-let isUIDragging = false;
-let globalDragItem = null;
-let globalDragIndex = -1;
-let globalLpTimer = null;
-let globalGhost = null;
-let globalPlaceholder = null;
-let globalDragType = null; // 'list' or 'table'
-
 const LS_SHOW_WP_ICON_KEY = 'mappingElf_showWpIcon';
 const LS_SHOW_IM_ICON_KEY = 'mappingElf_showImIcon';
 let showWpIcon = localStorage.getItem(LS_SHOW_WP_ICON_KEY) !== '0'; // default true
@@ -1549,9 +1540,6 @@ function hideAlternatives() {
 
 function updateWaypointList(waypoints) {
   const frozen = !!importedTrackMode;
-  // Prevent list re-render if we are currently dragging to avoid disrupting the DOM
-  if (isUIDragging && globalDragType === 'list') return;
-
   if (waypoints.length === 0) {
     waypointList.innerHTML = `
       <div class="empty-state">
@@ -1598,7 +1586,6 @@ function updateWaypointList(waypoints) {
   waypointList.querySelectorAll('.waypoint-item').forEach((item, wpIndex) => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('.wp-actions')) return;
-      if (item._justDragged) return; // Already handled by onEnd logic
       if (item._justHighlighted) {
         item._justHighlighted = false;
         return;
@@ -1669,44 +1656,51 @@ function updateWaypointList(waypoints) {
   });
 
   // --- Drag-and-drop sorting & Removal support ---
+  let dragItem = null;
+  let dragIndex = -1;
+  let lpTimer = null;
+  let ghost = null;
+  let placeholder = null;
+
   const startDrag = (item, idx, clientX, clientY) => {
-    isUIDragging = true;
-    globalDragType = 'list';
-    globalDragItem = item;
-    globalDragIndex = idx;
+    dragItem = item;
+    dragIndex = idx;
     item.classList.add('is-dragging');
     if (navigator.vibrate) navigator.vibrate(40);
 
-    globalGhost = item.cloneNode(true);
-    globalGhost.classList.add('drag-ghost');
-    globalGhost.style.width = `${item.offsetWidth}px`;
-    globalGhost.style.position = 'fixed';
-    globalGhost.style.zIndex = '10010';
-    globalGhost.style.pointerEvents = 'none';
-    globalGhost.style.opacity = '0.8';
-    document.body.appendChild(globalGhost);
+    // Create placeholder
+    placeholder = document.createElement('div');
+    placeholder.className = 'waypoint-placeholder';
+    placeholder.style.height = `${item.offsetHeight}px`;
+    placeholder.style.marginBottom = '6px';
+    item.parentNode.insertBefore(placeholder, item.nextSibling);
+
+    // Create ghost for visual feedback
+    ghost = item.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    ghost.style.width = `${item.offsetWidth}px`;
+    ghost.style.position = 'fixed';
+    ghost.style.zIndex = '10010';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.opacity = '0.8';
+    document.body.appendChild(ghost);
     updateGhostPos(clientX, clientY);
 
     item.style.display = 'none';
-
-    globalPlaceholder = document.createElement('div');
-    globalPlaceholder.className = 'waypoint-placeholder';
-    globalPlaceholder.style.height = `${item.offsetHeight}px`;
-    globalPlaceholder.style.marginBottom = '6px';
-    item.parentNode.insertBefore(globalPlaceholder, item.nextSibling);
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onEnd);
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
 
+    // Show trash zone when sidebar drag starts
     mapManager.showTrashZone('list');
   };
 
   const updateGhostPos = (x, y) => {
-    if (!globalGhost) return;
-    globalGhost.style.left = `${x - 20}px`;
-    globalGhost.style.top = `${y - 20}px`;
+    if (!ghost) return;
+    ghost.style.left = `${x - 20}px`;
+    ghost.style.top = `${y - 20}px`;
   };
 
   const onMove = (e) => {
@@ -1714,14 +1708,13 @@ function updateWaypointList(waypoints) {
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
     updateGhostPos(cx, cy);
 
+    // Removal detection: use the central trash zone logic from mapManager
     const overTrash = mapManager.updateTrashZoneHover(cx, cy);
-    if (globalGhost) globalGhost.classList.toggle('drag-to-remove', overTrash);
-    if (overTrash) {
-      if (globalPlaceholder) globalPlaceholder.style.display = 'none';
-      return;
-    }
-    if (globalPlaceholder) globalPlaceholder.style.display = '';
+    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
 
+    if (overTrash) return;
+
+    // Sorting logic (only if not over trash)
     const rect = sidePanel.getBoundingClientRect();
     const inSidePanel = cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom;
     
@@ -1739,8 +1732,8 @@ function updateWaypointList(waypoints) {
         }
       });
       
-      if (bestAfter !== globalPlaceholder) {
-        waypointList.insertBefore(globalPlaceholder, bestAfter);
+      if (bestAfter !== placeholder) {
+        waypointList.insertBefore(placeholder, bestAfter);
       }
     }
   };
@@ -1753,38 +1746,32 @@ function updateWaypointList(waypoints) {
 
     const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
-
+    
     const isOverTrash = mapManager.isOverTrashZone(cx, cy);
     mapManager.hideTrashZone();
 
-    const _draggedIdx = globalDragIndex;
-    const _draggedItem = globalDragItem;
-
     if (isOverTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-      isUIDragging = false;
-      cleanupDragUI();
-      mapManager.removeWaypoint(_draggedIdx);
-      return;
-    }
+      mapManager.removeWaypoint(dragIndex);
+    } else {
+      const items = Array.from(waypointList.children);
+      const placeholderIdx = items.indexOf(placeholder);
+      let targetIdx = 0;
+      for (let i = 0; i < placeholderIdx; i++) {
+        if (items[i].classList.contains('waypoint-item') && items[i] !== dragItem) {
+          targetIdx++;
+        }
+      }
 
-    let offset = 0;
-    if (globalPlaceholder && globalPlaceholder.parentNode) {
-      const newItems = Array.from(waypointList.querySelectorAll('.waypoint-item, .waypoint-placeholder'));
-      const newIdx = newItems.indexOf(globalPlaceholder);
-      // Logic: if placeholder is at newIdx, then the item moved to that position.
-      offset = newIdx - _draggedIdx;
-    }
-
-    isUIDragging = false;
-    cleanupDragUI();
-
-    if (offset !== 0) {
-        const targetIdx = _draggedIdx + offset;
+      const offset = targetIdx - dragIndex;
+      if (offset !== 0) {
+        // Move one step at a time via manager to update everything correctly
         const waypointsCopy = [...mapManager.waypoints];
-        const [moved] = waypointsCopy.splice(_draggedIdx, 1);
+        const [moved] = waypointsCopy.splice(dragIndex, 1);
         waypointsCopy.splice(targetIdx, 0, moved);
         
+        const _wasSuppressed = history.suppressed;
+        history.suppressed = true;
         const cb = mapManager.onWaypointChange;
         mapManager.onWaypointChange = () => {};
         try {
@@ -1792,50 +1779,55 @@ function updateWaypointList(waypoints) {
           waypointsCopy.forEach(wp => mapManager.addWaypoint(wp[0], wp[1]));
         } finally {
           mapManager.onWaypointChange = cb;
+          history.suppressed = _wasSuppressed;
         }
         onWaypointsChanged(mapManager.waypoints);
-    } else {
+      } else {
         updateWaypointList(mapManager.waypoints);
+      }
+      
+      // Highlight the moved/dropped waypoint at its new position
+      const itemsAfter = Array.from(waypointList.querySelectorAll('.waypoint-item'));
+      const finalIdx = itemsAfter.indexOf(dragItem);
+      if (finalIdx >= 0) {
+        const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === finalIdx);
+        if (colIdx >= 0) highlightPoint(colIdx);
+        else mapManager.highlightWaypoint(finalIdx);
+      }
     }
-    
-    // Mark as just dragged so the subsequent click doesn't toggle highlight
-    if (_draggedItem) {
-      _draggedItem._justDragged = true;
-      setTimeout(() => { if (_draggedItem) _draggedItem._justDragged = false; }, 150);
-    }
-  };
 
-  const cleanupDragUI = () => {
-    if (globalGhost) { globalGhost.remove(); globalGhost = null; }
-    if (globalPlaceholder) { globalPlaceholder.remove(); globalPlaceholder = null; }
-    if (globalDragItem) { 
-      globalDragItem.classList.remove('is-dragging'); 
-      globalDragItem.style.display = '';
-      globalDragItem = null; 
-    }
-    globalDragIndex = -1;
-    globalDragType = null;
+    if (ghost) ghost.remove();
+    if (placeholder) placeholder.remove();
+    dragItem = null;
+    ghost = null;
+    placeholder = null;
   };
 
   waypointList.querySelectorAll('.waypoint-item').forEach((item, idx) => {
+    let startX = 0, startY = 0;
+    
     const triggerLP = (clientX, clientY) => {
-      globalLpTimer = setTimeout(() => {
-        globalLpTimer = null;
+      startX = clientX;
+      startY = clientY;
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
         startDrag(item, idx, clientX, clientY);
       }, 500);
     };
+    
     const cancelLP = () => {
-      if (globalLpTimer) { clearTimeout(globalLpTimer); globalLpTimer = null; }
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
     };
-    const checkMove = (cx, cy) => {
-      if (!globalLpTimer) return;
-      const dx = cx - (item._startX || cx), dy = cy - (item._startY || cy);
+
+    const checkMove = (clientX, clientY) => {
+      if (!lpTimer) return;
+      const dx = clientX - startX;
+      const dy = clientY - startY;
       if (dx * dx + dy * dy > 64) cancelLP();
     };
 
     item.addEventListener('mousedown', (e) => {
       if (frozen || e.button !== 0 || e.target.closest('.wp-actions')) return;
-      item._startX = e.clientX; item._startY = e.clientY;
       triggerLP(e.clientX, e.clientY);
       
       const onMoveGuard = (ev) => checkMove(ev.clientX, ev.clientY);
@@ -1864,7 +1856,6 @@ function updateWaypointList(waypoints) {
     item.addEventListener('touchstart', (e) => {
       if (frozen || e.target.closest('.wp-actions')) return;
       const t = e.touches[0];
-      item._startX = t.clientX; item._startY = t.clientY;
       triggerLP(t.clientX, t.clientY);
     }, { passive: true });
     
@@ -4701,13 +4692,9 @@ const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
 ).join('');
 
 function renderWeatherPanel() {
+  weatherPoints = buildWeatherPoints();
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-
-  // Prevent table re-render if we are currently dragging a column
-  if (isUIDragging && globalDragType === 'table') return;
-
-  weatherPoints = buildWeatherPoints();
 
   if (weatherPoints.length === 0) {
     container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
@@ -5207,27 +5194,33 @@ function renderWeatherPanel() {
  * flow in updateWaypointList().
  */
 function bindWeatherTableColumnDrag(container) {
+  const LP_MS = 500;
+  const MOVE_TOL_SQ = 64;
+
+  let lpTimer = null;
   let dragOriginTh = null;   // <th> the drag started on (for click suppression)
+  let dragWpIdx = -1;        // mapManager.waypoints index being dragged
+  let ghost = null;
+  let targetTh = null;
+  let targetAfter = false;
 
   const updateGhost = (x, y) => {
-    if (!globalGhost) return;
-    globalGhost.style.left = `${x - 20}px`;
-    globalGhost.style.top = `${y - 20}px`;
+    if (!ghost) return;
+    ghost.style.left = `${x - 20}px`;
+    ghost.style.top = `${y - 20}px`;
   };
 
   const clearTargetHighlight = () => {
-    if (globalDragType === 'table' && globalDragItem) {
-        container.querySelectorAll('.wt-drop-target').forEach(el => el.classList.remove('wt-drop-target', 'wt-drop-target-after'));
+    if (targetTh) {
+      targetTh.classList.remove('wt-drop-target', 'wt-drop-target-after');
     }
+    targetTh = null;
+    targetAfter = false;
   };
 
-  const findDropTarget = (cx, cy) => {
+  const findDropTarget = (cx) => {
     let bestTh = null;
     let after = false;
-    // Check if within the vertical bounds of the header row or table
-    const tableRect = container.querySelector('.weather-table').getBoundingClientRect();
-    if (cy < tableRect.top || cy > tableRect.bottom) return { th: null, after: false };
-
     container.querySelectorAll('.wt-header-row-label .wt-col-head').forEach(th => {
       const idx = parseInt(th.dataset.idx);
       const pt = weatherPoints[idx];
@@ -5249,16 +5242,17 @@ function bindWeatherTableColumnDrag(container) {
     updateGhost(cx, cy);
 
     const overTrash = mapManager.updateTrashZoneHover(cx, cy);
-    if (globalGhost) globalGhost.classList.toggle('drag-to-remove', overTrash);
+    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
     if (overTrash) { clearTargetHighlight(); return; }
 
-    const found = findDropTarget(cx, cy);
-    const targetTh = container.querySelector('.wt-drop-target');
+    const found = findDropTarget(cx);
     if (found.th !== targetTh) {
       clearTargetHighlight();
       if (found.th) found.th.classList.add('wt-drop-target');
     }
-    if (found.th) found.th.classList.toggle('wt-drop-target-after', found.after);
+    targetTh = found.th;
+    targetAfter = found.after;
+    if (targetTh) targetTh.classList.toggle('wt-drop-target-after', targetAfter);
   };
 
   const suppressNextClick = (el) => {
@@ -5285,43 +5279,43 @@ function bindWeatherTableColumnDrag(container) {
     const overTrash = mapManager.isOverTrashZone(cx, cy);
     mapManager.hideTrashZone();
 
-    const _draggedWpIdx = globalDragIndex;
+    const _draggedWpIdx = dragWpIdx;
+    const _targetTh = targetTh;
+    const _targetAfter = targetAfter;
     const _originEl = dragOriginTh;
-    const targetTh = container.querySelector('.wt-drop-target');
-    const targetAfter = targetTh ? targetTh.classList.contains('wt-drop-target-after') : false;
 
     clearTargetHighlight();
     if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
-    isUIDragging = false;
     dragOriginTh = null;
-    if (globalGhost) { globalGhost.remove(); globalGhost = null; }
-    globalDragIndex = -1;
-    globalDragType = null;
+    dragWpIdx = -1;
+    if (ghost) { ghost.remove(); ghost = null; }
 
     // Suppress the click that would otherwise toggle the highlight
     suppressNextClick(_originEl);
 
     if (overTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-      mapManager.removeWaypoint(_draggedWpIdx); 
+      mapManager.removeWaypoint(_draggedWpIdx); // triggers full re-render
       return;
     }
 
-    if (!targetTh) return;
+    if (!_targetTh) return; // dropped on nothing → no-op
 
-    const targetColIdx = parseInt(targetTh.dataset.idx);
+    const targetColIdx = parseInt(_targetTh.dataset.idx);
     let targetWpIdx = -1;
-    let _targetAfterFinal = targetAfter;
+    let _targetAfterFinal = _targetAfter;
 
+    // Find the nearest outbound waypoint index for the drop position
     for (let i = targetColIdx; i < weatherPoints.length; i++) {
       if (weatherPoints[i].isWaypoint && !weatherPoints[i].isReturn) {
         targetWpIdx = weatherPoints[i].wpIndex;
-        if (i > targetColIdx) _targetAfterFinal = false;
+        if (i > targetColIdx) _targetAfterFinal = false; // Dropped on intermediate before this WP
         break;
       }
     }
 
     if (targetWpIdx === -1) {
+      // Dropped after the last outbound waypoint
       const lastOutbound = weatherPoints.slice().reverse().find(p => p.isWaypoint && !p.isReturn);
       if (lastOutbound) {
         targetWpIdx = lastOutbound.wpIndex;
@@ -5340,12 +5334,10 @@ function bindWeatherTableColumnDrag(container) {
     if (_targetAfterFinal) insertAt += 1;
     insertAt = Math.max(0, Math.min(wps.length, insertAt));
 
-    if (insertAt === _draggedWpIdx) {
-        renderWeatherPanel(); // Refresh to clear state
-        return;
-    }
+    if (insertAt === _draggedWpIdx) return; // no positional change
     wps.splice(insertAt, 0, moved);
 
+    // Rebuild waypoints in one shot, suppressing intermediate change callbacks
     mapManager.clearWaypoints();
     const cb = mapManager.onWaypointChange;
     mapManager.onWaypointChange = () => {};
@@ -5355,34 +5347,32 @@ function bindWeatherTableColumnDrag(container) {
   };
 
   const startDrag = (el, clientX, clientY) => {
-    isUIDragging = true;
-    globalDragType = 'table';
     dragOriginTh = el;
     const colIdx = parseInt(el.dataset.idx || el.dataset.col);
     const pt = weatherPoints[colIdx];
     if (!pt?.isWaypoint || pt.isReturn || pt.wpIndex == null) {
-      isUIDragging = false;
       dragOriginTh = null;
       return;
     }
-    globalDragIndex = pt.wpIndex;
+    dragWpIdx = pt.wpIndex;
 
     el.classList.add('wt-col-dragging');
     if (navigator.vibrate) navigator.vibrate(40);
 
+    // If it's a data cell, we use the corresponding header label as ghost
     const headerTh = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"]`);
     const ghostBase = headerTh || el;
-    globalGhost = ghostBase.cloneNode(true);
-    globalGhost.classList.remove('wt-col-dragging');
-    globalGhost.style.position = 'fixed';
-    globalGhost.style.zIndex = '10010';
-    globalGhost.style.pointerEvents = 'none';
-    globalGhost.style.opacity = '0.85';
-    globalGhost.style.width = `${ghostBase.offsetWidth}px`;
-    globalGhost.style.background = 'var(--bg-tertiary)';
-    globalGhost.style.boxShadow = '0 4px 16px rgba(0,0,0,0.35)';
-    globalGhost.style.borderRadius = '4px';
-    document.body.appendChild(globalGhost);
+    ghost = ghostBase.cloneNode(true);
+    ghost.classList.remove('wt-col-dragging');
+    ghost.style.position = 'fixed';
+    ghost.style.zIndex = '10010';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.opacity = '0.85';
+    ghost.style.width = `${ghostBase.offsetWidth}px`;
+    ghost.style.background = 'var(--bg-tertiary)';
+    ghost.style.boxShadow = '0 4px 16px rgba(0,0,0,0.35)';
+    ghost.style.borderRadius = '4px';
+    document.body.appendChild(ghost);
     updateGhost(clientX, clientY);
 
     document.addEventListener('mousemove', onMove);
@@ -5393,26 +5383,27 @@ function bindWeatherTableColumnDrag(container) {
     mapManager.showTrashZone('table');
   };
 
+  // Bind long-press detection to each cell in primary-waypoint columns
   container.querySelectorAll('.wt-col-head, .wt-data-cell').forEach(el => {
     const colIdx = parseInt(el.dataset.idx || el.dataset.col);
     const pt = weatherPoints[colIdx];
     if (!pt?.isWaypoint || pt.isReturn) return;
 
-    el._startX = 0; el._startY = 0;
+    let startX = 0, startY = 0;
     const triggerLP = (cx, cy) => {
-      el._startX = cx; el._startY = cy;
-      globalLpTimer = setTimeout(() => {
-        globalLpTimer = null;
+      startX = cx; startY = cy;
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
         startDrag(el, cx, cy);
-      }, 500);
+      }, LP_MS);
     };
     const cancelLP = () => {
-      if (globalLpTimer) { clearTimeout(globalLpTimer); globalLpTimer = null; }
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
     };
     const checkMove = (cx, cy) => {
-      if (!globalLpTimer) return;
-      const dx = cx - (el._startX || cx), dy = cy - (el._startY || cy);
-      if (dx * dx + dy * dy > 64) cancelLP();
+      if (!lpTimer) return;
+      const dx = cx - startX, dy = cy - startY;
+      if (dx * dx + dy * dy > MOVE_TOL_SQ) cancelLP();
     };
 
     el.addEventListener('mousedown', (e) => {
