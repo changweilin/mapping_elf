@@ -5278,12 +5278,13 @@ function bindWeatherTableColumnDrag(container) {
     const overTrash = mapManager.isOverTrashZone(cx, cy);
     mapManager.hideTrashZone();
 
-    clearTargetHighlight();
-    if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
     const _draggedWpIdx = dragWpIdx;
     const _targetTh = targetTh;
     const _targetAfter = targetAfter;
     const _originEl = dragOriginTh;
+
+    clearTargetHighlight();
+    if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
     dragOriginTh = null;
     dragWpIdx = -1;
     if (ghost) { ghost.remove(); ghost = null; }
