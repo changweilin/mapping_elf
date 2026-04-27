@@ -528,10 +528,6 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   transform: scale(1.2);
 }
 
-.custom-waypoint-icon.is-selected {
-  z-index: 900 !important;
-}
-
 .wp-weather-badge {
   position: absolute;
   top: -22px;
