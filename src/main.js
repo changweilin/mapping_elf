@@ -4487,46 +4487,73 @@ function handleWeatherTimeChange(idx, th) {
   if (!th) th = heads[idx];
   if (!th) return;
 
-  if (strictLinearMode) {
-    if (idx > 0) {
-      const prevDate = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"] .wt-date-input`)?.value;
-      const curDate = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value;
-      const prevH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx - 1}"] .wt-time-select`)?.value ?? '0');
-      const curH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
+  // 1. Enforce strict linear ordering: if this waypoint is earlier than its predecessor
+  // on the same day, bump it to the next day.
+  if (strictLinearMode && idx > 0) {
+    const prevDate = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"] .wt-date-input`)?.value;
+    const curDate = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value;
+    const prevH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx - 1}"] .wt-time-select`)?.value ?? '0');
+    const curH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
 
-      if (prevDate && curDate && prevDate === curDate && curH < prevH) {
-        const d = new Date(curDate + 'T12:00:00');
-        d.setDate(d.getDate() + 1);
-        const y = d.getFullYear();
-        const mo = String(d.getMonth() + 1).padStart(2, '0');
-        const dy = String(d.getDate()).padStart(2, '0');
-        const di = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`);
-        if (di) di.value = `${y}-${mo}-${dy}`;
-      }
+    if (prevDate && curDate && prevDate === curDate && curH < prevH) {
+      const d = new Date(curDate + 'T12:00:00');
+      d.setDate(d.getDate() + 1);
+      const y = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const dy = String(d.getDate()).padStart(2, '0');
+      const di = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`);
+      if (di) di.value = `${y}-${mo}-${dy}`;
     }
   }
 
-  if (strictLinearMode) {
-    const prevMs = parseInt(th.dataset.prevMs) || colToMs(th);
-    const deltaMs = colToMs(th) - prevMs;
-    if (deltaMs !== 0) {
-      for (let j = idx + 1; j < heads.length; j++) {
+  // 2. Calculate shift delta. Use dataset.prevMs (snapshot on focus) to determine how much 
+  // the user shifted this point, so we can apply the same delta to all subsequent waypoints.
+  let prevMs = parseInt(th.dataset.prevMs);
+  if (isNaN(prevMs)) {
+    const saved = loadWeatherSettings();
+    const pt = weatherPoints[idx];
+    const sv = getSavedCol(pt, idx, saved);
+    if (sv && sv.date) {
+      prevMs = new Date(sv.date + 'T00:00:00').getTime() + parseInt(sv.hour) * 3600000;
+    } else {
+      prevMs = colToMs(th);
+    }
+  }
+  const deltaMs = colToMs(th) - prevMs;
+
+  if (deltaMs !== 0) {
+    // Shifting subsequent waypoints linearly provides a natural "move entire trip" UX.
+    // Interval points are skipped here and handled by the cascade logic below.
+    for (let j = idx + 1; j < heads.length; j++) {
+      if (weatherPoints[j]?.isWaypoint) {
         setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
       }
     }
-    if (!speedIntervalMode) {
-      syncIntervalTimesFromWP();
-    }
   }
-  updateDateConstraints();
+
+  // 3. Sync interval points and enforce ordering.
+  // We save settings after the linear shift so the cascade/enforce logic sees the new waypoint times.
   saveWeatherSettings();
+  if (speedIntervalMode) {
+    cascadeWeatherTimes();
+  } else {
+    syncIntervalTimesFromWP();
+  }
+  // Save again to persist any adjustments made by sync/enforce (e.g. min-time enforcement)
+  saveWeatherSettings();
+
+  updateDateConstraints();
   th.dataset.prevMs = String(colToMs(th));
   refreshWindyLinks();
+  
+  // Refresh weather for the edited column. 
+  // Subsequent columns that shifted will retain their old weather data until a global 
+  // "Update Weather" fetch is triggered, to avoid massive parallel API calls on every slider change.
   fetchAllWeatherData({ onlyColIndex: idx });
 
   refreshOpenWeatherCards();
   
-  // Rule: Highlighting the point when date/time changes
+  // Ensure the edited point is highlighted and map is panned
   highlightPoint(idx);
 }
 
@@ -4692,7 +4719,7 @@ function renderWeatherPanel() {
   weatherPoints.forEach((pt, i) => {
     const sv = getSavedCol(pt, i, saved);
     const date = sv?.date || todayStr;
-    const locked = strictLinearMode && !pt.isWaypoint;
+    const locked = !pt.isWaypoint;
 
     let thClass = 'wt-col-head wt-th wt-th-date';
     if (pt.isReturn) thClass += ' wt-return-col';
@@ -4727,7 +4754,7 @@ function renderWeatherPanel() {
   weatherPoints.forEach((pt, i) => {
     const sv = getSavedCol(pt, i, saved);
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
-    const locked = strictLinearMode && !pt.isWaypoint;
+    const locked = !pt.isWaypoint;
 
     let thClass = 'wt-col-head wt-th wt-th-time';
     if (pt.isReturn) thClass += ' wt-return-col';
@@ -5354,7 +5381,7 @@ function _renderWeatherCard(colIdx) {
       html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
       html += `<span class="wc-info-label">${row.label}</span>`;
       if (isForecast) {
-        const locked = strictLinearMode && !pt.isWaypoint;
+        const locked = !pt.isWaypoint;
         let minAttr = '';
         if (strictLinearMode && colIdx > 0) {
           const prevDateInput = document.querySelector(`#weather-table-container .wt-th-date[data-idx="${colIdx - 1}"] .wt-date-input`);
