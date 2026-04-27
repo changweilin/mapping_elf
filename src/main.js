@@ -5250,6 +5250,7 @@ function renderWeatherPanel() {
     th.addEventListener('click', (e) => {
       // Requirement: Don't highlight when clicking inputs/selects (opening dropdowns)
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.target.closest('.clickable-coords')) return;
       // Requirement 3: Toggle on single click
       highlightPoint(colIdx, true);
     });
@@ -5269,6 +5270,7 @@ function renderWeatherPanel() {
     td.addEventListener('click', (e) => {
       // Requirement: Don't highlight when clicking inputs (though cells usually don't have them, for safety)
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.target.closest('.clickable-coords')) return;
       // Requirement 3: Toggle on single click
       highlightPoint(parseInt(td.dataset.col), true);
     });
@@ -6177,6 +6179,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   root.addEventListener('click', (e) => {
     // Requirement: Don't highlight when clicking inputs/selects in the card
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.target.closest('.clickable-coords')) return;
     highlightPoint(colIdx);
   });
 
