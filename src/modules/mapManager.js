@@ -1787,6 +1787,8 @@ export class MapManager {
     const sameLeg = allMarkers.filter(isTarget);
     if (!sameLeg.length) return;
 
+    this._syncStackedWaypointLayerForBack(isTarget);
+
     // Check if there are markers NOT in this group to avoid unnecessary z-index reduction
     const othersExist = allMarkers.some(m => !isTarget(m));
     if (!othersExist) return;
@@ -1797,6 +1799,30 @@ export class MapManager {
       if (off < minOffset) minOffset = off;
     }
     sameLeg.forEach(m => m.setZIndexOffset(minOffset - 100));
+  }
+
+  /**
+   * Keep colocated outbound/return waypoint pairs visually aligned with the
+   * route leg being sent behind. Route cycling used to lower polylines and
+   * generic markers only; stacked main waypoints kept their old per-waypoint
+   * swap state, so the visible waypoint could disagree with the visible track.
+   */
+  _syncStackedWaypointLayerForBack(isTarget) {
+    if (!this.stackedWaypointFlags?.some(Boolean)) return;
+    this.waypointMarkers.forEach((outbound, idx) => {
+      if (!this.stackedWaypointFlags[idx]) return;
+      const ret = this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
+      if (!outbound || !ret) return;
+
+      const outboundMovesBack = isTarget(outbound);
+      const returnMovesBack = isTarget(ret);
+      if (outboundMovesBack === returnMovesBack) return;
+
+      // true means outbound rests above return; false means return rests above outbound.
+      this.waypointLayerSwapped[idx] = returnMovesBack;
+      outbound.setZIndexOffset(returnMovesBack ? 100 : 0);
+      ret.setZIndexOffset(returnMovesBack ? 0 : 100);
+    });
   }
 
   /**
