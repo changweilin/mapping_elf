@@ -4335,6 +4335,7 @@ function updateReturnWaypointMarkers() {
         wpIndex: x.pt.wpIndex,
         label: x.pt.label,
         colIdx: x.i,
+        cumDistM: x.pt._cum,
         color: _weatherPointGradColor(x.pt),
         weather: weatherIcon,
       };

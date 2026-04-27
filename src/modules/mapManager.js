@@ -549,6 +549,7 @@ export class MapManager {
       icon,
       draggable: false,
     }).addTo(this.map);
+    marker._wpIndex = idx;
 
     let _dragModeActive = false;
     let _justDragged = false;
@@ -1364,7 +1365,7 @@ export class MapManager {
    * offset to the bottom-right and both ends get an `is-stacked` class so the
    * pair gets a yellow dotted halo to flag the overlap.
    *
-   * @param {Array<{lat,lng,wpIndex,label,color,colIdx,weather}>} points
+   * @param {Array<{lat,lng,wpIndex,label,color,colIdx,weather,cumDistM,_cum}>} points
    */
   setReturnWaypoints(points) {
     this.clearReturnWaypoints();
@@ -1389,11 +1390,15 @@ export class MapManager {
       const isStacked = this.waypoints.some(([la, ln]) => eq(la, pt.lat) && eq(ln, pt.lng));
       const icon = this._createReturnIcon(pt, isStacked);
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
+      const cumDistM = Number.isFinite(pt.cumDistM)
+        ? pt.cumDistM
+        : (Number.isFinite(pt._cum) ? pt._cum : undefined);
       marker._colIdx = pt.colIdx;
       marker._wpIndex = pt.wpIndex;
-      marker._cumDistM = pt._cum;
+      if (cumDistM !== undefined) marker._cumDistM = cumDistM;
       marker._isReturn = true;
-      marker._legId = this._legIdAtCumDist(pt._cum);
+      const legId = this._legIdAtCumDist(cumDistM);
+      if (legId !== undefined) marker._legId = legId;
 
       const outboundOnTop = this.waypointLayerSwapped[pt.wpIndex] ?? true;
       marker.setZIndexOffset(outboundOnTop ? 0 : 100);
@@ -1661,6 +1666,7 @@ export class MapManager {
 
   _updateMarkerIcons() {
     this.waypointMarkers.forEach((marker, i) => {
+      marker._wpIndex = i;
       marker.setIcon(this._createIcon(i));
       this._applyColorToMarker(marker, i);
     });
@@ -1763,7 +1769,7 @@ export class MapManager {
   _legIdAtCumDist(cumDistM) {
     const cum = this._currentRouteCum;
     const legs = this._currentRouteLegIds;
-    if (!cum || !legs || cumDistM == null) return 0;
+    if (!cum || !legs || !Number.isFinite(cumDistM)) return undefined;
     let lo = 0, hi = cum.length - 1;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
@@ -1856,10 +1862,23 @@ export class MapManager {
       ...this.waypointMarkers,
       ...this.returnWaypointMarkers
     ];
+
+    const stackedWaypointIndex = (m) => {
+      const idx = m._wpIndex ?? this.waypointMarkers.indexOf(m);
+      return idx >= 0 && this.stackedWaypointFlags?.[idx] ? idx : -1;
+    };
     
     // Explicit comparison to handle numeric leg IDs and boolean direction flags correctly.
     // Also checks m._legIds (plural) for markers that sit at leg boundaries.
     const isTarget = (m) => {
+      const stackedIdx = stackedWaypointIndex(m);
+      if (stackedIdx >= 0) {
+        if (typeof idOrFlag === 'boolean') return m._isReturn === idOrFlag;
+        if (m._legId === idOrFlag) return true;
+        if (m._legIds?.includes(idOrFlag)) return true;
+        if (m._legId !== undefined || m._legIds) return false;
+      }
+
       // 1. Primary match (flag or specific ID)
       if (typeof idOrFlag === 'boolean' && m._isReturn === idOrFlag) return true;
       if (m._legId === idOrFlag) return true;
@@ -1883,7 +1902,7 @@ export class MapManager {
     const sameLeg = allMarkers.filter(isTarget);
     if (!sameLeg.length) return;
 
-    this._syncStackedWaypointLayerForBack(isTarget);
+    this._syncStackedWaypointLayerForBack(idOrFlag, isTarget);
 
     // Check if there are markers NOT in this group to avoid unnecessary z-index reduction
     const othersExist = allMarkers.some(m => !isTarget(m));
@@ -1903,15 +1922,23 @@ export class MapManager {
    * generic markers only; stacked main waypoints kept their old per-waypoint
    * swap state, so the visible waypoint could disagree with the visible track.
    */
-  _syncStackedWaypointLayerForBack(isTarget) {
+  _syncStackedWaypointLayerForBack(idOrFlag, isTarget) {
     if (!this.stackedWaypointFlags?.some(Boolean)) return;
     this.waypointMarkers.forEach((outbound, idx) => {
       if (!this.stackedWaypointFlags[idx]) return;
       const ret = this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
       if (!outbound || !ret) return;
 
-      const outboundMovesBack = isTarget(outbound);
-      const returnMovesBack = isTarget(ret);
+      const isPrimaryTarget = (m) => {
+        if (typeof idOrFlag === 'boolean') return m._isReturn === idOrFlag;
+        if (m._legId === idOrFlag) return true;
+        if (m._legIds?.includes(idOrFlag)) return true;
+        if (m._legId !== undefined || m._legIds) return false;
+        return isTarget(m);
+      };
+
+      const outboundMovesBack = isPrimaryTarget(outbound);
+      const returnMovesBack = isPrimaryTarget(ret);
       if (outboundMovesBack === returnMovesBack) return;
 
       // true means outbound rests above return; false means return rests above outbound.
@@ -1927,7 +1954,13 @@ export class MapManager {
    */
   setWaypointDistances(dists) {
     this.waypointMarkers.forEach((m, i) => {
-      m._cumDistM = dists[i];
+      if (Number.isFinite(dists[i])) {
+        m._cumDistM = dists[i];
+      } else {
+        delete m._cumDistM;
+        delete m._legId;
+        delete m._legIds;
+      }
       m._isReturn = false;
     });
     this._syncAllMarkerLegIds();
@@ -1944,7 +1977,7 @@ export class MapManager {
     if (!cum || !legs) return;
 
     all.forEach(m => {
-      if (m._cumDistM !== undefined) {
+      if (Number.isFinite(m._cumDistM)) {
         let lo = 0, hi = cum.length - 1;
         while (lo < hi) {
           const mid = (lo + hi) >> 1;
@@ -1961,6 +1994,9 @@ export class MapManager {
         
         m._legId = legs[lo] ?? 0;
         m._legIds = Array.from(ids);
+      } else {
+        delete m._legId;
+        delete m._legIds;
       }
     });
   }
