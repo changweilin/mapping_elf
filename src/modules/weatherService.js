@@ -126,7 +126,6 @@ export class WeatherService {
       weatherCode: targetCode,
       weatherDesc: wmo.desc,
       weatherIcon: wmo.icon,
-      forecastTime: (timeStr && h && h.time) ? h.time[parseInt(timeStr.split(':')[0])].replace('T', ' ') : d.time?.[0],
     };
   }
 
@@ -170,7 +169,6 @@ export class WeatherService {
       weatherCode: targetCode,
       weatherDesc: wmo.desc,
       weatherIcon: wmo.icon,
-      forecastTime: (timeStr && h && h.time) ? h.time[parseInt(timeStr.split(':')[0])].replace('T', ' ') : d.time?.[0],
     };
   }
 
@@ -282,7 +280,6 @@ export class WeatherService {
       sunrise: fmtDT(d.sunrise?.[0]),
       sunset:  fmtDT(d.sunset?.[0]),
       elevation: n(json.elevation, ' m'),
-      forecastTime: (h && h.time && hour >= 0 && hour < 24) ? h.time[hour].replace('T', ' ') : d.time?.[0],
     };
   }
 

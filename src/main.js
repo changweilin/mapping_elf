@@ -3259,7 +3259,6 @@ const WEATHER_ROWS = [
   { key: 'sunrise', label: '日出' },
   { key: 'sunset', label: '日落' },
   { key: 'coords', label: '坐標' },
-  { key: 'forecastTime', label: '預報時間' },
 ];
 
 let weatherPoints = [];
@@ -3724,7 +3723,6 @@ function getCellValue(data, key, pt) {
   if (key === 'coords' && pt) return formatCoords(pt.lat, pt.lng);
   if (!data) return '—';
   switch (key) {
-    case 'forecastTime': return v(data.forecastTime, '—');
     case 'weather': return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
     case 'temp': return v(data.temp, data.tempMax);
     case 'tempRange': return (data.tempMax || data.tempMin) ? `${v(data.tempMax, '—')} / ${v(data.tempMin, '—')}` : '—';
@@ -5969,7 +5967,6 @@ function _renderWeatherCard(colIdx) {
   }
   if (isFull) {
     const CARD_ROWS = [
-      { key: 'forecastTime', label: '預報時間' },
       { key: 'tempRange', label: '高/低溫' },
       { key: 'feelsLike', label: '體感溫度' },
       { key: 'precipitation', label: '雨量' },
@@ -5990,10 +5987,9 @@ function _renderWeatherCard(colIdx) {
     ];
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
-      const isWide = ['coords', 'forecastTime'].includes(row.key);
+      const isWide = row.key === 'coords';
       const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
       const isCoords = row.key === 'coords';
-      const isForecast = row.key === 'forecastTime';
       const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
       const displayVal = val(row.key);
       const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
@@ -6002,20 +5998,7 @@ function _renderWeatherCard(colIdx) {
         : '';
       html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
       html += `<span class="wc-info-label">${row.label}</span>`;
-      if (isForecast) {
-        const locked = !pt.isWaypoint;
-        let minAttr = '';
-        if (strictLinearMode && colIdx > 0) {
-          const prevDateInput = document.querySelector(`#weather-table-container .wt-th-date[data-idx="${colIdx - 1}"] .wt-date-input`);
-          if (prevDateInput?.value) minAttr = ` min="${prevDateInput.value}"`;
-        }
-        html += `<div class="wc-time-edit-wrap">`;
-        html += `<input type="date" class="wc-date-input" value="${dateStr}"${locked ? ' disabled' : ''}${minAttr}>`;
-        html += `<select class="wc-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>`;
-        html += `</div>`;
-      } else {
-        html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
-      }
+      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
       html += `</div>`;
     });
     html += `</div>`;
@@ -6106,7 +6089,6 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   if (status === 'ok') {
     const CARD_ROWS = [
-      { key: 'forecastTime', label: '預報時間' },
       { key: 'tempRange', label: '高/低溫' },
       { key: 'feelsLike', label: '體感溫度' },
       { key: 'precipitation', label: '雨量' },
@@ -6127,7 +6109,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
     ];
     html += `<div class="wc-info-grid">`;
     CARD_ROWS.forEach(row => {
-      const isWide = ['coords', 'forecastTime'].includes(row.key);
+      const isWide = row.key === 'coords';
       const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
       const isCoords = row.key === 'coords';
       const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
