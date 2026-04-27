@@ -1754,12 +1754,14 @@ function updateWaypointList(waypoints) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
       mapManager.removeWaypoint(dragIndex);
     } else {
-      const items = Array.from(waypointList.childNodes);
-      const newIdx = items.indexOf(placeholder);
-      // Because we inserted placeholder, we need to map back to logic index
-      const logicalItems = items.filter(n => n.nodeType === 1 && n !== placeholder && n !== dragItem);
-      let targetIdx = logicalItems.indexOf(items[newIdx]);
-      if (targetIdx === -1) targetIdx = logicalItems.length;
+      const items = Array.from(waypointList.children);
+      const placeholderIdx = items.indexOf(placeholder);
+      let targetIdx = 0;
+      for (let i = 0; i < placeholderIdx; i++) {
+        if (items[i].classList.contains('waypoint-item') && items[i] !== dragItem) {
+          targetIdx++;
+        }
+      }
 
       const offset = targetIdx - dragIndex;
       if (offset !== 0) {
@@ -5221,7 +5223,7 @@ function bindWeatherTableColumnDrag(container) {
     container.querySelectorAll('.wt-header-row-label .wt-col-head').forEach(th => {
       const idx = parseInt(th.dataset.idx);
       const pt = weatherPoints[idx];
-      if (!pt?.isWaypoint || pt.isReturn) return;
+      if (!pt) return;
       if (th === dragOriginTh) return;
       const r = th.getBoundingClientRect();
       if (cx >= r.left && cx <= r.right) {
@@ -5298,8 +5300,28 @@ function bindWeatherTableColumnDrag(container) {
     if (!_targetTh) return; // dropped on nothing → no-op
 
     const targetColIdx = parseInt(_targetTh.dataset.idx);
-    const targetWpIdx = weatherPoints[targetColIdx]?.wpIndex;
-    if (targetWpIdx == null) return;
+    let targetWpIdx = -1;
+    let _targetAfterFinal = _targetAfter;
+
+    // Find the nearest outbound waypoint index for the drop position
+    for (let i = targetColIdx; i < weatherPoints.length; i++) {
+      if (weatherPoints[i].isWaypoint && !weatherPoints[i].isReturn) {
+        targetWpIdx = weatherPoints[i].wpIndex;
+        if (i > targetColIdx) _targetAfterFinal = false; // Dropped on intermediate before this WP
+        break;
+      }
+    }
+
+    if (targetWpIdx === -1) {
+      // Dropped after the last outbound waypoint
+      const lastOutbound = weatherPoints.slice().reverse().find(p => p.isWaypoint && !p.isReturn);
+      if (lastOutbound) {
+        targetWpIdx = lastOutbound.wpIndex;
+        _targetAfterFinal = true;
+      } else {
+        return;
+      }
+    }
 
     const wps = [...mapManager.waypoints];
     if (_draggedWpIdx < 0 || _draggedWpIdx >= wps.length) return;
@@ -5307,7 +5329,7 @@ function bindWeatherTableColumnDrag(container) {
 
     let insertAt = targetWpIdx;
     if (_draggedWpIdx < targetWpIdx) insertAt -= 1;
-    if (_targetAfter) insertAt += 1;
+    if (_targetAfterFinal) insertAt += 1;
     insertAt = Math.max(0, Math.min(wps.length, insertAt));
 
     if (insertAt === _draggedWpIdx) return; // no positional change
