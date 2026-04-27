@@ -6331,17 +6331,7 @@ function highlightPoint(colIdx, toggle = false) {
     }
   }
 
-  // 5. Map Centering — when a card is open, centre the card in the visible
-  // safe area (so its top buttons stay clear of the toolbar and it sits
-  // above the bottom-panel divider). Otherwise just centre the marker.
-  const mode = _wcStates.get(colIdx);
-  if (mode === 'full' || mode === 'compact') {
-    panMapToCenterFullCard(colIdx);
-  } else if (waypointCentering) {
-    panMapToVisibleCenter([pt.lat, pt.lng]);
-  }
-
-  // 6. Weather Card — Highlight the card and bring to front
+  // 5. Weather Card — Highlight the card and bring to front
   document.querySelectorAll('.weather-card.is-highlighted').forEach(el => {
     el.classList.remove('is-highlighted');
     const popup = el.closest('.leaflet-popup');
@@ -6352,6 +6342,16 @@ function highlightPoint(colIdx, toggle = false) {
     card.classList.add('is-highlighted');
     const popup = card.closest('.leaflet-popup');
     if (popup) popup.style.zIndex = '1000';
+  }
+
+  // 6. Map Centering — when a card is open, centre the card in the visible
+  // safe area (so its top buttons stay clear of the toolbar and it sits
+  // above the bottom-panel divider). Otherwise just centre the marker.
+  const mode = _wcStates.get(colIdx);
+  if (mode === 'full' || mode === 'compact') {
+    panMapToCenterFullCard(colIdx);
+  } else if (waypointCentering) {
+    panMapToVisibleCenter([pt.lat, pt.lng]);
   }
 }
 
