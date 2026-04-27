@@ -5071,11 +5071,6 @@ function renderWeatherPanel() {
     const labelEl = th.querySelector('.wt-col-label');
     if (labelEl) {
       labelEl.style.cursor = 'pointer';
-      // Guard: ignore clicks that originate from the inline edit input
-      labelEl.addEventListener('click', (e) => {
-        if (e.target.tagName === 'INPUT') return;
-        highlightPoint(colIdx, true);
-      });
       if (pt.isWaypoint) {
         labelEl.title = '單擊高亮 · 雙擊編輯名稱';
         labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startLabelEdit(labelEl, pt); });
@@ -5243,16 +5238,16 @@ function bindWeatherTableColumnDrag(container) {
     if (targetTh) targetTh.classList.toggle('wt-drop-target-after', targetAfter);
   };
 
-  const suppressNextClick = (th) => {
-    if (!th) return;
+  const suppressNextClick = (el) => {
+    if (!el) return;
     const handler = (ev) => {
       ev.stopPropagation();
       ev.stopImmediatePropagation();
       ev.preventDefault();
-      th.removeEventListener('click', handler, true);
+      el.removeEventListener('click', handler, true);
     };
-    th.addEventListener('click', handler, true);
-    setTimeout(() => th.removeEventListener('click', handler, true), 350);
+    el.addEventListener('click', handler, true);
+    setTimeout(() => el.removeEventListener('click', handler, true), 350);
   };
 
   const onEnd = (e) => {
@@ -5267,19 +5262,18 @@ function bindWeatherTableColumnDrag(container) {
     const overTrash = mapManager.isOverTrashZone(cx, cy);
     mapManager.hideTrashZone();
 
+    clearTargetHighlight();
+    if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
     const _draggedWpIdx = dragWpIdx;
     const _targetTh = targetTh;
     const _targetAfter = targetAfter;
-    const _originTh = dragOriginTh;
-
-    clearTargetHighlight();
-    if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
+    const _originEl = dragOriginTh;
     dragOriginTh = null;
     dragWpIdx = -1;
     if (ghost) { ghost.remove(); ghost = null; }
 
     // Suppress the click that would otherwise toggle the highlight
-    suppressNextClick(_originTh);
+    suppressNextClick(_originEl);
 
     if (overTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -5314,9 +5308,9 @@ function bindWeatherTableColumnDrag(container) {
     onWaypointsChanged(mapManager.waypoints);
   };
 
-  const startDrag = (th, clientX, clientY) => {
-    dragOriginTh = th;
-    const colIdx = parseInt(th.dataset.idx);
+  const startDrag = (el, clientX, clientY) => {
+    dragOriginTh = el;
+    const colIdx = parseInt(el.dataset.idx || el.dataset.col);
     const pt = weatherPoints[colIdx];
     if (!pt?.isWaypoint || pt.isReturn || pt.wpIndex == null) {
       dragOriginTh = null;
@@ -5324,10 +5318,12 @@ function bindWeatherTableColumnDrag(container) {
     }
     dragWpIdx = pt.wpIndex;
 
-    th.classList.add('wt-col-dragging');
+    el.classList.add('wt-col-dragging');
     if (navigator.vibrate) navigator.vibrate(40);
 
-    ghost = th.cloneNode(true);
+    // If it's a data cell, we use the corresponding header label as ghost
+    const headerTh = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"]`);
+    ghost = (headerTh || th).cloneNode(true);
     ghost.classList.remove('wt-col-dragging');
     ghost.style.position = 'fixed';
     ghost.style.zIndex = '10010';
@@ -5348,9 +5344,9 @@ function bindWeatherTableColumnDrag(container) {
     mapManager.showTrashZone('table');
   };
 
-  // Bind long-press detection to each primary-waypoint label-row header
-  container.querySelectorAll('.wt-header-row-label .wt-col-head').forEach(th => {
-    const colIdx = parseInt(th.dataset.idx);
+  // Bind long-press detection to each cell in primary-waypoint columns
+  container.querySelectorAll('.wt-col-head, .wt-data-cell').forEach(el => {
+    const colIdx = parseInt(el.dataset.idx || el.dataset.col);
     const pt = weatherPoints[colIdx];
     if (!pt?.isWaypoint || pt.isReturn) return;
 
@@ -5359,7 +5355,7 @@ function bindWeatherTableColumnDrag(container) {
       startX = cx; startY = cy;
       lpTimer = setTimeout(() => {
         lpTimer = null;
-        startDrag(th, cx, cy);
+        startDrag(el, cx, cy);
       }, LP_MS);
     };
     const cancelLP = () => {
@@ -5371,7 +5367,7 @@ function bindWeatherTableColumnDrag(container) {
       if (dx * dx + dy * dy > MOVE_TOL_SQ) cancelLP();
     };
 
-    th.addEventListener('mousedown', (e) => {
+    el.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       triggerLP(e.clientX, e.clientY);
@@ -5385,16 +5381,16 @@ function bindWeatherTableColumnDrag(container) {
       document.addEventListener('mouseup', guardUp);
     });
 
-    th.addEventListener('touchstart', (e) => {
+    el.addEventListener('touchstart', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       const t = e.touches[0];
       triggerLP(t.clientX, t.clientY);
     }, { passive: true });
-    th.addEventListener('touchmove', (e) => {
+    el.addEventListener('touchmove', (e) => {
       const t = e.touches[0];
       checkMove(t.clientX, t.clientY);
     }, { passive: true });
-    th.addEventListener('touchend', cancelLP, { passive: true });
+    el.addEventListener('touchend', cancelLP, { passive: true });
   });
 }
 
