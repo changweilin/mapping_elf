@@ -45,6 +45,18 @@
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
   --transition-smooth: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* New Theme-aware Soft Backgrounds */
+  --bg-soft: rgba(255, 255, 255, 0.03);
+  --bg-soft-hover: rgba(255, 255, 255, 0.06);
+  --bg-overlay: rgba(255, 255, 255, 0.05);
+  --bg-glass-sub: rgba(255, 255, 255, 0.04);
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-color-strong: rgba(255, 255, 255, 0.2);
+}
+
+html {
+  color-scheme: dark;
 }
 
 /* Light Theme Overrides */
@@ -76,6 +88,17 @@ html.light-theme {
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
   --shadow-glow: 0 0 20px rgba(16, 185, 129, 0.15);
+
+  --bg-soft: rgba(0, 0, 0, 0.03);
+  --bg-soft-hover: rgba(0, 0, 0, 0.06);
+  --bg-overlay: rgba(0, 0, 0, 0.05);
+  --bg-glass-sub: rgba(0, 0, 0, 0.04);
+  --border-color: rgba(0, 0, 0, 0.1);
+  --border-color-strong: rgba(0, 0, 0, 0.2);
+}
+
+html.light-theme {
+  color-scheme: light;
 }
 
 /* ======== Reset & Base ======== */
@@ -99,6 +122,29 @@ body {
   background: var(--bg-primary);
   -webkit-font-smoothing: antialiased;
   transition: background-color var(--transition-normal), color var(--transition-normal);
+}
+
+/* Global Form Element Theme Support */
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+  color: inherit;
+}
+
+select option {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+/* Ensure native dropdowns and picker indicators follow theme */
+html.light-theme ::-webkit-calendar-picker-indicator {
+  filter: invert(0);
+}
+
+html:not(.light-theme) ::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
 }
 
 ::-webkit-scrollbar {
@@ -287,7 +333,7 @@ body {
 
 .layer-btn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-overlay);
 }
 
 .layer-btn.active {
@@ -949,7 +995,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   padding: 4px 8px;
   font-size: 12px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-overlay);
   border: 1px solid var(--border);
   color: var(--text-primary);
 }
@@ -970,7 +1016,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   min-width: 0;
   max-width: 100px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-overlay);
   border: 1px solid var(--border);
   color: var(--text-primary);
   text-overflow: ellipsis;
@@ -1022,7 +1068,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   height: 30px;
   border: none;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-overlay);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -1051,7 +1097,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
 
 .icon-btn:disabled:hover,
 .icon-btn[disabled]:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-overlay);
   color: var(--text-secondary);
 }
 
@@ -1101,7 +1147,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   gap: 10px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-soft);
   margin-bottom: 6px;
   transition: background var(--transition-fast);
   animation: fadeSlideIn 0.3s ease;
@@ -1109,7 +1155,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
 }
 
 .waypoint-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-soft-hover);
 }
 
 .waypoint-item.wp-highlight {
@@ -1178,7 +1224,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   height: 22px;
   border: none;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-overlay);
   color: var(--text-muted);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -1186,7 +1232,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
 }
 
 .waypoint-item .wp-action:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bg-soft-hover);
   color: var(--text-primary);
 }
 
@@ -1842,7 +1888,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-soft);
   border: 1px solid var(--border);
   transition: all var(--transition-fast);
 }
@@ -1855,7 +1901,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
 }
 
 .mode-label:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-soft-hover);
   border-color: var(--border-hover);
 }
 
@@ -1876,13 +1922,13 @@ html.light-theme .waypoint-trash-zone.is-hover {
   gap: 10px;
   padding: 12px;
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-soft);
   border: 1px solid var(--border);
   transition: all var(--transition-fast);
 }
 
 .stat-card:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-overlay);
   border-color: var(--border-hover);
 }
 
@@ -1956,7 +2002,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   width: 100%;
   height: 160px;
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-soft);
   border: 1px solid var(--border);
   overflow: hidden;
   transition: height 0.3s ease;
@@ -1986,7 +2032,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
 }
 
 .chart-toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bg-soft-hover);
   color: white;
 }
 
@@ -2053,11 +2099,6 @@ html.light-theme .waypoint-trash-zone.is-hover {
   box-shadow: 0 0 0 2px rgba(110, 231, 183, 0.15);
 }
 
-::-webkit-calendar-picker-indicator {
-  filter: invert(0.7);
-  cursor: pointer;
-}
-
 .btn-primary {
   display: flex;
   align-items: center;
@@ -2088,7 +2129,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
   padding: 8px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-soft);
   color: var(--text-secondary);
   font-family: inherit;
   font-size: 13px;
@@ -2098,7 +2139,7 @@ html.light-theme .waypoint-trash-zone.is-hover {
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-soft-hover);
   border-color: var(--border-hover);
   color: var(--text-primary);
 }
@@ -3379,8 +3420,8 @@ html.light-theme .wt-date-input {
   padding: 3px 5px;
   border-radius: 4px;
   border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 11px;
   cursor: pointer;
 }
@@ -3665,9 +3706,9 @@ body.modal-open {
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  background: var(--bg-glass-sub, rgba(255, 255, 255, 0.04));
+  background: var(--bg-glass-sub);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -3676,8 +3717,8 @@ body.modal-open {
 }
 
 .favorite-item:hover {
-  background: var(--bg-glass, rgba(255, 255, 255, 0.08));
-  border-color: var(--border-color-strong, rgba(255, 255, 255, 0.2));
+  background: var(--bg-glass-hover);
+  border-color: var(--border-color-strong);
 }
 
 .favorite-item.dragging {
