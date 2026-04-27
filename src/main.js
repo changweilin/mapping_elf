@@ -5337,13 +5337,14 @@ function bindWeatherTableColumnDrag(container) {
 
     // If it's a data cell, we use the corresponding header label as ghost
     const headerTh = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"]`);
-    ghost = (headerTh || th).cloneNode(true);
+    const ghostBase = headerTh || el;
+    ghost = ghostBase.cloneNode(true);
     ghost.classList.remove('wt-col-dragging');
     ghost.style.position = 'fixed';
     ghost.style.zIndex = '10010';
     ghost.style.pointerEvents = 'none';
     ghost.style.opacity = '0.85';
-    ghost.style.width = `${th.offsetWidth}px`;
+    ghost.style.width = `${ghostBase.offsetWidth}px`;
     ghost.style.background = 'var(--bg-tertiary)';
     ghost.style.boxShadow = '0 4px 16px rgba(0,0,0,0.35)';
     ghost.style.borderRadius = '4px';
