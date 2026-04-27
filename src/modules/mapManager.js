@@ -58,8 +58,6 @@ export class MapManager {
     this.waypointMetadata = []; // Arbitrary metadata (ele, time, fileOrder) per waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
     this.gradientPolylines = []; // Gradient chunks for selected route
-    this.legStackOrder = []; // Route leg IDs ordered bottom -> top for overlapping-layer cycling
-    this.legRank = new Map(); // legId -> current stack rank
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
     this.currentLayerName = 'topo';
@@ -552,7 +550,6 @@ export class MapManager {
       draggable: false,
     }).addTo(this.map);
     marker._wpIndex = idx;
-    marker._stackOrderBias = idx;
 
     let _dragModeActive = false;
     let _justDragged = false;
@@ -1221,125 +1218,13 @@ export class MapManager {
       this.gradientPolylines.push(pl);
     }
 
-    this._initializeLegStackOrder();
-    this._applyRouteLegOrder();
-    this._applyMarkerLegOrder();
+    this._bringOutboundRouteSegmentsToFront();
   }
 
   _bringOutboundRouteSegmentsToFront() {
     this.gradientPolylines
       .filter((pl) => pl._isReturn === false)
       .forEach((pl) => pl.bringToFront());
-  }
-
-  _rebuildLegRank() {
-    this.legRank = new Map(this.legStackOrder.map((legId, i) => [legId, i]));
-  }
-
-  _initializeLegStackOrder() {
-    const seen = new Set();
-    const routeOrder = [];
-    const info = new Map();
-
-    this.gradientPolylines.forEach((pl, order) => {
-      const legId = pl._legId;
-      if (legId === undefined) return;
-      if (!seen.has(legId)) {
-        seen.add(legId);
-        routeOrder.push(legId);
-      }
-      const meta = info.get(legId) || { firstOrder: order, hasOutbound: false, hasReturn: false };
-      meta.firstOrder = Math.min(meta.firstOrder, order);
-      if (pl._isReturn === true) meta.hasReturn = true;
-      if (pl._isReturn === false) meta.hasOutbound = true;
-      info.set(legId, meta);
-    });
-
-    const hasReturnLegs = routeOrder.some((legId) => info.get(legId)?.hasReturn);
-    if (hasReturnLegs) {
-      const returnOnly = routeOrder.filter((legId) => {
-        const meta = info.get(legId);
-        return meta?.hasReturn && !meta?.hasOutbound;
-      });
-      const outboundOrMixed = routeOrder.filter((legId) => !returnOnly.includes(legId));
-      this.legStackOrder = [...returnOnly, ...outboundOrMixed];
-    } else {
-      this.legStackOrder = routeOrder;
-    }
-    this._rebuildLegRank();
-  }
-
-  _ensureLegStackOrder() {
-    const routeLegs = [];
-    const seen = new Set();
-    this.gradientPolylines.forEach((pl) => {
-      if (pl._legId === undefined || seen.has(pl._legId)) return;
-      seen.add(pl._legId);
-      routeLegs.push(pl._legId);
-    });
-
-    const routeSet = new Set(routeLegs);
-    this.legStackOrder = this.legStackOrder.filter((legId) => routeSet.has(legId));
-    routeLegs.forEach((legId) => {
-      if (!this.legStackOrder.includes(legId)) this.legStackOrder.push(legId);
-    });
-    this._rebuildLegRank();
-  }
-
-  _applyRouteLegOrder() {
-    this._ensureLegStackOrder();
-    this.legStackOrder.forEach((legId) => {
-      this.gradientPolylines
-        .filter((pl) => pl._legId === legId)
-        .forEach((pl) => pl.bringToFront());
-    });
-  }
-
-  _moveLegToBottomOfGroup(legId, groupLegs) {
-    this._ensureLegStackOrder();
-    const groupSet = new Set((groupLegs || []).filter((id) => this.legRank.has(id)));
-    if (!groupSet.has(legId)) groupSet.add(legId);
-    const currentGroupOrder = this.legStackOrder.filter((id) => groupSet.has(id));
-    if (currentGroupOrder.length <= 1) return false;
-
-    const nextGroupOrder = [
-      legId,
-      ...currentGroupOrder.filter((id) => id !== legId),
-    ];
-
-    let groupIdx = 0;
-    this.legStackOrder = this.legStackOrder.map((id) => (
-      groupSet.has(id) ? nextGroupOrder[groupIdx++] : id
-    ));
-    this._rebuildLegRank();
-    return true;
-  }
-
-  _getOverlappingLegsAt(latlng, clickedLeg) {
-    if (!latlng || !this.map) return clickedLeg !== undefined ? [clickedLeg] : [];
-    const clickPx = this.map.latLngToContainerPoint(latlng);
-    const PROX_PX = 10;
-    const legs = new Set();
-
-    this.gradientPolylines.forEach((pl) => {
-      if (pl._legId === undefined) return;
-      const coords = pl.getLatLngs();
-      if (!coords.length) return;
-      const sampleCount = Math.min(coords.length, 12);
-      const step = sampleCount > 1 ? (coords.length - 1) / (sampleCount - 1) : 0;
-      for (let i = 0; i < sampleCount; i++) {
-        const idx = Math.round(i * step);
-        const px = this.map.latLngToContainerPoint(coords[idx]);
-        if (Math.hypot(px.x - clickPx.x, px.y - clickPx.y) <= PROX_PX) {
-          legs.add(pl._legId);
-          break;
-        }
-      }
-    });
-
-    if (clickedLeg !== undefined) legs.add(clickedLeg);
-    const order = this.legStackOrder.length ? this.legStackOrder : Array.from(legs);
-    return order.filter((legId) => legs.has(legId));
   }
 
   /**
@@ -1411,8 +1296,6 @@ export class MapManager {
   clearGradientRoute() {
     this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
     this.gradientPolylines = [];
-    this.legStackOrder = [];
-    this.legRank = new Map();
   }
 
   /**
@@ -1450,9 +1333,9 @@ export class MapManager {
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
       marker._colIdx = pt.colIdx;
       marker._addOrder = this.intermediateMarkers.length;
-      if (Number.isFinite(pt.cumDistM)) marker._cumDistM = pt.cumDistM;
+      marker._cumDistM = pt.cumDistM;
       marker._isReturn = pt.isReturn;
-      this._assignMarkerLegIds(marker);
+      marker._legId = this._legIdAtCumDist(pt.cumDistM);
 
       marker.on('click', (e) => {
         // Detect click on weather badge
@@ -1467,7 +1350,6 @@ export class MapManager {
       });
       this.intermediateMarkers.push(marker);
     });
-    this._applyMarkerLegOrder();
   }
 
   clearIntermediateMarkers() {
@@ -1515,8 +1397,8 @@ export class MapManager {
       marker._wpIndex = pt.wpIndex;
       if (cumDistM !== undefined) marker._cumDistM = cumDistM;
       marker._isReturn = true;
-      marker._stackOrderBias = 500 + (pt.wpIndex ?? 0);
-      this._assignMarkerLegIds(marker);
+      const legId = this._legIdAtCumDist(cumDistM);
+      if (legId !== undefined) marker._legId = legId;
 
       const outboundOnTop = this.waypointLayerSwapped[pt.wpIndex] ?? true;
       marker.setZIndexOffset(outboundOnTop ? 0 : 100);
@@ -1608,7 +1490,6 @@ export class MapManager {
 
       this.returnWaypointMarkers.push(marker);
     });
-    this._applyMarkerLegOrder();
   }
 
   clearReturnWaypoints() {
@@ -1786,12 +1667,9 @@ export class MapManager {
   _updateMarkerIcons() {
     this.waypointMarkers.forEach((marker, i) => {
       marker._wpIndex = i;
-      marker._stackOrderBias = i;
       marker.setIcon(this._createIcon(i));
       this._applyColorToMarker(marker, i);
     });
-    this._restoreWaypointHighlightClass();
-    this._applyMarkerLegOrder();
   }
 
   /** Apply the stored gradient color to a marker's DOM element. */
@@ -1901,120 +1779,6 @@ export class MapManager {
     return legs[lo] ?? 0;
   }
 
-  _allRouteAwareMarkers() {
-    return [
-      ...this.intermediateMarkers,
-      ...this.waypointMarkers,
-      ...this.returnWaypointMarkers,
-    ];
-  }
-
-  _mainWaypointStackAt(latlng) {
-    if (!latlng) return [];
-    const all = [...this.waypointMarkers, ...this.returnWaypointMarkers];
-    return all.filter((m) => {
-      const pos = m.getLatLng?.();
-      return pos && pos.distanceTo(latlng) <= 1.5;
-    });
-  }
-
-  _markerLegIds(marker) {
-    if (Array.isArray(marker?._legIds) && marker._legIds.length) return marker._legIds;
-    return marker?._legId !== undefined ? [marker._legId] : [];
-  }
-
-  _markerLegRank(marker) {
-    const ids = this._markerLegIds(marker);
-    let rank = -1;
-    ids.forEach((legId) => {
-      const r = this.legRank.get(legId);
-      if (r !== undefined) rank = Math.max(rank, r);
-    });
-    return rank >= 0 ? rank : 0;
-  }
-
-  _markerTieBreak(marker) {
-    if (Number.isFinite(marker?._wpIndex) && this.stackedWaypointFlags?.[marker._wpIndex]) {
-      const outboundOnTop = this.waypointLayerSwapped[marker._wpIndex] ?? true;
-      return marker._isReturn
-        ? (outboundOnTop ? 0 : 500)
-        : (outboundOnTop ? 500 : 0);
-    }
-    if (Number.isFinite(marker?._stackOrderBias)) return marker._stackOrderBias;
-    if (Number.isFinite(marker?._wpIndex)) return marker._wpIndex;
-    if (Number.isFinite(marker?._addOrder)) return marker._addOrder;
-    return 0;
-  }
-
-  _markerDisplayRank(marker) {
-    return this._markerLegRank(marker) * 1000 + this._markerTieBreak(marker);
-  }
-
-  _assignMarkerLegIds(marker) {
-    const cum = this._currentRouteCum;
-    const legs = this._currentRouteLegIds;
-    if (!cum || !legs || !Number.isFinite(marker?._cumDistM)) {
-      delete marker._legId;
-      delete marker._legIds;
-      return;
-    }
-
-    let lo = 0, hi = cum.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (cum[mid] < marker._cumDistM) lo = mid + 1;
-      else hi = mid;
-    }
-
-    const ids = new Set();
-    ids.add(legs[lo] ?? 0);
-    if (lo > 0 && Math.abs(marker._cumDistM - cum[lo]) < 2.0) {
-      ids.add(legs[lo - 1] ?? 0);
-    }
-    if (lo < cum.length - 1 && Math.abs(marker._cumDistM - cum[lo]) < 2.0) {
-      ids.add(legs[lo + 1] ?? legs[lo] ?? 0);
-    }
-
-    marker._legId = legs[lo] ?? 0;
-    marker._legIds = Array.from(ids);
-  }
-
-  _applyMarkerLegOrder() {
-    this._ensureLegStackOrder();
-    this._allRouteAwareMarkers().forEach((marker) => {
-      marker.setZIndexOffset(this._markerDisplayRank(marker));
-    });
-  }
-
-  _cycleMarkerStackAt(latlng) {
-    const stack = this._mainWaypointStackAt(latlng);
-    if (stack.length <= 1) return false;
-
-    const topMarker = stack.reduce((best, marker) => (
-      !best || this._markerDisplayRank(marker) > this._markerDisplayRank(best) ? marker : best
-    ), null);
-    if (!topMarker) return false;
-
-    const topLeg = this._markerLegIds(topMarker)
-      .sort((a, b) => (this.legRank.get(b) ?? -1) - (this.legRank.get(a) ?? -1))[0];
-    if (topLeg === undefined) return false;
-
-    const stackLegs = new Set();
-    stack.forEach((marker) => this._markerLegIds(marker).forEach((legId) => stackLegs.add(legId)));
-    this._getOverlappingLegsAt(latlng, topLeg).forEach((legId) => stackLegs.add(legId));
-
-    if (!this._moveLegToBottomOfGroup(topLeg, Array.from(stackLegs))) return false;
-    this._applyRouteLegOrder();
-    this._applyMarkerLegOrder();
-    return true;
-  }
-
-  _topWaypointMarkerAt(latlng) {
-    return this._mainWaypointStackAt(latlng).reduce((best, marker) => (
-      !best || this._markerDisplayRank(marker) > this._markerDisplayRank(best) ? marker : best
-    ), null);
-  }
-
   /**
    * On dblclick: send the entire leg the clicked chunk belongs to (all chunks
    * sharing the same _legId) to the back, exposing whatever leg sat underneath.
@@ -2028,24 +1792,62 @@ export class MapManager {
 
     // Refresh leg IDs on all markers to ensure they match current route state
     this._syncAllMarkerLegIds();
-    this._ensureLegStackOrder();
 
     if (targetLeg !== undefined) {
-      const overlapLegs = this._getOverlappingLegsAt(latlng, targetLeg);
-      this._moveLegToBottomOfGroup(targetLeg, overlapLegs);
-      this._applyRouteLegOrder();
-      this._applyMarkerLegOrder();
+      const sameLegPolylines = this.gradientPolylines.filter(pl => pl._legId === targetLeg);
+      const otherLegsExist = this.gradientPolylines.some(pl => pl._legId !== targetLeg);
+      if (otherLegsExist) {
+        sameLegPolylines.forEach(pl => pl.bringToBack());
+      }
+      // Pass the click latlng for boundary proximity detection
+      this._sendLegMarkersToBack(targetLeg, latlng);
       return;
     }
 
-    const overlapLegs = this._getOverlappingLegsAt(latlng);
-    const topLeg = overlapLegs
-      .slice()
-      .sort((a, b) => (this.legRank.get(b) ?? -1) - (this.legRank.get(a) ?? -1))[0];
-    if (topLeg === undefined) return;
-    this._moveLegToBottomOfGroup(topLeg, overlapLegs);
-    this._applyRouteLegOrder();
-    this._applyMarkerLegOrder();
+    // Fallback (no leg ids available): spatial contiguous-run grouping.
+    const clickPx = this.map.latLngToContainerPoint(latlng);
+    const PROX_PX = 10;
+    const passesNear = (pl) => {
+      const coords = pl.getLatLngs();
+      if (!coords.length) return false;
+      const sampleCount = Math.min(coords.length, 12);
+      const step = sampleCount > 1 ? (coords.length - 1) / (sampleCount - 1) : 0;
+      for (let i = 0; i < sampleCount; i++) {
+        const idx = Math.round(i * step);
+        const px = this.map.latLngToContainerPoint(coords[idx]);
+        if (Math.hypot(px.x - clickPx.x, px.y - clickPx.y) <= PROX_PX) return true;
+      }
+      return false;
+    };
+    const overlapSet = new Set(this.gradientPolylines.filter(passesNear));
+    let idx = -1;
+    if (clickedObject.getLatLngs) {
+      overlapSet.add(clickedObject);
+      idx = this.gradientPolylines.indexOf(clickedObject);
+    } else {
+      // If a marker was clicked, find the closest polyline segment to act as the pivot
+      let minD = Infinity;
+      this.gradientPolylines.forEach((pl, i) => {
+        if (passesNear(pl)) {
+          overlapSet.add(pl);
+          if (idx < 0) idx = i;
+        }
+      });
+    }
+    if (idx < 0) return;
+    let lo = idx, hi = idx;
+    while (lo > 0 && overlapSet.has(this.gradientPolylines[lo - 1])) lo--;
+    while (hi < this.gradientPolylines.length - 1 && overlapSet.has(this.gradientPolylines[hi + 1])) hi++;
+    
+    // Cycle both polylines and markers in fallback case
+    const otherPassesExist = overlapSet.size < this.gradientPolylines.length;
+    for (let i = lo; i <= hi; i++) {
+      const pl = this.gradientPolylines[i];
+      if (otherPassesExist) pl.bringToBack();
+      // Try to sync associated markers if they have some leg affinity
+      if (pl._legId !== undefined) this._sendLegMarkersToBack(pl._legId, latlng);
+      else if (pl._isReturn !== undefined) this._sendLegMarkersToBack(pl._isReturn, latlng);
+    }
   }
 
   /**
@@ -2055,24 +1857,6 @@ export class MapManager {
    * @param {L.LatLng} clickLatLng - optional proximity check for boundary waypoints
    */
   _sendLegMarkersToBack(idOrFlag, clickLatLng = null) {
-    this._syncAllMarkerLegIds();
-    if (typeof idOrFlag === 'number') {
-      this._moveLegToBottomOfGroup(idOrFlag, this._getOverlappingLegsAt(clickLatLng, idOrFlag));
-    } else {
-      const legs = Array.from(new Set(
-        this.gradientPolylines
-          .filter((pl) => pl._isReturn === idOrFlag && pl._legId !== undefined)
-          .map((pl) => pl._legId)
-      ));
-      const topLeg = legs
-        .slice()
-        .sort((a, b) => (this.legRank.get(b) ?? -1) - (this.legRank.get(a) ?? -1))[0];
-      if (topLeg !== undefined) this._moveLegToBottomOfGroup(topLeg, legs);
-    }
-    this._applyRouteLegOrder();
-    this._applyMarkerLegOrder();
-    return;
-
     const allMarkers = [
       ...this.intermediateMarkers,
       ...this.waypointMarkers,
@@ -2139,9 +1923,6 @@ export class MapManager {
    * swap state, so the visible waypoint could disagree with the visible track.
    */
   _syncStackedWaypointLayerForBack(idOrFlag, isTarget) {
-    this._applyMarkerLegOrder();
-    return;
-
     if (!this.stackedWaypointFlags?.some(Boolean)) return;
     this.waypointMarkers.forEach((outbound, idx) => {
       if (!this.stackedWaypointFlags[idx]) return;
@@ -2195,8 +1976,29 @@ export class MapManager {
     const legs = this._currentRouteLegIds;
     if (!cum || !legs) return;
 
-    all.forEach(m => this._assignMarkerLegIds(m));
-    this._applyMarkerLegOrder();
+    all.forEach(m => {
+      if (Number.isFinite(m._cumDistM)) {
+        let lo = 0, hi = cum.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (cum[mid] < m._cumDistM) lo = mid + 1;
+          else hi = mid;
+        }
+        
+        const ids = new Set();
+        ids.add(legs[lo] ?? 0);
+        // If at a boundary between legs, associate with both so it switches with either
+        if (lo > 0 && Math.abs(m._cumDistM - cum[lo]) < 2.0) {
+          ids.add(legs[lo - 1] ?? 0);
+        }
+        
+        m._legId = legs[lo] ?? 0;
+        m._legIds = Array.from(ids);
+      } else {
+        delete m._legId;
+        delete m._legIds;
+      }
+    });
   }
 
   getCurrentLayerInfo() {
@@ -2216,16 +2018,11 @@ export class MapManager {
    *  locations — only when an outbound marker is highlighted does it rise
    *  above its return counterpart. */
   _toggleWaypointLayer(idx, { select = true } = {}) {
-    if (idx === undefined || idx < 0) return;
-    const anchor = this.waypointMarkers[idx]?.getLatLng()
-      || this.returnWaypointMarkers.find((m) => m._wpIndex === idx)?.getLatLng();
-    if (!anchor) return;
-
-    const changed = this._cycleMarkerStackAt(anchor);
-    if (!changed && this.stackedWaypointFlags?.[idx]) {
-      this.waypointLayerSwapped[idx] = !this.waypointLayerSwapped[idx];
-      this._applyMarkerLegOrder();
-    }
+    if (idx === undefined || idx < 0 || !this.stackedWaypointFlags?.[idx]) return;
+    
+    // Toggle the swap state for this specific waypoint index
+    this.waypointLayerSwapped[idx] = !this.waypointLayerSwapped[idx];
+    this._resetWaypointMarkerZ();
 
     if (select) this._highlightTopWaypointLayer(idx);
   }
@@ -2256,21 +2053,17 @@ export class MapManager {
   }
 
   _highlightTopWaypointLayer(idx) {
-    if (idx === undefined || idx < 0) return;
+    if (idx === undefined || idx < 0 || !this.stackedWaypointFlags?.[idx]) return;
 
-    const anchor = this.waypointMarkers[idx]?.getLatLng()
-      || this.returnWaypointMarkers.find((m) => m._wpIndex === idx)?.getLatLng();
-    const topMarker = this._topWaypointMarkerAt(anchor);
-    if (topMarker?._isReturn) {
-      const topIdx = topMarker._wpIndex;
-      this.highlightReturnWaypoint(topIdx, true);
-      this.onWaypointSelect?.(topIdx, true);
-      return;
+    // Highlight the one that has been brought to the top.
+    const isOutboundOnTop = this.waypointLayerSwapped[idx];
+    if (isOutboundOnTop) {
+      this.highlightWaypoint(idx);
+      this.onWaypointSelect?.(idx, false);
+    } else {
+      this.highlightReturnWaypoint(idx, true); // True to bypass onWaypointSelect circularity
+      this.onWaypointSelect?.(idx, true);
     }
-    const topIdx = topMarker ? this.waypointMarkers.indexOf(topMarker) : idx;
-    const resolvedIdx = topIdx >= 0 ? topIdx : idx;
-    this.highlightWaypoint(resolvedIdx);
-    this.onWaypointSelect?.(resolvedIdx, false);
   }
 
   /**
@@ -2279,58 +2072,52 @@ export class MapManager {
    * Overridden by waypointLayerSwapped[idx].
    */
   _resetWaypointMarkerZ() {
-    this._clearWaypointSelectionClasses();
-    this._applyMarkerLegOrder();
-  }
-
-  _clearWaypointSelectionClasses() {
-    this.waypointMarkers.forEach((m) => {
+    this.waypointMarkers.forEach((m, i) => {
       m.getElement()?.classList.remove('is-selected');
+      const outboundOnTop = this.waypointLayerSwapped[i] ?? true;
+      const offset = outboundOnTop ? 100 : 0;
+      m.setZIndexOffset(offset);
     });
     this.returnWaypointMarkers.forEach((m) => {
       m.getElement()?.classList.remove('is-selected');
+      const i = m._wpIndex;
+      const outboundOnTop = i !== undefined ? (this.waypointLayerSwapped[i] ?? true) : true;
+      const offset = outboundOnTop ? 0 : 100;
+      m.setZIndexOffset(offset);
     });
   }
 
-  _restoreWaypointHighlightClass() {
-    this._clearWaypointSelectionClasses();
-    if (this.highlightedWpIndex < 0) return;
-    const marker = this.highlightedIsReturn
-      ? this.returnWaypointMarkers.find((x) => x._wpIndex === this.highlightedWpIndex)
-      : this.waypointMarkers[this.highlightedWpIndex];
-    marker?.getElement()?.classList.add('is-selected');
-  }
-
-  /** Highlight an outbound waypoint marker by index without changing z-order. */
+  /** Highlight an outbound waypoint marker by index. Bumps the marker's
+   *  Leaflet zIndexOffset so it rises above any colocated return marker
+   *  (which sits at +100 by default). */
   highlightWaypoint(wpIndex) {
-    this._clearWaypointSelectionClasses();
+    this._resetWaypointMarkerZ();
     this.highlightedWpIndex = wpIndex;
     this.highlightedIsReturn = false;
     const m = this.waypointMarkers[wpIndex];
     if (m) {
       m.getElement()?.classList.add('is-selected');
+      m.setZIndexOffset(1000);
     }
-    this._applyMarkerLegOrder();
   }
 
   /** Highlight a return-leg waypoint marker by wpIndex. */
   highlightReturnWaypoint(wpIndex) {
-    this._clearWaypointSelectionClasses();
+    this._resetWaypointMarkerZ();
     this.highlightedWpIndex = wpIndex;
     this.highlightedIsReturn = true;
     const m = this.returnWaypointMarkers.find((x) => x._wpIndex === wpIndex);
     if (m) {
       m.getElement()?.classList.add('is-selected');
+      m.setZIndexOffset(1000);
     }
-    this._applyMarkerLegOrder();
   }
 
   /** Remove all waypoint selection highlights (outbound + return). */
   clearWaypointHighlight() {
     this.highlightedWpIndex = -1;
     this.highlightedIsReturn = false;
-    this._clearWaypointSelectionClasses();
-    this._applyMarkerLegOrder();
+    this._resetWaypointMarkerZ();
   }
 
   /**
