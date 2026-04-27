@@ -1077,9 +1077,8 @@ export class MapManager {
     const totalD = dists[N - 1] || 1;
 
     // Compute leg IDs across the whole route — used for cycling overlapping
-    // passes via dblclick. A leg boundary is detected at U-turns and at points
-    // where the route revisits previously-traversed territory (laps, figure-8).
-    const legIds = this._computeLegIds(routeCoords, dists);
+    // passes via dblclick. Segments are strictly defined as waypoint-to-waypoint.
+    const legIds = this._computeLegIds(routeCoords, dists, isRoundTrip);
     this._currentRouteLegIds = legIds;
     this._currentRouteCum = dists;
     this._syncAllMarkerLegIds();
@@ -1180,94 +1179,68 @@ export class MapManager {
   }
 
   /**
-   * Compute leg IDs along a route. A leg boundary is detected at:
-   *   1) U-turns: heading change > 120° within a ~25m window.
-   *   2) Loop closes: the route revisits territory (within 30m) that was
-   *      previously traversed in the same leg, with sufficient gap (>250m)
-   *      so tight switchbacks don't trip it.
-   * Returns an array of integers (one per coord) where chunks/markers within
-   * the same leg share the same id.
+   * Compute leg IDs along a route. Segments are defined by the "main waypoints"
+   * (this.waypoints). Handles outbound, return (if isRoundTrip), and O-loops.
    */
-  _computeLegIds(routeCoords, cumDists) {
+  _computeLegIds(routeCoords, cumDists, isRoundTrip) {
     const N = routeCoords.length;
-    if (N < 6) return new Array(N).fill(0);
+    if (N < 2) return new Array(N).fill(0);
+    const wps = this.waypoints;
+    if (wps.length < 2) return new Array(N).fill(0);
 
-    // Equirectangular meters approximation — good enough for short distances.
     const distM = (a, b) => {
       const dLat = (b[0] - a[0]) * 111320;
       const meanLat = ((a[0] + b[0]) / 2) * Math.PI / 180;
       const dLng = (b[1] - a[1]) * 111320 * Math.cos(meanLat);
       return Math.sqrt(dLat * dLat + dLng * dLng);
     };
-    const cum = cumDists;
-    const legIds = new Array(N).fill(0);
-    let currentLeg = 0;
 
-    const WINDOW_M = 25;
-    const U_TURN_DEG = 120;
-    const LOOP_PROX_M = 35;
-    const LOOP_MIN_GAP_M = 250;
-    const SAMPLE_INTERVAL_M = 40;
-    const MIN_LEG_LEN_M = 30;
+    const boundaries = [0];
+    let searchStart = 0;
 
-    const idxBack = (i, d) => {
-      let j = i - 1;
-      while (j > 0 && cum[i] - cum[j] < d) j--;
-      return j;
-    };
-    const idxFwd = (i, d) => {
-      let j = i + 1;
-      while (j < N - 1 && cum[j] - cum[i] < d) j++;
-      return j;
-    };
+    // 1. Forward Leg: Find waypoint indices WP0 -> WP1 -> ... -> WPN-1
+    for (let i = 0; i < wps.length; i++) {
+      let minD = Infinity, minIdx = searchStart;
+      // Sequential search: find the first occurrence of each waypoint after the last one.
+      // This correctly handles loops and self-intersections.
+      for (let j = searchStart; j < N; j++) {
+        const d = distM(wps[i], routeCoords[j]);
+        if (d < minD) { minD = d; minIdx = j; }
+        if (d < 5) break; // Close enough
+      }
+      if (minIdx > searchStart) boundaries.push(minIdx);
+      searchStart = minIdx;
+    }
 
-    const samples = [];
-    let lastSampleCum = -Infinity;
-    let lastBoundaryCum = -Infinity;
-
-    for (let i = 0; i < N; i++) {
-      let isBoundary = false;
-
-      // U-turn detection
-      if (i > 0 && i < N - 1) {
-        const ja = idxBack(i, WINDOW_M);
-        const jb = idxFwd(i, WINDOW_M);
-        if (cum[i] - cum[ja] >= WINDOW_M * 0.6 && cum[jb] - cum[i] >= WINDOW_M * 0.6) {
-          const a = routeCoords[ja], b = routeCoords[i], c = routeCoords[jb];
-          const h1 = Math.atan2(b[1] - a[1], b[0] - a[0]);
-          const h2 = Math.atan2(c[1] - b[1], c[0] - b[0]);
-          let diff = (h2 - h1) * 180 / Math.PI;
-          while (diff > 180) diff -= 360;
-          while (diff < -180) diff += 360;
-          if (Math.abs(diff) > U_TURN_DEG) isBoundary = true;
+    // 2. Return Leg (optional): WPN-1 -> WPN-2 -> ... -> WP0
+    if (isRoundTrip) {
+      for (let i = wps.length - 2; i >= 0; i--) {
+        let minD = Infinity, minIdx = searchStart;
+        for (let j = searchStart; j < N; j++) {
+          const d = distM(wps[i], routeCoords[j]);
+          if (d < minD) { minD = d; minIdx = j; }
+          if (d < 5) break;
         }
+        if (minIdx > searchStart) boundaries.push(minIdx);
+        searchStart = minIdx;
       }
-
-      // Loop close detection (only against same-leg samples that are far enough behind)
-      if (!isBoundary) {
-        for (let s = samples.length - 1; s >= 0; s--) {
-          const sample = samples[s];
-          if (sample.leg !== currentLeg) break;
-          if (cum[i] - sample.cum < LOOP_MIN_GAP_M) continue;
-          if (distM(routeCoords[i], sample.coord) < LOOP_PROX_M) {
-            isBoundary = true;
-            break;
-          }
-        }
-      }
-
-      if (isBoundary && cum[i] - lastBoundaryCum >= MIN_LEG_LEN_M) {
-        currentLeg++;
-        lastBoundaryCum = cum[i];
-      }
-      legIds[i] = currentLeg;
-
-      if (cum[i] - lastSampleCum >= SAMPLE_INTERVAL_M) {
-        samples.push({ coord: routeCoords[i], idx: i, cum: cum[i], leg: currentLeg });
-        lastSampleCum = cum[i];
+    } else {
+      // Check for O-loop: does the route end back at the start waypoint?
+      const endDistToStart = distM(routeCoords[N - 1], wps[0]);
+      if (endDistToStart < 20 && searchStart < N - 10) {
+        boundaries.push(N - 1);
       }
     }
 
+    // Assign legId based on the boundary intervals
+    const legIds = new Array(N).fill(0);
+    let currentLeg = 0;
+    for (let i = 0; i < N; i++) {
+      while (currentLeg < boundaries.length - 1 && i >= boundaries[currentLeg + 1]) {
+        currentLeg++;
+      }
+      legIds[i] = currentLeg;
+    }
     return legIds;
   }
 
