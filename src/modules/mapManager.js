@@ -58,6 +58,7 @@ export class MapManager {
     this.waypointMetadata = []; // Arbitrary metadata (ele, time, fileOrder) per waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
     this.gradientPolylines = []; // Gradient chunks for selected route
+    this._overlapCycleState = new Map(); // Spatial leg-set key -> visible leg index
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
     this.currentLayerName = 'topo';
@@ -1144,81 +1145,76 @@ export class MapManager {
       const startI = Math.floor(chunk * chunkSize);
       const endI = Math.min(Math.floor((chunk + 1) * chunkSize), N - 1);
       if (endI <= startI) continue;
-
-      if (splitIdx > startI && splitIdx < endI) {
-        // Chunk straddles the split point. Subdivide it!
-        const d1 = dists[startI];
-        const t1 = splitD > 0 ? d1 / splitD : 0;
-        const pl1 = L.polyline(routeCoords.slice(startI, splitIdx + 1), {
-          color: interpolateRouteColor(t1),
-          weight: 5,
-          opacity: ROUTE_SELECTED_OPACITY,
-          lineCap: 'round',
-          lineJoin: 'round',
-        }).addTo(this.map);
-        pl1._isReturn = false;
-        pl1._legId = legIds[Math.floor((startI + splitIdx) / 2)] ?? 0;
-        this._bindRouteHoverEvents(pl1);
-        this._bindGradientRouteEvents(pl1);
-        this.gradientPolylines.push(pl1);
-
-        const d2 = dists[splitIdx];
-        const denom = totalD - splitD;
-        const t2 = denom > 0 ? (d2 - splitD) / denom : 0;
-        const pl2 = L.polyline(routeCoords.slice(splitIdx, endI + 1), {
-          color: interpolateReturnColor(t2),
-          weight: 5,
-          opacity: ROUTE_SELECTED_OPACITY,
-          lineCap: 'round',
-          lineJoin: 'round',
-        }).addTo(this.map);
-        pl2._isReturn = true;
-        pl2._legId = legIds[Math.floor((splitIdx + endI) / 2)] ?? 0;
-        this._bindRouteHoverEvents(pl2);
-        this._bindGradientRouteEvents(pl2);
-        this.gradientPolylines.push(pl2);
-        continue;
+      const splitPoints = [startI];
+      if (splitIdx > startI && splitIdx < endI) splitPoints.push(splitIdx);
+      for (let i = startI + 1; i < endI; i++) {
+        if (legIds[i] !== legIds[i - 1]) splitPoints.push(i);
       }
+      splitPoints.push(endI);
+      splitPoints.sort((a, b) => a - b);
 
-      const d = dists[startI];
-      let color;
-      if (splitD > 0) {
-        if (startI < splitIdx) {
-          const t = d / splitD;
-          color = interpolateRouteColor(t);
-        } else {
-          const denom = totalD - splitD;
-          const t = denom > 0 ? (d - splitD) / denom : 0;
-          color = interpolateReturnColor(t);
-        }
-      } else {
-        const xFrac = d / totalD;
-        const t = isRoundTrip ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
-        color = interpolateRouteColor(t);
+      for (let i = 0; i < splitPoints.length - 1; i++) {
+        const subStart = splitPoints[i];
+        const subEnd = splitPoints[i + 1];
+        if (subEnd <= subStart) continue;
+        this._addGradientRouteChunk({
+          routeCoords,
+          dists,
+          legIds,
+          startI: subStart,
+          endI: subEnd,
+          totalD,
+          splitD,
+          splitIdx,
+          isRoundTrip,
+        });
       }
-
-      const pl = L.polyline(routeCoords.slice(startI, endI + 1), {
-        color,
-        weight: 5,
-        opacity: ROUTE_SELECTED_OPACITY,
-        lineCap: 'round',
-        lineJoin: 'round',
-      }).addTo(this.map);
-
-      const xFrac = dists[startI] / totalD;
-      if (splitD > 0) {
-        pl._isReturn = (startI >= splitIdx);
-      } else {
-        pl._isReturn = isRoundTrip && (xFrac >= 0.5);
-      }
-      pl._legId = legIds[Math.floor((startI + endI) / 2)] ?? 0;
-
-      this._bindRouteHoverEvents(pl);
-      this._bindGradientRouteEvents(pl);
-      this.gradientPolylines.push(pl);
     }
 
     this._bringOutboundRouteSegmentsToFront();
+  }
+
+  _addGradientRouteChunk({ routeCoords, dists, legIds, startI, endI, totalD, splitD, splitIdx, isRoundTrip }) {
+    const d = dists[startI];
+    let color;
+    let isReturn;
+    if (splitD > 0) {
+      if (startI < splitIdx) {
+        color = interpolateRouteColor(d / splitD);
+        isReturn = false;
+      } else {
+        const denom = totalD - splitD;
+        const t = denom > 0 ? (d - splitD) / denom : 0;
+        color = interpolateReturnColor(t);
+        isReturn = true;
+      }
+    } else {
+      const xFrac = d / totalD;
+      const t = isRoundTrip ? (1 - Math.abs(2 * xFrac - 1)) : xFrac;
+      color = interpolateRouteColor(t);
+      isReturn = isRoundTrip && (xFrac >= 0.5);
+    }
+
+    const pl = L.polyline(routeCoords.slice(startI, endI + 1), {
+      color,
+      weight: 5,
+      opacity: ROUTE_SELECTED_OPACITY,
+      lineCap: 'round',
+      lineJoin: 'round',
+    }).addTo(this.map);
+
+    const legSet = new Set();
+    for (let i = startI; i <= endI; i++) legSet.add(legIds[i] ?? 0);
+    pl._isReturn = isReturn;
+    pl._legId = legIds[Math.floor((startI + endI) / 2)] ?? 0;
+    pl._legIds = Array.from(legSet);
+    pl._routeStartI = startI;
+    pl._routeEndI = endI;
+    pl._routeDrawOrder = this.gradientPolylines.length;
+
+    this._bindRouteHoverEvents(pl);
+    this._bindGradientRouteEvents(pl);
+    this.gradientPolylines.push(pl);
   }
 
   _bringOutboundRouteSegmentsToFront() {
@@ -1296,6 +1292,7 @@ export class MapManager {
   clearGradientRoute() {
     this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
     this.gradientPolylines = [];
+    this._overlapCycleState.clear();
   }
 
   /**
@@ -1788,66 +1785,168 @@ export class MapManager {
    */
   _cycleOverlappingLayers(clickedObject, latlng) {
     if (!this.gradientPolylines.length) return;
-    const targetLeg = clickedObject._legId;
 
     // Refresh leg IDs on all markers to ensure they match current route state
     this._syncAllMarkerLegIds();
 
-    if (targetLeg !== undefined) {
-      const sameLegPolylines = this.gradientPolylines.filter(pl => pl._legId === targetLeg);
-      const otherLegsExist = this.gradientPolylines.some(pl => pl._legId !== targetLeg);
-      if (otherLegsExist) {
-        sameLegPolylines.forEach(pl => pl.bringToBack());
-      }
-      // Pass the click latlng for boundary proximity detection
-      this._sendLegMarkersToBack(targetLeg, latlng);
-      return;
-    }
+    const nearby = this._findOverlappingRouteChunks(latlng, clickedObject);
+    const legs = this._uniqueNearbyLegs(nearby);
+    if (legs.length < 2) return;
 
-    // Fallback (no leg ids available): spatial contiguous-run grouping.
+    const key = this._overlapStackKey(legs, latlng);
+    const clickedLeg = clickedObject?._legId;
+    const previousLeg = this._overlapCycleState.has(key)
+      ? this._overlapCycleState.get(key)
+      : (legs.includes(clickedLeg) ? clickedLeg : legs[0]);
+    const previousIdx = Math.max(0, legs.indexOf(previousLeg));
+    const nextLeg = legs[(previousIdx + 1) % legs.length];
+    this._overlapCycleState.set(key, nextLeg);
+
+    this._bringOverlapLegToFront(legs, nextLeg);
+    this._syncOverlapMarkerStack(legs, nextLeg, latlng);
+  }
+
+  _findOverlappingRouteChunks(latlng, clickedObject = null) {
     const clickPx = this.map.latLngToContainerPoint(latlng);
     const PROX_PX = 10;
-    const passesNear = (pl) => {
-      const coords = pl.getLatLngs();
-      if (!coords.length) return false;
-      const sampleCount = Math.min(coords.length, 12);
-      const step = sampleCount > 1 ? (coords.length - 1) / (sampleCount - 1) : 0;
-      for (let i = 0; i < sampleCount; i++) {
-        const idx = Math.round(i * step);
-        const px = this.map.latLngToContainerPoint(coords[idx]);
-        if (Math.hypot(px.x - clickPx.x, px.y - clickPx.y) <= PROX_PX) return true;
-      }
-      return false;
+    const near = [];
+
+    const segmentDistancePx = (p, a, b) => {
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const wx = p.x - a.x;
+      const wy = p.y - a.y;
+      const lenSq = vx * vx + vy * vy;
+      const t = lenSq > 0 ? Math.max(0, Math.min(1, (wx * vx + wy * vy) / lenSq)) : 0;
+      const x = a.x + t * vx;
+      const y = a.y + t * vy;
+      return Math.hypot(p.x - x, p.y - y);
     };
-    const overlapSet = new Set(this.gradientPolylines.filter(passesNear));
-    let idx = -1;
-    if (clickedObject.getLatLngs) {
-      overlapSet.add(clickedObject);
-      idx = this.gradientPolylines.indexOf(clickedObject);
-    } else {
-      // If a marker was clicked, find the closest polyline segment to act as the pivot
+
+    const minDistanceToPolyline = (pl) => {
+      const coords = pl.getLatLngs();
+      if (!coords || coords.length === 0) return Infinity;
+      if (coords.length === 1) {
+        const px = this.map.latLngToContainerPoint(coords[0]);
+        return Math.hypot(px.x - clickPx.x, px.y - clickPx.y);
+      }
       let minD = Infinity;
-      this.gradientPolylines.forEach((pl, i) => {
-        if (passesNear(pl)) {
-          overlapSet.add(pl);
-          if (idx < 0) idx = i;
-        }
+      for (let i = 0; i < coords.length - 1; i++) {
+        const a = this.map.latLngToContainerPoint(coords[i]);
+        const b = this.map.latLngToContainerPoint(coords[i + 1]);
+        minD = Math.min(minD, segmentDistancePx(clickPx, a, b));
+      }
+      return minD;
+    };
+
+    this.gradientPolylines.forEach((pl) => {
+      const d = minDistanceToPolyline(pl);
+      if (d <= PROX_PX) near.push({ pl, d });
+    });
+    if (clickedObject?.getLatLngs && !near.some((item) => item.pl === clickedObject)) {
+      near.push({ pl: clickedObject, d: 0 });
+    }
+    return near.sort((a, b) => a.d - b.d || (a.pl._routeDrawOrder ?? 0) - (b.pl._routeDrawOrder ?? 0));
+  }
+
+  _uniqueNearbyLegs(nearby) {
+    const seen = new Set();
+    const legs = [];
+    nearby.forEach(({ pl }) => {
+      const ids = Array.isArray(pl._legIds) && pl._legIds.length ? pl._legIds : [pl._legId];
+      ids.forEach((id) => {
+        if (id === undefined || seen.has(id)) return;
+        seen.add(id);
+        legs.push(id);
       });
-    }
-    if (idx < 0) return;
-    let lo = idx, hi = idx;
-    while (lo > 0 && overlapSet.has(this.gradientPolylines[lo - 1])) lo--;
-    while (hi < this.gradientPolylines.length - 1 && overlapSet.has(this.gradientPolylines[hi + 1])) hi++;
-    
-    // Cycle both polylines and markers in fallback case
-    const otherPassesExist = overlapSet.size < this.gradientPolylines.length;
-    for (let i = lo; i <= hi; i++) {
-      const pl = this.gradientPolylines[i];
-      if (otherPassesExist) pl.bringToBack();
-      // Try to sync associated markers if they have some leg affinity
-      if (pl._legId !== undefined) this._sendLegMarkersToBack(pl._legId, latlng);
-      else if (pl._isReturn !== undefined) this._sendLegMarkersToBack(pl._isReturn, latlng);
-    }
+    });
+    return legs.sort((a, b) => a - b);
+  }
+
+  _overlapStackKey(legs, latlng) {
+    const lat = Math.round(latlng.lat * 10000);
+    const lng = Math.round(latlng.lng * 10000);
+    return `${legs.join('|')}@${lat},${lng}`;
+  }
+
+  _bringOverlapLegToFront(legs, topLeg) {
+    const ordered = legs.filter((leg) => leg !== topLeg).concat(topLeg);
+    ordered.forEach((leg) => {
+      this.gradientPolylines
+        .filter((pl) => pl._legId === leg || pl._legIds?.includes(leg))
+        .forEach((pl) => pl.bringToFront());
+    });
+  }
+
+  _syncOverlapMarkerStack(legs, topLeg, clickLatLng) {
+    const legSet = new Set(legs);
+    const allMarkers = [
+      ...this.intermediateMarkers,
+      ...this.waypointMarkers,
+      ...this.returnWaypointMarkers,
+    ];
+
+    const markerLegs = (m) => {
+      const ids = new Set();
+      if (m._legId !== undefined) ids.add(m._legId);
+      if (Array.isArray(m._legIds)) m._legIds.forEach((id) => ids.add(id));
+      return Array.from(ids);
+    };
+    const matchesAny = (m) => markerLegs(m).some((id) => legSet.has(id));
+    const matchesTop = (m) => markerLegs(m).includes(topLeg);
+    const coordKey = (m) => {
+      const ll = m.getLatLng();
+      return `${Math.round(ll.lat * 100000)},${Math.round(ll.lng * 100000)}`;
+    };
+    const groups = new Map();
+    allMarkers.filter(matchesAny).forEach((m) => {
+      const key = coordKey(m);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    });
+    const nearClick = (m) => !clickLatLng || m.getLatLng().distanceTo(clickLatLng) <= 30;
+    const candidates = [];
+    groups.forEach((group) => {
+      const groupLegs = new Set();
+      group.forEach((m) => markerLegs(m).forEach((id) => {
+        if (legSet.has(id)) groupLegs.add(id);
+      }));
+      if (group.length > 1 && groupLegs.size > 1) {
+        candidates.push(...group);
+      } else {
+        candidates.push(...group.filter(nearClick));
+      }
+    });
+    if (candidates.length < 2) return;
+
+    const rank = new Map(legs.map((leg, i) => [leg, i]));
+    candidates
+      .sort((a, b) => {
+        const ar = Math.min(...markerLegs(a).map((id) => rank.get(id) ?? 0));
+        const br = Math.min(...markerLegs(b).map((id) => rank.get(id) ?? 0));
+        return ar - br;
+      })
+      .forEach((m, i) => m.setZIndexOffset(200 + i * 20));
+    candidates.filter(matchesTop).forEach((m) => m.setZIndexOffset(900));
+
+    this._syncStackedWaypointLayerForTopLeg(topLeg);
+  }
+
+  _syncStackedWaypointLayerForTopLeg(topLeg) {
+    if (!this.stackedWaypointFlags?.some(Boolean)) return;
+    this.waypointMarkers.forEach((outbound, idx) => {
+      if (!this.stackedWaypointFlags[idx]) return;
+      const ret = this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
+      if (!outbound || !ret) return;
+      const outboundIds = new Set([outbound._legId, ...(outbound._legIds || [])]);
+      const returnIds = new Set([ret._legId, ...(ret._legIds || [])]);
+      const outboundMatches = outboundIds.has(topLeg);
+      const returnMatches = returnIds.has(topLeg);
+      if (outboundMatches === returnMatches) return;
+      this.waypointLayerSwapped[idx] = outboundMatches;
+      outbound.setZIndexOffset(outboundMatches ? 900 : 200);
+      ret.setZIndexOffset(returnMatches ? 900 : 200);
+    });
   }
 
   /**
