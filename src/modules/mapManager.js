@@ -39,6 +39,7 @@ const ROUTE_SELECTED_OPACITY = 0.9;
 
 // Max gradient chunks for the selected route polyline
 const GRADIENT_CHUNKS = 80;
+const STACKED_WAYPOINT_TOLERANCE_M = 30;
 
 export class MapManager {
   constructor(containerId, onWaypointChange) {
@@ -612,7 +613,7 @@ export class MapManager {
         // Selection is applied on release so the highlight does not appear while
         // the pointer/finger is still held down.
         const wpIdx = this.waypointMarkers.indexOf(marker);
-        if (wpIdx >= 0 && this.stackedWaypointFlags?.[wpIdx]) {
+        if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
           this._toggleWaypointLayer(wpIdx, { select: false });
           layerToggledByLongPress = true;
         }
@@ -693,7 +694,7 @@ export class MapManager {
         // Selection is applied on release so the highlight does not appear while
         // the pointer/finger is still held down.
         const wpIdx = this.waypointMarkers.indexOf(marker);
-        if (wpIdx >= 0 && this.stackedWaypointFlags?.[wpIdx]) {
+        if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
           this._toggleWaypointLayer(wpIdx, { select: false });
           layerToggledByLongPress = true;
         }
@@ -812,7 +813,7 @@ export class MapManager {
       this._clearWaypointClickTimeout();
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
-        if (this.stackedWaypointFlags?.[idx]) {
+        if (this._hasReturnWaypointPair(idx)) {
           this._toggleWaypointLayer(idx, { select: false });
           this._deferTopWaypointLayerHighlight(idx);
         } else {
@@ -1358,9 +1359,9 @@ export class MapManager {
    * Render markers for round-trip return-leg waypoints. Same size/shape as
    * outbound waypoint markers but with a dashed border, return-gradient
    * background, and a small "↩" badge so the two legs are easy to tell apart.
-   * Markers whose lat/lng coincides with an outbound waypoint are anchor-
-   * offset to the bottom-right and both ends get an `is-stacked` class so the
-   * pair gets a yellow dotted halo to flag the overlap.
+   * Markers paired by wpIndex can be display-layer toggled even when route
+   * snapping leaves them slightly offset. The `is-stacked` class remains a
+   * visual hint for pairs whose coordinates are close enough to overlap.
    *
    * @param {Array<{lat,lng,wpIndex,label,color,colIdx,weather,cumDistM,_cum}>} points
    */
@@ -1368,15 +1369,27 @@ export class MapManager {
     this.clearReturnWaypoints();
     const list = points || [];
 
-    const eq = (a, b) => Math.abs(a - b) < 1e-6;
-    const newFlags = this.waypoints.map(([la, ln]) =>
-      list.some((pt) => eq(pt.lat, la) && eq(pt.lng, ln))
+    const validReturnWpIndices = new Set(
+      list
+        .map((pt) => Number.isInteger(pt.wpIndex) ? pt.wpIndex : -1)
+        .filter((idx) => idx >= 0 && idx < this.waypoints.length)
+    );
+    const isNearWaypoint = (pt, idx) => {
+      const wp = this.waypoints[idx];
+      if (!wp || !Number.isFinite(pt.lat) || !Number.isFinite(pt.lng)) return false;
+      return L.latLng(pt.lat, pt.lng).distanceTo(L.latLng(wp[0], wp[1])) <= STACKED_WAYPOINT_TOLERANCE_M;
+    };
+    const newFlags = this.waypoints.map((_, idx) =>
+      list.some((pt) => {
+        if (Number.isInteger(pt.wpIndex)) return pt.wpIndex === idx && isNearWaypoint(pt, idx);
+        return isNearWaypoint(pt, idx);
+      })
     );
     const flagsChanged =
       newFlags.length !== this.stackedWaypointFlags.length ||
       newFlags.some((f, i) => f !== this.stackedWaypointFlags[i]);
-    newFlags.forEach((isStacked, i) => {
-      if (isStacked && !this.stackedWaypointFlags[i]) {
+    validReturnWpIndices.forEach((i) => {
+      if (this.waypointLayerSwapped[i] === undefined) {
         this.waypointLayerSwapped[i] = true;
       }
     });
@@ -1384,7 +1397,9 @@ export class MapManager {
     if (flagsChanged) this._updateMarkerIcons();
 
     list.forEach((pt) => {
-      const isStacked = this.waypoints.some(([la, ln]) => eq(la, pt.lat) && eq(ln, pt.lng));
+      const isStacked = Number.isInteger(pt.wpIndex)
+        ? isNearWaypoint(pt, pt.wpIndex)
+        : this.waypoints.some((_, idx) => isNearWaypoint(pt, idx));
       const icon = this._createReturnIcon(pt, isStacked);
       const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
       const cumDistM = Number.isFinite(pt.cumDistM)
@@ -1894,7 +1909,13 @@ export class MapManager {
     };
     const matchesAny = (m) => markerLegs(m).some((id) => legSet.has(id));
     const matchesTop = (m) => markerLegs(m).includes(topLeg);
+    const switchablePairKey = (m) => {
+      const idx = m._wpIndex ?? this.waypointMarkers.indexOf(m);
+      return idx >= 0 && this._hasReturnWaypointPair(idx) ? `wp:${idx}` : null;
+    };
     const coordKey = (m) => {
+      const pairKey = switchablePairKey(m);
+      if (pairKey) return pairKey;
       const ll = m.getLatLng();
       return `${Math.round(ll.lat * 100000)},${Math.round(ll.lng * 100000)}`;
     };
@@ -1917,6 +1938,7 @@ export class MapManager {
         candidates.push(...group.filter(nearClick));
       }
     });
+    this._syncStackedWaypointLayerForTopLeg(topLeg);
     if (candidates.length < 2) return;
 
     const rank = new Map(legs.map((leg, i) => [leg, i]));
@@ -1928,14 +1950,10 @@ export class MapManager {
       })
       .forEach((m, i) => m.setZIndexOffset(200 + i * 20));
     candidates.filter(matchesTop).forEach((m) => m.setZIndexOffset(900));
-
-    this._syncStackedWaypointLayerForTopLeg(topLeg);
   }
 
   _syncStackedWaypointLayerForTopLeg(topLeg) {
-    if (!this.stackedWaypointFlags?.some(Boolean)) return;
     this.waypointMarkers.forEach((outbound, idx) => {
-      if (!this.stackedWaypointFlags[idx]) return;
       const ret = this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
       if (!outbound || !ret) return;
       const outboundIds = new Set([outbound._legId, ...(outbound._legIds || [])]);
@@ -1964,7 +1982,7 @@ export class MapManager {
 
     const stackedWaypointIndex = (m) => {
       const idx = m._wpIndex ?? this.waypointMarkers.indexOf(m);
-      return idx >= 0 && this.stackedWaypointFlags?.[idx] ? idx : -1;
+      return idx >= 0 && this._hasReturnWaypointPair(idx) ? idx : -1;
     };
     
     // Explicit comparison to handle numeric leg IDs and boolean direction flags correctly.
@@ -2022,9 +2040,7 @@ export class MapManager {
    * swap state, so the visible waypoint could disagree with the visible track.
    */
   _syncStackedWaypointLayerForBack(idOrFlag, isTarget) {
-    if (!this.stackedWaypointFlags?.some(Boolean)) return;
     this.waypointMarkers.forEach((outbound, idx) => {
-      if (!this.stackedWaypointFlags[idx]) return;
       const ret = this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
       if (!outbound || !ret) return;
 
@@ -2087,8 +2103,11 @@ export class MapManager {
         const ids = new Set();
         ids.add(legs[lo] ?? 0);
         // If at a boundary between legs, associate with both so it switches with either
-        if (lo > 0 && Math.abs(m._cumDistM - cum[lo]) < 2.0) {
+        if (lo > 0 && Math.abs(m._cumDistM - cum[lo]) <= STACKED_WAYPOINT_TOLERANCE_M) {
           ids.add(legs[lo - 1] ?? 0);
+        }
+        if (lo < cum.length - 1 && Math.abs(cum[lo] - m._cumDistM) <= STACKED_WAYPOINT_TOLERANCE_M) {
+          ids.add(legs[lo + 1] ?? legs[lo] ?? 0);
         }
         
         m._legId = legs[lo] ?? 0;
@@ -2117,7 +2136,7 @@ export class MapManager {
    *  locations — only when an outbound marker is highlighted does it rise
    *  above its return counterpart. */
   _toggleWaypointLayer(idx, { select = true } = {}) {
-    if (idx === undefined || idx < 0 || !this.stackedWaypointFlags?.[idx]) return;
+    if (idx === undefined || idx < 0 || !this._hasReturnWaypointPair(idx)) return;
     
     // Toggle the swap state for this specific waypoint index
     this.waypointLayerSwapped[idx] = !this.waypointLayerSwapped[idx];
@@ -2152,7 +2171,7 @@ export class MapManager {
   }
 
   _highlightTopWaypointLayer(idx) {
-    if (idx === undefined || idx < 0 || !this.stackedWaypointFlags?.[idx]) return;
+    if (idx === undefined || idx < 0 || !this._hasReturnWaypointPair(idx)) return;
 
     // Highlight the one that has been brought to the top.
     const isOutboundOnTop = this.waypointLayerSwapped[idx];
@@ -2184,6 +2203,12 @@ export class MapManager {
       const offset = outboundOnTop ? 0 : 100;
       m.setZIndexOffset(offset);
     });
+  }
+
+  _hasReturnWaypointPair(idx) {
+    return idx >= 0
+      && idx < this.waypointMarkers.length
+      && this.returnWaypointMarkers.some((m) => m._wpIndex === idx);
   }
 
   /** Highlight an outbound waypoint marker by index. Bumps the marker's
