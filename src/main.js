@@ -92,7 +92,10 @@ let importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1'; 
 let importAutoNameMode = localStorage.getItem(LS_IMPORT_AUTO_NAME_KEY) === '1'; // default OFF
 let skipAutoGeocode = false;
 let paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh'; // 'kmh' | 'minkm' | 'shanhe'
-let windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
+let windyLayer = (() => {
+  const saved = localStorage.getItem(LS_WINDY_LAYER_KEY);
+  return (saved && ['radar', 'satellite', 'thunder', 'rainAccu', 'waves', 'meteogram', 'airgram', 'airq'].includes(saved)) ? saved : 'meteogram';
+})();
 let windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
 let collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0'; // default true
 let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0'; // default true
@@ -274,7 +277,10 @@ function applySettingsFromStorage() {
   importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1';
   importAutoNameMode = localStorage.getItem(LS_IMPORT_AUTO_NAME_KEY) === '1';
   paceUnit = localStorage.getItem(LS_PACE_UNIT_KEY) || 'kmh';
-  windyLayer = localStorage.getItem(LS_WINDY_LAYER_KEY) || 'rain';
+  {
+    const saved = localStorage.getItem(LS_WINDY_LAYER_KEY);
+    windyLayer = (saved && REMAINING_WINDY_LAYERS.has(saved)) ? saved : 'meteogram';
+  }
   windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
   collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0';
   collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
@@ -3093,11 +3099,11 @@ function importFile(e) {
 
 // =========== Windy URL Builder ===========
 
-function buildWindyUrl(lat, lng, date, hour) {
+function buildWindyUrl(lat, lng, date, hour, layerOverride) {
   const zoom = Math.round(mapManager.map.getZoom());
   const latF = lat.toFixed(3);
   const lngF = lng.toFixed(3);
-  const layer = windyLayer;
+  const layer = layerOverride || windyLayer;
   const model = windyModel;
   let ts = '';
   if (date && hour != null) {
@@ -3155,9 +3161,47 @@ function refreshWindyLinks() {
     const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
     a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng, date, hour);
   });
+  // Per-cell row icons: link uses each cell's own column coords + date/hour
+  container.querySelectorAll('.wt-data-cell .row-windy-link').forEach(a => {
+    const td = a.closest('td');
+    const col = parseInt(td?.dataset.col);
+    const layer = a.dataset.layer;
+    if (!layer || isNaN(col) || !weatherPoints[col]) return;
+    const th = container.querySelector(`.wt-col-head[data-idx="${col}"]`);
+    const date = th?.querySelector('.wt-date-input')?.value || '';
+    const hour = parseInt(th?.querySelector('.wt-time-select')?.value ?? '0');
+    a.href = buildWindyUrl(weatherPoints[col].lat, weatherPoints[col].lng, date, hour, layer);
+  });
 }
 
 // =========== Weather Panel ===========
+
+/** Weather-row key → Windy layer (only those that have a direct Windy counterpart). */
+const ROW_KEY_TO_WINDY_LAYER = {
+  temp: 'temp',
+  precipitation: 'rain',
+  windSpeed: 'wind',
+  cloudCover: 'clouds',
+};
+
+const WINDY_LAYER_LABELS = {
+  temp: '溫度',
+  rain: '降雨',
+  wind: '風速',
+  clouds: '雲',
+};
+
+/** Layers still shown in the dropdown (ones without a direct row counterpart). */
+const REMAINING_WINDY_LAYERS = new Set([
+  'radar', 'satellite', 'thunder', 'rainAccu', 'waves',
+  'meteogram', 'airgram', 'airq',
+]);
+
+function buildRowWindyIconHtml(layer, url, size = 12) {
+  const title = `在 Windy 開啟「${WINDY_LAYER_LABELS[layer] || layer}」圖層`;
+  return ` <a class="row-windy-link" href="${url}" target="_blank" rel="noopener" title="${title}" data-layer="${layer}" onclick="event.stopPropagation()">` +
+    `<img src="https://www.windy.com/favicon.ico" width="${size}" height="${size}" alt="Windy" class="windy-favicon"></a>`;
+}
 
 const WEATHER_ROWS = [
   { key: 'weather', label: '天氣' },
@@ -3673,11 +3717,16 @@ function getCellValue(data, key, pt) {
  */
 function updateWeatherTableCell(cell, key, val) {
   if (!cell) return;
+  const valueEl = cell.querySelector('.wt-cell-value');
   if (key === 'weather') {
     const parts = val.split(' ');
     const icon = parts[0];
     const desc = parts.slice(1).join(' ');
-    cell.innerHTML = `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${icon}</span> ${desc}`;
+    const html = `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${icon}</span> ${desc}`;
+    if (valueEl) valueEl.innerHTML = html;
+    else cell.innerHTML = html;
+  } else if (valueEl) {
+    valueEl.textContent = val;
   } else {
     cell.textContent = val;
   }
@@ -4773,7 +4822,29 @@ function renderWeatherPanel() {
   });
   html += `</tr></thead><tbody>`;
 
-  // Windy link row
+  WEATHER_ROWS.forEach(row => {
+    const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
+    html += `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
+    weatherPoints.forEach((pt, i) => {
+      const returnClass = pt.isReturn ? ' wt-return-col' : '';
+      const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
+      const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
+      const iconHtml = layerForRow
+        ? buildRowWindyIconHtml(
+            layerForRow,
+            buildWindyUrl(pt.lat, pt.lng, colTimes[i].date, colTimes[i].hour, layerForRow),
+            12,
+          )
+        : '';
+      const cellInner = layerForRow
+        ? `${iconHtml}<span class="wt-cell-value">—</span>`
+        : '—';
+      html += `<td class="wt-data-cell wt-td${returnClass}${startClass}${layerForRow ? ' wt-cell-with-icon' : ''}" data-col="${i}" data-key="${row.key}"${cellStyle}>${cellInner}</td>`;
+    });
+    html += '</tr>';
+  });
+
+  // Windy link row (bottom)
   html += '<tr class="wt-windy-row"><td class="wt-label-cell wt-td">Windy</td>';
   weatherPoints.forEach((pt, i) => {
     const returnClass = pt.isReturn ? ' wt-return-col' : '';
@@ -4786,16 +4857,6 @@ function renderWeatherPanel() {
   });
   html += '</tr>';
 
-  WEATHER_ROWS.forEach(row => {
-    html += `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
-    weatherPoints.forEach((pt, i) => {
-      const returnClass = pt.isReturn ? ' wt-return-col' : '';
-      const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
-      const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
-      html += `<td class="wt-data-cell wt-td${returnClass}${startClass}" data-col="${i}" data-key="${row.key}"${cellStyle}>—</td>`;
-    });
-    html += '</tr>';
-  });
   html += '</tbody></table>';
   container.innerHTML = html;
 
@@ -5347,7 +5408,8 @@ function _renderWeatherCard(colIdx) {
     html += `</div>`;
     html += `</div>`;
   } else {
-    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${temp}</span></div>`;
+    const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
+    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
     const CARD_ROWS = [
@@ -5378,6 +5440,10 @@ function _renderWeatherCard(colIdx) {
       const isForecast = row.key === 'forecastTime';
       const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
       const displayVal = val(row.key);
+      const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
+      const valuePrefix = layerForRow
+        ? buildRowWindyIconHtml(layerForRow, buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layerForRow))
+        : '';
       html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
       html += `<span class="wc-info-label">${row.label}</span>`;
       if (isForecast) {
@@ -5392,7 +5458,7 @@ function _renderWeatherCard(colIdx) {
         html += `<select class="wc-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>`;
         html += `</div>`;
       } else {
-        html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${displayVal}</span>`;
+        html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
       }
       html += `</div>`;
     });
@@ -5479,7 +5545,8 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
   html += `</div>`;
 
   html += `<div class="wc-body">`;
-  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${temp}</span></div>`;
+  const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(lat, lng, dateStr, hour, 'temp'), 14);
+  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
 
   if (status === 'ok') {
     const CARD_ROWS = [
@@ -5509,9 +5576,13 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
       const isCoords = row.key === 'coords';
       const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
       const displayVal = val(row.key);
+      const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
+      const valuePrefix = layerForRow
+        ? buildRowWindyIconHtml(layerForRow, buildWindyUrl(lat, lng, dateStr, hour, layerForRow))
+        : '';
       html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
       html += `<span class="wc-info-label">${row.label}</span>`;
-      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${displayVal}</span>`;
+      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
       html += `</div>`;
     });
     html += `</div>`;
