@@ -2179,6 +2179,40 @@ function updateDateConstraints() {
  * may bump a waypoint to the next day, leaving the interval points that come
  * after it showing stale (pre-bump) times.
  */
+function updateWeatherTimeAdjustButtons() {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+
+  weatherPoints.forEach((pt, i) => {
+    const locked = !pt?.isWaypoint;
+    const thDate = container.querySelector(`.wt-th-date[data-idx="${i}"]`);
+    const thTime = container.querySelector(`.wt-th-time[data-idx="${i}"]`);
+    if (!thDate || !thTime) return;
+
+    let canMinusDay = !locked;
+    let canMinusHour = !locked;
+    const canPlus = !locked;
+
+    if (strictLinearMode && !locked && i > 0) {
+      const prevTh = container.querySelector(`.wt-th-date[data-idx="${i - 1}"]`);
+      const curMs = colToMs(thDate);
+      const prevMs = prevTh ? colToMs(prevTh) : -Infinity;
+      canMinusDay = curMs - 86400000 >= prevMs;
+      canMinusHour = curMs - 3600000 >= prevMs;
+    }
+
+    const dayMinus = thDate.querySelector('.wt-adj-day-minus');
+    const dayPlus = thDate.querySelector('.wt-adj-day-plus');
+    const hourMinus = thTime.querySelector('.wt-adj-hour-minus');
+    const hourPlus = thTime.querySelector('.wt-adj-hour-plus');
+
+    if (dayMinus) dayMinus.disabled = !canMinusDay;
+    if (dayPlus) dayPlus.disabled = !canPlus;
+    if (hourMinus) hourMinus.disabled = !canMinusHour;
+    if (hourPlus) hourPlus.disabled = !canPlus;
+  });
+}
+
 function syncIntervalTimes() {
   cascadeIntervalTimes();
   enforceTimeOrdering();
@@ -3821,6 +3855,8 @@ function shiftAllDates(deltaDays, deltaHours) {
 
   syncIntervalTimes();
   saveWeatherSettings();
+  updateDateConstraints();
+  updateWeatherTimeAdjustButtons();
   refreshOpenWeatherCards();
 }
 
@@ -4782,6 +4818,7 @@ function handleWeatherTimeChange(idx, th) {
   saveWeatherSettings();
 
   updateDateConstraints();
+  updateWeatherTimeAdjustButtons();
   th.dataset.prevMs = String(colToMs(th));
   refreshWindyLinks();
   
@@ -5157,6 +5194,7 @@ function renderWeatherPanel() {
   if (speedIntervalMode) cascadeWeatherTimes();
   else syncIntervalTimes();
   updateDateConstraints();
+  updateWeatherTimeAdjustButtons();
   refreshWindyLinks();
 
   // Restore previously fetched weather data — read actual date/hour from DOM
