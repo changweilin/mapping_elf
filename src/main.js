@@ -4018,6 +4018,16 @@ function initWeatherControls() {
 
   if (!handle) return;
 
+  const invalidateMapSize = () => {
+    mapManager.map.invalidateSize({ animate: false, pan: false });
+  };
+  const invalidateMapSizeAfterLayout = () => {
+    requestAnimationFrame(() => {
+      invalidateMapSize();
+      requestAnimationFrame(invalidateMapSize);
+    });
+  };
+
   // --- Drag-to-resize ---
   // rAF-coalesce pointer moves: multiple move events within a single frame are
   // collapsed into one DOM write, which keeps the drag smooth under high-rate
@@ -4032,6 +4042,7 @@ function initWeatherControls() {
     const h = Math.max(MIN_H, Math.min(getMaxPanelH(), window.innerHeight - clientY));
     panel.style.height = `${h}px`;
     document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+    invalidateMapSize();
   };
   const scheduleHeight = (clientY) => {
     pendingClientY = clientY;
@@ -4056,7 +4067,7 @@ function initWeatherControls() {
       document.body.classList.remove('is-resizing');
       handle.classList.remove('dragging');
       savePanelRatio();
-      mapManager.map.invalidateSize({ animate: false });
+      invalidateMapSizeAfterLayout();
       requestAnimationFrame(() => elevationProfile?.chart?.resize());
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -4079,7 +4090,7 @@ function initWeatherControls() {
       document.body.classList.remove('is-resizing');
       handle.classList.remove('dragging');
       savePanelRatio();
-      mapManager.map.invalidateSize({ animate: false });
+      invalidateMapSizeAfterLayout();
       requestAnimationFrame(() => elevationProfile?.chart?.resize());
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
@@ -4106,7 +4117,7 @@ function initWeatherControls() {
       panel.style.transition = '';
       panel.removeEventListener('transitionend', onEnd);
       savePanelRatio();
-      mapManager.map.invalidateSize({ animate: false });
+      invalidateMapSizeAfterLayout();
       requestAnimationFrame(() => elevationProfile?.chart?.resize());
     };
     panel.addEventListener('transitionend', onEnd);
@@ -4129,7 +4140,7 @@ function initWeatherControls() {
   window.addEventListener('resize', () => {
     if (panel._resizing) return;
     applyPanelRatio();
-    mapManager.map.invalidateSize({ animate: false });
+    invalidateMapSizeAfterLayout();
   });
 }
 
