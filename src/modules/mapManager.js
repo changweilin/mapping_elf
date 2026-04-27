@@ -71,6 +71,7 @@ export class MapManager {
     this._dragWpIndex = undefined;
     this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
+    this._waypointClickTimeout = null; // Delay waypoint click selection so dblclick can cancel it first
     // Map cursor — placed by GPS button (goToMyLocation). Long-press / click
     // on the cursor opens an action menu (set as waypoint / copy coords / weather).
     this._mapCursor = null;
@@ -537,7 +538,7 @@ export class MapManager {
   addWaypoint(lat, lng, insertIndex = null) {
     const idx = insertIndex !== null ? insertIndex : this.waypoints.length;
     this.waypoints.splice(idx, 0, [lat, lng]);
-    this.waypointLayerSwapped.splice(idx, 0, false);
+    this.waypointLayerSwapped.splice(idx, 0, true);
     this.waypointWeather.splice(idx, 0, null);
     this.waypointColors.splice(idx, 0, null);
     this.waypointLabels.splice(idx, 0, null);
@@ -602,11 +603,16 @@ export class MapManager {
         document.removeEventListener('mousemove', onMoveGuard);
         document.removeEventListener('mouseup', cancelLP);
         _mouseLPTimer = null;
+        let layerToggledByLongPress = false;
+        let manualDragMoved = false;
 
-        // Long-press on overlapping waypoint toggles display level independently of track
+        // Long-press on overlapping waypoint toggles display level independently of track.
+        // Selection is applied on release so the highlight does not appear while
+        // the pointer/finger is still held down.
         const wpIdx = this.waypointMarkers.indexOf(marker);
         if (wpIdx >= 0 && this.stackedWaypointFlags?.[wpIdx]) {
-          this._toggleWaypointLayer(wpIdx);
+          this._toggleWaypointLayer(wpIdx, { select: false });
+          layerToggledByLongPress = true;
         }
 
         _dragModeActive = true;
@@ -618,6 +624,7 @@ export class MapManager {
         this._startRubberBand(marker);
 
         const onMove = (ev) => {
+          manualDragMoved = true;
           const latlng = this.map.mouseEventToLatLng(ev);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
@@ -635,8 +642,12 @@ export class MapManager {
           this.map.dragging.enable();
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
-          const pos = marker.getLatLng();
           const idx = this.waypointMarkers.indexOf(marker);
+          if (layerToggledByLongPress && !manualDragMoved) {
+            this._deferTopWaypointLayerHighlight(idx);
+            return;
+          }
+          const pos = marker.getLatLng();
           if (idx >= 0) {
             if (isOverTrash) {
               if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -673,11 +684,16 @@ export class MapManager {
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
+        let layerToggledByLongPress = false;
+        let manualDragMoved = false;
 
-        // Long-press on overlapping waypoint toggles display level independently of track
+        // Long-press on overlapping waypoint toggles display level independently of track.
+        // Selection is applied on release so the highlight does not appear while
+        // the pointer/finger is still held down.
         const wpIdx = this.waypointMarkers.indexOf(marker);
         if (wpIdx >= 0 && this.stackedWaypointFlags?.[wpIdx]) {
-          this._toggleWaypointLayer(wpIdx);
+          this._toggleWaypointLayer(wpIdx, { select: false });
+          layerToggledByLongPress = true;
         }
 
         _dragModeActive = true;
@@ -692,6 +708,7 @@ export class MapManager {
 
         const onTouchMove = (ev) => {
           ev.preventDefault();
+          manualDragMoved = true;
           const t = ev.touches[0];
           lastTouchClientX = t.clientX;
           lastTouchClientY = t.clientY;
@@ -720,8 +737,12 @@ export class MapManager {
           this.map.dragging.enable();
           document.removeEventListener('touchmove', onTouchMove);
           document.removeEventListener('touchend', onTouchEnd);
-          const pos = marker.getLatLng();
           const idx = this.waypointMarkers.indexOf(marker);
+          if (layerToggledByLongPress && !manualDragMoved) {
+            this._deferTopWaypointLayerHighlight(idx);
+            return;
+          }
+          const pos = marker.getLatLng();
           if (idx >= 0) {
             if (isOverTrash) {
               if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -779,16 +800,22 @@ export class MapManager {
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
         // Requirement 1: Toggle highlight on single click
-        this.onWaypointSelect?.(idx, false, true);
+        this._scheduleWaypointSelect(idx, false, true);
       }
     });
 
     // Double-click on marker: highlight and center
     marker.on('dblclick', (e) => {
       L.DomEvent.stopPropagation(e);
+      this._clearWaypointClickTimeout();
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
-        this.onWaypointSelect?.(idx, false, true);
+        if (this.stackedWaypointFlags?.[idx]) {
+          this._toggleWaypointLayer(idx, { select: false });
+          this._deferTopWaypointLayerHighlight(idx);
+        } else {
+          this._deferWaypointSelect(idx, false, true);
+        }
       }
     });
 
@@ -1165,6 +1192,14 @@ export class MapManager {
       this._bindGradientRouteEvents(pl);
       this.gradientPolylines.push(pl);
     }
+
+    this._bringOutboundRouteSegmentsToFront();
+  }
+
+  _bringOutboundRouteSegmentsToFront() {
+    this.gradientPolylines
+      .filter((pl) => pl._isReturn === false)
+      .forEach((pl) => pl.bringToFront());
   }
 
   /**
@@ -1318,6 +1353,11 @@ export class MapManager {
     const flagsChanged =
       newFlags.length !== this.stackedWaypointFlags.length ||
       newFlags.some((f, i) => f !== this.stackedWaypointFlags[i]);
+    newFlags.forEach((isStacked, i) => {
+      if (isStacked && !this.stackedWaypointFlags[i]) {
+        this.waypointLayerSwapped[i] = true;
+      }
+    });
     this.stackedWaypointFlags = newFlags;
     if (flagsChanged) this._updateMarkerIcons();
 
@@ -1331,9 +1371,8 @@ export class MapManager {
       marker._isReturn = true;
       marker._legId = this._legIdAtCumDist(pt._cum);
 
-      // Sit on top of the (now hidden) outbound marker at stacked locations so
-      // clicks land on the return circle.
-      marker.setZIndexOffset(100);
+      const outboundOnTop = this.waypointLayerSwapped[pt.wpIndex] ?? true;
+      marker.setZIndexOffset(outboundOnTop ? 0 : 100);
 
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
@@ -1343,17 +1382,47 @@ export class MapManager {
           if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
           return;
         }
-        if (pt.wpIndex !== undefined) this.onWaypointSelect?.(pt.wpIndex, true);
+        if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true);
+      });
+
+      marker.on('dblclick', (e) => {
+        L.DomEvent.stopPropagation(e);
+        this._clearWaypointClickTimeout();
+        this._toggleWaypointLayer(marker._wpIndex, { select: false });
+        this._deferTopWaypointLayerHighlight(marker._wpIndex);
       });
 
       // Long-press (500ms) to cycle overlapping layers
       let _lpTimer = null;
       let _startX = 0, _startY = 0;
+      let _pendingLPHighlight = false;
+
+      const cleanupLPListeners = () => {
+        document.removeEventListener('mouseup', endLP);
+        document.removeEventListener('touchend', endLP);
+        document.removeEventListener('touchcancel', cancelLP);
+      };
+
+      const cancelLP = () => {
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        _pendingLPHighlight = false;
+        cleanupLPListeners();
+      };
+
+      const endLP = () => {
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        if (_pendingLPHighlight) {
+          _pendingLPHighlight = false;
+          this._deferTopWaypointLayerHighlight(marker._wpIndex);
+        }
+        cleanupLPListeners();
+      };
       
       const startLP = (e) => {
         if (this.isFrozen) return;
         const oe = e.originalEvent;
         if (oe.button !== undefined && oe.button !== 0) return;
+        cancelLP();
         const touch = oe.touches ? oe.touches[0] : oe;
         _startX = touch.clientX;
         _startY = touch.clientY;
@@ -1361,8 +1430,13 @@ export class MapManager {
         _lpTimer = setTimeout(() => {
           _lpTimer = null;
           if (navigator.vibrate) navigator.vibrate(40);
-          this._toggleWaypointLayer(marker._wpIndex);
+          this._toggleWaypointLayer(marker._wpIndex, { select: false });
+          _pendingLPHighlight = true;
         }, 500);
+
+        document.addEventListener('mouseup', endLP);
+        document.addEventListener('touchend', endLP);
+        document.addEventListener('touchcancel', cancelLP);
       };
       
       const moveLP = (e) => {
@@ -1374,17 +1448,15 @@ export class MapManager {
           _lpTimer = null;
         }
       };
-      
-      const endLP = () => {
-        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-      };
 
       marker.on('mousedown touchstart', startLP);
       marker.on('mousemove touchmove', moveLP);
-      marker.on('mouseup touchend mouseleave touchcancel', endLP);
+      marker.on('mouseup touchend', endLP);
+      marker.on('mouseleave touchcancel', cancelLP);
       marker.on('contextmenu', (e) => {
         L.DomEvent.stop(e);
-        this._toggleWaypointLayer(marker._wpIndex);
+        this._toggleWaypointLayer(marker._wpIndex, { select: false });
+        this._deferTopWaypointLayerHighlight(marker._wpIndex);
       });
 
       this.returnWaypointMarkers.push(marker);
@@ -1885,14 +1957,45 @@ export class MapManager {
    *  by default the (dashed) return circle is the one the user sees at stacked
    *  locations — only when an outbound marker is highlighted does it rise
    *  above its return counterpart. */
-  _toggleWaypointLayer(idx) {
+  _toggleWaypointLayer(idx, { select = true } = {}) {
     if (idx === undefined || idx < 0 || !this.stackedWaypointFlags?.[idx]) return;
     
     // Toggle the swap state for this specific waypoint index
     this.waypointLayerSwapped[idx] = !this.waypointLayerSwapped[idx];
     this._resetWaypointMarkerZ();
-    
-    // Now highlight the one that has been brought to the top
+
+    if (select) this._highlightTopWaypointLayer(idx);
+  }
+
+  _clearWaypointClickTimeout() {
+    if (this._waypointClickTimeout) {
+      clearTimeout(this._waypointClickTimeout);
+      this._waypointClickTimeout = null;
+    }
+  }
+
+  _scheduleWaypointSelect(wpIndex, isReturn = false, shouldToggle = false) {
+    this._clearWaypointClickTimeout();
+    this._waypointClickTimeout = setTimeout(() => {
+      this._waypointClickTimeout = null;
+      this.onWaypointSelect?.(wpIndex, isReturn, shouldToggle);
+    }, 250);
+  }
+
+  _deferWaypointSelect(wpIndex, isReturn = false, shouldToggle = false) {
+    this._clearWaypointClickTimeout();
+    setTimeout(() => this.onWaypointSelect?.(wpIndex, isReturn, shouldToggle), 0);
+  }
+
+  _deferTopWaypointLayerHighlight(idx) {
+    this._clearWaypointClickTimeout();
+    setTimeout(() => this._highlightTopWaypointLayer(idx), 0);
+  }
+
+  _highlightTopWaypointLayer(idx) {
+    if (idx === undefined || idx < 0 || !this.stackedWaypointFlags?.[idx]) return;
+
+    // Highlight the one that has been brought to the top.
     const isOutboundOnTop = this.waypointLayerSwapped[idx];
     if (isOutboundOnTop) {
       this.highlightWaypoint(idx);
@@ -1905,21 +2008,21 @@ export class MapManager {
 
   /**
    * Reset all marker z-indices to their default stack order.
-   * Default: Return leg (100) is above Outbound leg (0).
+   * Default: outbound leg (100) is above return leg (0).
    * Overridden by waypointLayerSwapped[idx].
    */
   _resetWaypointMarkerZ() {
     this.waypointMarkers.forEach((m, i) => {
       m.getElement()?.classList.remove('is-selected');
-      // If swapped, outbound is at 100. Default is 0.
-      const offset = this.waypointLayerSwapped[i] ? 100 : 0;
+      const outboundOnTop = this.waypointLayerSwapped[i] ?? true;
+      const offset = outboundOnTop ? 100 : 0;
       m.setZIndexOffset(offset);
     });
     this.returnWaypointMarkers.forEach((m) => {
       m.getElement()?.classList.remove('is-selected');
       const i = m._wpIndex;
-      // If swapped, return is at 0. Default is 100.
-      const offset = (i !== undefined && this.waypointLayerSwapped[i]) ? 0 : 100;
+      const outboundOnTop = i !== undefined ? (this.waypointLayerSwapped[i] ?? true) : true;
+      const offset = outboundOnTop ? 0 : 100;
       m.setZIndexOffset(offset);
     });
   }
