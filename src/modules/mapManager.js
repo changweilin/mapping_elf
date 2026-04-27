@@ -926,6 +926,30 @@ export class MapManager {
     this.onWaypointChange(this.waypoints);
   }
 
+  moveWaypointTo(fromIndex, toIndex) {
+    if (fromIndex < 0 || fromIndex >= this.waypoints.length) return;
+    const clampedTo = Math.max(0, Math.min(this.waypoints.length - 1, toIndex));
+    if (fromIndex === clampedTo) return;
+    const total = this.waypoints.length;
+
+    const moveInArray = (arr) => {
+      arr.length = total;
+      const [item] = arr.splice(fromIndex, 1);
+      arr.splice(clampedTo, 0, item);
+    };
+
+    moveInArray(this.waypoints);
+    moveInArray(this.waypointMarkers);
+    moveInArray(this.waypointWeather);
+    moveInArray(this.waypointColors);
+    moveInArray(this.waypointLabels);
+    moveInArray(this.waypointMetadata);
+    moveInArray(this.waypointLayerSwapped);
+
+    this._updateMarkerIcons();
+    this.onWaypointChange(this.waypoints);
+  }
+
   clearWaypoints() {
     this.waypointMarkers.forEach((m) => this.map.removeLayer(m));
     this.waypoints = [];

@@ -1765,23 +1765,7 @@ function updateWaypointList(waypoints) {
 
       const offset = targetIdx - dragIndex;
       if (offset !== 0) {
-        // Move one step at a time via manager to update everything correctly
-        const waypointsCopy = [...mapManager.waypoints];
-        const [moved] = waypointsCopy.splice(dragIndex, 1);
-        waypointsCopy.splice(targetIdx, 0, moved);
-        
-        const _wasSuppressed = history.suppressed;
-        history.suppressed = true;
-        const cb = mapManager.onWaypointChange;
-        mapManager.onWaypointChange = () => {};
-        try {
-          mapManager.clearWaypoints();
-          waypointsCopy.forEach(wp => mapManager.addWaypoint(wp[0], wp[1]));
-        } finally {
-          mapManager.onWaypointChange = cb;
-          history.suppressed = _wasSuppressed;
-        }
-        onWaypointsChanged(mapManager.waypoints);
+        mapManager.moveWaypointTo(dragIndex, targetIdx);
       } else {
         updateWaypointList(mapManager.waypoints);
       }
@@ -4114,10 +4098,14 @@ function computeIntermediatePoints(coords, intervalKm) {
   const result = [];
   let cumDist = 0;
   let nextMarkM = intervalM;
+  let totalRouteM = 0;
+  for (let i = 1; i < coords.length; i++) {
+    totalRouteM += haversineDistance(coords[i - 1], coords[i]);
+  }
 
   for (let i = 1; i < coords.length; i++) {
     const segDist = haversineDistance(coords[i - 1], coords[i]);
-    while (nextMarkM <= cumDist + segDist + 1e-6) {
+    while (nextMarkM < totalRouteM - 1e-6 && nextMarkM <= cumDist + segDist + 1e-6) {
       const frac = segDist > 0 ? (nextMarkM - cumDist) / segDist : 0;
       
       // Use Spherical Mercator projection for interpolation to ensure points 
@@ -4140,6 +4128,69 @@ function computeIntermediatePoints(coords, intervalKm) {
     cumDist += segDist;
   }
   return result;
+}
+
+function interpolateRoutePointAtCum(coords, dists, cumDistM) {
+  if (!coords.length) return null;
+  if (cumDistM <= 0) return { lat: coords[0][0], lng: coords[0][1] };
+  const lastIdx = coords.length - 1;
+  const total = dists[lastIdx] || 0;
+  if (cumDistM >= total) return { lat: coords[lastIdx][0], lng: coords[lastIdx][1] };
+
+  for (let i = 1; i < coords.length; i++) {
+    if (dists[i] >= cumDistM) {
+      const span = dists[i] - dists[i - 1];
+      const frac = span > 0 ? (cumDistM - dists[i - 1]) / span : 0;
+      const p1 = L.Projection.SphericalMercator.project(L.latLng(coords[i - 1][0], coords[i - 1][1]));
+      const p2 = L.Projection.SphericalMercator.project(L.latLng(coords[i][0], coords[i][1]));
+      const projectedPoint = L.point(
+        p1.x + frac * (p2.x - p1.x),
+        p1.y + frac * (p2.y - p1.y)
+      );
+      const unprojected = L.Projection.SphericalMercator.unproject(projectedPoint);
+      return { lat: unprojected.lat, lng: unprojected.lng };
+    }
+  }
+  return { lat: coords[lastIdx][0], lng: coords[lastIdx][1] };
+}
+
+function computeIntermediatePointsBySegments(coords, dists, anchorDists, intervalKm) {
+  const intervalM = intervalKm * 1000;
+  const result = [];
+  for (let i = 0; i < anchorDists.length - 1; i++) {
+    const start = anchorDists[i];
+    const end = anchorDists[i + 1];
+    if (end - start <= intervalM * 0.05) continue;
+    for (let mark = start + intervalM; mark < end - 1e-6; mark += intervalM) {
+      const pt = interpolateRoutePointAtCum(coords, dists, mark);
+      if (pt) result.push({ ...pt, cumDistM: mark });
+    }
+  }
+  return result;
+}
+
+function buildSegmentSamples(coords, dists, startCum, endCum, getEleAt) {
+  const samples = [];
+  const addSample = (cum) => {
+    const pt = interpolateRoutePointAtCum(coords, dists, cum);
+    if (!pt) return;
+    const prev = samples[samples.length - 1];
+    if (prev && Math.abs(prev.cum - cum) < 1e-6) return;
+    samples.push({ lat: pt.lat, lng: pt.lng, cum, ele: getEleAt(cum) ?? 0 });
+  };
+
+  addSample(startCum);
+  for (let i = 1; i < coords.length - 1; i++) {
+    if (dists[i] > startCum + 1e-6 && dists[i] < endCum - 1e-6) {
+      samples.push({ lat: coords[i][0], lng: coords[i][1], cum: dists[i], ele: getEleAt(dists[i]) ?? 0 });
+    }
+  }
+  addSample(endCum);
+
+  const segDists = samples.map(s => s.cum - startCum);
+  const segCoords = samples.map(s => [s.lat, s.lng]);
+  const segElevs = samples.map(s => s.ele);
+  return { samples, segCoords, segDists, segElevs };
 }
 
 /**
@@ -4254,9 +4305,13 @@ function buildWeatherPoints() {
 
   // --- Compute cumulative distances for waypoints along the route ---
   let totalDistM = 0;
+  const routeDists = coords.length ? [0] : [];
   const wpCumDist = [];
   if (coords.length > 1) {
-    for (let j = 1; j < coords.length; j++) totalDistM += haversineDistance(coords[j - 1], coords[j]);
+    for (let j = 1; j < coords.length; j++) {
+      totalDistM += haversineDistance(coords[j - 1], coords[j]);
+      routeDists.push(totalDistM);
+    }
     let searchStart = 0;
     for (let i = 0; i < wps.length; i++) {
       let minDist = Infinity, minIdx = searchStart;
@@ -4293,6 +4348,16 @@ function buildWeatherPoints() {
 
   /** Get elapsed hours for a given cumDistM (full-route metres). */
   const getElapsedH = (cumDistM) => {
+    if (perSegmentMode && (speedIntervalMode || segmentIntervalKm > 0) && coords.length > 1 && routeDists.length > 1) {
+      const timeline = getPerSegmentPaceTimeline();
+      for (const seg of timeline.segments) {
+        if (cumDistM >= seg.startCum - 1e-3 && cumDistM <= seg.endCum + 1e-3) {
+          const localDist = Math.max(0, Math.min(seg.endCum - seg.startCum, cumDistM - seg.startCum));
+          return seg.startElapsedH + interpolateTimeAtDist(localDist, seg.dists, seg.times);
+        }
+      }
+      return timeline.totalH || 0;
+    }
     if (!cumTimes || !sampledDists.length || fullTotalDistBuild === 0) return 0;
     // Map high-res distance to sampled distance space for pace lookup
     const fraction = Math.max(0, Math.min(1, cumDistM / (totalDistM || 1)));
@@ -4308,6 +4373,41 @@ function buildWeatherPoints() {
     // Map high-res distance to sampled distance space for elevation lookup
     const fraction = Math.max(0, Math.min(1, cumDistM / (totalDistM || 1)));
     return elevationProfile._interpolateElevAtCumM(fraction * totalSampled);
+  };
+
+  const getWaypointAnchorDists = () => {
+    const anchors = [0, ...wpCumDist, totalDistM]
+      .filter(v => typeof v === 'number' && Number.isFinite(v));
+    if ((roundTripMode || oLoopMode) && !importedTrackMode && wps.length >= 2 && totalDistM > 0) {
+      if (roundTripMode) {
+        for (let i = wps.length - 2; i >= 0; i--) anchors.push(totalDistM - wpCumDist[i]);
+      } else if (oLoopMode) {
+        anchors.push(totalDistM);
+      }
+    }
+    anchors.sort((a, b) => a - b);
+    return anchors.filter((v, i) => i === 0 || Math.abs(v - anchors[i - 1]) > 1e-3);
+  };
+
+  let perSegmentPaceTimeline = null;
+  const getPerSegmentPaceTimeline = () => {
+    if (perSegmentPaceTimeline) return perSegmentPaceTimeline;
+    const segments = [];
+    let elapsedAtStart = 0;
+    const anchors = getWaypointAnchorDists();
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const startCum = anchors[i];
+      const endCum = anchors[i + 1];
+      if (endCum - startCum <= 1e-3) continue;
+      const seg = buildSegmentSamples(coords, routeDists, startCum, endCum, getEleAt);
+      if (seg.segDists.length < 2) continue;
+      const times = computeCumulativeTimes(seg.segElevs, seg.segDists, speedActivity, paceParams);
+      const totalH = times[times.length - 1] || 0;
+      segments.push({ startCum, endCum, startElapsedH: elapsedAtStart, totalH, times, dists: seg.segDists });
+      elapsedAtStart += totalH;
+    }
+    perSegmentPaceTimeline = { anchors, segments, totalH: elapsedAtStart };
+    return perSegmentPaceTimeline;
   };
 
   const all = [];
@@ -4422,14 +4522,9 @@ function buildWeatherPoints() {
     // Skip generating dynamic intervals.
   } else if (coords.length > 1) {
     // Construct integrated (full-trip) high-resolution track for interval calculations.
-    // This ensures markers stay on-track even during mirroring / O-loops and avoids
-    // the "sampled shortcut" deviation seen with 80-point elevation profiles.
+    // currentRouteCoords already reflects the selected nav mode, so every
+    // cumDistM below remains measured from the actual trip start.
     let integratedCoords = [...coords];
-    if (roundTripMode && !importedTrackMode) {
-      for (let i = coords.length - 2; i >= 0; i--) integratedCoords.push(coords[i]);
-    } else if (oLoopMode && !importedTrackMode) {
-      integratedCoords.push(coords[0]);
-    }
 
     if (speedIntervalMode) {
       // Speed mode: intermediate points every 1 hour of travel time.
@@ -4441,18 +4536,8 @@ function buildWeatherPoints() {
       }
       const integratedElevs = integratedCoords.map((_, i) => getEleAt(integratedDists[i]));
 
-      let wpTimes = null;
-      if (perSegmentMode) {
-        const allWpCumDists = [...wpCumDist];
-        if (roundTripMode && wps.length >= 2 && totalDistM > 0) {
-          for (let i = wps.length - 2; i >= 0; i--) allWpCumDists.push(totalDistM - wpCumDist[i]);
-        } else if (oLoopMode && wps.length >= 2 && totalDistM > 0) {
-          allWpCumDists.push(totalDistM);
-        }
-        wpTimes = allWpCumDists.map(cum => getElapsedH(cum));
-      }
-
-      const hourlyPts = computeHourlyPoints(integratedCoords, integratedElevs, integratedDists, speedActivity, 1.0, paceParams, wpTimes);
+      if (!perSegmentMode) {
+      const hourlyPts = computeHourlyPoints(integratedCoords, integratedElevs, integratedDists, speedActivity, 1.0, paceParams);
       hourlyPts.forEach((pt) => {
         const hLabel = Number.isInteger(pt.estTimeH) ? `第 ${pt.estTimeH} 小時` : `${pt.estTimeH.toFixed(1)} 小時`;
         all.push({
@@ -4462,9 +4547,42 @@ function buildWeatherPoints() {
           _ele: pt._ele ?? getEleAt(pt.cumDistM),
         });
       });
+      } else {
+        const timeline = getPerSegmentPaceTimeline();
+        timeline.segments.forEach(seg => {
+          let nextH = 1.0;
+          while (nextH < seg.totalH - 0.05) {
+            for (let j = 1; j < seg.times.length; j++) {
+              if (seg.times[j] >= nextH) {
+                const span = seg.times[j] - seg.times[j - 1];
+                const f = span > 0 ? (nextH - seg.times[j - 1]) / span : 0;
+                const localDist = seg.dists[j - 1] + f * (seg.dists[j] - seg.dists[j - 1]);
+                const cumDistM = seg.startCum + localDist;
+                const pt = interpolateRoutePointAtCum(integratedCoords, integratedDists, cumDistM);
+                if (pt) {
+                  all.push({
+                    label: `${nextH} h`, lat: pt.lat, lng: pt.lng, isWaypoint: false,
+                    isReturn: cumDistM > (wpCumDist[wps.length - 1] + 1e-3),
+                    _cum: cumDistM, _elapsedH: seg.startElapsedH + nextH,
+                    _ele: getEleAt(cumDistM),
+                  });
+                }
+                break;
+              }
+            }
+            nextH += 1.0;
+          }
+        });
+      }
     } else if (segmentIntervalKm > 0) {
       // km-interval intermediate points using high-res integrated track
-      const intermediates = computeIntermediatePoints(integratedCoords, segmentIntervalKm);
+      const integratedDists = [0];
+      for (let j = 1; j < integratedCoords.length; j++) {
+        integratedDists.push(integratedDists[j - 1] + haversineDistance(integratedCoords[j - 1], integratedCoords[j]));
+      }
+      const intermediates = perSegmentMode
+        ? computeIntermediatePointsBySegments(integratedCoords, integratedDists, getWaypointAnchorDists(), segmentIntervalKm)
+        : computeIntermediatePoints(integratedCoords, segmentIntervalKm);
       intermediates.forEach((pt) => {
         const kmLabel = (pt.cumDistM / 1000 % 1 === 0)
           ? `${pt.cumDistM / 1000 | 0} km`
@@ -4549,8 +4667,8 @@ function buildWeatherPoints() {
   // Sort by position along route
   all.sort((a, b) => {
     if (Math.abs(a._cum - b._cum) < 1e-3) {
-      if (a.isWaypoint && !b.isWaypoint) return 1;
-      if (!a.isWaypoint && b.isWaypoint) return -1;
+      if (a.isWaypoint && !b.isWaypoint) return -1;
+      if (!a.isWaypoint && b.isWaypoint) return 1;
       return 0;
     }
     return a._cum - b._cum;
@@ -5325,25 +5443,13 @@ function bindWeatherTableColumnDrag(container) {
       }
     }
 
-    const wps = [...mapManager.waypoints];
-    if (_draggedWpIdx < 0 || _draggedWpIdx >= wps.length) return;
-    const [moved] = wps.splice(_draggedWpIdx, 1);
-
     let insertAt = targetWpIdx;
     if (_draggedWpIdx < targetWpIdx) insertAt -= 1;
     if (_targetAfterFinal) insertAt += 1;
-    insertAt = Math.max(0, Math.min(wps.length, insertAt));
+    insertAt = Math.max(0, Math.min(mapManager.waypoints.length - 1, insertAt));
 
     if (insertAt === _draggedWpIdx) return; // no positional change
-    wps.splice(insertAt, 0, moved);
-
-    // Rebuild waypoints in one shot, suppressing intermediate change callbacks
-    mapManager.clearWaypoints();
-    const cb = mapManager.onWaypointChange;
-    mapManager.onWaypointChange = () => {};
-    wps.forEach(wp => mapManager.addWaypoint(wp[0], wp[1]));
-    mapManager.onWaypointChange = cb;
-    onWaypointsChanged(mapManager.waypoints);
+    mapManager.moveWaypointTo(_draggedWpIdx, insertAt);
   };
 
   const startDrag = (el, clientX, clientY) => {
@@ -5408,9 +5514,21 @@ function bindWeatherTableColumnDrag(container) {
 
     el.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
       triggerLP(e.clientX, e.clientY);
-      const guardMove = (ev) => checkMove(ev.clientX, ev.clientY);
+      const canDragByMove = el.matches('.wt-header-row-label .wt-col-head');
+      const guardMove = (ev) => {
+        if (!lpTimer) return;
+        const dx = ev.clientX - startX, dy = ev.clientY - startY;
+        if (dx * dx + dy * dy <= MOVE_TOL_SQ) return;
+        if (canDragByMove) {
+          cancelLP();
+          startDrag(el, startX, startY);
+          onMove(ev);
+        } else {
+          cancelLP();
+        }
+      };
       const guardUp = () => {
         cancelLP();
         document.removeEventListener('mousemove', guardMove);
@@ -5421,7 +5539,7 @@ function bindWeatherTableColumnDrag(container) {
     });
 
     el.addEventListener('touchstart', (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
       const t = e.touches[0];
       triggerLP(t.clientX, t.clientY);
     }, { passive: true });
