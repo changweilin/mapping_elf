@@ -3754,6 +3754,16 @@ function updateWeatherTableCell(cell, key, val) {
   let valueEl = cell.querySelector('.wt-cell-value');
   const layerForRow = ROW_KEY_TO_WINDY_LAYER[key];
 
+  if (key === 'coords') {
+    const col = parseInt(cell.dataset.col);
+    const pt = weatherPoints[col];
+    const coords = pt ? formatCoords(pt.lat, pt.lng) : val;
+    const html = `<span class="wt-cell-value clickable-coords" data-coords="${coords}" title="點擊複製座標">${coords}</span>`;
+    if (valueEl) valueEl.outerHTML = html;
+    else cell.innerHTML = html;
+    return;
+  }
+
   // If the cell should have an icon but it's missing (e.g. cleared by textContent), restore it
   if (layerForRow && !cell.querySelector('.row-windy-link')) {
     const col = parseInt(cell.dataset.col);
@@ -5097,9 +5107,12 @@ function renderWeatherPanel() {
             12,
           )
         : '';
-      const cellInner = layerForRow
-        ? `${iconHtml}<span class="wt-cell-value">—</span>`
-        : '—';
+      const coordText = row.key === 'coords' ? formatCoords(pt.lat, pt.lng) : '';
+      const cellInner = row.key === 'coords'
+        ? `<span class="wt-cell-value clickable-coords" data-coords="${coordText}" title="點擊複製座標">${coordText}</span>`
+        : layerForRow
+          ? `${iconHtml}<span class="wt-cell-value">—</span>`
+          : '—';
       html += `<td class="wt-data-cell wt-td${returnClass}${startClass}${layerForRow ? ' wt-cell-with-icon' : ''}" data-col="${i}" data-key="${row.key}"${cellStyle}>${cellInner}</td>`;
     });
     html += '</tr>';
@@ -6145,10 +6158,12 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
     e.stopPropagation();
     mapManager.closeCursorWeatherPopup();
   });
-  wrapper.querySelector('.clickable-coords')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const text = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-    copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
+  wrapper.querySelectorAll('.clickable-coords').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const text = e.currentTarget.dataset.coords || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
+    });
   });
 }
 
@@ -6186,25 +6201,13 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     navigateWeatherCard(colIdx, +1);
   });
   // Click to copy coordinates
-  root.querySelector('.clickable-coords')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const text = e.currentTarget.dataset.coords;
-    if (!text) return;
-    const done = (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500);
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
-    } else {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        done(true);
-      } catch (err) { done(false); }
-    }
+  root.querySelectorAll('.clickable-coords').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const text = e.currentTarget.dataset.coords;
+      if (!text) return;
+      copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
+    });
   });
 
   // Sync changes back to the weather table
