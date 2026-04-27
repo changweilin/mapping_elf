@@ -79,6 +79,10 @@ export class MapManager {
     this._cursorWeatherPopup = null; // Ad-hoc weather card anchored at the cursor (independent of weatherPoints)
     this.onMapCursorAction = null; // callback(action, lat, lng)
 
+    // Selection/Highlight state tracking
+    this.highlightedWpIndex = -1;
+    this.highlightedIsReturn = false;
+
     this.map = L.map(containerId, {
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
@@ -552,7 +556,15 @@ export class MapManager {
     let _mouseStartX = 0, _mouseStartY = 0;
     marker.on('mousedown', (e) => {
       if (this.isFrozen || e.originalEvent.button !== 0 || _dragModeActive) return;
-      L.DomEvent.stopPropagation(e);
+
+      // Rule: Highlight first if not already highlighted
+      const wpIdx = this.waypointMarkers.indexOf(marker);
+      if (wpIdx >= 0 && (this.highlightedWpIndex !== wpIdx || this.highlightedIsReturn !== false)) {
+        this.highlightWaypoint(wpIdx);
+        this.onWaypointSelect?.(wpIdx, false);
+        return;
+      }
+
       _mouseStartX = e.originalEvent.clientX;
       _mouseStartY = e.originalEvent.clientY;
 
@@ -637,6 +649,14 @@ export class MapManager {
       const touch = e.originalEvent.touches[0];
       _touchStartX = touch.clientX;
       _touchStartY = touch.clientY;
+
+      // Rule: Highlight first if not already highlighted
+      const wpIdx = this.waypointMarkers.indexOf(marker);
+      if (wpIdx >= 0 && (this.highlightedWpIndex !== wpIdx || this.highlightedIsReturn !== false)) {
+        this.highlightWaypoint(wpIdx);
+        this.onWaypointSelect?.(wpIdx, false);
+        return;
+      }
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
@@ -1337,6 +1357,13 @@ export class MapManager {
         const touch = oe.touches ? oe.touches[0] : oe;
         _startX = touch.clientX;
         _startY = touch.clientY;
+
+        // Rule: Highlight first if not already highlighted
+        if (marker._wpIndex !== undefined && (this.highlightedWpIndex !== marker._wpIndex || this.highlightedIsReturn !== true)) {
+          this.highlightReturnWaypoint(marker._wpIndex);
+          this.onWaypointSelect?.(marker._wpIndex, true);
+          return;
+        }
         
         _lpTimer = setTimeout(() => {
           _lpTimer = null;
@@ -1878,6 +1905,8 @@ export class MapManager {
    *  (which sits at +100 by default). */
   highlightWaypoint(wpIndex) {
     this._resetWaypointMarkerZ();
+    this.highlightedWpIndex = wpIndex;
+    this.highlightedIsReturn = false;
     const m = this.waypointMarkers[wpIndex];
     if (m) {
       m.getElement()?.classList.add('is-selected');
@@ -1888,6 +1917,8 @@ export class MapManager {
   /** Highlight a return-leg waypoint marker by wpIndex. */
   highlightReturnWaypoint(wpIndex) {
     this._resetWaypointMarkerZ();
+    this.highlightedWpIndex = wpIndex;
+    this.highlightedIsReturn = true;
     const m = this.returnWaypointMarkers.find((x) => x._wpIndex === wpIndex);
     if (m) {
       m.getElement()?.classList.add('is-selected');
@@ -1897,6 +1928,8 @@ export class MapManager {
 
   /** Remove all waypoint selection highlights (outbound + return). */
   clearWaypointHighlight() {
+    this.highlightedWpIndex = -1;
+    this.highlightedIsReturn = false;
     this._resetWaypointMarkerZ();
   }
 

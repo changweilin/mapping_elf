@@ -1563,7 +1563,7 @@ function updateWaypointList(waypoints) {
       return `
         <div class="waypoint-item ${frozen ? 'is-frozen' : ''}">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
-          <span class="wp-coords clickable-coords" data-coords="${coords}" title="點擊複製座標" style="color:${gradColor}">
+          <span class="wp-coords" title="單擊高亮" style="color:${gradColor}">
             <span class="wp-place-name">${displayName}</span>
             ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
@@ -1779,6 +1779,19 @@ function updateWaypointList(waypoints) {
     let startX = 0, startY = 0;
     
     const triggerLP = (clientX, clientY) => {
+      // Rule: Highlight first if not already highlighted
+      if (!item.classList.contains('wp-highlight')) {
+        const colIdx = weatherPoints.findIndex(p => p.isWaypoint && !p.isReturn && p.wpIndex === idx);
+        if (colIdx >= 0) {
+          highlightPoint(colIdx);
+        } else {
+          mapManager.highlightWaypoint(idx);
+          waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
+          item.classList.add('wp-highlight');
+        }
+        return; // Block the long-press drag
+      }
+
       startX = clientX;
       startY = clientY;
       lpTimer = setTimeout(() => {
@@ -4505,8 +4518,10 @@ function handleWeatherTimeChange(idx, th) {
   refreshWindyLinks();
   fetchAllWeatherData({ onlyColIndex: idx });
 
-  // Re-render any open weather cards to reflect the new time/date/weather
   refreshOpenWeatherCards();
+  
+  // Rule: Highlighting the point when date/time changes
+  highlightPoint(idx);
 }
 
 /** Re-render all currently open weather cards (Map Popups). */
@@ -4829,7 +4844,8 @@ function renderWeatherPanel() {
     const colIdx = parseInt(th.dataset.idx);
     const pt = weatherPoints[colIdx];
     th.addEventListener('click', (e) => {
-      if (e.target.closest('.wt-date-input, .wt-time-select, .wt-col-label')) return;
+      // Direct click on input/label is an exception (单击例外) but we still want to highlight.
+      // We don't return anymore, so the highlightPoint(colIdx) will run.
       highlightPoint(colIdx);
     });
     const labelEl = th.querySelector('.wt-col-label');
@@ -5782,16 +5798,6 @@ function panMapToVisibleCenter(latlng) {
  */
 function highlightPoint(colIdx) {
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
-
-  // Toggle: clicking the already-highlighted column clears the highlight
-  const curTh = document.querySelector(
-    '#weather-table-container .wt-col-head.wt-col-highlight'
-  );
-  if (curTh && parseInt(curTh.dataset.idx) === colIdx) {
-    clearAllHighlights();
-    return;
-  }
-
   const pt = weatherPoints[colIdx];
 
   // 1. Weather table — highlight exactly the clicked column
