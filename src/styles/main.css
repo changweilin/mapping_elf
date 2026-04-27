@@ -2996,7 +2996,7 @@ body.is-resizing {
   flex-direction: column;
   max-height: 100vh;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   user-select: none;
 }
 
@@ -3008,6 +3008,18 @@ body.is-resizing {
   justify-content: center;
   flex-shrink: 0;
   touch-action: none;
+  position: relative;
+  z-index: 10;
+}
+
+.bp-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  bottom: -12px;
+  left: 0;
+  right: 0;
+  z-index: 1;
 }
 
 .bp-resize-handle::after {

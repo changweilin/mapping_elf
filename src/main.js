@@ -3941,7 +3941,9 @@ function initWeatherControls() {
   const getMaxPanelH = () => {
     const toolbar = document.querySelector('.toolbar');
     const toolbarH = toolbar ? toolbar.offsetHeight : 0;
-    return Math.max(MIN_H, window.innerHeight - toolbarH);
+    // Leave a small gap on mobile to ensure the handle remains reachable
+    const gap = window.innerWidth <= 768 ? 12 : 0;
+    return Math.max(MIN_H, window.innerHeight - toolbarH - gap);
   };
   const savePanelRatio = () => {
     const ratio = panel.offsetHeight / window.innerHeight;
@@ -3956,7 +3958,13 @@ function initWeatherControls() {
       h = Math.round(savedRatio * window.innerHeight);
     } else if (legacyH > 0) {
       h = legacyH;
+    } else {
+      // Default: Handle + Elevation Chart row only.
+      // We use the computed height of .bp-chart-row to handle responsive scaling.
+      const chartRow = panel.querySelector('.bp-chart-row');
+      h = (handle.offsetHeight || 18) + (chartRow?.offsetHeight || 0);
     }
+
     if (h > 0) {
       // Allow full range so dbl-click collapsed/expanded states persist across reloads.
       const clamped = Math.max(0, Math.min(getMaxPanelH(), h));
@@ -3965,15 +3973,8 @@ function initWeatherControls() {
     }
   };
 
-  // Restore saved height (ratio-based)
-  if (localStorage.getItem(LS_PANEL_HEIGHT_RATIO_KEY) || localStorage.getItem(LS_PANEL_HEIGHT_KEY)) {
-    applyPanelRatio();
-  } else {
-    requestAnimationFrame(() => {
-      const h = panel.offsetHeight;
-      if (h > 0) document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
-    });
-  }
+  // Restore saved height or apply smart default (handle + chart)
+  requestAnimationFrame(applyPanelRatio);
 
   // Sync CSS var whenever panel naturally resizes (content changes)
   new ResizeObserver(entries => {
