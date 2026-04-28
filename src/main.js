@@ -3280,12 +3280,16 @@ function buildRowWindyIconHtml(layer, url, size = 12) {
     `<img src="https://www.windy.com/favicon.ico" width="${size}" height="${size}" alt="Windy" class="windy-favicon"></a>`;
 }
 
-const WEATHER_ROWS = [
+const WEATHER_TOP_ROWS = [
   { key: 'weather', label: '天氣' },
   { key: 'temp', label: '溫度' },
   { key: 'precipitation', label: '雨量' },
   { key: 'precipProb', label: '降雨機率' },
-  { key: 'tempRange', label: '高/低溫' },
+];
+
+const WEATHER_MIDDLE_ROWS = [
+  { key: 'tempMax', label: '最高溫' },
+  { key: 'tempMin', label: '最低溫' },
   { key: 'feelsLike', label: '體感溫度' },
   { key: 'humidity', label: '濕度' },
   { key: 'dewPoint', label: '露點' },
@@ -3296,11 +3300,25 @@ const WEATHER_ROWS = [
   { key: 'visibility', label: '能見度' },
   { key: 'sunshineHours', label: '日照' },
   { key: 'radiation', label: '輻射' },
-  { key: 'elevation', label: '海拔' },
   { key: 'sunrise', label: '日出' },
   { key: 'sunset', label: '日落' },
+];
+
+const WEATHER_BOTTOM_ROWS = [
+  { key: 'distance', label: '距離' },
+  { key: 'elevation', label: '海拔' },
   { key: 'coords', label: '坐標' },
 ];
+
+const WEATHER_ROWS = [
+  ...WEATHER_TOP_ROWS,
+  ...WEATHER_MIDDLE_ROWS,
+  ...WEATHER_BOTTOM_ROWS,
+];
+
+const WEATHER_CARD_TOP_STAT_ROWS = WEATHER_TOP_ROWS.filter(row => row.key === 'precipitation' || row.key === 'precipProb');
+const WEATHER_CARD_MIDDLE_ROWS = WEATHER_MIDDLE_ROWS;
+const WEATHER_CARD_BOTTOM_ROWS = WEATHER_BOTTOM_ROWS;
 
 let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
@@ -3782,6 +3800,7 @@ const weatherCoordKey = (lat, lng, date, hour) =>
 
 function getCellValue(data, key, pt) {
   const v = (a, b) => a != null ? a : (b != null ? b : '—');
+  if (key === 'distance' && pt && Number.isFinite(pt._cum)) return formatDistance(pt._cum);
   if (key === 'elevation' && pt && pt._ele != null) return formatElevation(pt._ele);
   if (key === 'coords' && pt) return formatCoords(pt.lat, pt.lng);
   if (!data) return '—';
@@ -3789,6 +3808,8 @@ function getCellValue(data, key, pt) {
     case 'weather': return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
     case 'temp': return v(data.temp, data.tempMax);
     case 'tempRange': return (data.tempMax || data.tempMin) ? `${v(data.tempMax, '—')} / ${v(data.tempMin, '—')}` : '—';
+    case 'tempMax': return v(data.tempMax, '—');
+    case 'tempMin': return v(data.tempMin, '—');
     case 'feelsLike': return v(data.feelsLike, '—');
     case 'humidity': return v(data.humidity, '—');
     case 'dewPoint': return v(data.dewPoint, '—');
@@ -5229,7 +5250,7 @@ function renderWeatherPanel() {
         ? `<span class="wt-cell-value clickable-coords" data-coords="${coordText}" title="點擊複製座標">${coordText}</span>`
         : layerForRow
           ? `${iconHtml}<span class="wt-cell-value">—</span>`
-          : '—';
+          : `<span class="wt-cell-value">${getCellValue(null, row.key, pt)}</span>`;
       html += `<td class="wt-data-cell wt-td${returnClass}${startClass}${layerForRow ? ' wt-cell-with-icon' : ''}" data-col="${i}" data-key="${row.key}"${cellStyle}>${cellInner}</td>`;
     });
     html += '</tr>';
@@ -6004,6 +6025,28 @@ function _getWeatherCardData(colIdx) {
   return { data: null, pt, dateStr, hour, colIdx };
 }
 
+function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '') {
+  const className = `wc-info-grid${extraClass ? ` ${extraClass}` : ''}`;
+  let html = `<div class="${className}">`;
+  rows.forEach(row => {
+    const isWide = row.key === 'coords';
+    const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
+    const isCoords = row.key === 'coords';
+    const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
+    const displayVal = val(row.key);
+    const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
+    const valuePrefix = layerForRow
+      ? buildRowWindyIconHtml(layerForRow, windyUrlForLayer(layerForRow))
+      : '';
+    html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
+    html += `<span class="wc-info-label">${row.label}</span>`;
+    html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
+    html += `</div>`;
+  });
+  html += `</div>`;
+  return html;
+}
+
 /** Render a specific weather card. */
 function _renderWeatherCard(colIdx) {
   const state = _wcStates.get(colIdx);
@@ -6028,6 +6071,7 @@ function _renderWeatherCard(colIdx) {
 
   // Resolve display values
   const val = (key) => {
+    if (key === 'distance') return Number.isFinite(pt._cum) ? formatDistance(pt._cum) : '—';
     if (key === 'elevation') return formatElevation(pt._ele);
     if (key === 'coords') return formatCoords(pt.lat, pt.lng);
     if (data) return getCellValue(data, key, pt);
@@ -6086,42 +6130,9 @@ function _renderWeatherCard(colIdx) {
     html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
-    const CARD_ROWS = [
-      { key: 'tempRange', label: '高/低溫' },
-      { key: 'feelsLike', label: '體感溫度' },
-      { key: 'precipitation', label: '雨量' },
-      { key: 'precipProb', label: '降雨機率' },
-      { key: 'humidity', label: '濕度' },
-      { key: 'dewPoint', label: '露點' },
-      { key: 'cloudCover', label: '雲量' },
-      { key: 'windSpeed', label: '風速' },
-      { key: 'windGust', label: '陣風' },
-      { key: 'uvIndex', label: 'UV' },
-      { key: 'visibility', label: '能見度' },
-      { key: 'sunshineHours', label: '日照' },
-      { key: 'radiation', label: '輻射' },
-      { key: 'elevation', label: '海拔' },
-      { key: 'sunrise', label: '日出' },
-      { key: 'sunset', label: '日落' },
-      { key: 'coords', label: '坐標' },
-    ];
-    html += `<div class="wc-info-grid">`;
-    CARD_ROWS.forEach(row => {
-      const isWide = row.key === 'coords';
-      const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
-      const isCoords = row.key === 'coords';
-      const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
-      const displayVal = val(row.key);
-      const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
-      const valuePrefix = layerForRow
-        ? buildRowWindyIconHtml(layerForRow, buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layerForRow))
-        : '';
-      html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
-      html += `<span class="wc-info-label">${row.label}</span>`;
-      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
-      html += `</div>`;
-    });
-    html += `</div>`;
+    html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
+    html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer));
+    html += buildWeatherCardSectionHtml(WEATHER_CARD_BOTTOM_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-bottom-facts');
 
     const windyUrl = buildWindyUrl(pt.lat, pt.lng, dateStr, hour);
     html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
@@ -6180,6 +6191,7 @@ async function openCursorWeatherCard(lat, lng) {
 
 function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
   const val = (key) => {
+    if (key === 'distance') return '—';
     if (key === 'coords') return formatCoords(lat, lng);
     if (data) return getCellValue(data, key, { lat, lng }); // GPS cursor has no elevation, so pt._ele will be undefined
     return '—';
@@ -6208,42 +6220,9 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
   html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
 
   if (status === 'ok') {
-    const CARD_ROWS = [
-      { key: 'tempRange', label: '高/低溫' },
-      { key: 'feelsLike', label: '體感溫度' },
-      { key: 'precipitation', label: '雨量' },
-      { key: 'precipProb', label: '降雨機率' },
-      { key: 'humidity', label: '濕度' },
-      { key: 'dewPoint', label: '露點' },
-      { key: 'cloudCover', label: '雲量' },
-      { key: 'windSpeed', label: '風速' },
-      { key: 'windGust', label: '陣風' },
-      { key: 'uvIndex', label: 'UV' },
-      { key: 'visibility', label: '能見度' },
-      { key: 'sunshineHours', label: '日照' },
-      { key: 'radiation', label: '輻射' },
-      { key: 'elevation', label: '海拔' },
-      { key: 'sunrise', label: '日出' },
-      { key: 'sunset', label: '日落' },
-      { key: 'coords', label: '坐標' },
-    ];
-    html += `<div class="wc-info-grid">`;
-    CARD_ROWS.forEach(row => {
-      const isWide = row.key === 'coords';
-      const fullWidthAttr = isWide ? ' style="grid-column: span 2;"' : '';
-      const isCoords = row.key === 'coords';
-      const valueClass = isCoords ? 'wc-info-value clickable-coords' : 'wc-info-value';
-      const displayVal = val(row.key);
-      const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
-      const valuePrefix = layerForRow
-        ? buildRowWindyIconHtml(layerForRow, buildWindyUrl(lat, lng, dateStr, hour, layerForRow))
-        : '';
-      html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
-      html += `<span class="wc-info-label">${row.label}</span>`;
-      html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
-      html += `</div>`;
-    });
-    html += `</div>`;
+    html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-top-stats');
+    html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer));
+    html += buildWeatherCardSectionHtml(WEATHER_CARD_BOTTOM_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-bottom-facts');
 
     const windyUrl = buildWindyUrl(lat, lng, dateStr, hour);
     html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
