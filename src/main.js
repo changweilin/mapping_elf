@@ -3609,8 +3609,15 @@ function showWaypointNamePeek(anchor, pt, fallbackIdx = 0) {
   document.body.appendChild(peek);
 
   const rect = anchor?.getBoundingClientRect?.();
-  const left = rect ? Math.min(window.innerWidth - 12, Math.max(12, rect.left + rect.width / 2)) : window.innerWidth / 2;
-  const top = rect ? Math.max(12, rect.top - 6) : Math.max(12, window.innerHeight * 0.36);
+  const peekWidth = Math.min(Math.max(label.length * 13 + 28, 90), Math.min(window.innerWidth - 24, 260));
+  const left = rect
+    ? Math.min(window.innerWidth - peekWidth / 2 - 8, Math.max(peekWidth / 2 + 8, rect.left + rect.width / 2))
+    : window.innerWidth / 2;
+  const top = rect
+    ? (rect.top > 68 ? Math.max(12, rect.top - 6) : Math.min(window.innerHeight - 12, rect.bottom + 42))
+    : Math.max(12, window.innerHeight * 0.36);
+  peek.style.width = `${peekWidth}px`;
+  peek.classList.toggle('below', !!rect && rect.top <= 68);
   peek.style.left = `${left}px`;
   peek.style.top = `${top}px`;
   requestAnimationFrame(() => peek.classList.add('show'));
@@ -5466,7 +5473,9 @@ function renderWeatherPanel() {
     html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
       <div class="wt-adj-wrap">
         <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
-        <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
+        <span class="wt-picker-icon wt-date-picker" title="選擇日期">
+          <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
+        </span>
         <button class="wt-adj-btn wt-adj-day-plus" title="後一天"${canPlus ? '' : ' disabled'}>+</button>
       </div>
     </th>`;
@@ -5520,7 +5529,9 @@ function renderWeatherPanel() {
     html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
       <div class="wt-time-row">
         <button class="wt-adj-btn wt-adj-hour-minus" title="前一小時"${locked ? ' disabled' : ''}>−</button>
-        <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
+        <span class="wt-picker-icon wt-time-picker" title="選擇時間">
+          <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
+        </span>
         <button class="wt-adj-btn wt-adj-hour-plus" title="後一小時"${locked ? ' disabled' : ''}>+</button>
       </div>
     </th>`;
@@ -5958,8 +5969,7 @@ function bindWeatherTableColumnDrag(container) {
 
     el.classList.add('wt-col-dragging');
     if (weatherTableCollapsed) {
-      const labelEl = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"] .wt-col-label`) || el;
-      showWaypointNamePeek(labelEl, pt, colIdx);
+      showWaypointNamePeek(el, pt, colIdx);
     }
     if (navigator.vibrate) navigator.vibrate(40);
 
@@ -6051,10 +6061,9 @@ function bindWeatherTableColumnDrag(container) {
 
 function bindWeatherTableNamePeek(container) {
   if (!weatherTableCollapsed) return;
-  const targets = container.querySelectorAll('.wt-header-row-label .wt-col-head, .wt-header-row-label .wt-col-label');
+  const targets = container.querySelectorAll('.wt-col-head, .wt-col-label, .wt-data-cell');
   targets.forEach(el => {
-    const th = el.closest('.wt-col-head');
-    const colIdx = parseInt(th?.dataset.idx);
+    const colIdx = parseInt(el.dataset.idx || el.dataset.col || el.closest('.wt-col-head')?.dataset.idx);
     const pt = weatherPoints[colIdx];
     if (!pt?.isWaypoint || pt.isReturn) return;
     let timer = 0;
