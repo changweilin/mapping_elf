@@ -15,7 +15,7 @@ import { OfflineManager } from './modules/offlineManager.js';
 import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
 import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist } from './modules/paceEngine.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -61,6 +61,7 @@ const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
 const LS_SPEED_MODE_KEY = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY = 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY = 'mappingElf_paceParams';
+const LS_PACE_CALIBRATION_KEY = 'mappingElf_paceCalibration';
 const LS_PER_SEGMENT_KEY = 'mappingElf_perSegment';
 const LS_STRICT_LINEAR_KEY = 'mappingElf_strictLinear';
 const LS_IMPORT_AUTO_SORT_KEY = 'mappingElf_importAutoSort';
@@ -145,6 +146,24 @@ let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
 })();
+
+let paceCalibration = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_PACE_CALIBRATION_KEY) || 'null');
+    return {
+      enabled: !!saved?.enabled,
+      factor: Number(saved?.factor) || 1,
+      tracks: Array.isArray(saved?.tracks) ? saved.tracks.slice(0, 5) : [],
+    };
+  } catch {
+    return { enabled: false, factor: 1, tracks: [] };
+  }
+})();
+paceParams = {
+  ...paceParams,
+  calibrationEnabled: paceCalibration.enabled,
+  calibrationFactor: paceCalibration.factor,
+};
 
 const LS_FAVORITES_KEY = 'mappingElf_favorites';
 const FAVORITES_MAX = 10;
@@ -330,6 +349,21 @@ function applySettingsFromStorage() {
   } catch {
     paceParams = { ...DEFAULT_PACE_PARAMS };
   }
+  try {
+    const savedCalibration = JSON.parse(localStorage.getItem(LS_PACE_CALIBRATION_KEY) || 'null');
+    paceCalibration = {
+      enabled: !!savedCalibration?.enabled,
+      factor: Number(savedCalibration?.factor) || 1,
+      tracks: Array.isArray(savedCalibration?.tracks) ? savedCalibration.tracks.slice(0, 5) : [],
+    };
+  } catch {
+    paceCalibration = { enabled: false, factor: 1, tracks: [] };
+  }
+  paceParams = {
+    ...paceParams,
+    calibrationEnabled: paceCalibration.enabled,
+    calibrationFactor: paceCalibration.factor,
+  };
 
   // Update UI components that depend on these globals
   routeEngine.setMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking');
@@ -351,6 +385,7 @@ function applySettingsFromStorage() {
   if (importAutoSortEl) importAutoSortEl.checked = importAutoSortMode;
   const importAutoNameEl = document.getElementById('import-auto-name-enable');
   if (importAutoNameEl) importAutoNameEl.checked = importAutoNameMode;
+  syncPaceCalibrationUI();
 
   // Waypoint Settings
   const collectiveMarkedEl = document.getElementById('collective-marked-pts');
@@ -546,6 +581,13 @@ const paceRestRow = document.getElementById('pace-rest-row');
 const paceRestEvery = document.getElementById('pace-rest-every');
 const paceRestMinutes = document.getElementById('pace-rest-minutes');
 const paceUnitSelect = document.getElementById('pace-unit-select');
+const paceCalibrationEnable = document.getElementById('pace-calibration-enable');
+const paceCalibrationFileInput = document.getElementById('pace-calibration-file-input');
+const paceCalibrationPick = document.getElementById('btn-pace-calibration-pick');
+const paceCalibrationCompute = document.getElementById('btn-pace-calibration-compute');
+const paceCalibrationClear = document.getElementById('btn-pace-calibration-clear');
+const paceCalibrationList = document.getElementById('pace-calibration-list');
+const paceCalibrationFactor = document.getElementById('pace-calibration-factor');
 
 /** Convert km/h → displayed value in current unit */
 const kmhToDisplay = (v) =>
@@ -558,6 +600,159 @@ const displayToKmh = (v) =>
   paceUnit === 'shanhe' ? SHANHE_BASE / v
     : paceUnit === 'minkm' ? 60 / v
       : v;
+
+function syncCalibrationIntoPaceParams() {
+  paceParams = {
+    ...DEFAULT_PACE_PARAMS,
+    ...paceParams,
+    calibrationEnabled: !!paceCalibration.enabled,
+    calibrationFactor: Number(paceCalibration.factor) || 1,
+  };
+}
+
+function savePaceCalibration() {
+  paceCalibration = {
+    enabled: !!paceCalibration.enabled,
+    factor: Number(paceCalibration.factor) || 1,
+    tracks: (paceCalibration.tracks || []).slice(0, 5),
+  };
+  localStorage.setItem(LS_PACE_CALIBRATION_KEY, JSON.stringify(paceCalibration));
+  syncCalibrationIntoPaceParams();
+  localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+}
+
+function formatCalibrationTrackSummary(track) {
+  const distKm = ((track.distanceM || 0) / 1000).toFixed(1);
+  const est = formatDuration(track.estimatedH || 0);
+  return `${distKm} km · +${Math.round(track.ascentM || 0)} m / -${Math.round(track.descentM || 0)} m · 預估 ${est}`;
+}
+
+function syncPaceCalibrationUI() {
+  if (paceCalibrationEnable) paceCalibrationEnable.checked = !!paceCalibration.enabled;
+  if (paceCalibrationFactor) {
+    paceCalibrationFactor.textContent = `個人校正 ×${(Number(paceCalibration.factor) || 1).toFixed(2)}`;
+    paceCalibrationFactor.classList.toggle('disabled', !paceCalibration.enabled);
+  }
+  if (!paceCalibrationList) return;
+  const tracks = paceCalibration.tracks || [];
+  if (tracks.length === 0) {
+    paceCalibrationList.innerHTML = '<div class="pace-calibration-empty">尚未載入校正軌跡</div>';
+    return;
+  }
+  paceCalibrationList.innerHTML = tracks.map((track, idx) => `
+    <div class="pace-calibration-item" data-idx="${idx}">
+      <div class="pace-calibration-main">
+        <div class="pace-calibration-name">${_escapeHtml(track.name || `Track ${idx + 1}`)}</div>
+        <div class="pace-calibration-meta">${_escapeHtml(formatCalibrationTrackSummary(track))}</div>
+      </div>
+      <label class="pace-calibration-hours">
+        <span>實際</span>
+        <input type="number" min="0.1" step="0.1" value="${track.actualHours ?? ''}" data-calibration-hours="${idx}" placeholder="小時">
+      </label>
+      <button type="button" class="btn-secondary pace-calibration-remove" data-calibration-remove="${idx}">移除</button>
+    </div>
+  `).join('');
+
+  paceCalibrationList.querySelectorAll('[data-calibration-hours]').forEach(input => {
+    input.addEventListener('change', () => {
+      const idx = parseInt(input.dataset.calibrationHours);
+      const val = parseFloat(input.value);
+      if (paceCalibration.tracks[idx]) {
+        paceCalibration.tracks[idx].actualHours = Number.isFinite(val) && val > 0 ? val : null;
+        savePaceCalibration();
+      }
+    });
+  });
+  paceCalibrationList.querySelectorAll('[data-calibration-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.calibrationRemove);
+      paceCalibration.tracks.splice(idx, 1);
+      savePaceCalibration();
+      syncPaceCalibrationUI();
+      updateTimeStat();
+      updateIntermediateMarkers();
+      renderWeatherPanel();
+    });
+  });
+}
+
+function parseCalibrationFile(file) {
+  return new Promise((resolve, reject) => {
+    const ext = file.name.split('.').pop().toLowerCase();
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        let result;
+        if (ext === 'gpx') result = GpxExporter.parse(evt.target.result);
+        else if (ext === 'kml') result = KmlExporter.parse(evt.target.result);
+        else throw new Error('Unsupported calibration file');
+        const summary = summarizeImportedTrackForCalibration(
+          result,
+          null,
+          speedActivity || 'hiking',
+          { ...paceParams, calibrationEnabled: false, calibrationFactor: 1 }
+        );
+        resolve({
+          id: `cal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          ...summary,
+        });
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error('Read failed'));
+    reader.readAsText(file);
+  });
+}
+
+async function loadPaceCalibrationFiles(files) {
+  const incoming = Array.from(files || []).filter(file => /\.(gpx|kml)$/i.test(file.name));
+  if (incoming.length === 0) {
+    showNotification('請選擇 GPX 或 KML 軌跡', 'warning');
+    return;
+  }
+  const remainingSlots = Math.max(0, 5 - (paceCalibration.tracks?.length || 0));
+  if (remainingSlots <= 0) {
+    showNotification('最多只能保留 5 條校正軌跡', 'warning');
+    return;
+  }
+  const selected = incoming.slice(0, remainingSlots);
+  if (incoming.length > selected.length) showNotification('已達 5 條上限，只載入前幾條軌跡', 'warning');
+
+  const loaded = [];
+  for (const file of selected) {
+    try {
+      loaded.push(await parseCalibrationFile(file));
+    } catch (err) {
+      console.error('Calibration track parse failed:', file.name, err);
+      showNotification(`校正軌跡讀取失敗：${file.name}`, 'error');
+    }
+  }
+  if (loaded.length > 0) {
+    paceCalibration.tracks = [...(paceCalibration.tracks || []), ...loaded].slice(0, 5);
+    savePaceCalibration();
+    syncPaceCalibrationUI();
+    showNotification(`已載入 ${loaded.length} 條校正軌跡`, 'success');
+  }
+}
+
+function computeAndApplyPaceCalibration() {
+  const result = computeCalibrationFromTracks(paceCalibration.tracks || []);
+  if (result.count === 0) {
+    showNotification('請先為至少一條校正軌跡輸入實際耗時', 'warning');
+    return;
+  }
+  paceCalibration.factor = result.factor;
+  paceCalibration.enabled = true;
+  savePaceCalibration();
+  syncPaceCalibrationUI();
+  updateTimeStat();
+  updateIntermediateMarkers();
+  renderWeatherPanel();
+  const clipNote = result.clipped ? '，倍率已限制在 0.6–1.8' : '';
+  showNotification(`個人校正已更新：×${result.factor.toFixed(2)}${clipNote}`, result.clipped ? 'warning' : 'success');
+}
 
 /** Sync placeholder and input constraints to current unit */
 function updateFlatPlaceholder() {
@@ -2535,6 +2730,7 @@ function _syncExtraSettingsUI() {
   if (paceParamsPanel) paceParamsPanel.style.display = speedIntervalMode ? '' : 'none';
 
   if (typeof updateFlatPlaceholder === 'function') updateFlatPlaceholder();
+  if (typeof syncPaceCalibrationUI === 'function') syncPaceCalibrationUI();
 }
 
 function loadFavorite(fav) {
@@ -7041,6 +7237,7 @@ async function init() {
       ? displayToKmh(rawDisplay)
       : null;
     paceParams = {
+      ...paceParams,
       flatPaceKmH: flatKmh,
       bodyWeightKg: parseFloat(paceBodyWeight?.value) || 70,
       packWeightKg: parseFloat(pacePackWeight?.value) || 0,
@@ -7048,6 +7245,7 @@ async function init() {
       restEveryH: parseFloat(paceRestEvery?.value) || 1.0,
       restMinutes: parseFloat(paceRestMinutes?.value) || 10,
     };
+    syncCalibrationIntoPaceParams();
     localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
     updateFlatPlaceholder();
     applyFatigueToggle();
@@ -7128,6 +7326,40 @@ async function init() {
     importAutoNameEl.addEventListener('change', () => {
       importAutoNameMode = importAutoNameEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_NAME_KEY, importAutoNameMode ? '1' : '0');
+    });
+  }
+
+  // --- Personal pace calibration ---
+  syncPaceCalibrationUI();
+  if (paceCalibrationEnable) {
+    paceCalibrationEnable.addEventListener('change', () => {
+      paceCalibration.enabled = paceCalibrationEnable.checked;
+      savePaceCalibration();
+      syncPaceCalibrationUI();
+      updateTimeStat();
+      updateIntermediateMarkers();
+      renderWeatherPanel();
+    });
+  }
+  if (paceCalibrationPick && paceCalibrationFileInput) {
+    paceCalibrationPick.addEventListener('click', () => paceCalibrationFileInput.click());
+    paceCalibrationFileInput.addEventListener('change', async () => {
+      await loadPaceCalibrationFiles(paceCalibrationFileInput.files);
+      paceCalibrationFileInput.value = '';
+    });
+  }
+  if (paceCalibrationCompute) {
+    paceCalibrationCompute.addEventListener('click', computeAndApplyPaceCalibration);
+  }
+  if (paceCalibrationClear) {
+    paceCalibrationClear.addEventListener('click', () => {
+      paceCalibration = { enabled: false, factor: 1, tracks: [] };
+      savePaceCalibration();
+      syncPaceCalibrationUI();
+      updateTimeStat();
+      updateIntermediateMarkers();
+      renderWeatherPanel();
+      showNotification('已清除個人配速校正', 'success');
     });
   }
 
@@ -7498,6 +7730,7 @@ function resetToDefaults() {
     LS_SPEED_MODE_KEY,
     LS_SPEED_ACTIVITY_KEY,
     LS_PACE_PARAMS_KEY,
+    LS_PACE_CALIBRATION_KEY,
     LS_PER_SEGMENT_KEY,
     LS_STRICT_LINEAR_KEY,
     LS_IMPORT_AUTO_SORT_KEY,

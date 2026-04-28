@@ -748,6 +748,23 @@
               (免費版約 <span style="color: var(--accent-primary);">6-10 天</span>，付費版可達 <span
                 style="color: var(--accent-primary);">15 天</span>)。</small></p>
         </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group-label">Personal Pace Calibration</div>
+        <div class="pace-calibration-panel">
+          <label class="pace-check-opt pace-calibration-toggle" title="Use a personal multiplier calculated from completed tracks.">
+            <input type="checkbox" id="pace-calibration-enable">
+            <span>啟用個人校正</span>
+          </label>
+          <div class="pace-calibration-factor" id="pace-calibration-factor">個人校正 ×1.00</div>
+          <div class="settings-actions-btn-row">
+            <button type="button" class="btn-secondary" id="btn-pace-calibration-pick">載入軌跡</button>
+            <button type="button" class="btn-secondary" id="btn-pace-calibration-compute">計算校正</button>
+            <button type="button" class="btn-secondary" id="btn-pace-calibration-clear">清除</button>
+          </div>
+          <input type="file" id="pace-calibration-file-input" accept=".gpx,.kml" multiple style="display:none" />
+          <div class="pace-calibration-hint">最多 5 條 GPX/KML。載入後手動填每條實際耗時（小時），再計算總倍率。</div>
+          <div class="pace-calibration-list" id="pace-calibration-list"></div>
+        </div>
       </div>
     </section>
 

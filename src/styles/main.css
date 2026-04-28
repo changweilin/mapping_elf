@@ -1439,6 +1439,85 @@ html.light-theme .waypoint-trash-zone.is-hover {
   width: 100%;
 }
 
+.pace-calibration-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pace-calibration-toggle {
+  margin-bottom: 0;
+}
+
+.pace-calibration-factor {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-primary);
+}
+
+.pace-calibration-factor.disabled {
+  color: var(--text-muted);
+}
+
+.pace-calibration-hint,
+.pace-calibration-empty,
+.pace-calibration-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.pace-calibration-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pace-calibration-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 56px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+}
+
+.pace-calibration-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pace-calibration-hours {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.pace-calibration-hours input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.pace-calibration-remove {
+  flex: 0 0 auto;
+  height: 30px;
+}
+
 .segment-interval-unit {
   font-size: 12px;
   color: var(--text-muted);
