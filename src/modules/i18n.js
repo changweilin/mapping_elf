@@ -274,6 +274,7 @@ let currentLanguage = detectLanguage();
 const textOriginals = new WeakMap();
 let observer = null;
 let onLanguageChange = null;
+let translationLanguageOverride = null;
 
 export function detectLanguage() {
   const saved = localStorage.getItem(LS_LANGUAGE_KEY);
@@ -314,15 +315,25 @@ export function tWmo(code, kind = 'desc') {
 }
 
 export function translatePhrase(text) {
+  return translatePhraseForLanguage(text, currentLanguage);
+}
+
+function translatePhraseForLanguage(text, language) {
   if (text == null) return text;
   const raw = String(text);
   const trimmed = raw.replace(/\s+/g, ' ').trim();
   if (!trimmed) return raw;
   const direct = PHRASES[trimmed] || STRINGS[trimmed];
-  if (direct) return preserveOuterWhitespace(raw, direct[currentLanguage] ?? direct['zh-TW'] ?? trimmed);
+  if (direct) return preserveOuterWhitespace(raw, direct[language] ?? direct['zh-TW'] ?? trimmed);
 
-  const pattern = translatePattern(trimmed);
-  return pattern ? preserveOuterWhitespace(raw, pattern) : raw;
+  const previousOverride = translationLanguageOverride;
+  translationLanguageOverride = language;
+  try {
+    const pattern = translatePattern(trimmed);
+    return pattern ? preserveOuterWhitespace(raw, pattern) : raw;
+  } finally {
+    translationLanguageOverride = previousOverride;
+  }
 }
 
 export function applyTranslations(root = document) {
@@ -424,9 +435,8 @@ function translateTextNode(node) {
     textOriginals.set(node, node.nodeValue);
   } else {
     const previousOriginal = textOriginals.get(node);
-    const previousTranslation = translatePhrase(previousOriginal);
     const currentValue = node.nodeValue || '';
-    if (currentValue !== previousTranslation && /[\u4e00-\u9fff]/.test(currentValue)) {
+    if (!isKnownTranslation(currentValue, previousOriginal) && /[\u4e00-\u9fff]/.test(currentValue)) {
       textOriginals.set(node, currentValue);
     }
   }
@@ -452,14 +462,18 @@ function translateElementAttributes(el) {
     if (!el.dataset[key]) {
       el.dataset[key] = currentValue;
     } else {
-      const previousTranslation = translatePhrase(el.dataset[key]);
-      if (currentValue !== previousTranslation && /[\u4e00-\u9fff]/.test(currentValue)) {
+      if (!isKnownTranslation(currentValue, el.dataset[key]) && /[\u4e00-\u9fff]/.test(currentValue)) {
         el.dataset[key] = currentValue;
       }
     }
     const translated = translatePhrase(el.dataset[key]);
     if (el.getAttribute(attr) !== translated) el.setAttribute(attr, translated);
   });
+}
+
+function isKnownTranslation(value, original) {
+  const rendered = String(value ?? '');
+  return LANGUAGES.some(({ code }) => translatePhraseForLanguage(original, code) === rendered);
 }
 
 function translatePattern(text) {
@@ -500,12 +514,12 @@ function translatePattern(text) {
 
 function withNum(en, ja, ko, fr, de, es, it, n) {
   const entry = { 'zh-TW': null, en, ja, ko, fr, de, es, it };
-  return (entry[currentLanguage] || '').replace('{n}', n ?? '');
+  return (entry[translationLanguageOverride || currentLanguage] || '').replace('{n}', n ?? '');
 }
 
 function phraseWithText(en, ja, ko, fr, de, es, it, x) {
   const entry = { 'zh-TW': null, en, ja, ko, fr, de, es, it };
-  return (entry[currentLanguage] || '').replace('{x}', x ?? '');
+  return (entry[translationLanguageOverride || currentLanguage] || '').replace('{x}', x ?? '');
 }
 
 function preserveOuterWhitespace(original, translated) {
