@@ -4768,6 +4768,15 @@ html.light-theme .wc-time-select {
   letter-spacing: 0.02em;
 }
 
+.about-me-version {
+  margin-left: auto;
+  margin-right: -6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
 .about-me-quote {
   display: flex;
   flex-direction: column;
@@ -4822,7 +4831,6 @@ html.light-theme .wc-time-select {
 
 .feedback-link {
   gap: 6px;
-  margin-left: auto;
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
