@@ -53,6 +53,8 @@ let importedWaypointMeta = [];
 let lastWaypoints = [];
 let pendingNewWaypointIndex = null;
 let isInitialLoad = false;
+let refreshKeywordSearchResults = null;
+let lastGpsLatLng = null;
 
 const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
@@ -80,6 +82,36 @@ const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
+
+const COUNTRY_SEARCH_LANGUAGES = {
+  tw: ['zh-TW'],
+  cn: ['zh'],
+  hk: ['zh-TW', 'en'],
+  mo: ['zh-TW'],
+  sg: ['en', 'zh'],
+  jp: ['ja'],
+  kr: ['ko'],
+  fr: ['fr'],
+  be: ['fr', 'de'],
+  ch: ['de', 'fr', 'it'],
+  de: ['de'],
+  at: ['de'],
+  es: ['es'],
+  mx: ['es'],
+  ar: ['es'],
+  cl: ['es'],
+  co: ['es'],
+  pe: ['es'],
+  it: ['it'],
+  sm: ['it'],
+  va: ['it'],
+  us: ['en'],
+  gb: ['en'],
+  ie: ['en'],
+  ca: ['en', 'fr'],
+  au: ['en'],
+  nz: ['en'],
+};
 
 /**
  * 上河速度 base: S=1.0 corresponds to 3.0 km/h on flat terrain.
@@ -193,6 +225,9 @@ const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
+mapManager.onGpsFix = (lat, lng) => {
+  lastGpsLatLng = [lat, lng];
+};
 
 // =========== Undo/Redo History ===========
 // Snapshot-based history for all route-planning actions:
@@ -7123,6 +7158,7 @@ function refreshLanguageSensitiveUi() {
   updateThemeIcons();
   renderFavoritesList();
   refreshOpenWeatherCards();
+  refreshKeywordSearchResults?.();
   applyTranslations();
 }
 
@@ -7535,7 +7571,10 @@ async function init() {
   } else if (!trackRestored && !savedView && navigator.geolocation) {
     // No saved state at all — pan to user's location
     navigator.geolocation.getCurrentPosition(
-      (pos) => mapManager.map.setView([pos.coords.latitude, pos.coords.longitude], 13),
+      (pos) => {
+        lastGpsLatLng = [pos.coords.latitude, pos.coords.longitude];
+        mapManager.map.setView(lastGpsLatLng, 13);
+      },
       () => { }
     );
   }
@@ -7570,6 +7609,53 @@ function parseLatLngInput(q) {
   return [lat, lng];
 }
 
+function detectSearchInputLanguage(query) {
+  const text = (query || '').trim();
+  if (!text) return null;
+  if (/[\u3040-\u30ff]/.test(text)) return 'ja';
+  if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+  if (/[\u4e00-\u9fff]/.test(text)) return 'zh-TW';
+  if (/[ßäö]/i.test(text)) return 'de';
+  if (/[ñ¿¡]/i.test(text)) return 'es';
+  if (/[âæçêëîïôœûÿ]/i.test(text)) return 'fr';
+  if (/[ìò]/i.test(text)) return 'it';
+  return null;
+}
+
+function countryLanguages(countryCode) {
+  return COUNTRY_SEARCH_LANGUAGES[String(countryCode || '').toLowerCase()] || [];
+}
+
+async function getLanguagesForLatLng(latlng) {
+  if (!latlng) return [];
+  const [lat, lng] = latlng;
+  const cc = await fetchViewCountryCode(lat, lng);
+  return countryLanguages(cc);
+}
+
+async function getSearchAcceptLanguage(query, bounds) {
+  const languages = [];
+  const add = (value) => {
+    if (!value || languages.includes(value)) return;
+    languages.push(value);
+  };
+  const addMany = (values) => values.forEach(add);
+
+  const inputLanguage = detectSearchInputLanguage(query);
+  add(inputLanguage);
+  add(getLanguage());
+
+  if (bounds) {
+    const center = bounds.getCenter();
+    addMany(await getLanguagesForLatLng([center.lat, center.lng]));
+  }
+
+  addMany(await getLanguagesForLatLng(lastGpsLatLng || mapManager._mapCursorLatLng));
+  if (!inputLanguage) add('en');
+
+  return languages.join(',');
+}
+
 /**
  * Resolve the ISO country code at (lat, lng) via Nominatim reverse-geocoding.
  * Cached on a ~11 km grid so a panning user doesn't trigger repeated lookups.
@@ -7582,7 +7668,7 @@ async function fetchViewCountryCode(lat, lng) {
     const r = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=3`,
       {
-        headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+        headers: { 'Accept-Language': 'en', 'User-Agent': 'MappingElf/1.0' },
         signal: AbortSignal.timeout(5000),
       }
     );
@@ -7604,6 +7690,7 @@ async function fetchViewCountryCode(lat, lng) {
  */
 async function searchByKeyword(query, bounds) {
   const dedup = [];
+  const searchAcceptLanguage = await getSearchAcceptLanguage(query, bounds);
 
   const getSearchPriority = (it) => {
     const c = it.class || '';
@@ -7644,7 +7731,7 @@ async function searchByKeyword(query, bounds) {
 
   const fetchNom = async (url) => {
     const r = await fetch(url, {
-      headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+      headers: { 'Accept-Language': searchAcceptLanguage, 'User-Agent': 'MappingElf/1.0' },
       signal: AbortSignal.timeout(8000),
     });
     return r.ok ? r.json() : null;
@@ -7783,6 +7870,11 @@ function initKeywordSearch() {
     if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
     else if (e.key === 'Escape') { resultsEl.style.display = 'none'; }
   });
+
+  refreshKeywordSearchResults = () => {
+    const hasVisibleResults = resultsEl.style.display !== 'none';
+    if (hasVisibleResults && input.value.trim()) doSearch();
+  };
 
   const gmapsLink = document.getElementById('search-gmaps-link');
   if (gmapsLink) {

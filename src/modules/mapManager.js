@@ -81,6 +81,7 @@ export class MapManager {
     this._mapCursorMenuPopup = null;
     this._cursorWeatherPopup = null; // Ad-hoc weather card anchored at the cursor (independent of weatherPoints)
     this.onMapCursorAction = null; // callback(action, lat, lng)
+    this.onGpsFix = null; // callback(lat, lng)
 
     // Selection/Highlight state tracking
     this.highlightedWpIndex = -1;
@@ -1622,6 +1623,7 @@ export class MapManager {
         // Drop a map cursor at the GPS fix instead of adding a waypoint —
         // user can long-press the cursor to set as waypoint / copy / show weather.
         this.setMapCursor(lat, lng);
+        this.onGpsFix?.(lat, lng);
       },
       () => { }
     );
