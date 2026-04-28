@@ -3916,7 +3916,7 @@ function updateWeatherTableCell(cell, key, val) {
         buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layerForRow),
         12
       );
-      cell.innerHTML = `${iconHtml}<span class="wt-cell-value">${val}</span>`;
+      cell.innerHTML = `${iconHtml}<span class="wt-cell-value">${formatWeatherTableValueHtml(key, val)}</span>`;
       return;
     }
   }
@@ -3929,10 +3929,18 @@ function updateWeatherTableCell(cell, key, val) {
     if (valueEl) valueEl.innerHTML = html;
     else cell.innerHTML = html;
   } else if (valueEl) {
-    valueEl.textContent = val;
+    valueEl.innerHTML = formatWeatherTableValueHtml(key, val);
   } else {
-    cell.textContent = val;
+    cell.innerHTML = `<span class="wt-cell-value">${formatWeatherTableValueHtml(key, val)}</span>`;
   }
+}
+
+function formatWeatherTableValueHtml(key, val) {
+  const text = String(val ?? '—');
+  if (key === 'weather' || key === 'coords') return text;
+  const match = text.match(/^([+-]?\d+(?:\.\d+)?)(.*)$/);
+  if (!match) return text;
+  return `<span class="wt-cell-number">${match[1]}</span><span class="wt-cell-unit">${match[2]}</span>`;
 }
 
 /**
@@ -5122,16 +5130,21 @@ function renderWeatherPanel() {
     return left + right;
   });
   const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
-  const labelW = weatherTableCollapsed ? 44 : 68;
-  const minColW = weatherTableCollapsed ? 54 : 110;
-  const dataW = Math.max(panelW - labelW, visibleN * minColW);
+  const labelW = 68;
+  const minColW = weatherTableCollapsed ? 38 : 110;
+  const dataW = weatherTableCollapsed
+    ? visibleN * minColW
+    : Math.max(panelW - labelW, visibleN * minColW);
   const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
 
   const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
     `<option value="${h}"${h === sel ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
   ).join('');
 
-  let html = `<table class="weather-table${weatherTableCollapsed ? ' is-collapsed' : ''}"><colgroup><col style="width:${labelW}px">`;
+  let html = `<button class="wt-ctrl-collapse" data-action="toggle-weather-table" title="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}" aria-label="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${weatherTableCollapsed ? 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z' : 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z'}" fill="currentColor"/></svg>
+  </button>`;
+  html += `<table class="weather-table${weatherTableCollapsed ? ' is-collapsed' : ''}"><colgroup><col style="width:${labelW}px">`;
   colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
   html += `</colgroup><thead>`;
 
@@ -5315,11 +5328,12 @@ function renderWeatherPanel() {
           )
         : '';
       const coordText = row.key === 'coords' ? formatCoords(pt.lat, pt.lng) : '';
+      const initialVal = getCellValue(null, row.key, pt);
       const cellInner = row.key === 'coords'
         ? `<span class="wt-cell-value clickable-coords" data-coords="${coordText}" title="點擊複製座標">${coordText}</span>`
         : layerForRow
           ? `${iconHtml}<span class="wt-cell-value">—</span>`
-          : `<span class="wt-cell-value">${getCellValue(null, row.key, pt)}</span>`;
+          : `<span class="wt-cell-value">${formatWeatherTableValueHtml(row.key, initialVal)}</span>`;
       html += `<td class="wt-data-cell wt-td${returnClass}${startClass}${layerForRow ? ' wt-cell-with-icon' : ''}" data-col="${i}" data-key="${row.key}"${cellStyle}>${cellInner}</td>`;
     });
     html += '</tr>';
