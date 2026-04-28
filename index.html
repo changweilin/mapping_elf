@@ -835,6 +835,52 @@
             </div>
           </div>
 
+          <div class="instr-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                🧭 路線規劃說明</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li>依序點選地圖即可建立航點；拖曳航點可微調路線位置</li>
+                <li><span class="instr-badge">單程</span> 適合 A 到 B；<span class="instr-badge">來回</span> 會自動折返；<span class="instr-badge">O繞</span> 會尋找回到起點的替代路線</li>
+                <li>若出現多條候選路線，可點選候選卡或地圖上的軌跡切換主路線</li>
+              </ul>
+            </div>
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                🌦 天氣資料說明</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li>短期預報優先參考 Open-Meteo；需要比對模式時可切換 Windy 模型</li>
+                <li>天氣卡顯示的是航點附近資料，山區微地形與稜線風仍需現地判斷</li>
+                <li>出發前建議重整資料，並留意降雨、體感溫度、陣風與雷雨指標</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="instr-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                🧮 估時小提醒</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li>配速估算會受到坡度、距離、負重、休息與疲勞設定影響</li>
+                <li>匯入自己的 GPX/KML 並填入實際耗時，可建立更貼近個人體感的校正倍率</li>
+                <li>估時適合做行程規劃基準；困難地形、摸黑、濕滑路況請預留額外時間</li>
+              </ul>
+            </div>
+            <div class="instr-group">
+              <div class="instr-title"
+                style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                🗺 離線地圖包提醒</div>
+              <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
+                <li>.melmap 可保存路線、航點、目前圖層圖磚與部分個人偏好</li>
+                <li>離線圖磚只會包含匯出當下選取的範圍與縮放層級</li>
+                <li>地圖包可能較大；出發前請先匯入測試，確認路線與圖層都能正常開啟</li>
+              </ul>
+            </div>
+          </div>
+
           <div class="instr-group" style="margin-bottom: 16px;">
             <div class="instr-title"
               style="font-weight: bold; color: var(--text-primary); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
