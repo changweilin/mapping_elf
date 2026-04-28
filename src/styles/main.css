@@ -3272,31 +3272,34 @@ body.is-resizing {
 }
 
 .weather-table.is-collapsed .wt-label-cell {
-  padding-left: 4px;
-  padding-right: 6px;
+  padding-left: 2px;
+  padding-right: 3px;
   text-align: right;
+  font-size: 10px;
 }
 
 .weather-table.is-collapsed .wt-ctrl-fetch {
-  width: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   margin-left: auto;
   margin-right: auto;
 }
 
 .weather-table.is-collapsed .wt-ctrl-fetch span,
+.weather-table.is-collapsed .wt-ctrl-adj,
 .weather-table.is-collapsed .wt-adj-btn {
   display: none;
 }
 
 .weather-table.is-collapsed .wt-col-label {
-  font-size: 12px;
-  padding: 2px 0;
+  font-size: 11px;
+  padding: 1px 0;
   margin: 0;
 }
 
 .weather-table.is-collapsed .wt-col-head {
-  padding: 2px;
+  padding: 1px;
 }
 
 .weather-table.is-collapsed .wt-adj-wrap,
@@ -3306,26 +3309,26 @@ body.is-resizing {
 }
 
 .weather-table.is-collapsed .wt-date-input {
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 20px;
   padding: 0;
   color: transparent;
   text-indent: -999px;
 }
 
 .weather-table.is-collapsed .wt-time-select {
-  flex: 0 0 26px;
-  width: 26px;
-  height: 22px;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 20px;
   padding: 0 2px;
   color: transparent;
   text-shadow: 0 0 0 var(--text-primary);
 }
 
 .weather-table.is-collapsed .wt-data-cell {
-  padding: 3px 2px;
-  font-size: 10.5px;
+  padding: 2px 1px;
+  font-size: 10px;
 }
 
 .weather-table.is-collapsed .wt-cell-value,
@@ -3350,6 +3353,13 @@ body.is-resizing {
   opacity: 0.62;
   -webkit-mask-image: linear-gradient(90deg, #000 45%, transparent);
   mask-image: linear-gradient(90deg, #000 45%, transparent);
+}
+
+.weather-table.is-collapsed .wt-td.wt-label-cell {
+  overflow: hidden;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, #000 62%, transparent);
+  mask-image: linear-gradient(90deg, #000 62%, transparent);
 }
 
 .weather-table.is-collapsed .row-windy-link,

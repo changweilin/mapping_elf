@@ -5130,8 +5130,8 @@ function renderWeatherPanel() {
     return left + right;
   });
   const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
-  const labelW = 68;
-  const minColW = weatherTableCollapsed ? 38 : 110;
+  const labelW = weatherTableCollapsed ? 42 : 68;
+  const minColW = weatherTableCollapsed ? 34 : 110;
   const dataW = weatherTableCollapsed
     ? visibleN * minColW
     : Math.max(panelW - labelW, visibleN * minColW);
