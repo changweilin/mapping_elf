@@ -3,6 +3,8 @@
  * Service Worker registration and cache management
  */
 
+import { translatePhrase } from './i18n.js';
+
 export class OfflineManager {
   constructor() {
     this.isOnline = navigator.onLine;
@@ -33,25 +35,25 @@ export class OfflineManager {
       this._statusDot.className = `status-dot ${online ? 'online' : 'offline'}`;
     }
     if (this._statusText) {
-      this._statusText.textContent = online ? '線上模式' : '離線模式';
+      this._statusText.textContent = translatePhrase(online ? '線上模式' : '離線模式');
     }
     this.updateCacheInfo();
   }
 
   async updateCacheInfo() {
     if (!('caches' in window)) {
-      if (this._cacheInfo) this._cacheInfo.querySelector('span').textContent = '快取瓦片：不支援';
+      if (this._cacheInfo) this._cacheInfo.querySelector('span').textContent = translatePhrase('快取瓦片：不支援');
       return;
     }
     try {
       const cache = await caches.open('mapping-elf-tiles');
       const keys = await cache.keys();
       if (this._cacheInfo) {
-        this._cacheInfo.querySelector('span').textContent = `快取瓦片：${keys.length} 個`;
+        this._cacheInfo.querySelector('span').textContent = translatePhrase(`快取瓦片：${keys.length} 個`);
       }
     } catch {
       if (this._cacheInfo) {
-        this._cacheInfo.querySelector('span').textContent = '快取瓦片：0 個';
+        this._cacheInfo.querySelector('span').textContent = translatePhrase('快取瓦片：0 個');
       }
     }
   }

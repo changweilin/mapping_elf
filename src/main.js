@@ -14,8 +14,13 @@ import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
+import { applyTranslations, initI18n, translatePhrase } from './modules/i18n.js';
+
+function showNotification(message, type = 'info', duration = 3500) {
+  rawShowNotification(translatePhrase(message), type, duration);
+}
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -7098,6 +7103,15 @@ function updateElevationMarkers() {
 // =========== Init ===========
 
 async function init() {
+  initI18n({
+    onLanguageChange: () => {
+      renderWeatherPanel();
+      updateWaypointList(mapManager.waypoints);
+      updateTimeStat();
+      applyTranslations();
+    },
+  });
+
   // Global listener for clickable coordinates
   document.addEventListener('click', (e) => {
     const el = e.target.closest('.clickable-coords');
