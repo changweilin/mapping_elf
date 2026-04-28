@@ -44,13 +44,25 @@ export const DEFAULT_PACE_PARAMS = {
   calibrationFactor: 1,
 };
 
-export function formatDuration(hours) {
+export function formatDuration(hours, language = 'zh-TW') {
   if (!hours || hours <= 0) return '—';
   const h = Math.floor(hours);
   const m = Math.round((hours - h) * 60);
-  if (h === 0) return `${m} 分`;
-  if (m === 0) return `${h} 小時`;
-  return `${h} 小時 ${m} 分`;
+  const parts = {
+    'zh-TW': { h: '小時', m: '分', between: ' ', unitGap: ' ' },
+    en: { h: 'h', m: 'min', between: ' ', unitGap: ' ' },
+    ja: { h: '時間', m: '分', between: '', unitGap: '' },
+    ko: { h: '시간', m: '분', between: ' ', unitGap: '' },
+    fr: { h: 'h', m: 'min', between: ' ', unitGap: ' ' },
+    de: { h: 'Std.', m: 'Min.', between: ' ', unitGap: ' ' },
+    es: { h: 'h', m: 'min', between: ' ', unitGap: ' ' },
+    it: { h: 'h', m: 'min', between: ' ', unitGap: ' ' },
+  }[language] || { h: 'h', m: 'min', between: ' ', unitGap: ' ' };
+  const hourText = `${h}${parts.unitGap}${parts.h}`;
+  const minuteText = `${m}${parts.unitGap}${parts.m}`;
+  if (h === 0) return minuteText;
+  if (m === 0) return hourText;
+  return `${hourText}${parts.between}${minuteText}`;
 }
 
 export function formatDurationHHMM(hours) {

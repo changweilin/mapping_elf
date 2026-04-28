@@ -16,7 +16,7 @@ import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
 import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
-import { applyTranslations, getLanguage, initI18n, translatePhrase } from './modules/i18n.js';
+import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -628,8 +628,8 @@ function savePaceCalibration() {
 
 function formatCalibrationTrackSummary(track) {
   const distKm = ((track.distanceM || 0) / 1000).toFixed(1);
-  const est = formatDuration(track.estimatedH || 0);
-  return `${distKm} km · +${Math.round(track.ascentM || 0)} m / -${Math.round(track.descentM || 0)} m · 預估 ${est}`;
+  const est = formatDuration(track.estimatedH || 0, getLanguage());
+  return `${distKm} km · +${Math.round(track.ascentM || 0)} m / -${Math.round(track.descentM || 0)} m · ${translatePhrase('預估')} ${est}`;
 }
 
 function syncPaceCalibrationUI() {
@@ -2146,7 +2146,7 @@ function updateTimeStat() {
   }
   const times = computeCumulativeTimes(elevs, dists, speedActivity, paceParams);
   const totalH = times[times.length - 1] || 0;
-  statTime.textContent = formatDuration(totalH);
+  statTime.textContent = formatDuration(totalH, getLanguage());
 
   const trip = computeTripStats(elevs, dists, speedActivity, paceParams);
   if (statKcal) statKcal.textContent = `${trip.kcalExpended.toLocaleString()} kcal`;
@@ -2667,7 +2667,7 @@ function captureFavorite(name) {
       if (cellMap) {
         const labelled = {};
         WEATHER_ROWS.forEach(r => {
-          const v = cellMap[r.key];
+          const v = getSavedWeatherCellValue(cellMap, r.key);
           if (v && v !== '—') labelled[r.label] = v;
         });
         if (Object.keys(labelled).length) weather[wpIdx].weather = labelled;
@@ -3034,7 +3034,7 @@ function collectExportData() {
       const savedCells = getSavedWeatherCells(pt);
       if (savedCells) {
         WEATHER_ROWS.forEach(row => {
-          const val = savedCells[row.key];
+          const val = getSavedWeatherCellValue(savedCells, row.key);
           if (val && val !== '—') weather[row.key] = { label: row.label, value: val };
         });
       }
@@ -3568,6 +3568,16 @@ function getSavedWeatherCells(pt) {
   const cells = savedWeatherCells[key] || savedWeatherCells[legacyKey] || null;
   if (cells && key !== legacyKey && !savedWeatherCells[key]) saveWeatherCells(key, cells);
   return cells;
+}
+
+function getSavedWeatherCellValue(cells, key) {
+  if (!cells) return '—';
+  if (key === 'weather') {
+    const icon = cells._icon || String(cells.weather || '').split(' ')[0] || '';
+    if (cells._weatherCode != null) return `${icon} ${tWmo(cells._weatherCode)}`.trim();
+    return translateWeatherText(cells.weather || '—');
+  }
+  return cells[key] || '—';
 }
 
 function getWeatherPointShortLabel(pt, fallbackIdx = 0) {
@@ -4143,7 +4153,7 @@ function getCellValue(data, key, pt) {
   if (key === 'coords' && pt) return formatCoords(pt.lat, pt.lng);
   if (!data) return '—';
   switch (key) {
-    case 'weather': return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
+    case 'weather': return `${data.weatherIcon || ''} ${data.weatherCode != null ? tWmo(data.weatherCode) : translateWeatherText(data.weatherDesc || '—')}`.trim();
     case 'temp': return v(data.temp, data.tempMax);
     case 'tempRange': return (data.tempMax || data.tempMin) ? `${v(data.tempMax, '—')} / ${v(data.tempMin, '—')}` : '—';
     case 'tempMax': return v(data.tempMax, '—');
@@ -4207,6 +4217,7 @@ function updateWeatherTableCell(cell, key, val) {
   }
 
   if (key === 'weather') {
+    val = translateWeatherText(val);
     const parts = val.split(' ');
     const icon = parts[0];
     const desc = parts.slice(1).join(' ');
@@ -5727,7 +5738,7 @@ function renderWeatherPanel() {
     if (!dateStr) return;
     const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
     if (cached) {
-      const cells = {};
+      const cells = { _icon: cached.weatherIcon, _weatherCode: cached.weatherCode };
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(cached, row.key, pt);
         cells[row.key] = val;
@@ -5744,7 +5755,7 @@ function renderWeatherPanel() {
       if (saved) {
         WEATHER_ROWS.forEach(row => {
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
-          const val = saved[row.key];
+          const val = getSavedWeatherCellValue(saved, row.key);
           if (cell && val) updateWeatherTableCell(cell, row.key, val);
         });
       }
@@ -5840,9 +5851,9 @@ function renderWeatherPanel() {
         for (const [k, v] of Object.entries(importedData.weather)) {
           const val = (typeof v === 'object') ? v.value : v;
           const key = labelToKey[k] || k;
-          cells[key] = val;
+          cells[key] = key === 'weather' ? translateWeatherText(val) : val;
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${key}"]`);
-          if (cell) cell.textContent = val;
+          if (cell) updateWeatherTableCell(cell, key, cells[key]);
         }
         // The weather cell is formatted "<emoji> <desc>" — extract the emoji so
         // downstream consumers (map marker, elevation chart) can render the icon
@@ -6201,7 +6212,7 @@ async function fetchAllWeatherData(options = {}) {
     // If not forced and we have cache, just apply it and skip fetching
     if (!force) {
       if (data) {
-        const cells = { _icon: data.weatherIcon };
+        const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
         WEATHER_ROWS.forEach(row => {
           const val = getCellValue(data, row.key, pt);
           cells[row.key] = val;
@@ -6254,7 +6265,7 @@ async function fetchAllWeatherData(options = {}) {
       cachedWeatherData[cacheKey] = data;
       // Save after each point so partial data survives a mid-fetch page close
       localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
-      const cells = { _icon: data.weatherIcon };
+      const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(data, row.key, pt);
         cells[row.key] = val;
@@ -6479,7 +6490,7 @@ function _renderWeatherCard(colIdx) {
     if (key === 'elevation') return formatElevation(pt._ele);
     if (key === 'coords') return formatCoords(pt.lat, pt.lng);
     if (data) return getCellValue(data, key, pt);
-    if (cells && cells[key]) return cells[key];
+    if (cells && cells[key]) return getSavedWeatherCellValue(cells, key);
     return '—';
   };
 
