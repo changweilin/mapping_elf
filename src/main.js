@@ -3599,6 +3599,61 @@ function showMainWaypointNamePeek(anchor = null) {
   }, 2600);
 }
 
+function showAllWaypointNamePeeks(container, fallbackAnchor = null) {
+  const heads = Array.from(container.querySelectorAll('.wt-header-row-label .wt-col-head'))
+    .map(th => {
+      const colIdx = parseInt(th.dataset.idx);
+      const pt = weatherPoints[colIdx];
+      if (!pt?.isWaypoint || pt.isReturn) return null;
+      const label = pt.label || getWeatherPointShortLabel(pt, colIdx);
+      return { th, colIdx, label, rect: th.getBoundingClientRect() };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.rect.left - b.rect.left);
+
+  if (heads.length === 0) return;
+  document.querySelectorAll('.wt-name-peek').forEach(el => el.remove());
+
+  const anchorRect = fallbackAnchor?.getBoundingClientRect?.() || heads[0].rect;
+  const showBelow = anchorRect.top <= 86;
+  const laneRight = [];
+  const lanes = 3;
+
+  heads.forEach(item => {
+    const peek = document.createElement('div');
+    peek.className = 'wt-name-peek wt-name-peek-single';
+    peek.textContent = item.label;
+    document.body.appendChild(peek);
+
+    const width = Math.min(Math.max(item.label.length * 12 + 26, 76), Math.min(window.innerWidth - 16, 180));
+    const center = item.rect.left + item.rect.width / 2;
+    const left = Math.min(window.innerWidth - width / 2 - 8, Math.max(width / 2 + 8, center));
+    const boxLeft = left - width / 2;
+
+    let lane = laneRight.findIndex(right => boxLeft > right + 6);
+    if (lane < 0) lane = laneRight.length < lanes ? laneRight.length : laneRight.indexOf(Math.min(...laneRight));
+    laneRight[lane] = boxLeft + width;
+
+    const top = showBelow
+      ? Math.min(window.innerHeight - 12, anchorRect.bottom + 38 + lane * 32)
+      : Math.max(12, anchorRect.top - 6 - lane * 32);
+
+    peek.style.width = `${width}px`;
+    peek.classList.toggle('below', showBelow);
+    peek.style.left = `${left}px`;
+    peek.style.top = `${top}px`;
+    requestAnimationFrame(() => peek.classList.add('show'));
+  });
+
+  clearTimeout(showAllWaypointNamePeeks._timer);
+  showAllWaypointNamePeeks._timer = setTimeout(() => {
+    document.querySelectorAll('.wt-name-peek').forEach(peek => {
+      peek.classList.remove('show');
+      setTimeout(() => peek.remove(), 180);
+    });
+  }, 2300);
+}
+
 function showWaypointNamePeek(anchor, pt, fallbackIdx = 0) {
   const label = pt?.label || getWeatherPointShortLabel(pt, fallbackIdx);
   if (!label) return;
@@ -5355,8 +5410,8 @@ function renderWeatherPanel() {
     return left + right;
   });
   const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
-  const labelW = weatherTableCollapsed ? 42 : 68;
-  const minColW = weatherTableCollapsed ? 34 : 110;
+  const labelW = weatherTableCollapsed ? 36 : 68;
+  const minColW = weatherTableCollapsed ? 30 : 110;
   const dataW = weatherTableCollapsed
     ? visibleN * minColW
     : Math.max(panelW - labelW, visibleN * minColW);
@@ -5969,7 +6024,7 @@ function bindWeatherTableColumnDrag(container) {
 
     el.classList.add('wt-col-dragging');
     if (weatherTableCollapsed) {
-      showWaypointNamePeek(el, pt, colIdx);
+      showAllWaypointNamePeeks(container, el);
     }
     if (navigator.vibrate) navigator.vibrate(40);
 
@@ -6069,7 +6124,7 @@ function bindWeatherTableNamePeek(container) {
     let timer = 0;
     const start = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => showWaypointNamePeek(el, pt, colIdx), 650);
+      timer = setTimeout(() => showAllWaypointNamePeeks(container, el), 650);
     };
     const cancel = () => {
       clearTimeout(timer);
