@@ -73,6 +73,7 @@ const LS_WAYPOINT_CENTERING_KEY = 'mappingElf_waypointCentering';
 const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
+const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
 
 /**
  * 上河速度 base: S=1.0 corresponds to 3.0 km/h on flat terrain.
@@ -133,6 +134,7 @@ let collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0'; /
 let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0'; // default true
 let collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1'; // default false
 let waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0'; // default true
+let weatherTableCollapsed = localStorage.getItem(LS_WEATHER_TABLE_COLLAPSED_KEY) === '1';
 
 const LS_SHOW_WP_ICON_KEY = 'mappingElf_showWpIcon';
 const LS_SHOW_IM_ICON_KEY = 'mappingElf_showImIcon';
@@ -3367,6 +3369,57 @@ function getSavedWeatherCells(pt) {
   return cells;
 }
 
+function getWeatherPointShortLabel(pt, fallbackIdx = 0) {
+  if (pt?.isWaypoint && Number.isInteger(pt.wpIndex)) return String(pt.wpIndex + 1);
+  return String(fallbackIdx + 1);
+}
+
+function getMainWaypointNameList() {
+  return weatherPoints
+    .filter(pt => pt.isWaypoint && !pt.isReturn)
+    .map(pt => `${getWeatherPointShortLabel(pt)}. ${pt.label || ''}`.trim())
+    .filter(Boolean);
+}
+
+function showMainWaypointNamePeek(anchor = null) {
+  const names = getMainWaypointNameList();
+  if (names.length === 0) return;
+  document.querySelector('.wt-name-peek')?.remove();
+  const peek = document.createElement('div');
+  peek.className = 'wt-name-peek';
+  peek.textContent = names.join('  /  ');
+  document.body.appendChild(peek);
+
+  const rect = anchor?.getBoundingClientRect?.();
+  const left = rect ? Math.min(window.innerWidth - 16, Math.max(8, rect.left + rect.width / 2)) : window.innerWidth / 2;
+  const top = rect ? Math.max(12, rect.top - 10) : Math.max(12, window.innerHeight * 0.36);
+  peek.style.left = `${left}px`;
+  peek.style.top = `${top}px`;
+  requestAnimationFrame(() => peek.classList.add('show'));
+  clearTimeout(showMainWaypointNamePeek._timer);
+  showMainWaypointNamePeek._timer = setTimeout(() => {
+    peek.classList.remove('show');
+    setTimeout(() => peek.remove(), 180);
+  }, 2600);
+}
+
+function getWeatherTableVisibleIndices() {
+  const indices = weatherPoints.map((_, i) => i);
+  if (!weatherTableCollapsed) return indices;
+  const main = indices.filter(i => weatherPoints[i]?.isWaypoint && !weatherPoints[i]?.isReturn);
+  return main.length > 0 ? main : indices;
+}
+
+function setWeatherTableCollapsed(collapsed) {
+  weatherTableCollapsed = !!collapsed;
+  localStorage.setItem(LS_WEATHER_TABLE_COLLAPSED_KEY, weatherTableCollapsed ? '1' : '0');
+  renderWeatherPanel();
+}
+
+function toggleWeatherTableCollapsed() {
+  setWeatherTableCollapsed(!weatherTableCollapsed);
+}
+
 /** Persist display-cell values for one column */
 function saveWeatherCells(semKey, cells) {
   savedWeatherCells[semKey] = cells;
@@ -3893,14 +3946,16 @@ function updateWeatherTableCell(cell, key, val) {
 function saveWeatherSettings() {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
+  const previous = loadWeatherSettings();
   const byKey = {};
   const cols = [];
   weatherPoints.forEach((pt, i) => {
     const thDate = container.querySelector(`.wt-th-date[data-idx="${i}"]`);
     const thTime = container.querySelector(`.wt-th-time[data-idx="${i}"]`);
+    const previousEntry = getSavedCol(pt, i, previous) || previous?.cols?.[i] || defaultWeatherSchedule();
     const entry = {
-      date: thDate?.querySelector('.wt-date-input')?.value || '',
-      hour: thTime?.querySelector('.wt-time-select')?.value ?? '8',
+      date: thDate?.querySelector('.wt-date-input')?.value || previousEntry.date || '',
+      hour: thTime?.querySelector('.wt-time-select')?.value ?? previousEntry.hour ?? '8',
     };
     cols.push(entry); // keep legacy array for backwards compat
     if (!pt.isWaypoint) return; // Interval times are recalculated — no need to persist
@@ -4060,6 +4115,7 @@ function initWeatherControls() {
     if (!btn) return;
     console.log('Delegated click caught:', btn.dataset.action);
     switch (btn.dataset.action) {
+      case 'toggle-weather-table': toggleWeatherTableCollapsed(); break;
       case 'fetch': fetchAllWeatherData({ force: true }); break;
       case 'day-minus': shiftAllDates(-1, 0); break;
       case 'day-plus': shiftAllDates(+1, 0); break;
@@ -5057,22 +5113,25 @@ function renderWeatherPanel() {
 
   // Proportional column widths aligned with elevation chart X axis
   const positions = computeWeatherPointPositions();
-  const voronoi = positions.map((p, i) => {
-    const left = i === 0 ? p : (p - positions[i - 1]) / 2;
-    const right = i === N - 1 ? (1 - p) : (positions[i + 1] - p) / 2;
+  const visibleIndices = getWeatherTableVisibleIndices();
+  const visiblePositions = visibleIndices.map(i => positions[i]);
+  const visibleN = visibleIndices.length;
+  const voronoi = visiblePositions.map((p, i) => {
+    const left = i === 0 ? p : (p - visiblePositions[i - 1]) / 2;
+    const right = i === visibleN - 1 ? (1 - p) : (visiblePositions[i + 1] - p) / 2;
     return left + right;
   });
   const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
-  const labelW = 68;
-  const minColW = 110;
-  const dataW = Math.max(panelW - labelW, N * minColW);
+  const labelW = weatherTableCollapsed ? 44 : 68;
+  const minColW = weatherTableCollapsed ? 54 : 110;
+  const dataW = Math.max(panelW - labelW, visibleN * minColW);
   const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
 
   const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
     `<option value="${h}"${h === sel ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
   ).join('');
 
-  let html = `<table class="weather-table"><colgroup><col style="width:${labelW}px">`;
+  let html = `<table class="weather-table${weatherTableCollapsed ? ' is-collapsed' : ''}"><colgroup><col style="width:${labelW}px">`;
   colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
   html += `</colgroup><thead>`;
 
@@ -5084,13 +5143,17 @@ function renderWeatherPanel() {
   // --- Row 1: labels / fetch ---
   html += `<tr class="wt-header-row wt-header-row-label">
     <th class="wt-label-cell wt-th">
+      <button class="wt-ctrl-collapse" data-action="toggle-weather-table" title="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}" aria-label="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${weatherTableCollapsed ? 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z' : 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z'}" fill="currentColor"/></svg>
+      </button>
       <button class="wt-ctrl-fetch" data-action="fetch" title="更新天氣">
         <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg>
         <span>更新天氣</span>
       </button>
     </th>`;
 
-  weatherPoints.forEach((pt, i) => {
+  visibleIndices.forEach((i, visiblePos) => {
+    const pt = weatherPoints[i];
     const gradColor = _weatherPointGradColor(pt);
     const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
 
@@ -5122,8 +5185,11 @@ function renderWeatherPanel() {
       ? `<span class="wt-elapsed-badge">${formatDurationHHMM(displayElapsedH)}</span>`
       : '';
 
-    html += `<th class="${thClass}" data-idx="${i}" ${thStyle}>
-      <div class="wt-col-label" ${labelStyle}>${pt.label}${elapsedBadge}</div>
+    const displayLabel = weatherTableCollapsed ? getWeatherPointShortLabel(pt, visiblePos) : pt.label;
+    const titleAttr = weatherTableCollapsed ? ` title="${pt.label || displayLabel}"` : '';
+
+    html += `<th class="${thClass}" data-idx="${i}" ${thStyle}${titleAttr}>
+      <div class="wt-col-label" ${labelStyle}${titleAttr}>${displayLabel}${weatherTableCollapsed ? '' : elapsedBadge}</div>
     </th>`;
   });
   html += `</tr>`;
@@ -5140,7 +5206,8 @@ function renderWeatherPanel() {
       </div>
     </th>`;
 
-  weatherPoints.forEach((pt, i) => {
+  visibleIndices.forEach((i) => {
+    const pt = weatherPoints[i];
     const sv = getSavedCol(pt, i, saved);
     const date = sv?.date || todayStr;
     const locked = !pt.isWaypoint;
@@ -5165,7 +5232,7 @@ function renderWeatherPanel() {
       if (curDateMs - 86400000 < prevDateMs) canMinus = false;
     }
 
-    html += `<th class="${thClass}" data-idx="${i}">
+    html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
       <div class="wt-adj-wrap">
         <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
         <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
@@ -5190,7 +5257,8 @@ function renderWeatherPanel() {
       </div>
     </th>`;
 
-  weatherPoints.forEach((pt, i) => {
+  visibleIndices.forEach((i) => {
+    const pt = weatherPoints[i];
     const sv = getSavedCol(pt, i, saved);
     const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
     const locked = !pt.isWaypoint;
@@ -5218,7 +5286,7 @@ function renderWeatherPanel() {
       }
     }
 
-    html += `<th class="${thClass}" data-idx="${i}">
+    html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
       <div class="wt-time-row">
         <button class="wt-adj-btn wt-adj-hour-minus" title="前一小時"${locked ? ' disabled' : ''}>−</button>
         <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
@@ -5234,7 +5302,8 @@ function renderWeatherPanel() {
   WEATHER_ROWS.forEach(row => {
     const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
     html += `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
-    weatherPoints.forEach((pt, i) => {
+    visibleIndices.forEach((i) => {
+      const pt = weatherPoints[i];
       const returnClass = pt.isReturn ? ' wt-return-col' : '';
       const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
       const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
@@ -5258,7 +5327,8 @@ function renderWeatherPanel() {
 
   // Windy link row (bottom)
   html += '<tr class="wt-windy-row"><td class="wt-label-cell wt-td">Windy</td>';
-  weatherPoints.forEach((pt, i) => {
+  visibleIndices.forEach((i) => {
+    const pt = weatherPoints[i];
     const returnClass = pt.isReturn ? ' wt-return-col' : '';
     const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
     html += `<td class="wt-data-cell wt-td wt-windy-cell${returnClass}${startClass}" data-col="${i}">` +
@@ -5279,6 +5349,7 @@ function renderWeatherPanel() {
       const action = btn.dataset.action;
       console.log('Direct button click:', action);
       switch (action) {
+        case 'toggle-weather-table': toggleWeatherTableCollapsed(); break;
         case 'fetch': fetchAllWeatherData({ force: true }); break;
         case 'day-minus': shiftAllDates(-1, 0); break;
         case 'day-plus': shiftAllDates(+1, 0); break;
@@ -5397,6 +5468,7 @@ function renderWeatherPanel() {
       if (pt.isWaypoint) {
         labelEl.title = '單擊高亮 · 雙擊編輯名稱';
         labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startLabelEdit(labelEl, pt); });
+        if (weatherTableCollapsed) labelEl.title = pt.label || getWeatherPointShortLabel(pt, colIdx);
       } else {
         labelEl.title = '單擊高亮';
       }
@@ -5418,6 +5490,7 @@ function renderWeatherPanel() {
   // weather-table label row. The trash zone uses the 'table' variant so it
   // appears at the elevation-chart area, anchored to the bottom-panel divider.
   bindWeatherTableColumnDrag(container);
+  bindWeatherTableNamePeek(container);
 
   // Weather table icon click -> Expand card
   container.querySelectorAll('.wt-weather-icon-trigger').forEach(span => {
@@ -5653,6 +5726,7 @@ function bindWeatherTableColumnDrag(container) {
     dragWpIdx = pt.wpIndex;
 
     el.classList.add('wt-col-dragging');
+    if (weatherTableCollapsed) showMainWaypointNamePeek(el);
     if (navigator.vibrate) navigator.vibrate(40);
 
     // If it's a data cell, we use the corresponding header label as ghost
@@ -5738,6 +5812,29 @@ function bindWeatherTableColumnDrag(container) {
       checkMove(t.clientX, t.clientY);
     }, { passive: true });
     el.addEventListener('touchend', cancelLP, { passive: true });
+  });
+}
+
+function bindWeatherTableNamePeek(container) {
+  if (!weatherTableCollapsed) return;
+  const targets = container.querySelectorAll('.wt-header-row-label .wt-col-head, .wt-col-label');
+  targets.forEach(el => {
+    let timer = 0;
+    const start = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => showMainWaypointNamePeek(el), 650);
+    };
+    const cancel = () => {
+      clearTimeout(timer);
+      timer = 0;
+    };
+    el.addEventListener('touchstart', start, { passive: true });
+    el.addEventListener('touchmove', cancel, { passive: true });
+    el.addEventListener('touchend', cancel, { passive: true });
+    el.addEventListener('touchcancel', cancel, { passive: true });
+    el.addEventListener('mousedown', start);
+    el.addEventListener('mouseup', cancel);
+    el.addEventListener('mouseleave', cancel);
   });
 }
 
@@ -6087,6 +6184,7 @@ function _renderWeatherCard(colIdx) {
   const temp = val('temp');
   const precipitation = val('precipitation');
   const precipProb = val('precipProb');
+  const cardLabel = isCompact ? getWeatherPointShortLabel(pt, colIdx) : (pt.label || getWeatherPointShortLabel(pt, colIdx));
   const label = pt.label || (pt.isWaypoint ? `航點 ${pt.wpIndex + 1}` : '中繼點');
 
   // Build HTML with unique ID per column card. Use gradient color for card accent.
@@ -6097,7 +6195,7 @@ function _renderWeatherCard(colIdx) {
   // Header
   const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title">${wIcon} ${label}</span>`;
+  html += `<span class="wc-title" title="${pt.label || cardLabel}">${wIcon} ${cardLabel}</span>`;
   if (isFull) {
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
@@ -6297,6 +6395,19 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     });
   });
 
+  let namePeekTimer = 0;
+  const startNamePeek = () => {
+    clearTimeout(namePeekTimer);
+    namePeekTimer = setTimeout(() => showMainWaypointNamePeek(root), 650);
+  };
+  const cancelNamePeek = () => {
+    clearTimeout(namePeekTimer);
+    namePeekTimer = 0;
+  };
+  root.addEventListener('mousedown', startNamePeek);
+  root.addEventListener('mouseup', cancelNamePeek);
+  root.addEventListener('mouseleave', cancelNamePeek);
+
   // Sync changes back to the weather table
   root.querySelectorAll('.wc-date-input, .wc-time-select').forEach(el => {
     el.addEventListener('change', (e) => {
@@ -6330,9 +6441,13 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     _touchStartX = touch.clientX;
     _touchStartY = touch.clientY;
     _touchStartTime = Date.now();
+    startNamePeek();
   }, { passive: true });
 
+  root.addEventListener('touchmove', cancelNamePeek, { passive: true });
+
   root.addEventListener('touchend', (e) => {
+    cancelNamePeek();
     const touch = e.changedTouches[0];
     const dx = touch.clientX - _touchStartX;
     const dy = touch.clientY - _touchStartY;
