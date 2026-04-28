@@ -4741,7 +4741,15 @@ html.light-theme .wc-time-select {
   gap: 12px;
 }
 
-.about-me-header {
+.about-me-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.about-me-identity {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -4793,6 +4801,8 @@ html.light-theme .wc-time-select {
 
 .about-me-social {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 4px;
 }
@@ -4808,6 +4818,18 @@ html.light-theme .wc-time-select {
 .social-link:hover {
   color: var(--accent-primary);
   transform: translateY(-2px);
+}
+
+.feedback-link {
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.feedback-link span {
+  line-height: 1;
 }
 
 
@@ -4854,6 +4876,10 @@ html.light-theme .about-me-section {
 
 html.light-theme .about-me-name {
   color: #0f172a;
+}
+
+html.light-theme .about-me-title {
+  color: #64748b;
 }
 
 html.light-theme .quote-zh {
