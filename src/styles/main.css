@@ -1439,6 +1439,32 @@ html.light-theme .waypoint-trash-zone.is-hover {
   width: 100%;
 }
 
+.pace-formula-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pace-note-title {
+  margin-bottom: 5px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pace-formula-note p {
+  margin: 0 0 6px;
+}
+
+.pace-formula-note p:last-child {
+  margin-bottom: 0;
+}
+
 .pace-calibration-panel {
   display: flex;
   flex-direction: column;
