@@ -4209,21 +4209,6 @@ body.modal-open {
   margin-top: 6px;
 }
 
-.wc-top-stats {
-  margin-top: 0;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.wc-bottom-facts {
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-}
-
-.wc-bottom-facts + .wc-windy-btn {
-  margin-top: 6px;
-}
-
 .wc-info-item {
   display: flex;
   justify-content: space-between;
