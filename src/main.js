@@ -3403,6 +3403,28 @@ function showMainWaypointNamePeek(anchor = null) {
   }, 2600);
 }
 
+function showWaypointNamePeek(anchor, pt, fallbackIdx = 0) {
+  const label = pt?.label || getWeatherPointShortLabel(pt, fallbackIdx);
+  if (!label) return;
+  document.querySelector('.wt-name-peek')?.remove();
+  const peek = document.createElement('div');
+  peek.className = 'wt-name-peek wt-name-peek-single';
+  peek.textContent = label;
+  document.body.appendChild(peek);
+
+  const rect = anchor?.getBoundingClientRect?.();
+  const left = rect ? Math.min(window.innerWidth - 12, Math.max(12, rect.left + rect.width / 2)) : window.innerWidth / 2;
+  const top = rect ? Math.max(12, rect.top - 6) : Math.max(12, window.innerHeight * 0.36);
+  peek.style.left = `${left}px`;
+  peek.style.top = `${top}px`;
+  requestAnimationFrame(() => peek.classList.add('show'));
+  clearTimeout(showWaypointNamePeek._timer);
+  showWaypointNamePeek._timer = setTimeout(() => {
+    peek.classList.remove('show');
+    setTimeout(() => peek.remove(), 180);
+  }, 1800);
+}
+
 function getWeatherTableVisibleIndices() {
   const indices = weatherPoints.map((_, i) => i);
   if (!weatherTableCollapsed) return indices;
@@ -5740,7 +5762,10 @@ function bindWeatherTableColumnDrag(container) {
     dragWpIdx = pt.wpIndex;
 
     el.classList.add('wt-col-dragging');
-    if (weatherTableCollapsed) showMainWaypointNamePeek(el);
+    if (weatherTableCollapsed) {
+      const labelEl = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"] .wt-col-label`) || el;
+      showWaypointNamePeek(labelEl, pt, colIdx);
+    }
     if (navigator.vibrate) navigator.vibrate(40);
 
     // If it's a data cell, we use the corresponding header label as ghost
@@ -5831,12 +5856,16 @@ function bindWeatherTableColumnDrag(container) {
 
 function bindWeatherTableNamePeek(container) {
   if (!weatherTableCollapsed) return;
-  const targets = container.querySelectorAll('.wt-header-row-label .wt-col-head, .wt-col-label');
+  const targets = container.querySelectorAll('.wt-header-row-label .wt-col-head, .wt-header-row-label .wt-col-label');
   targets.forEach(el => {
+    const th = el.closest('.wt-col-head');
+    const colIdx = parseInt(th?.dataset.idx);
+    const pt = weatherPoints[colIdx];
+    if (!pt?.isWaypoint || pt.isReturn) return;
     let timer = 0;
     const start = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => showMainWaypointNamePeek(el), 650);
+      timer = setTimeout(() => showWaypointNamePeek(el, pt, colIdx), 650);
     };
     const cancel = () => {
       clearTimeout(timer);

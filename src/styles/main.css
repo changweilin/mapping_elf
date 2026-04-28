@@ -3362,8 +3362,25 @@ body.is-resizing {
   mask-image: linear-gradient(90deg, #000 62%, transparent);
 }
 
-.weather-table.is-collapsed .row-windy-link,
-.weather-table.is-collapsed .wt-windy-row {
+.weather-table.is-collapsed .row-windy-link {
+  display: none;
+}
+
+.weather-table.is-collapsed .wt-windy-row td {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.weather-table.is-collapsed .wt-windy-link {
+  opacity: 0.85;
+}
+
+.weather-table.is-collapsed .wt-windy-link .windy-favicon {
+  width: 11px;
+  height: 11px;
+}
+
+.weather-table.is-collapsed .wt-windy-link svg {
   display: none;
 }
 
@@ -3665,6 +3682,12 @@ html.light-theme .wt-date-input {
 .wt-name-peek.show {
   opacity: 1;
   transform: translate(-50%, -100%) translateY(-14px);
+}
+
+.wt-name-peek-single {
+  max-width: min(72vw, 260px);
+  text-align: center;
+  font-weight: 650;
 }
 
 /* Windy selects in weather header */
