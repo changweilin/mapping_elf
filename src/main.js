@@ -16,7 +16,7 @@ import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
 import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
-import { applyTranslations, initI18n, translatePhrase } from './modules/i18n.js';
+import { applyTranslations, getLanguage, initI18n, translatePhrase } from './modules/i18n.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -2852,7 +2852,7 @@ function renderFavoritesList() {
   }
   container.innerHTML = favorites.map(f => {
     const count = Array.isArray(f.waypoints) ? f.waypoints.length : 0;
-    const dateStr = new Date(f.savedAt || Date.now()).toLocaleString('zh-TW', {
+    const dateStr = new Date(f.savedAt || Date.now()).toLocaleString(getLanguage(), {
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
     });
     return `
@@ -2992,7 +2992,7 @@ function openReplaceFlow(pendingName) {
   list.innerHTML = favorites.map(f => `
     <button class="btn-secondary replace-target" data-id="${_escapeHtml(f.id)}">
       <div class="replace-target-name">取代「${_escapeHtml(f.name || '未命名路線')}」</div>
-      <div class="replace-target-meta">${_escapeHtml(new Date(f.savedAt).toLocaleString('zh-TW'))}</div>
+      <div class="replace-target-meta">${_escapeHtml(new Date(f.savedAt).toLocaleString(getLanguage()))}</div>
     </button>`).join('');
   list.querySelectorAll('.replace-target').forEach(btn => btn.addEventListener('click', (e) => {
     const id = e.currentTarget.dataset.id;
@@ -7100,16 +7100,26 @@ function updateElevationMarkers() {
   elevationProfile.setWaypointMarkers(markers);
 }
 
+function refreshLanguageSensitiveUi() {
+  renderWeatherPanel();
+  if (allAlternatives.length > 0) {
+    renderAlternatives(allAlternatives, selectedAltIndex);
+  }
+  updateWaypointList(mapManager.waypoints);
+  updateTimeStat();
+  syncPaceCalibrationUI();
+  updateFlatPlaceholder();
+  updateThemeIcons();
+  renderFavoritesList();
+  refreshOpenWeatherCards();
+  applyTranslations();
+}
+
 // =========== Init ===========
 
 async function init() {
   initI18n({
-    onLanguageChange: () => {
-      renderWeatherPanel();
-      updateWaypointList(mapManager.waypoints);
-      updateTimeStat();
-      applyTranslations();
-    },
+    onLanguageChange: refreshLanguageSensitiveUi,
   });
 
   // Global listener for clickable coordinates

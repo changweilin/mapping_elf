@@ -4,6 +4,7 @@
  */
 import { Chart, registerables } from 'chart.js';
 import { samplePoints, cumulativeDistances, formatDistance, formatElevation, interpolateRouteColor, interpolateRouteColorRgb, interpolateReturnColor, interpolateReturnColorRgb } from './utils.js';
+import { translatePhrase } from './i18n.js';
 
 Chart.register(...registerables);
 
@@ -292,7 +293,7 @@ export class ElevationProfile {
               c.font = 'bold 10px Inter, sans-serif';
               c.fillStyle = 'rgba(255,255,255,0.8)';
               const yOffset = m.weatherIcon ? r + 22 : r + 5;
-              c.fillText(m.label, xPx, yPx - yOffset);
+              c.fillText(translatePhrase(m.label), xPx, yPx - yOffset);
             }
           }
 
@@ -384,7 +385,7 @@ export class ElevationProfile {
               title: (items) => {
                 const item = items[0];
                 const marker = self._markers.find(m => m.dataIdx === item.dataIndex);
-                if (marker && marker.label) return `${marker.label} (${item.label} km)`;
+                if (marker && marker.label) return `${translatePhrase(marker.label)} (${item.label} km)`;
                 return `距離: ${item.label} km`;
               },
               label: (item) => `海拔: ${formatElevation(this.elevations[item.dataIndex])}`,
