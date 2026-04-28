@@ -14,8 +14,13 @@ import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { MapPackExporter } from './modules/mapPackExporter.js';
 import { MapPackImporter } from './modules/mapPackImporter.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
+import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
+
+function showNotification(message, type = 'info', duration = 3500) {
+  rawShowNotification(translatePhrase(message), type, duration);
+}
 
 // Fix Leaflet default icon paths
 import L from 'leaflet';
@@ -48,6 +53,8 @@ let importedWaypointMeta = [];
 let lastWaypoints = [];
 let pendingNewWaypointIndex = null;
 let isInitialLoad = false;
+let refreshKeywordSearchResults = null;
+let lastGpsLatLng = null;
 
 const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
@@ -75,6 +82,36 @@ const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
+
+const COUNTRY_SEARCH_LANGUAGES = {
+  tw: ['zh-TW'],
+  cn: ['zh'],
+  hk: ['zh-TW', 'en'],
+  mo: ['zh-TW'],
+  sg: ['en', 'zh'],
+  jp: ['ja'],
+  kr: ['ko'],
+  fr: ['fr'],
+  be: ['fr', 'de'],
+  ch: ['de', 'fr', 'it'],
+  de: ['de'],
+  at: ['de'],
+  es: ['es'],
+  mx: ['es'],
+  ar: ['es'],
+  cl: ['es'],
+  co: ['es'],
+  pe: ['es'],
+  it: ['it'],
+  sm: ['it'],
+  va: ['it'],
+  us: ['en'],
+  gb: ['en'],
+  ie: ['en'],
+  ca: ['en', 'fr'],
+  au: ['en'],
+  nz: ['en'],
+};
 
 /**
  * 上河速度 base: S=1.0 corresponds to 3.0 km/h on flat terrain.
@@ -188,6 +225,9 @@ const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
+mapManager.onGpsFix = (lat, lng) => {
+  lastGpsLatLng = [lat, lng];
+};
 
 // =========== Undo/Redo History ===========
 // Snapshot-based history for all route-planning actions:
@@ -623,8 +663,8 @@ function savePaceCalibration() {
 
 function formatCalibrationTrackSummary(track) {
   const distKm = ((track.distanceM || 0) / 1000).toFixed(1);
-  const est = formatDuration(track.estimatedH || 0);
-  return `${distKm} km · +${Math.round(track.ascentM || 0)} m / -${Math.round(track.descentM || 0)} m · 預估 ${est}`;
+  const est = formatDuration(track.estimatedH || 0, getLanguage());
+  return `${distKm} km · +${Math.round(track.ascentM || 0)} m / -${Math.round(track.descentM || 0)} m · ${translatePhrase('預估')} ${est}`;
 }
 
 function syncPaceCalibrationUI() {
@@ -2141,7 +2181,7 @@ function updateTimeStat() {
   }
   const times = computeCumulativeTimes(elevs, dists, speedActivity, paceParams);
   const totalH = times[times.length - 1] || 0;
-  statTime.textContent = formatDuration(totalH);
+  statTime.textContent = formatDuration(totalH, getLanguage());
 
   const trip = computeTripStats(elevs, dists, speedActivity, paceParams);
   if (statKcal) statKcal.textContent = `${trip.kcalExpended.toLocaleString()} kcal`;
@@ -2662,7 +2702,7 @@ function captureFavorite(name) {
       if (cellMap) {
         const labelled = {};
         WEATHER_ROWS.forEach(r => {
-          const v = cellMap[r.key];
+          const v = getSavedWeatherCellValue(cellMap, r.key);
           if (v && v !== '—') labelled[r.label] = v;
         });
         if (Object.keys(labelled).length) weather[wpIdx].weather = labelled;
@@ -2847,7 +2887,7 @@ function renderFavoritesList() {
   }
   container.innerHTML = favorites.map(f => {
     const count = Array.isArray(f.waypoints) ? f.waypoints.length : 0;
-    const dateStr = new Date(f.savedAt || Date.now()).toLocaleString('zh-TW', {
+    const dateStr = new Date(f.savedAt || Date.now()).toLocaleString(getLanguage(), {
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
     });
     return `
@@ -2987,7 +3027,7 @@ function openReplaceFlow(pendingName) {
   list.innerHTML = favorites.map(f => `
     <button class="btn-secondary replace-target" data-id="${_escapeHtml(f.id)}">
       <div class="replace-target-name">取代「${_escapeHtml(f.name || '未命名路線')}」</div>
-      <div class="replace-target-meta">${_escapeHtml(new Date(f.savedAt).toLocaleString('zh-TW'))}</div>
+      <div class="replace-target-meta">${_escapeHtml(new Date(f.savedAt).toLocaleString(getLanguage()))}</div>
     </button>`).join('');
   list.querySelectorAll('.replace-target').forEach(btn => btn.addEventListener('click', (e) => {
     const id = e.currentTarget.dataset.id;
@@ -3029,7 +3069,7 @@ function collectExportData() {
       const savedCells = getSavedWeatherCells(pt);
       if (savedCells) {
         WEATHER_ROWS.forEach(row => {
-          const val = savedCells[row.key];
+          const val = getSavedWeatherCellValue(savedCells, row.key);
           if (val && val !== '—') weather[row.key] = { label: row.label, value: val };
         });
       }
@@ -3563,6 +3603,16 @@ function getSavedWeatherCells(pt) {
   const cells = savedWeatherCells[key] || savedWeatherCells[legacyKey] || null;
   if (cells && key !== legacyKey && !savedWeatherCells[key]) saveWeatherCells(key, cells);
   return cells;
+}
+
+function getSavedWeatherCellValue(cells, key) {
+  if (!cells) return '—';
+  if (key === 'weather') {
+    const icon = cells._icon || String(cells.weather || '').split(' ')[0] || '';
+    if (cells._weatherCode != null) return `${icon} ${tWmo(cells._weatherCode)}`.trim();
+    return translateWeatherText(cells.weather || '—');
+  }
+  return cells[key] || '—';
 }
 
 function getWeatherPointShortLabel(pt, fallbackIdx = 0) {
@@ -4138,7 +4188,7 @@ function getCellValue(data, key, pt) {
   if (key === 'coords' && pt) return formatCoords(pt.lat, pt.lng);
   if (!data) return '—';
   switch (key) {
-    case 'weather': return `${data.weatherIcon || ''} ${data.weatherDesc || '—'}`.trim();
+    case 'weather': return `${data.weatherIcon || ''} ${data.weatherCode != null ? tWmo(data.weatherCode) : translateWeatherText(data.weatherDesc || '—')}`.trim();
     case 'temp': return v(data.temp, data.tempMax);
     case 'tempRange': return (data.tempMax || data.tempMin) ? `${v(data.tempMax, '—')} / ${v(data.tempMin, '—')}` : '—';
     case 'tempMax': return v(data.tempMax, '—');
@@ -4202,6 +4252,7 @@ function updateWeatherTableCell(cell, key, val) {
   }
 
   if (key === 'weather') {
+    val = translateWeatherText(val);
     const parts = val.split(' ');
     const icon = parts[0];
     const desc = parts.slice(1).join(' ');
@@ -5722,7 +5773,7 @@ function renderWeatherPanel() {
     if (!dateStr) return;
     const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
     if (cached) {
-      const cells = {};
+      const cells = { _icon: cached.weatherIcon, _weatherCode: cached.weatherCode };
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(cached, row.key, pt);
         cells[row.key] = val;
@@ -5739,7 +5790,7 @@ function renderWeatherPanel() {
       if (saved) {
         WEATHER_ROWS.forEach(row => {
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
-          const val = saved[row.key];
+          const val = getSavedWeatherCellValue(saved, row.key);
           if (cell && val) updateWeatherTableCell(cell, row.key, val);
         });
       }
@@ -5835,9 +5886,9 @@ function renderWeatherPanel() {
         for (const [k, v] of Object.entries(importedData.weather)) {
           const val = (typeof v === 'object') ? v.value : v;
           const key = labelToKey[k] || k;
-          cells[key] = val;
+          cells[key] = key === 'weather' ? translateWeatherText(val) : val;
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${key}"]`);
-          if (cell) cell.textContent = val;
+          if (cell) updateWeatherTableCell(cell, key, cells[key]);
         }
         // The weather cell is formatted "<emoji> <desc>" — extract the emoji so
         // downstream consumers (map marker, elevation chart) can render the icon
@@ -6196,7 +6247,7 @@ async function fetchAllWeatherData(options = {}) {
     // If not forced and we have cache, just apply it and skip fetching
     if (!force) {
       if (data) {
-        const cells = { _icon: data.weatherIcon };
+        const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
         WEATHER_ROWS.forEach(row => {
           const val = getCellValue(data, row.key, pt);
           cells[row.key] = val;
@@ -6249,7 +6300,7 @@ async function fetchAllWeatherData(options = {}) {
       cachedWeatherData[cacheKey] = data;
       // Save after each point so partial data survives a mid-fetch page close
       localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
-      const cells = { _icon: data.weatherIcon };
+      const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(data, row.key, pt);
         cells[row.key] = val;
@@ -6474,7 +6525,7 @@ function _renderWeatherCard(colIdx) {
     if (key === 'elevation') return formatElevation(pt._ele);
     if (key === 'coords') return formatCoords(pt.lat, pt.lng);
     if (data) return getCellValue(data, key, pt);
-    if (cells && cells[key]) return cells[key];
+    if (cells && cells[key]) return getSavedWeatherCellValue(cells, key);
     return '—';
   };
 
@@ -7095,9 +7146,29 @@ function updateElevationMarkers() {
   elevationProfile.setWaypointMarkers(markers);
 }
 
+function refreshLanguageSensitiveUi() {
+  renderWeatherPanel();
+  if (allAlternatives.length > 0) {
+    renderAlternatives(allAlternatives, selectedAltIndex);
+  }
+  updateWaypointList(mapManager.waypoints);
+  updateTimeStat();
+  syncPaceCalibrationUI();
+  updateFlatPlaceholder();
+  updateThemeIcons();
+  renderFavoritesList();
+  refreshOpenWeatherCards();
+  refreshKeywordSearchResults?.();
+  applyTranslations();
+}
+
 // =========== Init ===========
 
 async function init() {
+  initI18n({
+    onLanguageChange: refreshLanguageSensitiveUi,
+  });
+
   // Global listener for clickable coordinates
   document.addEventListener('click', (e) => {
     const el = e.target.closest('.clickable-coords');
@@ -7500,7 +7571,10 @@ async function init() {
   } else if (!trackRestored && !savedView && navigator.geolocation) {
     // No saved state at all — pan to user's location
     navigator.geolocation.getCurrentPosition(
-      (pos) => mapManager.map.setView([pos.coords.latitude, pos.coords.longitude], 13),
+      (pos) => {
+        lastGpsLatLng = [pos.coords.latitude, pos.coords.longitude];
+        mapManager.map.setView(lastGpsLatLng, 13);
+      },
       () => { }
     );
   }
@@ -7535,6 +7609,53 @@ function parseLatLngInput(q) {
   return [lat, lng];
 }
 
+function detectSearchInputLanguage(query) {
+  const text = (query || '').trim();
+  if (!text) return null;
+  if (/[\u3040-\u30ff]/.test(text)) return 'ja';
+  if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+  if (/[\u4e00-\u9fff]/.test(text)) return 'zh-TW';
+  if (/[ßäö]/i.test(text)) return 'de';
+  if (/[ñ¿¡]/i.test(text)) return 'es';
+  if (/[âæçêëîïôœûÿ]/i.test(text)) return 'fr';
+  if (/[ìò]/i.test(text)) return 'it';
+  return null;
+}
+
+function countryLanguages(countryCode) {
+  return COUNTRY_SEARCH_LANGUAGES[String(countryCode || '').toLowerCase()] || [];
+}
+
+async function getLanguagesForLatLng(latlng) {
+  if (!latlng) return [];
+  const [lat, lng] = latlng;
+  const cc = await fetchViewCountryCode(lat, lng);
+  return countryLanguages(cc);
+}
+
+async function getSearchAcceptLanguage(query, bounds) {
+  const languages = [];
+  const add = (value) => {
+    if (!value || languages.includes(value)) return;
+    languages.push(value);
+  };
+  const addMany = (values) => values.forEach(add);
+
+  const inputLanguage = detectSearchInputLanguage(query);
+  add(inputLanguage);
+  add(getLanguage());
+
+  if (bounds) {
+    const center = bounds.getCenter();
+    addMany(await getLanguagesForLatLng([center.lat, center.lng]));
+  }
+
+  addMany(await getLanguagesForLatLng(lastGpsLatLng || mapManager._mapCursorLatLng));
+  if (!inputLanguage) add('en');
+
+  return languages.join(',');
+}
+
 /**
  * Resolve the ISO country code at (lat, lng) via Nominatim reverse-geocoding.
  * Cached on a ~11 km grid so a panning user doesn't trigger repeated lookups.
@@ -7547,7 +7668,7 @@ async function fetchViewCountryCode(lat, lng) {
     const r = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=3`,
       {
-        headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+        headers: { 'Accept-Language': 'en', 'User-Agent': 'MappingElf/1.0' },
         signal: AbortSignal.timeout(5000),
       }
     );
@@ -7569,6 +7690,7 @@ async function fetchViewCountryCode(lat, lng) {
  */
 async function searchByKeyword(query, bounds) {
   const dedup = [];
+  const searchAcceptLanguage = await getSearchAcceptLanguage(query, bounds);
 
   const getSearchPriority = (it) => {
     const c = it.class || '';
@@ -7609,7 +7731,7 @@ async function searchByKeyword(query, bounds) {
 
   const fetchNom = async (url) => {
     const r = await fetch(url, {
-      headers: { 'Accept-Language': 'zh-TW,zh,en', 'User-Agent': 'MappingElf/1.0' },
+      headers: { 'Accept-Language': searchAcceptLanguage, 'User-Agent': 'MappingElf/1.0' },
       signal: AbortSignal.timeout(8000),
     });
     return r.ok ? r.json() : null;
@@ -7748,6 +7870,11 @@ function initKeywordSearch() {
     if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
     else if (e.key === 'Escape') { resultsEl.style.display = 'none'; }
   });
+
+  refreshKeywordSearchResults = () => {
+    const hasVisibleResults = resultsEl.style.display !== 'none';
+    if (hasVisibleResults && input.value.trim()) doSearch();
+  };
 
   const gmapsLink = document.getElementById('search-gmaps-link');
   if (gmapsLink) {

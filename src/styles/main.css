@@ -379,6 +379,38 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   transform: translateY(-1px);
 }
 
+.language-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.language-switcher-icon {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-primary);
+  line-height: 1;
+}
+
+.language-switcher select {
+  width: 76px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+
 /* ======== Map Container ======== */
 
 .map-container {
@@ -2703,6 +2735,17 @@ html.light-theme .waypoint-trash-zone.is-hover {
     height: 34px;
   }
 
+  .language-switcher {
+    height: 34px;
+    padding: 0 6px;
+    gap: 4px;
+  }
+
+  .language-switcher select {
+    width: 56px;
+    font-size: 11px;
+  }
+
   /* 滿版覆蓋：不再從下方，改由右側滑入，滿螢幕高度 */
   .side-panel {
     top: var(--toolbar-height);
@@ -4741,7 +4784,15 @@ html.light-theme .wc-time-select {
   gap: 12px;
 }
 
-.about-me-header {
+.about-me-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.about-me-identity {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -4758,6 +4809,15 @@ html.light-theme .wc-time-select {
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: 0.02em;
+}
+
+.about-me-version {
+  margin-left: auto;
+  margin-right: -6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1;
 }
 
 .about-me-quote {
@@ -4793,6 +4853,8 @@ html.light-theme .wc-time-select {
 
 .about-me-social {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 4px;
 }
@@ -4808,6 +4870,38 @@ html.light-theme .wc-time-select {
 .social-link:hover {
   color: var(--accent-primary);
   transform: translateY(-2px);
+}
+
+.feedback-link {
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.feedback-link span {
+  line-height: 1;
+}
+
+.about-me-visitor-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.about-me-visitor-count span {
+  flex: 0 0 auto;
+}
+
+.about-me-visitor-count img {
+  display: block;
+  max-width: 150px;
+  height: 20px;
+  border: 0;
 }
 
 
@@ -4854,6 +4948,10 @@ html.light-theme .about-me-section {
 
 html.light-theme .about-me-name {
   color: #0f172a;
+}
+
+html.light-theme .about-me-title {
+  color: #64748b;
 }
 
 html.light-theme .quote-zh {

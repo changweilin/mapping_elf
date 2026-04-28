@@ -3,6 +3,7 @@
  * Uses Open-Meteo API for weather data
  */
 import { samplePoints } from './utils.js';
+import { tWmo } from './i18n.js';
 
 const FORECAST_API = 'https://api.open-meteo.com/v1/forecast';
 const HISTORICAL_API = 'https://archive-api.open-meteo.com/v1/archive';
@@ -77,7 +78,7 @@ export class WeatherService {
           label: labels[i], lat, lng,
           temp: '—', tempMax: '—', tempMin: '—',
           humidity: '—', windSpeed: '—', precipitation: '—',
-          weatherCode: -1, weatherDesc: '無法取得', weatherIcon: '❓',
+          weatherCode: -1, weatherDesc: tWmo('unavailable'), weatherIcon: '❓',
         });
       }
     }
@@ -124,7 +125,7 @@ export class WeatherService {
       windSpeed: windStr,
       precipitation: prepStr,
       weatherCode: targetCode,
-      weatherDesc: wmo.desc,
+      weatherDesc: tWmo(targetCode),
       weatherIcon: wmo.icon,
     };
   }
@@ -167,7 +168,7 @@ export class WeatherService {
       windSpeed: windStr,
       precipitation: prepStr,
       weatherCode: targetCode,
-      weatherDesc: wmo.desc,
+      weatherDesc: tWmo(targetCode),
       weatherIcon: wmo.icon,
     };
   }
@@ -255,7 +256,7 @@ export class WeatherService {
     const wmo = WMO_CODES[hourlyCode] || { icon: '❓', desc: '未知' };
 
     return {
-      weatherCode: hourlyCode, weatherIcon: wmo.icon, weatherDesc: wmo.desc,
+      weatherCode: hourlyCode, weatherIcon: wmo.icon, weatherDesc: tWmo(hourlyCode),
       temp:     n(temp,     '°C'),
       tempMax:  n(d.temperature_2m_max?.[0], '°C'),
       tempMin:  n(d.temperature_2m_min?.[0], '°C'),
@@ -284,6 +285,7 @@ export class WeatherService {
   }
 
   static getWmoInfo(code) {
-    return WMO_CODES[code] || { icon: '❓', desc: '未知' };
+    const info = WMO_CODES[code] || { icon: '❓', desc: '未知' };
+    return { ...info, desc: tWmo(code) };
   }
 }
