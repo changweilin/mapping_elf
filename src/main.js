@@ -5370,7 +5370,6 @@ function renderWeatherPanel() {
     html += `<td class="wt-data-cell wt-td wt-windy-cell${returnClass}${startClass}" data-col="${i}">` +
       `<a class="wt-windy-link" href="${buildWindyUrl(pt.lat, pt.lng, colTimes[i].date, colTimes[i].hour)}" target="_blank" rel="noopener" title="在 Windy 開啟">` +
       `<img src="https://www.windy.com/favicon.ico" width="13" height="13" alt="Windy" class="windy-favicon">` +
-      `<svg viewBox="0 0 24 24" width="11" height="11" style="opacity:0.7"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg>` +
       `</a></td>`;
   });
   html += '</tr>';
@@ -6278,7 +6277,7 @@ function _renderWeatherCard(colIdx) {
     const windyUrl = buildWindyUrl(pt.lat, pt.lng, dateStr, hour);
     html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
     html += `<img src="https://www.windy.com/favicon.ico" alt="Windy"><span>在 Windy 開啟</span>`;
-    html += `<svg viewBox="0 0 24 24" width="12" height="12" style="opacity:0.6"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg></a>`;
+    html += `</a>`;
   }
 
   html += `</div></div>`;
@@ -6368,7 +6367,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
     const windyUrl = buildWindyUrl(lat, lng, dateStr, hour);
     html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
     html += `<img src="https://www.windy.com/favicon.ico" alt="Windy"><span>在 Windy 開啟</span>`;
-    html += `<svg viewBox="0 0 24 24" width="12" height="12" style="opacity:0.6"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" fill="currentColor"/></svg></a>`;
+    html += `</a>`;
   } else {
     html += `<div class="wc-info-grid"><div class="wc-info-item is-wide" style="grid-column: span 2;">`;
     html += `<span class="wc-info-label">坐標</span><span class="wc-info-value clickable-coords" data-coords="${formatCoords(lat, lng)}" title="點擊複製">${formatCoords(lat, lng)}</span>`;
