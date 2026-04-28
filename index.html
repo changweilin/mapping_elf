@@ -442,6 +442,28 @@
             <span class="pace-unit">分</span>
           </div>
         </div>
+        <div class="pace-formula-note">
+          <div class="pace-note-title">公式摘要</div>
+          <p>估時以「平地距離 / 平地速度 + 爬升 / 爬升率」為基礎；緩下坡會小幅加速，陡下坡會增加耗時。負重會降低速度並提高熱量估算，疲勞設定會在長時間移動後降低效率並插入休息。</p>
+          <p>熱量使用分段 MET 估算：坡度、速度、體重與負重會一起影響 kcal；補給建議則以移動時間估算攝取量。</p>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group-label">個人配速校正</div>
+        <div class="pace-calibration-panel">
+          <label class="pace-check-opt pace-calibration-toggle" title="依據已完成軌跡與實際耗時，計算個人估時倍率。">
+            <input type="checkbox" id="pace-calibration-enable">
+            <span>啟用個人校正</span>
+          </label>
+          <div class="pace-calibration-factor" id="pace-calibration-factor">個人校正 ×1.00</div>
+          <div class="settings-actions-btn-row">
+            <button type="button" class="btn-secondary" id="btn-pace-calibration-pick">載入軌跡</button>
+            <button type="button" class="btn-secondary" id="btn-pace-calibration-compute">計算校正</button>
+            <button type="button" class="btn-secondary" id="btn-pace-calibration-clear">清除</button>
+          </div>
+          <input type="file" id="pace-calibration-file-input" accept=".gpx,.kml" multiple style="display:none" />
+          <div class="pace-calibration-hint">在這裡匯入最多 5 條 GPX/KML，逐條輸入實際耗時（小時），再按「計算校正」。這不會改變目前地圖上的路線。</div>
+          <div class="pace-calibration-list" id="pace-calibration-list"></div>
+        </div>
       </div>
     </section>
 

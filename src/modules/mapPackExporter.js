@@ -28,6 +28,7 @@ const LS_STATE_KEYS = [
   'mappingElf_speedMode',
   'mappingElf_speedActivity',
   'mappingElf_paceParams',
+  'mappingElf_paceCalibration',
   'mappingElf_paceUnit',
   'mappingElf_perSegment',
   'mappingElf_strictLinear',

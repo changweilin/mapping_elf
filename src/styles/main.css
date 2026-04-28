@@ -1439,6 +1439,111 @@ html.light-theme .waypoint-trash-zone.is-hover {
   width: 100%;
 }
 
+.pace-formula-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pace-note-title {
+  margin-bottom: 5px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pace-formula-note p {
+  margin: 0 0 6px;
+}
+
+.pace-formula-note p:last-child {
+  margin-bottom: 0;
+}
+
+.pace-calibration-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pace-calibration-toggle {
+  margin-bottom: 0;
+}
+
+.pace-calibration-factor {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-primary);
+}
+
+.pace-calibration-factor.disabled {
+  color: var(--text-muted);
+}
+
+.pace-calibration-hint,
+.pace-calibration-empty,
+.pace-calibration-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.pace-calibration-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pace-calibration-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 56px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+}
+
+.pace-calibration-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pace-calibration-hours {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.pace-calibration-hours input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.pace-calibration-remove {
+  flex: 0 0 auto;
+  height: 30px;
+}
+
 .segment-interval-unit {
   font-size: 12px;
   color: var(--text-muted);
@@ -3069,6 +3174,42 @@ body.is-resizing {
   padding: 4px 4px;
 }
 
+.wt-ctrl-collapse {
+  position: sticky;
+  top: 100px;
+  left: 8px;
+  z-index: 40;
+  width: 30px;
+  height: 30px;
+  margin: 0 auto -30px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  border: 1px solid rgba(110, 231, 183, 0.42);
+  background: color-mix(in srgb, var(--bg-tertiary) 86%, transparent);
+  color: var(--accent-primary);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  opacity: 0.78;
+  backdrop-filter: blur(8px);
+}
+
+.wt-ctrl-collapse svg {
+  width: 18px;
+  height: 18px;
+}
+
+.wt-ctrl-collapse:hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  opacity: 0.95;
+}
+
+.wt-label-cell .wt-ctrl-collapse {
+  display: none !important;
+}
+
 .wt-ctrl-fetch {
   flex: 0 0 auto;
   height: 26px;
@@ -3221,6 +3362,7 @@ body.is-resizing {
 /* Weather Table */
 #weather-table-container {
   min-width: 100%;
+  position: relative;
 }
 
 .weather-table {
@@ -3235,6 +3377,131 @@ body.is-resizing {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.weather-table.is-collapsed .wt-label-cell {
+  padding-left: 1px;
+  padding-right: 2px;
+  text-align: right;
+  font-size: 9px;
+  line-height: 1.05;
+}
+
+.weather-table.is-collapsed .wt-ctrl-fetch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.weather-table.is-collapsed .wt-ctrl-fetch span,
+.weather-table.is-collapsed .wt-ctrl-adj,
+.weather-table.is-collapsed .wt-adj-btn {
+  display: none;
+}
+
+.weather-table.is-collapsed .wt-col-label {
+  font-size: 10px;
+  line-height: 1.05;
+  padding: 0;
+  margin: 0;
+}
+
+.weather-table.is-collapsed .wt-col-head {
+  padding: 0 1px;
+}
+
+.weather-table.is-collapsed .wt-adj-wrap,
+.weather-table.is-collapsed .wt-time-row {
+  justify-content: center;
+  margin: 0;
+}
+
+.weather-table.is-collapsed .wt-adj-wrap {
+  gap: 0;
+  margin-bottom: 0;
+}
+
+.weather-table.is-collapsed .wt-date-input {
+  width: 18px;
+  height: 17px;
+  padding: 0;
+  color: transparent;
+  text-indent: -999px;
+  opacity: 0;
+}
+
+.weather-table.is-collapsed .wt-time-select {
+  width: 18px;
+  height: 17px;
+  padding: 0;
+  color: transparent;
+  text-shadow: 0 0 0 var(--text-primary);
+  opacity: 0;
+}
+
+.weather-table.is-collapsed .wt-data-cell {
+  padding: 0 1px;
+  font-size: 9px;
+  line-height: 1.02;
+}
+
+.weather-table.is-collapsed .wt-cell-value,
+.weather-table.is-collapsed .wt-data-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather-table.is-collapsed .wt-cell-value {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  -webkit-mask-image: linear-gradient(90deg, #000 70%, transparent);
+  mask-image: linear-gradient(90deg, #000 70%, transparent);
+}
+
+.weather-table.is-collapsed .wt-data-cell[data-key="coords"] .wt-cell-value {
+  max-width: 2.8em;
+}
+
+.weather-table.is-collapsed .wt-cell-number {
+  font-weight: 650;
+}
+
+.weather-table.is-collapsed .wt-cell-unit {
+  opacity: 0.62;
+  -webkit-mask-image: linear-gradient(90deg, #000 45%, transparent);
+  mask-image: linear-gradient(90deg, #000 45%, transparent);
+}
+
+.weather-table.is-collapsed .wt-td.wt-label-cell {
+  overflow: hidden;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, #000 62%, transparent);
+  mask-image: linear-gradient(90deg, #000 62%, transparent);
+}
+
+.weather-table.is-collapsed .row-windy-link {
+  display: none;
+}
+
+.weather-table.is-collapsed .wt-windy-row td {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.weather-table.is-collapsed .wt-windy-link {
+  opacity: 0.85;
+}
+
+.weather-table.is-collapsed .wt-windy-link .windy-favicon {
+  width: 11px;
+  height: 11px;
+}
+
+.weather-table.is-collapsed .wt-windy-link svg {
+  display: none;
 }
 
 .wt-weather-icon-trigger {
@@ -3391,6 +3658,43 @@ body.is-resizing {
   box-sizing: border-box;
 }
 
+.wt-picker-icon {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.weather-table.is-collapsed .wt-picker-icon {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 17px;
+}
+
+.weather-table.is-collapsed .wt-picker-icon::before {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.weather-table.is-collapsed .wt-date-picker::before {
+  content: "▦";
+}
+
+.weather-table.is-collapsed .wt-time-picker::before {
+  content: "◷";
+}
+
 html:not(.light-theme) .wt-date-input {
   color-scheme: dark;
 }
@@ -3511,6 +3815,45 @@ html.light-theme .wt-date-input {
 
 .wt-windy-link:hover {
   opacity: 1;
+}
+
+.wt-name-peek {
+  position: fixed;
+  z-index: 10020;
+  max-width: min(92vw, 520px);
+  transform: translate(-50%, -100%) translateY(-8px);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-hover);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.wt-name-peek.show {
+  opacity: 1;
+  transform: translate(-50%, -100%) translateY(-14px);
+}
+
+.wt-name-peek.below {
+  transform: translate(-50%, 0) translateY(8px);
+}
+
+.wt-name-peek.below.show {
+  transform: translate(-50%, 0) translateY(14px);
+}
+
+.wt-name-peek-single {
+  max-width: min(72vw, 260px);
+  text-align: center;
+  font-weight: 650;
+  overflow-wrap: anywhere;
 }
 
 /* Windy selects in weather header */
@@ -4212,6 +4555,7 @@ body.modal-open {
 .wc-info-item {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   padding: 3px 0;
   font-size: 11px;
   border-bottom: 1px solid var(--border);
@@ -4256,6 +4600,9 @@ body.modal-open {
 .wc-info-value {
   color: var(--text-primary);
   font-weight: 500;
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .wc-time-edit-wrap {
@@ -4538,4 +4885,4 @@ html.light-theme .panel-bottom-logo {
 
 .clickable-coords:active {
   transform: scale(0.98);
-}
+}
