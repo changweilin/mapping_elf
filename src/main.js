@@ -53,6 +53,7 @@ const LS_SEGMENT_KEY = 'mappingElf_segmentKm';
 const LS_ROUNDTRIP_KEY = 'mappingElf_roundTrip';
 const LS_OLOOP_KEY = 'mappingElf_oLoop';
 const LS_WAYPOINTS_KEY = 'mappingElf_waypoints';
+const LS_WAYPOINT_IDS_KEY = 'mappingElf_waypointIds';
 const LS_ROUTE_MODE_KEY = 'mappingElf_routeMode';
 const LS_MAP_LAYER_KEY = 'mappingElf_mapLayer';
 const LS_MAP_VIEW_KEY = 'mappingElf_mapView';
@@ -79,6 +80,37 @@ const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
  * Conversion: V_km_h = SHANHE_BASE / S  ↔  S = SHANHE_BASE / V_km_h
  */
 const SHANHE_BASE = 3.0;
+
+function createWaypointId() {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `wp_${Date.now().toString(36)}_${rand}`;
+}
+
+function getPersistedWaypointIds() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(LS_WAYPOINT_IDS_KEY) || 'null');
+    return Array.isArray(ids) ? ids : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function persistWaypointIds() {
+  const ids = mapManager.waypoints.map((_, i) => mapManager.getWaypointMetadata(i)?.waypointId || null);
+  try { localStorage.setItem(LS_WAYPOINT_IDS_KEY, JSON.stringify(ids)); } catch (_) { }
+}
+
+function ensureWaypointIds(seedIds = null) {
+  const used = new Set();
+  mapManager.waypoints.forEach((_, i) => {
+    const meta = { ...(mapManager.getWaypointMetadata(i) || {}) };
+    if (!meta.waypointId && seedIds?.[i]) meta.waypointId = seedIds[i];
+    while (!meta.waypointId || used.has(meta.waypointId)) meta.waypointId = createWaypointId();
+    used.add(meta.waypointId);
+    mapManager.setWaypointMetadata(i, meta);
+  });
+  persistWaypointIds();
+}
 
 let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') || 0;
 let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
@@ -150,6 +182,7 @@ const history = {
 function _captureSnapshot() {
   return {
     waypoints: mapManager.waypoints.map(([a, b]) => [a, b]),
+    waypointIds: mapManager.waypoints.map((_, i) => mapManager.getWaypointMetadata(i)?.waypointId || null),
     customNames: JSON.parse(JSON.stringify(waypointCustomNames || {})),
     roundTripMode,
     oLoopMode,
@@ -165,6 +198,7 @@ function _snapsEqual(a, b) {
   if (a.waypoints.length !== b.waypoints.length) return false;
   for (let i = 0; i < a.waypoints.length; i++) {
     if (a.waypoints[i][0] !== b.waypoints[i][0] || a.waypoints[i][1] !== b.waypoints[i][1]) return false;
+    if ((a.waypointIds?.[i] || null) !== (b.waypointIds?.[i] || null)) return false;
   }
   const ak = Object.keys(a.customNames), bk = Object.keys(b.customNames);
   if (ak.length !== bk.length) return false;
@@ -213,6 +247,7 @@ function _restoreSnapshot(snap) {
     try {
       mapManager.clearWaypoints();
       snap.waypoints.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+      ensureWaypointIds(snap.waypointIds || []);
     } finally {
       mapManager.onWaypointChange = cb;
     }
@@ -947,6 +982,7 @@ btnClearRoute.addEventListener('click', () => {
   Object.keys(waypointPlaceNames).forEach(k => delete waypointPlaceNames[k]);
   localStorage.removeItem(LS_GEOCODE_KEY);
   localStorage.removeItem(LS_WAYPOINTS_KEY);
+  localStorage.removeItem(LS_WAYPOINT_IDS_KEY);
   const _wc = document.getElementById('weather-table-container');
   if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
   hideAlternatives();
@@ -1287,6 +1323,7 @@ routeModeRadios.forEach((radio) => {
 // =========== Core Logic ===========
 
 async function onWaypointsChanged(waypoints) {
+  ensureWaypointIds();
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
   historyRecord();
 
@@ -2424,7 +2461,7 @@ function captureFavorite(name) {
       if (di?.value) weather[wpIdx].date = di.value;
       if (ts?.value) weather[wpIdx].time = `${String(ts.value).padStart(2, '0')}:00`;
 
-      const cellMap = savedWeatherCells[getSemanticKey(pt)];
+      const cellMap = getSavedWeatherCells(pt);
       if (cellMap) {
         const labelled = {};
         WEATHER_ROWS.forEach(r => {
@@ -2791,7 +2828,7 @@ function collectExportData() {
       });
     } else {
       // Fallback: use saved display-cell values (survives date/coord changes and page reload)
-      const savedCells = savedWeatherCells[getSemanticKey(pt)];
+      const savedCells = getSavedWeatherCells(pt);
       if (savedCells) {
         WEATHER_ROWS.forEach(row => {
           const val = savedCells[row.key];
@@ -2906,7 +2943,10 @@ function saveImportedTrackSession() {
       coords: currentRouteCoords,
       elevations: currentElevations,
       waypoints: mapManager.waypoints,
-      waypointMeta: importedWaypointMeta,
+      waypointMeta: mapManager.waypoints.map((_, i) => ({
+        ...(importedWaypointMeta[i] || {}),
+        ...(mapManager.getWaypointMetadata(i) || {}),
+      })),
       intermediates: importedIntermediatePoints,
     };
     localStorage.setItem(LS_IMPORTED_TRACK_KEY, JSON.stringify(payload));
@@ -2940,7 +2980,8 @@ function restoreImportedTrack(session) {
 
   if (waypoints.length > 0) {
     skipAutoGeocode = true;
-    mapManager.setWaypointsFromImport(waypoints);
+    mapManager.setWaypointsFromImport(waypoints, waypointMeta);
+    ensureWaypointIds(waypointMeta.map(meta => meta?.waypointId || null));
     skipAutoGeocode = false;
   }
 
@@ -3277,13 +3318,35 @@ let savedWeatherCells = (() => {
  *   - same location after minor adjustment → same key → cache preserved
  *   - significantly moved → different key → cache miss (stale data not shown)
  */
-function getSemanticKey(pt) {
+function getWaypointIdForPoint(pt) {
+  if (!pt?.isWaypoint) return null;
+  return pt.waypointId || mapManager.getWaypointMetadata(pt.wpIndex)?.waypointId || null;
+}
+
+function getLegacySemanticKey(pt) {
   const latK = pt.lat.toFixed(2);
   const lngK = pt.lng.toFixed(2);
   if (pt.isWaypoint) {
     return pt.isReturn ? `ret:${latK},${lngK}` : `wp:${latK},${lngK}`;
   }
   return `int:${latK},${lngK}`;
+}
+
+function getSemanticKey(pt) {
+  if (pt?.isWaypoint) {
+    const waypointId = getWaypointIdForPoint(pt);
+    if (waypointId) return `${pt.isReturn ? 'ret' : 'wp'}:${waypointId}`;
+  }
+  if (Number.isFinite(pt?._cum)) return `int:${Math.round(pt._cum / 10) * 10}`;
+  return getLegacySemanticKey(pt);
+}
+
+function getSavedWeatherCells(pt) {
+  const key = getSemanticKey(pt);
+  const legacyKey = getLegacySemanticKey(pt);
+  const cells = savedWeatherCells[key] || savedWeatherCells[legacyKey] || null;
+  if (cells && key !== legacyKey && !savedWeatherCells[key]) saveWeatherCells(key, cells);
+  return cells;
 }
 
 /** Persist display-cell values for one column */
@@ -3820,8 +3883,7 @@ function saveWeatherSettings() {
     };
     cols.push(entry); // keep legacy array for backwards compat
     if (!pt.isWaypoint) return; // Interval times are recalculated — no need to persist
-    const key = pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`;
-    byKey[key] = entry;
+    byKey[getSemanticKey(pt)] = entry;
   });
   localStorage.setItem(LS_WEATHER_KEY, JSON.stringify({ byKey, cols }));
 }
@@ -3836,11 +3898,40 @@ function getSavedCol(pt, i, saved) {
   if (!saved) return null;
   if (!pt.isWaypoint) return null; // Interval points are always recalculated from col-0
   if (saved.byKey) {
-    const key = pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`;
+    const key = getSemanticKey(pt);
     if (saved.byKey[key]) return saved.byKey[key];
+    const legacyIndexKey = pt.isReturn ? `ret:${pt.wpIndex}` : `wp:${pt.wpIndex}`;
+    if (saved.byKey[legacyIndexKey]) return saved.byKey[legacyIndexKey];
   }
   // Legacy fallback: index-based
   return saved.cols?.[i] ?? null;
+}
+
+function defaultWeatherSchedule() {
+  const now = new Date();
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return { date, hour: now.getHours() };
+}
+
+function readWeatherPointScheduleFromDom(colIdx) {
+  const container = document.getElementById('weather-table-container');
+  if (!container || colIdx == null || colIdx < 0) return null;
+  const date = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
+  const hourRaw = container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value;
+  const hour = hourRaw != null ? parseInt(hourRaw) : NaN;
+  if (!date || Number.isNaN(hour)) return null;
+  return { date, hour };
+}
+
+function getWeatherPointSchedule(pt, colIdx, saved = loadWeatherSettings(), options = {}) {
+  const { preferDom = true, withDefault = true } = options;
+  if (preferDom) {
+    const domSchedule = readWeatherPointScheduleFromDom(colIdx);
+    if (domSchedule) return domSchedule;
+  }
+  const savedCol = getSavedCol(pt, colIdx, saved);
+  if (savedCol?.date) return { date: savedCol.date, hour: parseInt(savedCol.hour ?? '8') };
+  return withDefault ? defaultWeatherSchedule() : null;
 }
 
 function shiftAllDates(deltaDays, deltaHours) {
@@ -4286,17 +4377,14 @@ function updateIntermediateMarkers() {
     return;
   }
 
-  const container = document.getElementById('weather-table-container');
-
   const pts = weatherPoints
     .map((p, i) => ({ pt: p, i }))
     .filter(x => !x.pt.isWaypoint)
     .map(x => {
       // Look up weather icon for intermediate point
-      const dateStr = container?.querySelector(`.wt-th-date[data-idx="${x.i}"] .wt-date-input`)?.value;
-      const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${x.i}"] .wt-time-select`)?.value ?? '0');
-      const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, dateStr, hour)] : null;
-      const weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(x.pt)]?.weather?.split(' ')[0] || null;
+      const schedule = getWeatherPointSchedule(x.pt, x.i);
+      const cached = schedule ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, schedule.date, schedule.hour)] : null;
+      const weatherIcon = cached?.weatherIcon || getSavedWeatherCells(x.pt)?.weather?.split(' ')[0] || null;
 
       return {
         lat: x.pt.lat,
@@ -4331,15 +4419,13 @@ function updateReturnWaypointMarkers() {
     mapManager.clearReturnWaypoints();
     return;
   }
-  const container = document.getElementById('weather-table-container');
   const pts = weatherPoints
     .map((p, i) => ({ pt: p, i }))
     .filter((x) => x.pt.isWaypoint && x.pt.isReturn)
     .map((x) => {
-      const dateStr = container?.querySelector(`.wt-th-date[data-idx="${x.i}"] .wt-date-input`)?.value;
-      const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${x.i}"] .wt-time-select`)?.value ?? '0');
-      const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, dateStr, hour)] : null;
-      const weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(x.pt)]?.weather?.split(' ')[0] || null;
+      const schedule = getWeatherPointSchedule(x.pt, x.i);
+      const cached = schedule ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, schedule.date, schedule.hour)] : null;
+      const weatherIcon = cached?.weatherIcon || getSavedWeatherCells(x.pt)?.weather?.split(' ')[0] || null;
       return {
         lat: x.pt.lat,
         lng: x.pt.lng,
@@ -4539,6 +4625,7 @@ function buildWeatherPoints() {
         const label = customName || m.label || geocodedName || getWaypointLabel(m.wpIndex, m.lat, m.lng, isRet);
         all.push({
           label, lat: m.lat, lng: m.lng, isWaypoint: true, wpIndex: m.wpIndex,
+          waypointId: mapManager.getWaypointMetadata(m.wpIndex)?.waypointId,
           isReturn: isRet,
           _cum: cum, _elapsedH: getElapsedH(cum),
           _ele: m.ele != null ? m.ele : getEleAt(cum),
@@ -4564,6 +4651,7 @@ function buildWeatherPoints() {
       const label = getWaypointLabel(i, lat, lng, false);
       all.push({
         label, lat, lng, isWaypoint: true, wpIndex: i,
+        waypointId: mapManager.getWaypointMetadata(i)?.waypointId,
         isReturn: false,
         _cum: wpCumDist[i], _elapsedH: getElapsedH(wpCumDist[i]),
         _ele: getEleAt(wpCumDist[i]),
@@ -4704,6 +4792,7 @@ function buildWeatherPoints() {
         const returnCum = totalDistM - wpCumDist[i];
         all.push({
           label: outLabel, lat, lng, isWaypoint: true, isReturn: true, wpIndex: i,
+          waypointId: mapManager.getWaypointMetadata(i)?.waypointId,
           _cum: returnCum, _elapsedH: getElapsedH(returnCum), _ele: getEleAt(returnCum),
         });
       }
@@ -4867,7 +4956,23 @@ const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
 ).join('');
 
 function renderWeatherPanel() {
+  const previousWeatherPoints = weatherPoints;
+  const previousCardStates = new Map();
+  if (typeof _wcStates !== 'undefined') {
+    _wcStates.forEach((state, colIdx) => {
+      const prevPt = previousWeatherPoints[colIdx];
+      if (prevPt) previousCardStates.set(getSemanticKey(prevPt), state);
+    });
+  }
   weatherPoints = buildWeatherPoints();
+  if (previousCardStates.size > 0 && typeof _wcStates !== 'undefined') {
+    _wcStates.clear();
+    weatherPoints.forEach((pt, colIdx) => {
+      const state = previousCardStates.get(getSemanticKey(pt));
+      if (state) _wcStates.set(colIdx, state);
+    });
+    mapManager.closeWeatherPopup();
+  }
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
@@ -4880,7 +4985,7 @@ function renderWeatherPanel() {
   // any point in the current panel. This prevents stale data from accumulating in
   // localStorage when waypoints are moved far or deleted.
   {
-    const validKeys = new Set(weatherPoints.map(p => getSemanticKey(p)));
+    const validKeys = new Set(weatherPoints.flatMap(p => [getSemanticKey(p), getLegacySemanticKey(p)]));
     let pruned = false;
     Object.keys(savedWeatherCells).forEach(k => {
       if (!validKeys.has(k)) { delete savedWeatherCells[k]; pruned = true; }
@@ -5241,7 +5346,7 @@ function renderWeatherPanel() {
       }
     } else {
       // Fallback: restore display values saved from a previous fetch
-      const saved = savedWeatherCells[getSemanticKey(pt)];
+      const saved = getSavedWeatherCells(pt);
       if (saved) {
         WEATHER_ROWS.forEach(row => {
           const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
@@ -5365,6 +5470,7 @@ function renderWeatherPanel() {
   // Always persist the rendered state so page reload restores it correctly
   // (covers the case where user never manually changes any date/time input)
   saveWeatherSettings();
+  refreshOpenWeatherCards();
 }
 
 /**
@@ -5659,8 +5765,9 @@ async function fetchAllWeatherData(options = {}) {
       else fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
     }
 
-    const dateStr = container.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`)?.value;
-    const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`)?.value ?? '8');
+    const schedule = getWeatherPointSchedule(pt, i);
+    const dateStr = schedule?.date;
+    const hour = schedule?.hour ?? 8;
     if (!dateStr) continue;
 
     const cacheKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
@@ -5680,7 +5787,7 @@ async function fetchAllWeatherData(options = {}) {
           }
         });
         saveWeatherCells(getSemanticKey(pt), cells);
-        if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
+        if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
           mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
         
         // Update chart markers to show icon immediately
@@ -5691,13 +5798,12 @@ async function fetchAllWeatherData(options = {}) {
       }
       
       // Also check if UI already restored this point's weather from map pack (savedWeatherCells)
-      const semKey = getSemanticKey(pt);
-      const existingCells = savedWeatherCells[semKey];
+      const existingCells = getSavedWeatherCells(pt);
       if (existingCells && existingCells.weather && existingCells.weather !== '—') {
         const cell = container.querySelector(`[data-col="${i}"][data-key="weather"]`);
         if (cell && cell.textContent !== '...' && cell.textContent !== '—') {
           // Data is already populated correctly in the UI
-          if (pt.isWaypoint && pt.wpIndex !== undefined && existingCells._icon) {
+          if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && existingCells._icon) {
             mapManager.setWaypointWeather(pt.wpIndex, existingCells._icon);
           }
           updateElevationMarkers();
@@ -5734,8 +5840,8 @@ async function fetchAllWeatherData(options = {}) {
         }
       });
       saveWeatherCells(getSemanticKey(pt), cells);
-      // Update map icon (shared between outbound/return return markers)
-      if (pt.isWaypoint && pt.wpIndex !== undefined && data.weatherIcon)
+      // Update only the outbound map badge; return markers carry their own icon.
+      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
         mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
 
       // Refresh chart markers to show icon immediately
@@ -5835,16 +5941,14 @@ function setWeatherCardMode(colIdx, mode) {
 function navigateWeatherCard(colIdx, delta) {
   // Find all column indices that have weather icons AND whose icon type is visible
   const colsWithWeather = [];
-  const container = document.getElementById('weather-table-container');
 
   weatherPoints.forEach((pt, i) => {
     // Skip points whose icon type is hidden by the toggle
     if (!isPointIconVisible(i)) return;
 
-    const dateStr = container?.querySelector(`.wt-th-date[data-idx="${i}"] .wt-date-input`)?.value;
-    const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${i}"] .wt-time-select`)?.value ?? '0');
-    const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] : null;
-    const icon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(pt)]?.weather?.split(' ')[0] || null;
+    const schedule = getWeatherPointSchedule(pt, i);
+    const cached = schedule ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, schedule.date, schedule.hour)] : null;
+    const icon = cached?.weatherIcon || getSavedWeatherCells(pt)?.weather?.split(' ')[0] || null;
     
     if (icon) colsWithWeather.push(i);
   });
@@ -5880,20 +5984,9 @@ function _getWeatherCardData(colIdx) {
   const pt = weatherPoints[colIdx];
   if (!pt) return null;
 
-  const container = document.getElementById('weather-table-container');
-
-  // Try to read date/hour from the weather table DOM
-  let dateStr = null, hour = null;
-  if (container) {
-    dateStr = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
-    hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
-  }
-  // Fallback: today & now
-  if (!dateStr) {
-    const now = new Date();
-    dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    hour = new Date().getHours();
-  }
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  const dateStr = schedule.date;
+  const hour = schedule.hour;
 
   // 1) Try exact cache hit
   const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
@@ -5902,7 +5995,7 @@ function _getWeatherCardData(colIdx) {
   }
 
   // 2) Try savedWeatherCells (display values)
-  const saved = savedWeatherCells[getSemanticKey(pt)];
+  const saved = getSavedWeatherCells(pt);
   if (saved) {
     return { cells: saved, pt, dateStr, hour, colIdx };
   }
@@ -6592,11 +6685,9 @@ function updateElevationMarkers() {
       }
 
       // Try to find weather icon for this point
-      const container = document.getElementById('weather-table-container');
-      const dateStr = container?.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
-      const hour = parseInt(container?.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
-      const cached = (dateStr) ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)] : null;
-      let weatherIcon = cached?.weatherIcon || savedWeatherCells[getSemanticKey(pt)]?.weather?.split(' ')[0] || null;
+      const schedule = getWeatherPointSchedule(pt, colIdx);
+      const cached = schedule ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, schedule.date, schedule.hour)] : null;
+      let weatherIcon = cached?.weatherIcon || getSavedWeatherCells(pt)?.weather?.split(' ')[0] || null;
 
       // Filter weather icons based on visibility settings
       if (pt.isWaypoint && !showWpIcon) weatherIcon = null;
@@ -6970,7 +7061,9 @@ async function init() {
   })();
   if (savedWaypoints && savedWaypoints.length > 0) {
     skipAutoGeocode = true;
-    mapManager.setWaypointsFromImport(savedWaypoints);
+    const savedWaypointIds = getPersistedWaypointIds();
+    mapManager.setWaypointsFromImport(savedWaypoints, savedWaypointIds.map(waypointId => ({ waypointId })));
+    ensureWaypointIds(savedWaypointIds);
     skipAutoGeocode = false;
   } else if (!trackRestored && !savedView && navigator.geolocation) {
     // No saved state at all — pan to user's location
