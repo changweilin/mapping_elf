@@ -640,10 +640,6 @@ export class MapManager {
     let _mouseLPTimer = null;
     let _mouseStartX = 0, _mouseStartY = 0;
     marker.on('mousedown', (e) => {
-      if (this.isFrozen) {
-        this._scheduleFrozenInteractionNotice(e, 'waypoint-drag');
-        return;
-      }
       if (e.originalEvent.button !== 0 || _dragModeActive) return;
 
       _mouseStartX = e.originalEvent.clientX;
@@ -674,6 +670,16 @@ export class MapManager {
         if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
           this._toggleWaypointLayer(wpIdx, { select: false });
           layerToggledByLongPress = true;
+        }
+
+        if (this.isFrozen) {
+          if (layerToggledByLongPress) {
+            this._blockMapClick();
+            this._deferTopWaypointLayerHighlight(wpIdx);
+          } else {
+            this._notifyFrozenInteraction('waypoint-drag');
+          }
+          return;
         }
 
         _dragModeActive = true;
@@ -738,10 +744,6 @@ export class MapManager {
     let _touchStartX = 0, _touchStartY = 0;
     marker.on('touchstart', (e) => {
       _isTouchActive = true;
-      if (this.isFrozen) {
-        this._scheduleFrozenInteractionNotice(e, 'waypoint-drag');
-        return;
-      }
       if (_dragModeActive) return;
       const touch = e.originalEvent.touches[0];
       _touchStartX = touch.clientX;
@@ -759,6 +761,17 @@ export class MapManager {
         if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
           this._toggleWaypointLayer(wpIdx, { select: false });
           layerToggledByLongPress = true;
+        }
+
+        if (this.isFrozen) {
+          if (layerToggledByLongPress) {
+            this._blockMapClick();
+            this._deferTopWaypointLayerHighlight(wpIdx);
+          } else {
+            this._notifyFrozenInteraction('waypoint-drag');
+          }
+          _isTouchActive = false;
+          return;
         }
 
         _dragModeActive = true;
@@ -1525,10 +1538,6 @@ export class MapManager {
       };
       
       const startLP = (e) => {
-        if (this.isFrozen) {
-          this._notifyFrozenInteraction('waypoint-layer');
-          return;
-        }
         const oe = e.originalEvent;
         if (oe.button !== undefined && oe.button !== 0) return;
         cancelLP();
@@ -1794,10 +1803,6 @@ export class MapManager {
     let startX = 0, startY = 0;
 
     polyline.on('mousedown touchstart', (e) => {
-      if (this.isFrozen) {
-        this._notifyFrozenInteraction('route-edit');
-        return;
-      }
       const oe = e.originalEvent;
       if (oe.button !== undefined && oe.button !== 0) return;
       lpTriggered = false;
@@ -1832,11 +1837,11 @@ export class MapManager {
 
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
+      if (lpTriggered) return;
       if (this.isFrozen) {
         this._notifyFrozenInteraction('route-edit');
         return;
       }
-      if (lpTriggered) return;
 
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
