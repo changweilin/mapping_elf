@@ -34,6 +34,8 @@ export class ElevationProfile {
     this._activePointers = new Map();
     this._lastPinchDistance = null;
     this._lastPinchSpans = null;
+    this._pinchStartSpans = null;
+    this._pinchAxis = null;
     this._isPanning = false;
     this._panPointerId = null;
     this._panStartX = 0;
@@ -345,6 +347,8 @@ export class ElevationProfile {
     this._activePointers.clear();
     this._lastPinchDistance = null;
     this._lastPinchSpans = null;
+    this._pinchStartSpans = null;
+    this._pinchAxis = null;
     this._isPanning = false;
     this._panPointerId = null;
   }
@@ -423,6 +427,8 @@ export class ElevationProfile {
         this._panPointerId = null;
         this._lastPinchDistance = pinchDistance();
         this._lastPinchSpans = pinchSpans();
+        this._pinchStartSpans = this._lastPinchSpans;
+        this._pinchAxis = null;
         this.canvas.setPointerCapture?.(e.pointerId);
         return;
       }
@@ -449,11 +455,23 @@ export class ElevationProfile {
           if (!distance || !centerX || !centerY || !spans || !this._lastPinchDistance || !this._lastPinchSpans) {
             this._lastPinchDistance = distance;
             this._lastPinchSpans = spans;
+            this._pinchStartSpans = spans;
             return;
           }
 
-          this._applyHorizontalZoom(this._lastPinchSpans.x / spans.x, this._indexFromCanvasX(centerX));
-          this._applyVerticalZoom(this._lastPinchSpans.y / spans.y, this._valueFromCanvasY(centerY));
+          if (!this._pinchAxis) {
+            const startSpans = this._pinchStartSpans || this._lastPinchSpans;
+            const xDelta = Math.abs(Math.log(spans.x / startSpans.x));
+            const yDelta = Math.abs(Math.log(spans.y / startSpans.y));
+            if (Math.max(xDelta, yDelta) < 0.04) return;
+            this._pinchAxis = yDelta > xDelta * 1.6 ? 'y' : 'x';
+          }
+
+          if (this._pinchAxis === 'x') {
+            this._applyHorizontalZoom(this._lastPinchSpans.x / spans.x, this._indexFromCanvasX(centerX));
+          } else {
+            this._applyVerticalZoom(this._lastPinchSpans.y / spans.y, this._valueFromCanvasY(centerY));
+          }
           this._lastPinchDistance = distance;
           this._lastPinchSpans = spans;
           return;
@@ -480,6 +498,8 @@ export class ElevationProfile {
       if (this._activePointers.size < 2) {
         this._lastPinchDistance = null;
         this._lastPinchSpans = null;
+        this._pinchStartSpans = null;
+        this._pinchAxis = null;
       }
     };
 
