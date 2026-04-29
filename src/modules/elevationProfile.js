@@ -24,6 +24,11 @@ export class ElevationProfile {
     this.isRoundTrip = false;
     this.turnaroundFrac = null; // 0-1 fraction where outbound ends; null = no split
     this.isCollapsed = false;
+    this.zoomMin = 0;
+    this.zoomMax = 0;
+    this._interactionAbort = null;
+    this._activePointers = new Map();
+    this._lastPinchDistance = null;
   }
 
   toggleCollapse() {
@@ -104,6 +109,7 @@ export class ElevationProfile {
     // Calculate cumulative distances
     this.distances = cumulativeDistances(this.points);
     this.turnaroundFrac = this._computeTurnaroundFrac(turnaroundLatLng);
+    this._resetHorizontalZoom();
 
     // Calculate stats
     const stats = this._calcStats();
@@ -148,6 +154,7 @@ export class ElevationProfile {
     this.elevations = elevations;
     this.distances = cumulativeDistances(this.points);
     this.turnaroundFrac = this._computeTurnaroundFrac(turnaroundLatLng);
+    this._resetHorizontalZoom();
     this._renderChart();
   }
 
@@ -156,11 +163,153 @@ export class ElevationProfile {
       this.chart.destroy();
       this.chart = null;
     }
+    this._unbindInteractions();
     this.elevations = [];
     this.distances = [];
     this.points = [];
     this._markers = [];
+    this._resetHorizontalZoom();
     this.emptyState.classList.remove('hidden');
+  }
+
+  _resetHorizontalZoom() {
+    this.zoomMin = 0;
+    this.zoomMax = Math.max(0, this.elevations.length - 1);
+  }
+
+  _minZoomSpan() {
+    const count = this.elevations.length;
+    if (count <= 2) return Math.max(1, count - 1);
+    return Math.min(Math.max(4, Math.round(count * 0.08)), count - 1);
+  }
+
+  _normalizeZoomRange(min, max) {
+    const last = Math.max(0, this.elevations.length - 1);
+    if (last <= 0) return { min: 0, max: last };
+
+    const minSpan = this._minZoomSpan();
+    const span = Math.max(minSpan, Math.min(last, max - min));
+    const center = Number.isFinite((min + max) / 2) ? (min + max) / 2 : last / 2;
+    let nextMin = center - span / 2;
+    let nextMax = center + span / 2;
+
+    if (nextMin < 0) {
+      nextMax -= nextMin;
+      nextMin = 0;
+    }
+    if (nextMax > last) {
+      nextMin -= nextMax - last;
+      nextMax = last;
+    }
+
+    return {
+      min: Math.max(0, nextMin),
+      max: Math.min(last, nextMax),
+    };
+  }
+
+  _applyHorizontalZoom(factor, centerIndex) {
+    if (!this.chart || this.isCollapsed || this.elevations.length < 3) return;
+
+    const last = this.elevations.length - 1;
+    const currentMin = Number.isFinite(this.zoomMin) ? this.zoomMin : 0;
+    const currentMax = Number.isFinite(this.zoomMax) ? this.zoomMax : last;
+    const span = Math.max(1, currentMax - currentMin);
+    const boundedCenter = Math.max(currentMin, Math.min(currentMax, centerIndex));
+    const ratio = span > 0 ? (boundedCenter - currentMin) / span : 0.5;
+    const nextSpan = span * factor;
+    const range = this._normalizeZoomRange(
+      boundedCenter - nextSpan * ratio,
+      boundedCenter + nextSpan * (1 - ratio),
+    );
+
+    this.zoomMin = range.min;
+    this.zoomMax = range.max;
+    this.chart.options.scales.x.min = this.zoomMin;
+    this.chart.options.scales.x.max = this.zoomMax;
+    this.chart.update('none');
+  }
+
+  _indexFromCanvasX(clientX) {
+    if (!this.chart) return 0;
+    const area = this.chart.chartArea;
+    if (!area || area.right <= area.left) return (this.zoomMin + this.zoomMax) / 2;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const x = Math.max(area.left, Math.min(area.right, clientX - rect.left));
+    const frac = (x - area.left) / (area.right - area.left);
+    return this.zoomMin + frac * (this.zoomMax - this.zoomMin);
+  }
+
+  _unbindInteractions() {
+    this._interactionAbort?.abort();
+    this._interactionAbort = null;
+    this._activePointers.clear();
+    this._lastPinchDistance = null;
+  }
+
+  _bindZoomInteractions() {
+    this._unbindInteractions();
+    if (!this.canvas) return;
+
+    const controller = new AbortController();
+    const { signal } = controller;
+    this._interactionAbort = controller;
+
+    this.canvas.addEventListener('wheel', (e) => {
+      if (!this.chart || this.isCollapsed || this.elevations.length < 3) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 0.82 : 1.22;
+      this._applyHorizontalZoom(factor, this._indexFromCanvasX(e.clientX));
+    }, { passive: false, signal });
+
+    const pinchDistance = () => {
+      const pointers = [...this._activePointers.values()];
+      if (pointers.length < 2) return null;
+      return Math.hypot(pointers[0].clientX - pointers[1].clientX, pointers[0].clientY - pointers[1].clientY);
+    };
+
+    const pinchCenterX = () => {
+      const pointers = [...this._activePointers.values()];
+      if (pointers.length < 2) return null;
+      return (pointers[0].clientX + pointers[1].clientX) / 2;
+    };
+
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      this._activePointers.set(e.pointerId, e);
+      if (this._activePointers.size >= 2) {
+        e.preventDefault();
+        this._lastPinchDistance = pinchDistance();
+        this.canvas.setPointerCapture?.(e.pointerId);
+      }
+    }, { passive: false, signal });
+
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'touch' || !this._activePointers.has(e.pointerId)) return;
+      this._activePointers.set(e.pointerId, e);
+      if (this._activePointers.size < 2) return;
+      e.preventDefault();
+
+      const distance = pinchDistance();
+      const centerX = pinchCenterX();
+      if (!distance || !centerX || !this._lastPinchDistance) {
+        this._lastPinchDistance = distance;
+        return;
+      }
+
+      this._applyHorizontalZoom(this._lastPinchDistance / distance, this._indexFromCanvasX(centerX));
+      this._lastPinchDistance = distance;
+    }, { passive: false, signal });
+
+    const removePointer = (e) => {
+      if (e.pointerType !== 'touch') return;
+      this._activePointers.delete(e.pointerId);
+      if (this._activePointers.size < 2) this._lastPinchDistance = null;
+    };
+
+    this.canvas.addEventListener('pointerup', removePointer, { signal });
+    this.canvas.addEventListener('pointercancel', removePointer, { signal });
   }
 
   _calcStats() {
@@ -204,6 +353,7 @@ export class ElevationProfile {
     if (this.chart) {
       this.chart.destroy();
     }
+    this._unbindInteractions();
 
     const labels = this.distances.map((d) => (d / 1000).toFixed(1));
     const ctx = this.canvas.getContext('2d');
@@ -229,17 +379,18 @@ export class ElevationProfile {
           let xPx, yPx, xFrac;
           const meta = chart.getDatasetMeta(0);
           const ptMeta = m.dataIdx != null ? meta.data[m.dataIdx] : null;
+          xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
           if (ptMeta) {
             xPx = ptMeta.x;
             yPx = ptMeta.y;
-            xFrac = (right > left) ? (xPx - left) / (right - left) : 0;
           } else {
             // Fallback: distance-fraction positioning
-            xFrac = Math.max(0, Math.min(1, m.cumDistM / totalM));
-            xPx = left + xFrac * (right - left);
+            const idx = self.distances.findIndex((d) => d >= m.cumDistM);
+            xPx = scales.x.getPixelForValue(idx >= 0 ? idx : self.distances.length - 1);
             const elev = self.isCollapsed ? 0 : self._interpolateElevAtCumM(m.cumDistM);
             yPx = scales.y.getPixelForValue(elev);
           }
+          if (xPx < left - 8 || xPx > right + 8) return;
 
           let rgb;
           if (self.turnaroundFrac != null && xFrac > self.turnaroundFrac) {
@@ -396,6 +547,8 @@ export class ElevationProfile {
         scales: {
           x: {
             display: !this.isCollapsed,
+            min: this.zoomMin,
+            max: this.zoomMax,
             title: { display: true, text: 'km', color: '#6b7280', font: { size: 10 } },
             ticks: { color: '#6b7280', font: { size: 9 }, maxTicksLimit: 8 },
             grid: { color: 'rgba(255,255,255,0.04)' },
@@ -439,6 +592,8 @@ export class ElevationProfile {
       plugins: [markerPlugin, lineGradientPlugin],
     });
 
+    this._bindZoomInteractions();
+
     // Native click listener to capture hits on weather icons in the top padding area
     this.canvas.onclick = (e) => {
       const markers = self._markers;
@@ -459,10 +614,12 @@ export class ElevationProfile {
           mxPx = ptMeta.x;
           myPx = ptMeta.y;
         } else {
-          mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
+          const idx = self.distances.findIndex((d) => d >= m.cumDistM);
+          mxPx = scales.x.getPixelForValue(idx >= 0 ? idx : self.distances.length - 1);
           const elev = self.isCollapsed ? 0 : self._interpolateElevAtCumM(m.cumDistM);
           myPx = scales.y.getPixelForValue(elev);
         }
+        if (mxPx < cLeft - 8 || mxPx > cRight + 8) return;
 
         const r = m.isWaypoint ? 5 : 3.5;
         const dDot = Math.sqrt((xPx - mxPx) ** 2 + (yPx - myPx) ** 2);
@@ -498,10 +655,12 @@ export class ElevationProfile {
           mxPx = ptMeta.x;
           myPx = ptMeta.y;
         } else {
-          mxPx = cLeft + Math.max(0, Math.min(1, m.cumDistM / totalM)) * (cRight - cLeft);
+          const idx = self.distances.findIndex((d) => d >= m.cumDistM);
+          mxPx = scales.x.getPixelForValue(idx >= 0 ? idx : self.distances.length - 1);
           const elev = self.isCollapsed ? 0 : self._interpolateElevAtCumM(m.cumDistM);
           myPx = scales.y.getPixelForValue(elev);
         }
+        if (mxPx < cLeft - 8 || mxPx > cRight + 8) return false;
         const r = m.isWaypoint ? 5 : 3.5;
         const dDot = Math.sqrt((xPx - mxPx) ** 2 + (yPx - myPx) ** 2);
         let dIcon = Infinity;
