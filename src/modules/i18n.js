@@ -381,6 +381,23 @@ const textOriginals = new WeakMap();
 let observer = null;
 let onLanguageChange = null;
 let translationLanguageOverride = null;
+const pendingTranslationRoots = new Set();
+let pendingTranslationFrame = 0;
+
+function scheduleTranslateTree(root) {
+  if (!root) return;
+  pendingTranslationRoots.add(root);
+  if (pendingTranslationFrame) return;
+  const schedule = typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame
+    : (cb) => setTimeout(cb, 0);
+  pendingTranslationFrame = schedule(() => {
+    pendingTranslationFrame = 0;
+    const roots = Array.from(pendingTranslationRoots);
+    pendingTranslationRoots.clear();
+    roots.forEach(translateTree);
+  });
+}
 
 export function detectLanguage() {
   const saved = localStorage.getItem(LS_LANGUAGE_KEY);
@@ -484,9 +501,9 @@ export function initI18n(options = {}) {
     observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         mutation.addedNodes.forEach(node => {
-          if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) translateTree(node);
+          if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) scheduleTranslateTree(node);
         });
-        if (mutation.type === 'characterData') translateTree(mutation.target);
+        if (mutation.type === 'characterData') scheduleTranslateTree(mutation.target);
         if (mutation.type === 'attributes') translateElementAttributes(mutation.target);
       }
     });
