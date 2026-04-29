@@ -4763,6 +4763,15 @@ function initWeatherControls() {
     const gap = window.innerWidth <= 768 ? 12 : 0;
     return Math.max(MIN_H, window.innerHeight - toolbarH - gap);
   };
+  const isElevationChartExpanded = () => {
+    const chart = panel.querySelector('#elevation-chart-container');
+    return chart && !chart.classList.contains('collapsed');
+  };
+  const getChartOnlyPanelH = () => {
+    const chartRow = panel.querySelector('.bp-chart-row');
+    const chartH = chartRow?.offsetHeight || 0;
+    return Math.max(MIN_H, Math.min(getMaxPanelH(), (handle?.offsetHeight || 18) + chartH));
+  };
   const savePanelRatio = () => {
     const ratio = panel.offsetHeight / window.innerHeight;
     localStorage.setItem(LS_PANEL_HEIGHT_RATIO_KEY, ratio);
@@ -4842,23 +4851,40 @@ function initWeatherControls() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     pendingClientY = null;
   };
-
-  // Mouse
-  handle.addEventListener('mousedown', (e) => {
-    e.preventDefault();
+  const DRAG_START_THRESHOLD = 6;
+  let lastHandleTouchWasDrag = false;
+  const beginPanelResize = () => {
     panel.style.transition = '';
     panel._resizing = true;
     document.body.classList.add('is-resizing');
     handle.classList.add('dragging');
-    const onMove = (ev) => scheduleHeight(ev.clientY);
+  };
+  const endPanelResize = () => {
+    cancelPending();
+    panel._resizing = false;
+    document.body.classList.remove('is-resizing');
+    handle.classList.remove('dragging');
+    savePanelRatio();
+    invalidateMapSizeAfterLayout();
+    requestAnimationFrame(() => elevationProfile?.chart?.resize());
+  };
+
+  // Mouse
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    let didDrag = false;
+    const onMove = (ev) => {
+      if (!didDrag) {
+        if (Math.abs(ev.clientY - startY) < DRAG_START_THRESHOLD) return;
+        didDrag = true;
+        beginPanelResize();
+      }
+      scheduleHeight(ev.clientY);
+    };
     const onUp = () => {
-      cancelPending();
-      panel._resizing = false;
-      document.body.classList.remove('is-resizing');
-      handle.classList.remove('dragging');
-      savePanelRatio();
-      invalidateMapSizeAfterLayout();
-      requestAnimationFrame(() => elevationProfile?.chart?.resize());
+      if (didDrag) endPanelResize();
+      else cancelPending();
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -4869,24 +4895,32 @@ function initWeatherControls() {
   // Touch
   handle.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    panel.style.transition = '';
-    panel._resizing = true;
-    document.body.classList.add('is-resizing');
-    handle.classList.add('dragging');
-    const onMove = (ev) => scheduleHeight(ev.touches[0].clientY);
+    lastHandleTouchWasDrag = false;
+    const startY = e.touches[0].clientY;
+    let didDrag = false;
+    const onMove = (ev) => {
+      const touch = ev.touches[0];
+      if (!touch) return;
+      if (!didDrag) {
+        if (Math.abs(touch.clientY - startY) < DRAG_START_THRESHOLD) return;
+        didDrag = true;
+        lastHandleTouchWasDrag = true;
+        beginPanelResize();
+      }
+      ev.preventDefault();
+      scheduleHeight(touch.clientY);
+    };
     const onEnd = () => {
-      cancelPending();
-      panel._resizing = false;
-      document.body.classList.remove('is-resizing');
-      handle.classList.remove('dragging');
-      savePanelRatio();
-      invalidateMapSizeAfterLayout();
-      requestAnimationFrame(() => elevationProfile?.chart?.resize());
+      lastHandleTouchWasDrag = didDrag;
+      if (didDrag) endPanelResize();
+      else cancelPending();
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
+      document.removeEventListener('touchcancel', onEnd);
     };
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchcancel', onEnd);
   }, { passive: false });
 
   // --- Double-click toggle: 0:10 ↔ 10:0 ---
@@ -4899,7 +4933,9 @@ function initWeatherControls() {
     const viewH = window.innerHeight;
     const expandH = getMaxPanelH();
     const currentH = panel.offsetHeight;
-    const targetH = currentH > viewH / 2 ? COLLAPSE_H : expandH;
+    const targetH = currentH > viewH / 2
+      ? (isElevationChartExpanded() ? getChartOnlyPanelH() : COLLAPSE_H)
+      : expandH;
     panel.style.transition = 'height 0.25s ease';
     panel.style.height = `${targetH}px`;
     document.documentElement.style.setProperty('--bottom-panel-height', `${targetH}px`);
@@ -4916,6 +4952,10 @@ function initWeatherControls() {
   // Touch: detect double-tap within 300ms on the handle
   let lastTap = 0;
   handle.addEventListener('touchend', (e) => {
+    if (lastHandleTouchWasDrag) {
+      lastTap = 0;
+      return;
+    }
     const now = Date.now();
     if (now - lastTap < 300) {
       togglePanel(e);
