@@ -167,6 +167,10 @@ class LazyElevationProfile {
     this.instance?.showCrosshairAtIndex(idx);
   }
 
+  centerHorizontallyAtIndex(idx) {
+    this.instance?.centerHorizontallyAtIndex(idx);
+  }
+
   hideCrosshair() {
     this.instance?.hideCrosshair();
   }
@@ -1498,10 +1502,8 @@ window.addEventListener('keydown', (e) => {
       const curMode = _wcStates.get(activeColIdx) || 'compact';
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode));
-      if (nextMode === 'full') {
-        requestAnimationFrame(() => panMapToCenterFullCard(activeColIdx));
-      }
+      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+      highlightPoint(activeColIdx);
       return;
     }
     if (k === 'arrowdown') {
@@ -6722,13 +6724,16 @@ function closeWeatherCard(colIdx) {
 }
 
 /** Set the card mode and re-render. */
-function setWeatherCardMode(colIdx, mode) {
+function setWeatherCardMode(colIdx, mode, options = {}) {
   if (mode === 'minimized') {
     closeWeatherCard(colIdx);
     return;
   }
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
+  if (mode === 'full' && options.center !== false) {
+    scheduleWeatherCardCenter(colIdx, { settle: true });
+  }
 }
 
 /** Navigate a specific card holder to the next/prev point that has weather data. */
@@ -6918,6 +6923,7 @@ function _renderWeatherCard(colIdx) {
 
   mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
     _bindWeatherCardEvents(colIdx, wrapper);
+    if (isFull) scheduleWeatherCardCenter(colIdx, { settle: isHighlighted });
   }, !pt.isWaypoint, pt.wpIndex);
 }
 
@@ -7051,7 +7057,8 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     const curMode = _wcStates.get(colIdx) || 'compact';
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
     const targets = getCollectiveIndices(colIdx);
-    targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+    highlightPoint(colIdx);
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -7149,7 +7156,8 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         const curMode = _wcStates.get(colIdx) || 'compact';
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
         const targets = getCollectiveIndices(colIdx);
-        targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+        highlightPoint(colIdx);
       } else {
         // Swipe down: close
         const targets = getCollectiveIndices(colIdx);
@@ -7290,25 +7298,33 @@ function panMapToCenterFullCard(colIdx) {
 
   const { safeLeft, safeRight, safeTop, safeBottom } = _getMapSafeArea();
 
-  if (safeRight - safeLeft < cardW + 8 || safeBottom - safeTop < cardH + popupOffsetY) {
-    map.panTo([pt.lat, pt.lng], { animate: true });
-    return;
-  }
-
   // The popup wrapper sits with its bottom at marker_y - popupOffsetY (the
-  // tip is hidden via CSS, so no extra gap is needed). Centre the card
-  // vertically in the safe area, then place the marker directly below:
-  //   card_center = marker_y - popupOffsetY - cardH/2 = safeCenterY
+  // tip is hidden via CSS, so no extra gap is needed). Prefer centering the
+  // card between the toolbar and bottom-panel divider, but clamp its top edge
+  // into the safe area so the header buttons remain reachable on small phones.
   const safeCenterX = (safeLeft + safeRight) / 2;
   const safeCenterY = (safeTop + safeBottom) / 2;
   const targetX = safeCenterX;
-  const targetY = safeCenterY + cardH / 2 + popupOffsetY;
+  const desiredCardTop = safeCenterY - cardH / 2;
+  const cardTop = Math.max(safeTop, desiredCardTop);
+  const targetY = cardTop + cardH + popupOffsetY;
 
   const currentPointPx = map.latLngToContainerPoint([pt.lat, pt.lng]);
   const dx = currentPointPx.x - targetX;
   const dy = currentPointPx.y - targetY;
   if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
   map.panBy([dx, dy], { animate: true, duration: 0.25 });
+}
+
+function scheduleWeatherCardCenter(colIdx, options = {}) {
+  const center = () => panMapToCenterFullCard(colIdx);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(center);
+  });
+  if (options.settle) {
+    setTimeout(center, 120);
+    setTimeout(center, 280);
+  }
 }
 
 /**
@@ -7358,6 +7374,7 @@ function highlightPoint(colIdx, toggle = false) {
     if (fullDist > 0) {
       const frac = Math.max(0, Math.min(1, (pt._cum || 0) / fullDist));
       const idx = Math.round(frac * (sampledPts.length - 1));
+      elevationProfile.centerHorizontallyAtIndex(idx);
       elevationProfile.showCrosshairAtIndex(idx);
     }
   }
@@ -7402,7 +7419,9 @@ function highlightPoint(colIdx, toggle = false) {
   // safe area (so its top buttons stay clear of the toolbar and it sits
   // above the bottom-panel divider). Otherwise just centre the marker.
   const mode = _wcStates.get(colIdx);
-  if (mode === 'full' || mode === 'compact') {
+  if (mode === 'full') {
+    scheduleWeatherCardCenter(colIdx, { settle: true });
+  } else if (mode === 'compact') {
     panMapToCenterFullCard(colIdx);
   } else if (waypointCentering) {
     panMapToVisibleCenter([pt.lat, pt.lng]);
