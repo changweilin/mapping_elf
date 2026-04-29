@@ -6,19 +6,109 @@ import './styles/main.css';
 
 import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
-import { ElevationProfile } from './modules/elevationProfile.js';
-import { GpxExporter } from './modules/gpxExporter.js';
-import { KmlExporter } from './modules/kmlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { MapPackExporter } from './modules/mapPackExporter.js';
-import { MapPackImporter } from './modules/mapPackImporter.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, projectMileage, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
+}
+
+let routeExportersPromise = null;
+async function ensureRouteExporters() {
+  routeExportersPromise ||= Promise.all([
+    import('./modules/gpxExporter.js'),
+    import('./modules/kmlExporter.js'),
+  ]).then(([gpxModule, kmlModule]) => ({
+    GpxExporter: gpxModule.GpxExporter,
+    KmlExporter: kmlModule.KmlExporter,
+  }));
+  return routeExportersPromise;
+}
+
+let mapPackModulesPromise = null;
+async function ensureMapPackModules() {
+  mapPackModulesPromise ||= Promise.all([
+    import('./modules/mapPackExporter.js'),
+    import('./modules/mapPackImporter.js'),
+  ]).then(([exporterModule, importerModule]) => ({
+    MapPackExporter: exporterModule.MapPackExporter,
+    MapPackImporter: importerModule.MapPackImporter,
+  }));
+  return mapPackModulesPromise;
+}
+
+class LazyElevationProfile {
+  constructor(canvasId, emptyStateId, onHover, onMarkerClick) {
+    this.args = [canvasId, emptyStateId, onHover, onMarkerClick];
+    this.instance = null;
+    this.loadPromise = null;
+    this.isCollapsed = false;
+  }
+
+  async load() {
+    if (!this.loadPromise) {
+      this.loadPromise = import('./modules/elevationProfile.js').then(({ ElevationProfile }) => {
+        this.instance = new ElevationProfile(...this.args);
+        this.instance.isCollapsed = this.isCollapsed;
+        return this.instance;
+      });
+    }
+    return this.loadPromise;
+  }
+
+  get chart() { return this.instance?.chart || null; }
+  get elevations() { return this.instance?.elevations || []; }
+  get distances() { return this.instance?.distances || []; }
+  get points() { return this.instance?.points || []; }
+  get turnaroundFrac() { return this.instance?.turnaroundFrac ?? null; }
+
+  async update(...args) {
+    return (await this.load()).update(...args);
+  }
+
+  async updateWithData(...args) {
+    return (await this.load()).updateWithData(...args);
+  }
+
+  clear() {
+    if (this.instance) this.instance.clear();
+  }
+
+  toggleCollapse() {
+    this.isCollapsed = !this.isCollapsed;
+    if (this.instance) this.instance.toggleCollapse();
+  }
+
+  showCrosshairAtIndex(idx) {
+    this.instance?.showCrosshairAtIndex(idx);
+  }
+
+  hideCrosshair() {
+    this.instance?.hideCrosshair();
+  }
+
+  setWaypointMarkers(markers) {
+    this.instance?.setWaypointMarkers(markers);
+  }
+
+  _calcStats() {
+    return this.instance?._calcStats() || {
+      ascent: 0,
+      descent: 0,
+      maxElev: 0,
+      minElev: 0,
+      startElev: 0,
+      endElev: 0,
+      turnaroundElev: null,
+    };
+  }
+
+  _interpolateElevAtCumM(cumM) {
+    return this.instance?._interpolateElevAtCumM(cumM) || 0;
+  }
 }
 
 // Fix Leaflet default icon paths
@@ -455,7 +545,7 @@ function applySettingsFromStorage() {
   renderWeatherPanel();
 }
 
-const elevationProfile = new ElevationProfile(
+const elevationProfile = new LazyElevationProfile(
   'elevation-chart',
   'chart-empty',
   (lat, lng, color) => mapManager.showHoverMarker(lat, lng, color),
@@ -722,8 +812,9 @@ function parseCalibrationFile(file) {
   return new Promise((resolve, reject) => {
     const ext = file.name.split('.').pop().toLowerCase();
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
+        const { GpxExporter, KmlExporter } = await ensureRouteExporters();
         let result;
         if (ext === 'gpx') result = GpxExporter.parse(evt.target.result);
         else if (ext === 'kml') result = KmlExporter.parse(evt.target.result);
@@ -1373,12 +1464,13 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
   const { exportCoords, exportElevations } = getExportRouteData();
 
   const gpxXml = includeRoute
-    ? GpxExporter.generate(collectExportData(), exportCoords, exportElevations, routeName)
+    ? (await ensureRouteExporters()).GpxExporter.generate(collectExportData(), exportCoords, exportElevations, routeName)
     : null;
 
   progressContainer.classList.remove('hidden');
 
   try {
+    const { MapPackExporter } = await ensureMapPackModules();
     const { blob, filename, tileCount } = await MapPackExporter.export({
       bounds,
       routeCoords: currentRouteCoords,
@@ -1428,6 +1520,7 @@ document.getElementById('btn-mappack-import-cancel')?.addEventListener('click', 
 
 async function openMappackImportModal(file) {
   try {
+    const { MapPackImporter } = await ensureMapPackModules();
     const parsed = await MapPackImporter.parse(file);
     _pendingMappack = parsed;
 
@@ -1486,6 +1579,7 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
 
   try {
     console.log('Applying mappack...', { restoreRoute, restoreTiles, restoreState });
+    const { MapPackImporter } = await ensureMapPackModules();
     const applied = await MapPackImporter.apply(parsed, {
       restoreRoute,
       restoreTiles,
@@ -1516,8 +1610,9 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
 
     if (applied.gpxXml) {
       try {
+        const { GpxExporter } = await ensureRouteExporters();
         const result = GpxExporter.parse(applied.gpxXml);
-        applyImportedResult(result);
+        await applyImportedResult(result);
       } catch (err) {
         showNotification('路線還原失敗', 'error');
         console.error('GPX parse failed during mappack import:', err);
@@ -1739,7 +1834,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
       renderAlternatives(allAlternatives, 0);
 
       // Select the best route by default
-      selectAlternative(0);
+      await selectAlternative(0);
 
       const altMsg = allAlternatives.length > 1
         ? `找到 ${allAlternatives.length} 組建議路徑`
@@ -1763,7 +1858,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
 /**
  * Select a specific alternative route
  */
-function selectAlternative(index) {
+async function selectAlternative(index) {
   if (index >= allAlternatives.length) return;
 
   selectedAltIndex = index;
@@ -1794,7 +1889,7 @@ function selectAlternative(index) {
       turnaroundLL = wps[wps.length - 1];
     }
   }
-  elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
+  await elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
 
   // Update stats from pre-calculated route data
   const epStats = elevationProfile._calcStats();
@@ -2681,7 +2776,7 @@ function closeExportModal() {
 //   if (e.target === exportModal) closeExportModal();
 // });
 btnExportCancel?.addEventListener('click', closeExportModal);
-btnExportConfirm?.addEventListener('click', () => {
+btnExportConfirm?.addEventListener('click', async () => {
   const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
   if (fmt === 'melmap') {
     const includeRoute = document.getElementById('mappack-inc-route').checked;
@@ -2700,11 +2795,16 @@ btnExportConfirm?.addEventListener('click', () => {
     const routeName = nameInput ? nameInput.value.trim() : buildDefaultRouteName();
 
     closeExportModal();
-    doExportMapPack(buildExportFilenameBase(), routeName);
+    await doExportMapPack(buildExportFilenameBase(), routeName);
     return;
   }
   closeExportModal();
-  doExport(fmt);
+  try {
+    await doExport(fmt);
+  } catch (err) {
+    console.error(err);
+    showNotification('匯出失敗', 'error');
+  }
 });
 
 // =========== Favorites ===========
@@ -3188,13 +3288,14 @@ function collectSegmentDates() {
   return result;
 }
 
-function doExport(fmt) {
+async function doExport(fmt) {
   const nameInput = document.getElementById('export-filename-input');
   const routeName = (nameInput ? nameInput.value.trim() : null) || buildDefaultRouteName() || 'Mapping Elf Track';
   const filename = buildExportFilenameBase();
 
   const wpData = collectExportData();
   const { exportCoords, exportElevations } = getExportRouteData();
+  const { GpxExporter, KmlExporter } = await ensureRouteExporters();
 
   if (fmt === 'gpx' || fmt === 'all') {
     const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName);
@@ -3239,7 +3340,7 @@ function clearImportedTrackSession() {
  * Restore a previously saved imported-track session. Mirrors the track branch
  * of importFile() without touching custom-name storage (already persisted).
  */
-function restoreImportedTrack(session) {
+async function restoreImportedTrack(session) {
   const coords = Array.isArray(session.coords) ? session.coords : [];
   const elevations = Array.isArray(session.elevations) ? session.elevations : [];
   const waypoints = Array.isArray(session.waypoints) ? session.waypoints : [];
@@ -3263,7 +3364,7 @@ function restoreImportedTrack(session) {
     skipAutoGeocode = false;
   }
 
-  elevationProfile.updateWithData(coords, elevations);
+  await elevationProfile.updateWithData(coords, elevations);
   const totalDist = elevationProfile.distances.at(-1) || 0;
   const epStats = elevationProfile._calcStats();
   statDistance.textContent = formatDistance(totalDist);
@@ -3280,20 +3381,20 @@ function restoreImportedTrack(session) {
  * to the map — same semantics as the original inline importFile logic.
  * Extracted so that .melmap imports can reuse it.
  */
-function applyImportedResult(result) {
+async function applyImportedResult(result) {
   // Bulk import: suppress per-waypoint history entries and record one entry
   // for the whole import at the end.
   const _wasSuppressed = history.suppressed;
   history.suppressed = true;
   try {
-    _applyImportedResultCore(result);
+    await _applyImportedResultCore(result);
   } finally {
     history.suppressed = _wasSuppressed;
   }
   historyRecord();
 }
 
-function _applyImportedResultCore(result) {
+async function _applyImportedResultCore(result) {
   if (result.trackPoints.length > 0) {
     const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
 
@@ -3353,7 +3454,7 @@ function _applyImportedResultCore(result) {
     }
 
     // 6. Load elevation profile from track data (no elevation API call)
-    elevationProfile.updateWithData(coords, elevations);
+    await elevationProfile.updateWithData(coords, elevations);
 
     // 7. Update stats from track data
     const totalDist = elevationProfile.distances.at(-1) || 0;
@@ -3427,8 +3528,9 @@ function importFile(e) {
     return;
   }
   const reader = new FileReader();
-  reader.onload = (evt) => {
+  reader.onload = async (evt) => {
     try {
+      const { GpxExporter, KmlExporter } = await ensureRouteExporters();
       let result;
       if (ext === 'gpx') {
         result = GpxExporter.parse(evt.target.result);
@@ -3438,7 +3540,7 @@ function importFile(e) {
         showNotification('不支援的檔案格式', 'error');
         return;
       }
-      applyImportedResult(result);
+      await applyImportedResult(result);
     } catch (err) {
       showNotification('檔案解析失敗', 'error');
       console.error(err);
@@ -7580,8 +7682,9 @@ async function init() {
   if (pendingGpx) {
     try { localStorage.removeItem(LS_PENDING_GPX_KEY); } catch (_) { }
     try {
+      const { GpxExporter } = await ensureRouteExporters();
       const result = GpxExporter.parse(pendingGpx);
-      applyImportedResult(result);
+      await applyImportedResult(result);
     } catch (err) {
       console.error('Pending GPX replay failed:', err);
     }
@@ -7593,7 +7696,7 @@ async function init() {
     try { return JSON.parse(localStorage.getItem(LS_IMPORTED_TRACK_KEY) || 'null'); }
     catch { return null; }
   })();
-  const trackRestored = pendingGpx ? true : (savedTrackSession ? restoreImportedTrack(savedTrackSession) : false);
+  const trackRestored = pendingGpx ? true : (savedTrackSession ? await restoreImportedTrack(savedTrackSession) : false);
 
   // Otherwise, fall back to normal waypoint-only restore (triggers route recalc).
   const savedWaypoints = trackRestored ? null : (() => {
