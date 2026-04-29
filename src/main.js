@@ -16,6 +16,16 @@ function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
 }
 
+const IMPORTED_TRACK_EDIT_NOTICE = '匯入的軌跡無法編輯，需要規劃路線請點擊「重新規劃」。';
+let importedTrackEditNoticeAt = 0;
+
+function showImportedTrackEditNotice(duration = 3200) {
+  const now = Date.now();
+  if (now - importedTrackEditNoticeAt < 1200) return;
+  importedTrackEditNoticeAt = now;
+  showNotification(IMPORTED_TRACK_EDIT_NOTICE, 'warning', duration);
+}
+
 let routeExportersPromise = null;
 async function ensureRouteExporters() {
   routeExportersPromise ||= Promise.all([
@@ -315,6 +325,7 @@ const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
+mapManager.onFrozenInteraction = () => showImportedTrackEditNotice();
 mapManager.onGpsFix = (lat, lng) => {
   lastGpsLatLng = [lat, lng];
 };
@@ -2057,7 +2068,11 @@ function updateWaypointList(waypoints) {
     nameEl.title = '雙擊編輯名稱';
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      if (frozen || nameEl.querySelector('input')) return;
+      if (frozen) {
+        showImportedTrackEditNotice();
+        return;
+      }
+      if (nameEl.querySelector('input')) return;
       const input = document.createElement('input');
       input.type = 'text';
       input.value = getEffectiveName(wp[0], wp[1]) || nameEl.textContent.trim();
@@ -2236,7 +2251,23 @@ function updateWaypointList(waypoints) {
     };
 
     item.addEventListener('mousedown', (e) => {
-      if (frozen || e.button !== 0 || e.target.closest('.wp-actions')) return;
+      if (frozen) {
+        if (e.button === 0 && !e.target.closest('.wp-actions')) {
+          lpTimer = setTimeout(() => {
+            lpTimer = null;
+            showImportedTrackEditNotice();
+          }, 500);
+          const clearFrozenTimer = () => {
+            if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+            document.removeEventListener('mouseup', clearFrozenTimer);
+            document.removeEventListener('mousemove', clearFrozenTimer);
+          };
+          document.addEventListener('mouseup', clearFrozenTimer);
+          document.addEventListener('mousemove', clearFrozenTimer);
+        }
+        return;
+      }
+      if (e.button !== 0 || e.target.closest('.wp-actions')) return;
       triggerLP(e.clientX, e.clientY);
       
       const onMoveGuard = (ev) => checkMove(ev.clientX, ev.clientY);
@@ -2263,7 +2294,16 @@ function updateWaypointList(waypoints) {
     });
 
     item.addEventListener('touchstart', (e) => {
-      if (frozen || e.target.closest('.wp-actions')) return;
+      if (frozen) {
+        if (!e.target.closest('.wp-actions')) {
+          lpTimer = setTimeout(() => {
+            lpTimer = null;
+            showImportedTrackEditNotice();
+          }, 500);
+        }
+        return;
+      }
+      if (e.target.closest('.wp-actions')) return;
       const t = e.touches[0];
       triggerLP(t.clientX, t.clientY);
     }, { passive: true });
@@ -3484,6 +3524,7 @@ async function _applyImportedResultCore(result) {
       `已匯入軌跡（${coords.length} 個點${wpCount > 0 ? `，${wpCount} 個航點` : ''}）`,
       'success'
     );
+    showImportedTrackEditNotice(4500);
     // Explicitly call autoFetchWeather here before returning from track mode
     autoFetchWeather({ force: false });
     return;
@@ -7970,7 +8011,10 @@ function renderSearchResults(items, resultsEl) {
     });
     row.querySelector('.search-result-add').addEventListener('click', (e) => {
       e.stopPropagation();
-      if (frozen) return;
+      if (frozen) {
+        showImportedTrackEditNotice();
+        return;
+      }
       // Store the search result name as a custom name before adding to avoid redundant geocoding
       // and ensure the specific place name found during search is preserved.
       if (it.name || it.display_name) {
