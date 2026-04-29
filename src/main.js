@@ -1136,6 +1136,17 @@ function loadSidePanelWidth() {
 
 loadSidePanelWidth();
 
+function returnToRouteAfterPanelUpdate({ closePanel = false } = {}) {
+  if (closePanel) {
+    sidePanel?.classList.remove('open');
+  }
+
+  requestAnimationFrame(() => {
+    mapManager?.map?.invalidateSize?.({ animate: false, pan: false });
+    requestAnimationFrame(() => mapManager?.fitToRoute?.());
+  });
+}
+
 function updateThemeIcons() {
   const isLight = document.documentElement.classList.contains('light-theme');
   if (isLight) {
@@ -3462,11 +3473,11 @@ async function _applyImportedResultCore(result) {
     statDistance.textContent = formatDistance(totalDist);
     updateElevationStats(epStats);
 
-    mapManager.fitToRoute();
     updateTimeStat();
     renderWeatherPanel();
 
     saveImportedTrackSession();
+    returnToRouteAfterPanelUpdate({ closePanel: true });
 
     const wpCount = result.waypoints.length;
     showNotification(
