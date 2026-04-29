@@ -1199,6 +1199,12 @@ html.light-theme .waypoint-trash-zone.is-hover {
   transition: none !important;
 }
 
+body.route-list-dragging {
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
 /* Waypoint List */
 .waypoint-list {
   max-height: 200px;

@@ -2178,11 +2178,16 @@ function updateWaypointList(waypoints) {
   let lpTimer = null;
   let ghost = null;
   let placeholder = null;
+  let lastDragClientX = null;
+  let lastDragClientY = null;
 
   const startDrag = (item, idx, clientX, clientY) => {
     dragItem = item;
     dragIndex = idx;
+    lastDragClientX = clientX;
+    lastDragClientY = clientY;
     item.classList.add('is-dragging');
+    document.body.classList.add('route-list-dragging');
     if (navigator.vibrate) navigator.vibrate(40);
 
     // Create placeholder
@@ -2209,6 +2214,7 @@ function updateWaypointList(waypoints) {
     document.addEventListener('mouseup', onEnd);
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchcancel', onEnd);
 
     // Show trash zone when sidebar drag starts
     mapManager.showTrashZone('list');
@@ -2221,8 +2227,11 @@ function updateWaypointList(waypoints) {
   };
 
   const onMove = (e) => {
+    if (e.cancelable) e.preventDefault();
     const cx = e.touches ? e.touches[0].clientX : e.clientX;
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    lastDragClientX = cx;
+    lastDragClientY = cy;
     updateGhostPos(cx, cy);
 
     // Removal detection: use the central trash zone logic from mapManager
@@ -2260,9 +2269,12 @@ function updateWaypointList(waypoints) {
     document.removeEventListener('mouseup', onEnd);
     document.removeEventListener('touchmove', onMove);
     document.removeEventListener('touchend', onEnd);
+    document.removeEventListener('touchcancel', onEnd);
+    document.body.classList.remove('route-list-dragging');
 
-    const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
-    const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    const changedTouch = e.changedTouches?.[0];
+    const cx = changedTouch?.clientX ?? e.clientX ?? lastDragClientX;
+    const cy = changedTouch?.clientY ?? e.clientY ?? lastDragClientY;
     
     const isOverTrash = mapManager.isOverTrashZone(cx, cy);
     mapManager.hideTrashZone();
@@ -2302,6 +2314,8 @@ function updateWaypointList(waypoints) {
     dragItem = null;
     ghost = null;
     placeholder = null;
+    lastDragClientX = null;
+    lastDragClientY = null;
   };
 
   waypointList.querySelectorAll('.waypoint-item').forEach((item, idx) => {
