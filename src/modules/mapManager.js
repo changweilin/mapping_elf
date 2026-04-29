@@ -48,6 +48,7 @@ export class MapManager {
     this.onRouteSelect = null; // callback(index)
     this.onRouteHover = null; // callback(lat, lng) | callback(null, null)
     this.onWaypointSelect = null; // callback(wpIndex)
+    this.onFrozenInteraction = null; // callback(reason)
     this.onWeatherBadgeClick = null; // callback(wpIndex)
     this.isRoundTrip = false;
     this.turnaroundLatLng = null; // [lat,lng] of last forward waypoint for return-leg gradient split
@@ -100,7 +101,11 @@ export class MapManager {
     this.tileLayers.topo.addTo(this.map);
 
     this.map.on('click', (e) => {
-      if (this.ignoreMapClick || this.isFrozen) return;
+      if (this.isFrozen) {
+        this._notifyFrozenInteraction('map-click');
+        return;
+      }
+      if (this.ignoreMapClick) return;
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
@@ -150,6 +155,50 @@ export class MapManager {
   _blockMapClick() {
     this.ignoreMapClick = true;
     setTimeout(() => { this.ignoreMapClick = false; }, 300);
+  }
+
+  _notifyFrozenInteraction(reason) {
+    this.onFrozenInteraction?.(reason);
+  }
+
+  _scheduleFrozenInteractionNotice(e, reason, delay = 500) {
+    const oe = e?.originalEvent || e;
+    const start = oe?.touches ? oe.touches[0] : oe;
+    const startX = start?.clientX ?? 0;
+    const startY = start?.clientY ?? 0;
+    let timer = setTimeout(() => {
+      timer = null;
+      cleanup();
+      this._notifyFrozenInteraction(reason);
+    }, delay);
+
+    const cancel = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      cleanup();
+    };
+    const move = (ev) => {
+      if (!timer) return;
+      const cur = ev?.touches ? ev.touches[0] : ev;
+      const dx = (cur?.clientX ?? startX) - startX;
+      const dy = (cur?.clientY ?? startY) - startY;
+      if (dx * dx + dy * dy > 64) cancel();
+    };
+    function cleanup() {
+      document.removeEventListener('mouseup', cancel);
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('touchend', cancel);
+      document.removeEventListener('touchmove', move);
+      document.removeEventListener('touchcancel', cancel);
+    }
+
+    document.addEventListener('mouseup', cancel);
+    document.addEventListener('mousemove', move);
+    document.addEventListener('touchend', cancel);
+    document.addEventListener('touchmove', move, { passive: true });
+    document.addEventListener('touchcancel', cancel);
   }
 
   _startRubberBand(marker) {
@@ -579,7 +628,11 @@ export class MapManager {
     // handler below). The manual touch-drag handler will activate at 500ms.
     marker.on('contextmenu', (e) => {
       L.DomEvent.stopPropagation(e);
-      if (this.isFrozen || _isTouchActive || _longPressTimer !== null || _dragModeActive) return;
+      if (this.isFrozen) {
+        this._notifyFrozenInteraction('waypoint-drag');
+        return;
+      }
+      if (_isTouchActive || _longPressTimer !== null || _dragModeActive) return;
       _enableDrag();
     });
 
@@ -587,7 +640,11 @@ export class MapManager {
     let _mouseLPTimer = null;
     let _mouseStartX = 0, _mouseStartY = 0;
     marker.on('mousedown', (e) => {
-      if (this.isFrozen || e.originalEvent.button !== 0 || _dragModeActive) return;
+      if (this.isFrozen) {
+        this._scheduleFrozenInteractionNotice(e, 'waypoint-drag');
+        return;
+      }
+      if (e.originalEvent.button !== 0 || _dragModeActive) return;
 
       _mouseStartX = e.originalEvent.clientX;
       _mouseStartY = e.originalEvent.clientY;
@@ -681,7 +738,11 @@ export class MapManager {
     let _touchStartX = 0, _touchStartY = 0;
     marker.on('touchstart', (e) => {
       _isTouchActive = true;
-      if (this.isFrozen || _dragModeActive) return;
+      if (this.isFrozen) {
+        this._scheduleFrozenInteractionNotice(e, 'waypoint-drag');
+        return;
+      }
+      if (_dragModeActive) return;
       const touch = e.originalEvent.touches[0];
       _touchStartX = touch.clientX;
       _touchStartY = touch.clientY;
@@ -1069,7 +1130,10 @@ export class MapManager {
       pl._routeIndex = route.index;
       pl.on('click', (e) => {
         L.DomEvent.stop(e);
-        if (this.isFrozen) return;
+        if (this.isFrozen) {
+          this._notifyFrozenInteraction('route-select');
+          return;
+        }
         if (this._clickTimeout) {
           clearTimeout(this._clickTimeout);
           this._clickTimeout = null;
@@ -1461,7 +1525,10 @@ export class MapManager {
       };
       
       const startLP = (e) => {
-        if (this.isFrozen) return;
+        if (this.isFrozen) {
+          this._notifyFrozenInteraction('waypoint-layer');
+          return;
+        }
         const oe = e.originalEvent;
         if (oe.button !== undefined && oe.button !== 0) return;
         cancelLP();
@@ -1614,19 +1681,31 @@ export class MapManager {
   }
 
   goToMyLocation() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14));
-        // Drop a map cursor at the GPS fix instead of adding a waypoint —
-        // user can long-press the cursor to set as waypoint / copy / show weather.
-        this.setMapCursor(lat, lng);
-        this.onGpsFix?.(lat, lng);
-      },
-      () => { }
-    );
+    if (!navigator.geolocation) {
+      return Promise.reject(new Error('Geolocation is not supported'));
+    }
+
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          this.map.invalidateSize({ animate: false });
+          this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14), { animate: true });
+          // Drop a map cursor at the GPS fix instead of adding a waypoint —
+          // user can long-press the cursor to set as waypoint / copy / show weather.
+          this.setMapCursor(lat, lng);
+          this.onGpsFix?.(lat, lng);
+          resolve({ lat, lng });
+        },
+        reject,
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        }
+      );
+    });
   }
 
   setWaypointsFromImport(coords, metadata = null) {
@@ -1715,7 +1794,10 @@ export class MapManager {
     let startX = 0, startY = 0;
 
     polyline.on('mousedown touchstart', (e) => {
-      if (this.isFrozen) return;
+      if (this.isFrozen) {
+        this._notifyFrozenInteraction('route-edit');
+        return;
+      }
       const oe = e.originalEvent;
       if (oe.button !== undefined && oe.button !== 0) return;
       lpTriggered = false;
@@ -1750,7 +1832,11 @@ export class MapManager {
 
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
-      if (this.isFrozen || lpTriggered) return;
+      if (this.isFrozen) {
+        this._notifyFrozenInteraction('route-edit');
+        return;
+      }
+      if (lpTriggered) return;
 
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);

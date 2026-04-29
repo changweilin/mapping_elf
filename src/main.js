@@ -6,20 +6,190 @@ import './styles/main.css';
 
 import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
-import { ElevationProfile } from './modules/elevationProfile.js';
-import { GpxExporter } from './modules/gpxExporter.js';
-import { KmlExporter } from './modules/kmlExporter.js';
-import { YamlExporter } from './modules/yamlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { MapPackExporter } from './modules/mapPackExporter.js';
-import { MapPackImporter } from './modules/mapPackImporter.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, projectMileage, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
+}
+
+function getLocationPermissionHelpMessage() {
+  const capacitor = window.Capacitor;
+  const platform = capacitor?.getPlatform?.() || 'web';
+  const isNativeApp = !!capacitor?.isNativePlatform?.();
+
+  if (isNativeApp && platform === 'android') {
+    return [
+      '無法取得 GPS 位置，請開啟定位權限：',
+      '',
+      '1. 長按 Mapping Elf 圖示，點選「應用程式資訊」。',
+      '2. 進入「權限」或「應用程式權限」。',
+      '3. 點選「位置」，選擇「允許」。',
+      '4. 回到 Mapping Elf 後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認手機的系統「定位」總開關已開啟。',
+    ].join('\n');
+  }
+
+  if (isNativeApp && platform === 'ios') {
+    return [
+      '無法取得 GPS 位置，請開啟定位權限：',
+      '',
+      '1. 開啟 iPhone/iPad「設定」。',
+      '2. 往下找到「Mapping Elf」。',
+      '3. 點選「位置」。',
+      '4. 選擇「使用 App 期間」。',
+      '5. 回到 Mapping Elf 後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認「設定 > 隱私權與安全性 > 定位服務」已開啟。',
+    ].join('\n');
+  }
+
+  if (/Android/i.test(navigator.userAgent)) {
+    return [
+      '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
+      '',
+      '1. 點選網址列旁的鎖頭或網站設定圖示。',
+      '2. 進入「權限」或「網站設定」。',
+      '3. 將「位置」改成「允許」。',
+      '4. 重新整理頁面後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認手機的系統「定位」總開關已開啟。',
+    ].join('\n');
+  }
+
+  if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    return [
+      '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
+      '',
+      '1. 開啟 iPhone/iPad「設定」。',
+      '2. 找到目前使用的瀏覽器，例如 Safari 或 Chrome。',
+      '3. 確認「位置」允許使用。',
+      '4. 回到瀏覽器，重新整理頁面後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認「設定 > 隱私權與安全性 > 定位服務」已開啟。',
+    ].join('\n');
+  }
+
+  return [
+    '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
+    '',
+    '1. 點選網址列旁的網站設定或鎖頭圖示。',
+    '2. 將「位置」改成「允許」。',
+    '3. 重新整理頁面後再按一次定位按鈕。',
+  ].join('\n');
+}
+
+function showLocationPermissionHelp() {
+  window.alert(getLocationPermissionHelpMessage());
+}
+
+const IMPORTED_TRACK_EDIT_NOTICE = '匯入的軌跡無法編輯，需要規劃路線請點擊「重新規劃」。';
+let importedTrackEditNoticeAt = 0;
+
+function showImportedTrackEditNotice(duration = 3200) {
+  const now = Date.now();
+  if (now - importedTrackEditNoticeAt < 1200) return;
+  importedTrackEditNoticeAt = now;
+  showNotification(IMPORTED_TRACK_EDIT_NOTICE, 'warning', duration);
+}
+
+let routeExportersPromise = null;
+async function ensureRouteExporters() {
+  routeExportersPromise ||= Promise.all([
+    import('./modules/gpxExporter.js'),
+    import('./modules/kmlExporter.js'),
+  ]).then(([gpxModule, kmlModule]) => ({
+    GpxExporter: gpxModule.GpxExporter,
+    KmlExporter: kmlModule.KmlExporter,
+  }));
+  return routeExportersPromise;
+}
+
+let mapPackModulesPromise = null;
+async function ensureMapPackModules() {
+  mapPackModulesPromise ||= Promise.all([
+    import('./modules/mapPackExporter.js'),
+    import('./modules/mapPackImporter.js'),
+  ]).then(([exporterModule, importerModule]) => ({
+    MapPackExporter: exporterModule.MapPackExporter,
+    MapPackImporter: importerModule.MapPackImporter,
+  }));
+  return mapPackModulesPromise;
+}
+
+class LazyElevationProfile {
+  constructor(canvasId, emptyStateId, onHover, onMarkerClick) {
+    this.args = [canvasId, emptyStateId, onHover, onMarkerClick];
+    this.instance = null;
+    this.loadPromise = null;
+    this.isCollapsed = false;
+  }
+
+  async load() {
+    if (!this.loadPromise) {
+      this.loadPromise = import('./modules/elevationProfile.js').then(({ ElevationProfile }) => {
+        this.instance = new ElevationProfile(...this.args);
+        this.instance.isCollapsed = this.isCollapsed;
+        return this.instance;
+      });
+    }
+    return this.loadPromise;
+  }
+
+  get chart() { return this.instance?.chart || null; }
+  get elevations() { return this.instance?.elevations || []; }
+  get distances() { return this.instance?.distances || []; }
+  get points() { return this.instance?.points || []; }
+  get turnaroundFrac() { return this.instance?.turnaroundFrac ?? null; }
+
+  async update(...args) {
+    return (await this.load()).update(...args);
+  }
+
+  async updateWithData(...args) {
+    return (await this.load()).updateWithData(...args);
+  }
+
+  clear() {
+    if (this.instance) this.instance.clear();
+  }
+
+  toggleCollapse() {
+    this.isCollapsed = !this.isCollapsed;
+    if (this.instance) this.instance.toggleCollapse();
+  }
+
+  showCrosshairAtIndex(idx) {
+    this.instance?.showCrosshairAtIndex(idx);
+  }
+
+  hideCrosshair() {
+    this.instance?.hideCrosshair();
+  }
+
+  setWaypointMarkers(markers) {
+    this.instance?.setWaypointMarkers(markers);
+  }
+
+  _calcStats() {
+    return this.instance?._calcStats() || {
+      ascent: 0,
+      descent: 0,
+      maxElev: 0,
+      minElev: 0,
+      startElev: 0,
+      endElev: 0,
+      turnaroundElev: null,
+    };
+  }
+
+  _interpolateElevAtCumM(cumM) {
+    return this.instance?._interpolateElevAtCumM(cumM) || 0;
+  }
 }
 
 // Fix Leaflet default icon paths
@@ -82,6 +252,7 @@ const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
+const LS_PANEL_WIDTH_KEY = 'mappingElf_panelWidth';
 
 const COUNTRY_SEARCH_LANGUAGES = {
   tw: ['zh-TW'],
@@ -225,6 +396,7 @@ const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
+mapManager.onFrozenInteraction = () => showImportedTrackEditNotice();
 mapManager.onGpsFix = (lat, lng) => {
   lastGpsLatLng = [lat, lng];
 };
@@ -455,7 +627,7 @@ function applySettingsFromStorage() {
   renderWeatherPanel();
 }
 
-const elevationProfile = new ElevationProfile(
+const elevationProfile = new LazyElevationProfile(
   'elevation-chart',
   'chart-empty',
   (lat, lng, color) => mapManager.showHoverMarker(lat, lng, color),
@@ -577,6 +749,8 @@ const btnToggleTheme = document.getElementById('btn-toggle-theme');
 const btnMyLocation = document.getElementById('btn-my-location');
 const btnExportGpx = document.getElementById('btn-export-gpx');
 const btnImportGpx = document.getElementById('btn-import-gpx');
+const btnPanelNarrow = document.getElementById('btn-panel-narrow');
+const btnPanelWiden = document.getElementById('btn-panel-widen');
 const btnClearRoute = document.getElementById('btn-clear-route');
 const btnReplanRoute = document.getElementById('btn-replan-route');
 const btnUndo = document.getElementById('btn-undo');
@@ -720,8 +894,9 @@ function parseCalibrationFile(file) {
   return new Promise((resolve, reject) => {
     const ext = file.name.split('.').pop().toLowerCase();
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
+        const { GpxExporter, KmlExporter } = await ensureRouteExporters();
         let result;
         if (ext === 'gpx') result = GpxExporter.parse(evt.target.result);
         else if (ext === 'kml') result = KmlExporter.parse(evt.target.result);
@@ -1008,6 +1183,52 @@ function isPointIconVisible(colIdx) {
   return showImIcon;
 }
 
+const PANEL_WIDTH_DEFAULT = 380;
+const PANEL_WIDTH_MIN = 300;
+const PANEL_WIDTH_MAX = 560;
+const PANEL_WIDTH_STEP = 40;
+
+function clampPanelWidth(width) {
+  return Math.max(PANEL_WIDTH_MIN, Math.min(PANEL_WIDTH_MAX, width));
+}
+
+function getCurrentPanelWidth() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--panel-width');
+  return parseInt(raw, 10) || PANEL_WIDTH_DEFAULT;
+}
+
+function applySidePanelWidth(width, persist = true) {
+  const nextWidth = clampPanelWidth(width);
+  document.documentElement.style.setProperty('--panel-width', `${nextWidth}px`);
+  if (persist) {
+    localStorage.setItem(LS_PANEL_WIDTH_KEY, String(nextWidth));
+  }
+  requestAnimationFrame(() => {
+    mapManager?.map?.invalidateSize?.({ animate: false, pan: false });
+    elevationProfile?.chart?.resize?.();
+  });
+}
+
+function loadSidePanelWidth() {
+  const savedWidth = parseInt(localStorage.getItem(LS_PANEL_WIDTH_KEY) || '', 10);
+  if (Number.isFinite(savedWidth)) {
+    applySidePanelWidth(savedWidth, false);
+  }
+}
+
+loadSidePanelWidth();
+
+function returnToRouteAfterPanelUpdate({ closePanel = false } = {}) {
+  if (closePanel) {
+    sidePanel?.classList.remove('open');
+  }
+
+  requestAnimationFrame(() => {
+    mapManager?.map?.invalidateSize?.({ animate: false, pan: false });
+    requestAnimationFrame(() => mapManager?.fitToRoute?.());
+  });
+}
+
 function updateThemeIcons() {
   const isLight = document.documentElement.classList.contains('light-theme');
   if (isLight) {
@@ -1047,6 +1268,14 @@ if (btnToggleTheme) {
 }
 
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+btnPanelNarrow?.addEventListener('click', () => {
+  applySidePanelWidth(getCurrentPanelWidth() - PANEL_WIDTH_STEP);
+});
+
+btnPanelWiden?.addEventListener('click', () => {
+  applySidePanelWidth(getCurrentPanelWidth() + PANEL_WIDTH_STEP);
+});
 
 // 手機版右滑收起側邊欄
 let panelTouchStartX = 0;
@@ -1090,9 +1319,15 @@ document.getElementById('map').addEventListener('click', () => {
   }
 }, true);
 
-btnMyLocation.addEventListener('click', () => {
-  mapManager.goToMyLocation();
+btnMyLocation.addEventListener('click', async () => {
   showNotification('正在定位...', 'info');
+  try {
+    await mapManager.goToMyLocation();
+  } catch (err) {
+    console.warn('Failed to get current location:', err);
+    showLocationPermissionHelp();
+    showNotification('無法取得目前位置，請確認定位權限已開啟', 'error');
+  }
 });
 
 btnExportGpx.addEventListener('click', openExportModal);
@@ -1328,12 +1563,13 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
   const { exportCoords, exportElevations } = getExportRouteData();
 
   const gpxXml = includeRoute
-    ? GpxExporter.generate(collectExportData(), exportCoords, exportElevations, routeName)
+    ? (await ensureRouteExporters()).GpxExporter.generate(collectExportData(), exportCoords, exportElevations, routeName)
     : null;
 
   progressContainer.classList.remove('hidden');
 
   try {
+    const { MapPackExporter } = await ensureMapPackModules();
     const { blob, filename, tileCount } = await MapPackExporter.export({
       bounds,
       routeCoords: currentRouteCoords,
@@ -1383,6 +1619,7 @@ document.getElementById('btn-mappack-import-cancel')?.addEventListener('click', 
 
 async function openMappackImportModal(file) {
   try {
+    const { MapPackImporter } = await ensureMapPackModules();
     const parsed = await MapPackImporter.parse(file);
     _pendingMappack = parsed;
 
@@ -1441,6 +1678,7 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
 
   try {
     console.log('Applying mappack...', { restoreRoute, restoreTiles, restoreState });
+    const { MapPackImporter } = await ensureMapPackModules();
     const applied = await MapPackImporter.apply(parsed, {
       restoreRoute,
       restoreTiles,
@@ -1471,8 +1709,9 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
 
     if (applied.gpxXml) {
       try {
+        const { GpxExporter } = await ensureRouteExporters();
         const result = GpxExporter.parse(applied.gpxXml);
-        applyImportedResult(result);
+        await applyImportedResult(result);
       } catch (err) {
         showNotification('路線還原失敗', 'error');
         console.error('GPX parse failed during mappack import:', err);
@@ -1694,7 +1933,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
       renderAlternatives(allAlternatives, 0);
 
       // Select the best route by default
-      selectAlternative(0);
+      await selectAlternative(0);
 
       const altMsg = allAlternatives.length > 1
         ? `找到 ${allAlternatives.length} 組建議路徑`
@@ -1718,7 +1957,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
 /**
  * Select a specific alternative route
  */
-function selectAlternative(index) {
+async function selectAlternative(index) {
   if (index >= allAlternatives.length) return;
 
   selectedAltIndex = index;
@@ -1749,7 +1988,7 @@ function selectAlternative(index) {
       turnaroundLL = wps[wps.length - 1];
     }
   }
-  elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
+  await elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
 
   // Update stats from pre-calculated route data
   const epStats = elevationProfile._calcStats();
@@ -1906,7 +2145,11 @@ function updateWaypointList(waypoints) {
     nameEl.title = '雙擊編輯名稱';
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      if (frozen || nameEl.querySelector('input')) return;
+      if (frozen) {
+        showImportedTrackEditNotice();
+        return;
+      }
+      if (nameEl.querySelector('input')) return;
       const input = document.createElement('input');
       input.type = 'text';
       input.value = getEffectiveName(wp[0], wp[1]) || nameEl.textContent.trim();
@@ -1935,11 +2178,16 @@ function updateWaypointList(waypoints) {
   let lpTimer = null;
   let ghost = null;
   let placeholder = null;
+  let lastDragClientX = null;
+  let lastDragClientY = null;
 
   const startDrag = (item, idx, clientX, clientY) => {
     dragItem = item;
     dragIndex = idx;
+    lastDragClientX = clientX;
+    lastDragClientY = clientY;
     item.classList.add('is-dragging');
+    document.body.classList.add('route-list-dragging');
     if (navigator.vibrate) navigator.vibrate(40);
 
     // Create placeholder
@@ -1966,6 +2214,7 @@ function updateWaypointList(waypoints) {
     document.addEventListener('mouseup', onEnd);
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchcancel', onEnd);
 
     // Show trash zone when sidebar drag starts
     mapManager.showTrashZone('list');
@@ -1978,8 +2227,11 @@ function updateWaypointList(waypoints) {
   };
 
   const onMove = (e) => {
+    if (e.cancelable) e.preventDefault();
     const cx = e.touches ? e.touches[0].clientX : e.clientX;
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    lastDragClientX = cx;
+    lastDragClientY = cy;
     updateGhostPos(cx, cy);
 
     // Removal detection: use the central trash zone logic from mapManager
@@ -2017,9 +2269,12 @@ function updateWaypointList(waypoints) {
     document.removeEventListener('mouseup', onEnd);
     document.removeEventListener('touchmove', onMove);
     document.removeEventListener('touchend', onEnd);
+    document.removeEventListener('touchcancel', onEnd);
+    document.body.classList.remove('route-list-dragging');
 
-    const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
-    const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    const changedTouch = e.changedTouches?.[0];
+    const cx = changedTouch?.clientX ?? e.clientX ?? lastDragClientX;
+    const cy = changedTouch?.clientY ?? e.clientY ?? lastDragClientY;
     
     const isOverTrash = mapManager.isOverTrashZone(cx, cy);
     mapManager.hideTrashZone();
@@ -2059,6 +2314,8 @@ function updateWaypointList(waypoints) {
     dragItem = null;
     ghost = null;
     placeholder = null;
+    lastDragClientX = null;
+    lastDragClientY = null;
   };
 
   waypointList.querySelectorAll('.waypoint-item').forEach((item, idx) => {
@@ -2085,7 +2342,23 @@ function updateWaypointList(waypoints) {
     };
 
     item.addEventListener('mousedown', (e) => {
-      if (frozen || e.button !== 0 || e.target.closest('.wp-actions')) return;
+      if (frozen) {
+        if (e.button === 0 && !e.target.closest('.wp-actions')) {
+          lpTimer = setTimeout(() => {
+            lpTimer = null;
+            showImportedTrackEditNotice();
+          }, 500);
+          const clearFrozenTimer = () => {
+            if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+            document.removeEventListener('mouseup', clearFrozenTimer);
+            document.removeEventListener('mousemove', clearFrozenTimer);
+          };
+          document.addEventListener('mouseup', clearFrozenTimer);
+          document.addEventListener('mousemove', clearFrozenTimer);
+        }
+        return;
+      }
+      if (e.button !== 0 || e.target.closest('.wp-actions')) return;
       triggerLP(e.clientX, e.clientY);
       
       const onMoveGuard = (ev) => checkMove(ev.clientX, ev.clientY);
@@ -2112,7 +2385,16 @@ function updateWaypointList(waypoints) {
     });
 
     item.addEventListener('touchstart', (e) => {
-      if (frozen || e.target.closest('.wp-actions')) return;
+      if (frozen) {
+        if (!e.target.closest('.wp-actions')) {
+          lpTimer = setTimeout(() => {
+            lpTimer = null;
+            showImportedTrackEditNotice();
+          }, 500);
+        }
+        return;
+      }
+      if (e.target.closest('.wp-actions')) return;
       const t = e.touches[0];
       triggerLP(t.clientX, t.clientY);
     }, { passive: true });
@@ -2507,7 +2789,7 @@ function syncIntervalTimesFromWP() {
   enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
-// =========== Export / Import (GPX / KML / YAML) ===========
+// =========== Export / Import (GPX / KML) ===========
 
 const exportModal = document.getElementById('export-modal');
 const btnExportConfirm = document.getElementById('btn-export-confirm');
@@ -2636,7 +2918,7 @@ function closeExportModal() {
 //   if (e.target === exportModal) closeExportModal();
 // });
 btnExportCancel?.addEventListener('click', closeExportModal);
-btnExportConfirm?.addEventListener('click', () => {
+btnExportConfirm?.addEventListener('click', async () => {
   const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
   if (fmt === 'melmap') {
     const includeRoute = document.getElementById('mappack-inc-route').checked;
@@ -2655,11 +2937,16 @@ btnExportConfirm?.addEventListener('click', () => {
     const routeName = nameInput ? nameInput.value.trim() : buildDefaultRouteName();
 
     closeExportModal();
-    doExportMapPack(buildExportFilenameBase(), routeName);
+    await doExportMapPack(buildExportFilenameBase(), routeName);
     return;
   }
   closeExportModal();
-  doExport(fmt);
+  try {
+    await doExport(fmt);
+  } catch (err) {
+    console.error(err);
+    showNotification('匯出失敗', 'error');
+  }
 });
 
 // =========== Favorites ===========
@@ -3143,13 +3430,14 @@ function collectSegmentDates() {
   return result;
 }
 
-function doExport(fmt) {
+async function doExport(fmt) {
   const nameInput = document.getElementById('export-filename-input');
   const routeName = (nameInput ? nameInput.value.trim() : null) || buildDefaultRouteName() || 'Mapping Elf Track';
   const filename = buildExportFilenameBase();
 
   const wpData = collectExportData();
   const { exportCoords, exportElevations } = getExportRouteData();
+  const { GpxExporter, KmlExporter } = await ensureRouteExporters();
 
   if (fmt === 'gpx' || fmt === 'all') {
     const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName);
@@ -3161,12 +3449,7 @@ function doExport(fmt) {
     KmlExporter.download(kml, `${filename}.kml`);
   }
 
-  if (fmt === 'yaml' || fmt === 'all') {
-    const yaml = YamlExporter.generate(wpData, routeName);
-    YamlExporter.download(yaml, `${filename}.yaml`);
-  }
-
-  const label = fmt === 'all' ? 'GPX + KML + YAML' : fmt.toUpperCase();
+  const label = fmt === 'all' ? 'GPX + KML' : fmt.toUpperCase();
   showNotification(`${label} 檔案已匯出`, 'success');
 }
 
@@ -3199,7 +3482,7 @@ function clearImportedTrackSession() {
  * Restore a previously saved imported-track session. Mirrors the track branch
  * of importFile() without touching custom-name storage (already persisted).
  */
-function restoreImportedTrack(session) {
+async function restoreImportedTrack(session) {
   const coords = Array.isArray(session.coords) ? session.coords : [];
   const elevations = Array.isArray(session.elevations) ? session.elevations : [];
   const waypoints = Array.isArray(session.waypoints) ? session.waypoints : [];
@@ -3223,7 +3506,7 @@ function restoreImportedTrack(session) {
     skipAutoGeocode = false;
   }
 
-  elevationProfile.updateWithData(coords, elevations);
+  await elevationProfile.updateWithData(coords, elevations);
   const totalDist = elevationProfile.distances.at(-1) || 0;
   const epStats = elevationProfile._calcStats();
   statDistance.textContent = formatDistance(totalDist);
@@ -3236,24 +3519,24 @@ function restoreImportedTrack(session) {
 }
 
 /**
- * Apply a parsed import result (from GpxExporter / KmlExporter / YamlExporter)
+ * Apply a parsed import result (from GpxExporter / KmlExporter)
  * to the map — same semantics as the original inline importFile logic.
  * Extracted so that .melmap imports can reuse it.
  */
-function applyImportedResult(result) {
+async function applyImportedResult(result) {
   // Bulk import: suppress per-waypoint history entries and record one entry
   // for the whole import at the end.
   const _wasSuppressed = history.suppressed;
   history.suppressed = true;
   try {
-    _applyImportedResultCore(result);
+    await _applyImportedResultCore(result);
   } finally {
     history.suppressed = _wasSuppressed;
   }
   historyRecord();
 }
 
-function _applyImportedResultCore(result) {
+async function _applyImportedResultCore(result) {
   if (result.trackPoints.length > 0) {
     const coords = result.trackPoints.map((p) => [p.lat, p.lon]);
 
@@ -3313,7 +3596,7 @@ function _applyImportedResultCore(result) {
     }
 
     // 6. Load elevation profile from track data (no elevation API call)
-    elevationProfile.updateWithData(coords, elevations);
+    await elevationProfile.updateWithData(coords, elevations);
 
     // 7. Update stats from track data
     const totalDist = elevationProfile.distances.at(-1) || 0;
@@ -3321,17 +3604,18 @@ function _applyImportedResultCore(result) {
     statDistance.textContent = formatDistance(totalDist);
     updateElevationStats(epStats);
 
-    mapManager.fitToRoute();
     updateTimeStat();
     renderWeatherPanel();
 
     saveImportedTrackSession();
+    returnToRouteAfterPanelUpdate({ closePanel: true });
 
     const wpCount = result.waypoints.length;
     showNotification(
       `已匯入軌跡（${coords.length} 個點${wpCount > 0 ? `，${wpCount} 個航點` : ''}）`,
       'success'
     );
+    showImportedTrackEditNotice(4500);
     // Explicitly call autoFetchWeather here before returning from track mode
     autoFetchWeather({ force: false });
     return;
@@ -3387,20 +3671,19 @@ function importFile(e) {
     return;
   }
   const reader = new FileReader();
-  reader.onload = (evt) => {
+  reader.onload = async (evt) => {
     try {
+      const { GpxExporter, KmlExporter } = await ensureRouteExporters();
       let result;
       if (ext === 'gpx') {
         result = GpxExporter.parse(evt.target.result);
       } else if (ext === 'kml') {
         result = KmlExporter.parse(evt.target.result);
-      } else if (ext === 'yaml' || ext === 'yml') {
-        result = YamlExporter.parse(evt.target.result);
       } else {
         showNotification('不支援的檔案格式', 'error');
         return;
       }
-      applyImportedResult(result);
+      await applyImportedResult(result);
     } catch (err) {
       showNotification('檔案解析失敗', 'error');
       console.error(err);
@@ -4480,6 +4763,15 @@ function initWeatherControls() {
     const gap = window.innerWidth <= 768 ? 12 : 0;
     return Math.max(MIN_H, window.innerHeight - toolbarH - gap);
   };
+  const isElevationChartExpanded = () => {
+    const chart = panel.querySelector('#elevation-chart-container');
+    return chart && !chart.classList.contains('collapsed');
+  };
+  const getChartOnlyPanelH = () => {
+    const chartRow = panel.querySelector('.bp-chart-row');
+    const chartH = chartRow?.offsetHeight || 0;
+    return Math.max(MIN_H, Math.min(getMaxPanelH(), (handle?.offsetHeight || 18) + chartH));
+  };
   const savePanelRatio = () => {
     const ratio = panel.offsetHeight / window.innerHeight;
     localStorage.setItem(LS_PANEL_HEIGHT_RATIO_KEY, ratio);
@@ -4559,23 +4851,40 @@ function initWeatherControls() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     pendingClientY = null;
   };
-
-  // Mouse
-  handle.addEventListener('mousedown', (e) => {
-    e.preventDefault();
+  const DRAG_START_THRESHOLD = 6;
+  let lastHandleTouchWasDrag = false;
+  const beginPanelResize = () => {
     panel.style.transition = '';
     panel._resizing = true;
     document.body.classList.add('is-resizing');
     handle.classList.add('dragging');
-    const onMove = (ev) => scheduleHeight(ev.clientY);
+  };
+  const endPanelResize = () => {
+    cancelPending();
+    panel._resizing = false;
+    document.body.classList.remove('is-resizing');
+    handle.classList.remove('dragging');
+    savePanelRatio();
+    invalidateMapSizeAfterLayout();
+    requestAnimationFrame(() => elevationProfile?.chart?.resize());
+  };
+
+  // Mouse
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    let didDrag = false;
+    const onMove = (ev) => {
+      if (!didDrag) {
+        if (Math.abs(ev.clientY - startY) < DRAG_START_THRESHOLD) return;
+        didDrag = true;
+        beginPanelResize();
+      }
+      scheduleHeight(ev.clientY);
+    };
     const onUp = () => {
-      cancelPending();
-      panel._resizing = false;
-      document.body.classList.remove('is-resizing');
-      handle.classList.remove('dragging');
-      savePanelRatio();
-      invalidateMapSizeAfterLayout();
-      requestAnimationFrame(() => elevationProfile?.chart?.resize());
+      if (didDrag) endPanelResize();
+      else cancelPending();
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -4586,24 +4895,32 @@ function initWeatherControls() {
   // Touch
   handle.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    panel.style.transition = '';
-    panel._resizing = true;
-    document.body.classList.add('is-resizing');
-    handle.classList.add('dragging');
-    const onMove = (ev) => scheduleHeight(ev.touches[0].clientY);
+    lastHandleTouchWasDrag = false;
+    const startY = e.touches[0].clientY;
+    let didDrag = false;
+    const onMove = (ev) => {
+      const touch = ev.touches[0];
+      if (!touch) return;
+      if (!didDrag) {
+        if (Math.abs(touch.clientY - startY) < DRAG_START_THRESHOLD) return;
+        didDrag = true;
+        lastHandleTouchWasDrag = true;
+        beginPanelResize();
+      }
+      ev.preventDefault();
+      scheduleHeight(touch.clientY);
+    };
     const onEnd = () => {
-      cancelPending();
-      panel._resizing = false;
-      document.body.classList.remove('is-resizing');
-      handle.classList.remove('dragging');
-      savePanelRatio();
-      invalidateMapSizeAfterLayout();
-      requestAnimationFrame(() => elevationProfile?.chart?.resize());
+      lastHandleTouchWasDrag = didDrag;
+      if (didDrag) endPanelResize();
+      else cancelPending();
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
+      document.removeEventListener('touchcancel', onEnd);
     };
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchcancel', onEnd);
   }, { passive: false });
 
   // --- Double-click toggle: 0:10 ↔ 10:0 ---
@@ -4616,7 +4933,9 @@ function initWeatherControls() {
     const viewH = window.innerHeight;
     const expandH = getMaxPanelH();
     const currentH = panel.offsetHeight;
-    const targetH = currentH > viewH / 2 ? COLLAPSE_H : expandH;
+    const targetH = currentH > viewH / 2
+      ? (isElevationChartExpanded() ? getChartOnlyPanelH() : COLLAPSE_H)
+      : expandH;
     panel.style.transition = 'height 0.25s ease';
     panel.style.height = `${targetH}px`;
     document.documentElement.style.setProperty('--bottom-panel-height', `${targetH}px`);
@@ -4633,6 +4952,10 @@ function initWeatherControls() {
   // Touch: detect double-tap within 300ms on the handle
   let lastTap = 0;
   handle.addEventListener('touchend', (e) => {
+    if (lastHandleTouchWasDrag) {
+      lastTap = 0;
+      return;
+    }
     const now = Date.now();
     if (now - lastTap < 300) {
       togglePanel(e);
@@ -7542,8 +7865,9 @@ async function init() {
   if (pendingGpx) {
     try { localStorage.removeItem(LS_PENDING_GPX_KEY); } catch (_) { }
     try {
+      const { GpxExporter } = await ensureRouteExporters();
       const result = GpxExporter.parse(pendingGpx);
-      applyImportedResult(result);
+      await applyImportedResult(result);
     } catch (err) {
       console.error('Pending GPX replay failed:', err);
     }
@@ -7555,7 +7879,7 @@ async function init() {
     try { return JSON.parse(localStorage.getItem(LS_IMPORTED_TRACK_KEY) || 'null'); }
     catch { return null; }
   })();
-  const trackRestored = pendingGpx ? true : (savedTrackSession ? restoreImportedTrack(savedTrackSession) : false);
+  const trackRestored = pendingGpx ? true : (savedTrackSession ? await restoreImportedTrack(savedTrackSession) : false);
 
   // Otherwise, fall back to normal waypoint-only restore (triggers route recalc).
   const savedWaypoints = trackRestored ? null : (() => {
@@ -7818,7 +8142,10 @@ function renderSearchResults(items, resultsEl) {
     });
     row.querySelector('.search-result-add').addEventListener('click', (e) => {
       e.stopPropagation();
-      if (frozen) return;
+      if (frozen) {
+        showImportedTrackEditNotice();
+        return;
+      }
       // Store the search result name as a custom name before adding to avoid redundant geocoding
       // and ensure the specific place name found during search is preserved.
       if (it.name || it.display_name) {
@@ -7929,6 +8256,7 @@ function resetToDefaults() {
     LS_PACE_UNIT_KEY,
     LS_WINDY_LAYER_KEY,
     LS_WINDY_MODEL_KEY,
+    LS_PANEL_WIDTH_KEY,
     LS_MAP_VIEW_KEY
   ];
   keysToClear.forEach(key => localStorage.removeItem(key));
