@@ -1,3 +1,8 @@
+---
+name: mapping-elf-sub-agent-coordinator
+description: Coordinates Mapping Elf skill and sub-agent architecture. Use when creating, updating, routing, or splitting work across Mapping Elf specialist skills or Claude sub-agents, including localization, UI event logic, parameter data stewardship, spatial numeric analysis, market research, core modules, frontend design, verification, review, and deployment.
+---
+
 # Sub Agent Coordinator Skill
 
 ## Description
@@ -6,6 +11,30 @@ Trigger on: "create a new skill", "build a sub agent", "design a skill", "new au
 
 ## Category
 **Business Automation** (Multi-tool workflow for skill generation and management).
+
+## Mapping Elf Specialist Routing
+
+Use this routing table before assigning or designing Mapping Elf sub-agent work:
+
+- `mapping-elf-i18n-localization`: translations, language coverage, `src/modules/i18n.js`, WMO descriptions, `data-i18n-*`, dynamic translation patterns.
+- `mapping-elf-ui-event-logic`: `src/main.js` handlers, `src/modules/mapManager.js` interactions, Leaflet marker behavior, keyboard/touch flows, modal/panel state, localStorage updates caused by UI controls.
+- `mapping-elf-parameter-data-steward`: `LS_*_KEY` constants, `DEFAULT_PACE_PARAMS`, saved weather columns, calibration data, `.melmap` state, map-pack import/export compatibility, persistent defaults.
+- `mapping-elf-geo-numeric-analysis`: coordinate order, distance, projection, elevation sampling, route ranking, pace formulas, kcal/MET, round-trip mileage, numeric edge cases.
+- `mapping-elf-market-research-analysis`: competitor research, user feedback/review mining, SEO keyword datasets, research design, metrics, segmentation, evidence-backed product insights.
+- `mapping-elf-core-modules`: broad mapping, weather, pace, route, offline, and parser logic when the work does not fit a narrower specialist.
+- `mapping-elf-frontend-design`: visual/UI styling, CSS, responsive layout, z-index, design consistency.
+- `mapping-elf-verifier`: browser-level product verification, PWA/offline checks, GPX output checks, blank-page/map-load debugging.
+- `review`: code review, diff audit, known anti-pattern checks, regression risk assessment.
+- `mapping-elf-deploy`: GitHub Pages build, deploy, CI/deployment diagnosis.
+
+## Cross-Agent Handoff Rules
+
+- Split cross-functional work into bounded subtasks with one owner per file or behavior boundary.
+- Include current state, target behavior, relevant files, constraints, and verification expectations in each handoff.
+- For localization plus UI behavior, assign copy/key work to `mapping-elf-i18n-localization` and event/state work to `mapping-elf-ui-event-logic`.
+- For pace or weather settings, assign data shape/persistence to `mapping-elf-parameter-data-steward` and formulas to `mapping-elf-geo-numeric-analysis`.
+- For market findings that imply product changes, ask `mapping-elf-market-research-analysis` for evidence and then hand implementation to the appropriate product specialist.
+- Keep `SKILL.md` files in English. User-facing conversation may be in Chinese or another requested language.
 
 ## Framework: The 9 Skill Categories (with Examples)
 When designing a new skill, categorize it into one of these. Use the positive examples for inspiration and avoid the anti-patterns.
