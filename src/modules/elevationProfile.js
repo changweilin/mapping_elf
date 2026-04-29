@@ -26,9 +26,14 @@ export class ElevationProfile {
     this.isCollapsed = false;
     this.zoomMin = 0;
     this.zoomMax = 0;
+    this.yZoomMin = null;
+    this.yZoomMax = null;
+    this.chartHeightScale = 1;
+    this._baseChartHeight = null;
     this._interactionAbort = null;
     this._activePointers = new Map();
     this._lastPinchDistance = null;
+    this._lastPinchSpans = null;
     this._isPanning = false;
     this._panPointerId = null;
     this._panStartX = 0;
@@ -39,6 +44,9 @@ export class ElevationProfile {
 
   toggleCollapse() {
     this.isCollapsed = !this.isCollapsed;
+    const container = this.canvas?.closest?.('.elevation-chart-container');
+    if (container && this.isCollapsed) container.style.height = '';
+    if (container && !this.isCollapsed) this._applyChartHeightScale();
     this._renderChart();
   }
 
@@ -116,6 +124,7 @@ export class ElevationProfile {
     this.distances = cumulativeDistances(this.points);
     this.turnaroundFrac = this._computeTurnaroundFrac(turnaroundLatLng);
     this._resetHorizontalZoom();
+    this._resetVerticalZoom();
 
     // Calculate stats
     const stats = this._calcStats();
@@ -161,6 +170,7 @@ export class ElevationProfile {
     this.distances = cumulativeDistances(this.points);
     this.turnaroundFrac = this._computeTurnaroundFrac(turnaroundLatLng);
     this._resetHorizontalZoom();
+    this._resetVerticalZoom();
     this._renderChart();
   }
 
@@ -175,12 +185,71 @@ export class ElevationProfile {
     this.points = [];
     this._markers = [];
     this._resetHorizontalZoom();
+    this._resetVerticalZoom();
     this.emptyState.classList.remove('hidden');
   }
 
   _resetHorizontalZoom() {
     this.zoomMin = 0;
     this.zoomMax = Math.max(0, this.elevations.length - 1);
+  }
+
+  _fullYRange() {
+    const values = this.elevations.filter((e) => Number.isFinite(e));
+    if (!values.length) return { min: 0, max: 1 };
+
+    let min = Math.min(...values);
+    let max = Math.max(...values);
+    if (min === max) {
+      min -= 10;
+      max += 10;
+    }
+
+    const pad = Math.max(8, (max - min) * 0.08);
+    return { min: min - pad, max: max + pad };
+  }
+
+  _resetVerticalZoom() {
+    const range = this._fullYRange();
+    this.yZoomMin = range.min;
+    this.yZoomMax = range.max;
+    this.chartHeightScale = 1;
+    this._applyChartHeightScale();
+  }
+
+  _normalizeYRange(min, max) {
+    const full = this._fullYRange();
+    const fullSpan = Math.max(1, full.max - full.min);
+    const minSpan = Math.max(10, fullSpan * 0.12);
+    const maxSpan = fullSpan * 4;
+    const span = Math.max(minSpan, Math.min(maxSpan, max - min));
+    const center = Number.isFinite((min + max) / 2) ? (min + max) / 2 : (full.min + full.max) / 2;
+
+    return {
+      min: center - span / 2,
+      max: center + span / 2,
+    };
+  }
+
+  _valueFromCanvasY(clientY) {
+    if (!this.chart) return (this.yZoomMin + this.yZoomMax) / 2;
+    const area = this.chart.chartArea;
+    if (!area || area.bottom <= area.top) return (this.yZoomMin + this.yZoomMax) / 2;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const y = Math.max(area.top, Math.min(area.bottom, clientY - rect.top));
+    const frac = (area.bottom - y) / (area.bottom - area.top);
+    return this.yZoomMin + frac * (this.yZoomMax - this.yZoomMin);
+  }
+
+  _applyChartHeightScale() {
+    const container = this.canvas?.closest?.('.elevation-chart-container');
+    if (!container || this.isCollapsed) return;
+    if (!this._baseChartHeight) this._baseChartHeight = container.getBoundingClientRect().height || 140;
+
+    const nextHeight = Math.round(this._baseChartHeight * this.chartHeightScale);
+    container.style.height = `${nextHeight}px`;
+    requestAnimationFrame(() => this.chart?.resize());
   }
 
   _minZoomSpan() {
@@ -236,6 +305,19 @@ export class ElevationProfile {
     this.chart.update('none');
   }
 
+  _applyVerticalZoom(factor, centerValue) {
+    if (!this.chart || this.isCollapsed || this.elevations.length < 2) return;
+
+    const range = this._fullYRange();
+    this.yZoomMin = range.min;
+    this.yZoomMax = range.max;
+    this.chartHeightScale = Math.max(0.7, Math.min(1.8, this.chartHeightScale / factor));
+    this.chart.options.scales.y.min = this.yZoomMin;
+    this.chart.options.scales.y.max = this.yZoomMax;
+    this._applyChartHeightScale();
+    this.chart.update('none');
+  }
+
   _indexFromCanvasX(clientX) {
     if (!this.chart) return 0;
     const area = this.chart.chartArea;
@@ -247,11 +329,22 @@ export class ElevationProfile {
     return this.zoomMin + frac * (this.zoomMax - this.zoomMin);
   }
 
+  _isPointerOverYAxis(clientX) {
+    if (!this.chart) return false;
+    const area = this.chart.chartArea;
+    if (!area) return false;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    return x >= 0 && x <= area.left;
+  }
+
   _unbindInteractions() {
     this._interactionAbort?.abort();
     this._interactionAbort = null;
     this._activePointers.clear();
     this._lastPinchDistance = null;
+    this._lastPinchSpans = null;
     this._isPanning = false;
     this._panPointerId = null;
   }
@@ -288,7 +381,11 @@ export class ElevationProfile {
       if (!this.chart || this.isCollapsed || this.elevations.length < 3) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? 0.82 : 1.22;
-      this._applyHorizontalZoom(factor, this._indexFromCanvasX(e.clientX));
+      if (this._isPointerOverYAxis(e.clientX)) {
+        this._applyVerticalZoom(factor, this._valueFromCanvasY(e.clientY));
+      } else {
+        this._applyHorizontalZoom(factor, this._indexFromCanvasX(e.clientX));
+      }
     }, { passive: false, signal });
 
     const pinchDistance = () => {
@@ -303,6 +400,21 @@ export class ElevationProfile {
       return (pointers[0].clientX + pointers[1].clientX) / 2;
     };
 
+    const pinchCenterY = () => {
+      const pointers = [...this._activePointers.values()];
+      if (pointers.length < 2) return null;
+      return (pointers[0].clientY + pointers[1].clientY) / 2;
+    };
+
+    const pinchSpans = () => {
+      const pointers = [...this._activePointers.values()];
+      if (pointers.length < 2) return null;
+      return {
+        x: Math.max(16, Math.abs(pointers[0].clientX - pointers[1].clientX)),
+        y: Math.max(16, Math.abs(pointers[0].clientY - pointers[1].clientY)),
+      };
+    };
+
     this.canvas.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch') this._activePointers.set(e.pointerId, e);
       if (e.pointerType === 'touch' && this._activePointers.size >= 2) {
@@ -310,6 +422,7 @@ export class ElevationProfile {
         this._isPanning = false;
         this._panPointerId = null;
         this._lastPinchDistance = pinchDistance();
+        this._lastPinchSpans = pinchSpans();
         this.canvas.setPointerCapture?.(e.pointerId);
         return;
       }
@@ -331,13 +444,18 @@ export class ElevationProfile {
           e.preventDefault();
           const distance = pinchDistance();
           const centerX = pinchCenterX();
-          if (!distance || !centerX || !this._lastPinchDistance) {
+          const centerY = pinchCenterY();
+          const spans = pinchSpans();
+          if (!distance || !centerX || !centerY || !spans || !this._lastPinchDistance || !this._lastPinchSpans) {
             this._lastPinchDistance = distance;
+            this._lastPinchSpans = spans;
             return;
           }
 
-          this._applyHorizontalZoom(this._lastPinchDistance / distance, this._indexFromCanvasX(centerX));
+          this._applyHorizontalZoom(this._lastPinchSpans.x / spans.x, this._indexFromCanvasX(centerX));
+          this._applyVerticalZoom(this._lastPinchSpans.y / spans.y, this._valueFromCanvasY(centerY));
           this._lastPinchDistance = distance;
+          this._lastPinchSpans = spans;
           return;
         }
       }
@@ -359,7 +477,10 @@ export class ElevationProfile {
     const removePointer = (e) => {
       if (e.pointerType !== 'touch') return;
       this._activePointers.delete(e.pointerId);
-      if (this._activePointers.size < 2) this._lastPinchDistance = null;
+      if (this._activePointers.size < 2) {
+        this._lastPinchDistance = null;
+        this._lastPinchSpans = null;
+      }
     };
 
     this.canvas.addEventListener('pointerup', endPan, { signal });
@@ -612,6 +733,8 @@ export class ElevationProfile {
           },
           y: {
             display: !this.isCollapsed,
+            min: this.yZoomMin,
+            max: this.yZoomMax,
             title: { display: true, text: 'm', color: '#6b7280', font: { size: 10 } },
             ticks: { color: '#6b7280', font: { size: 9 }, maxTicksLimit: 5 },
             grid: { color: 'rgba(255,255,255,0.04)' },
