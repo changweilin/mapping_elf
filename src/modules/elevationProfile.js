@@ -29,6 +29,12 @@ export class ElevationProfile {
     this._interactionAbort = null;
     this._activePointers = new Map();
     this._lastPinchDistance = null;
+    this._isPanning = false;
+    this._panPointerId = null;
+    this._panStartX = 0;
+    this._panStartMin = 0;
+    this._panStartMax = 0;
+    this._suppressNextClick = false;
   }
 
   toggleCollapse() {
@@ -246,6 +252,28 @@ export class ElevationProfile {
     this._interactionAbort = null;
     this._activePointers.clear();
     this._lastPinchDistance = null;
+    this._isPanning = false;
+    this._panPointerId = null;
+  }
+
+  _isHorizontallyZoomed() {
+    return this.elevations.length > 2 && (this.zoomMax - this.zoomMin) < (this.elevations.length - 1) - 0.01;
+  }
+
+  _applyHorizontalPan(deltaPx) {
+    if (!this.chart || this.isCollapsed || !this._isHorizontallyZoomed()) return;
+    const area = this.chart.chartArea;
+    if (!area || area.right <= area.left) return;
+
+    const span = this._panStartMax - this._panStartMin;
+    const indexDelta = (deltaPx / (area.right - area.left)) * span;
+    const range = this._normalizeZoomRange(this._panStartMin - indexDelta, this._panStartMax - indexDelta);
+
+    this.zoomMin = range.min;
+    this.zoomMax = range.max;
+    this.chart.options.scales.x.min = this.zoomMin;
+    this.chart.options.scales.x.max = this.zoomMax;
+    this.chart.update('none');
   }
 
   _bindZoomInteractions() {
@@ -276,31 +304,57 @@ export class ElevationProfile {
     };
 
     this.canvas.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch') return;
-      this._activePointers.set(e.pointerId, e);
-      if (this._activePointers.size >= 2) {
+      if (e.pointerType === 'touch') this._activePointers.set(e.pointerId, e);
+      if (e.pointerType === 'touch' && this._activePointers.size >= 2) {
         e.preventDefault();
+        this._isPanning = false;
+        this._panPointerId = null;
         this._lastPinchDistance = pinchDistance();
         this.canvas.setPointerCapture?.(e.pointerId);
-      }
-    }, { passive: false, signal });
-
-    this.canvas.addEventListener('pointermove', (e) => {
-      if (e.pointerType !== 'touch' || !this._activePointers.has(e.pointerId)) return;
-      this._activePointers.set(e.pointerId, e);
-      if (this._activePointers.size < 2) return;
-      e.preventDefault();
-
-      const distance = pinchDistance();
-      const centerX = pinchCenterX();
-      if (!distance || !centerX || !this._lastPinchDistance) {
-        this._lastPinchDistance = distance;
         return;
       }
 
-      this._applyHorizontalZoom(this._lastPinchDistance / distance, this._indexFromCanvasX(centerX));
-      this._lastPinchDistance = distance;
+      if (!this.chart || this.isCollapsed || e.button > 0) return;
+      this._isPanning = true;
+      this._panPointerId = e.pointerId;
+      this._panStartX = e.clientX;
+      this._panStartMin = this.zoomMin;
+      this._panStartMax = this.zoomMax;
+      this.canvas.setPointerCapture?.(e.pointerId);
+      if (this._isHorizontallyZoomed()) this.canvas.style.cursor = 'grabbing';
     }, { passive: false, signal });
+
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch' && this._activePointers.has(e.pointerId)) {
+        this._activePointers.set(e.pointerId, e);
+        if (this._activePointers.size >= 2) {
+          e.preventDefault();
+          const distance = pinchDistance();
+          const centerX = pinchCenterX();
+          if (!distance || !centerX || !this._lastPinchDistance) {
+            this._lastPinchDistance = distance;
+            return;
+          }
+
+          this._applyHorizontalZoom(this._lastPinchDistance / distance, this._indexFromCanvasX(centerX));
+          this._lastPinchDistance = distance;
+          return;
+        }
+      }
+
+      if (!this._isPanning || e.pointerId !== this._panPointerId) return;
+      const deltaX = e.clientX - this._panStartX;
+      if (Math.abs(deltaX) > 3) this._suppressNextClick = true;
+      this._applyHorizontalPan(deltaX);
+    }, { passive: false, signal });
+
+    const endPan = (e) => {
+      if (e.pointerId !== this._panPointerId) return;
+      this._isPanning = false;
+      this._panPointerId = null;
+      this.canvas.releasePointerCapture?.(e.pointerId);
+      this.canvas.style.cursor = 'default';
+    };
 
     const removePointer = (e) => {
       if (e.pointerType !== 'touch') return;
@@ -308,6 +362,8 @@ export class ElevationProfile {
       if (this._activePointers.size < 2) this._lastPinchDistance = null;
     };
 
+    this.canvas.addEventListener('pointerup', endPan, { signal });
+    this.canvas.addEventListener('pointercancel', endPan, { signal });
     this.canvas.addEventListener('pointerup', removePointer, { signal });
     this.canvas.addEventListener('pointercancel', removePointer, { signal });
   }
@@ -596,6 +652,10 @@ export class ElevationProfile {
 
     // Native click listener to capture hits on weather icons in the top padding area
     this.canvas.onclick = (e) => {
+      if (self._suppressNextClick) {
+        self._suppressNextClick = false;
+        return;
+      }
       const markers = self._markers;
       if (!markers || markers.length === 0 || !self.onMarkerClick || !self.chart) return;
       const rect = this.canvas.getBoundingClientRect();
@@ -639,8 +699,12 @@ export class ElevationProfile {
 
     // Native mousemove for reliable cursor changes in padding areas
     this.canvas.onmousemove = (e) => {
+      if (self._isPanning) return;
       const markers = self._markers;
-      if (!markers || markers.length === 0 || !self.chart) return;
+      if (!markers || markers.length === 0 || !self.chart) {
+        this.canvas.style.cursor = self._isHorizontallyZoomed() ? 'grab' : 'default';
+        return;
+      }
       const rect = this.canvas.getBoundingClientRect();
       const xPx = e.clientX - rect.left;
       const yPx = e.clientY - rect.top;
@@ -670,7 +734,7 @@ export class ElevationProfile {
         }
         return Math.min(dDot, dIcon) < 12;
       });
-      this.canvas.style.cursor = near ? 'pointer' : 'default';
+      this.canvas.style.cursor = near ? 'pointer' : (self._isHorizontallyZoomed() ? 'grab' : 'default');
     };
 
     // Resize on next frame so the chart fills the container correctly
