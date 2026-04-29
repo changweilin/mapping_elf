@@ -54,7 +54,7 @@ const PHRASES = {
   '地形圖': { en: 'Topographic map', ja: '地形図', ko: '지형도', fr: 'Carte topo', de: 'Topografische Karte', es: 'Mapa topográfico', it: 'Mappa topografica' },
   '衛星圖': { en: 'Satellite map', ja: '衛星地図', ko: '위성 지도', fr: 'Carte satellite', de: 'Satellitenkarte', es: 'Mapa satelital', it: 'Mappa satellitare' },
   '全部回到預設': { en: 'Reset all defaults', ja: 'すべて既定値に戻す', ko: '모두 기본값으로 재설정', fr: 'Réinitialiser tous les réglages', de: 'Alles zurücksetzen', es: 'Restablecer todo', it: 'Ripristina tutto' },
-  '匯入路線（GPX / KML / YAML）': { en: 'Import route (GPX / KML / YAML)', ja: 'ルートをインポート（GPX / KML / YAML）', ko: '루트 가져오기 (GPX / KML / YAML)', fr: 'Importer un itinéraire (GPX / KML / YAML)', de: 'Route importieren (GPX / KML / YAML)', es: 'Importar ruta (GPX / KML / YAML)', it: 'Importa percorso (GPX / KML / YAML)' },
+  '匯入路線（GPX / KML）': { en: 'Import route (GPX / KML)', ja: 'ルートをインポート（GPX / KML）', ko: '루트 가져오기 (GPX / KML)', fr: 'Importer un itinéraire (GPX / KML)', de: 'Route importieren (GPX / KML)', es: 'Importar ruta (GPX / KML)', it: 'Importa percorso (GPX / KML)' },
   '匯出路線': { en: 'Export route', ja: 'ルートを書き出す', ko: '루트 내보내기', fr: 'Exporter l’itinéraire', de: 'Route exportieren', es: 'Exportar ruta', it: 'Esporta percorso' },
   '切換深淺色': { en: 'Toggle theme', ja: 'テーマ切替', ko: '테마 전환', fr: 'Changer de thème', de: 'Design wechseln', es: 'Cambiar tema', it: 'Cambia tema' },
   '設置面板': { en: 'Settings panel', ja: '設定パネル', ko: '설정 패널', fr: 'Panneau de réglages', de: 'Einstellungsbereich', es: 'Panel de ajustes', it: 'Pannello impostazioni' },

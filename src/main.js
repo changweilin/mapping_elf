@@ -9,7 +9,6 @@ import { RouteEngine } from './modules/routeEngine.js';
 import { ElevationProfile } from './modules/elevationProfile.js';
 import { GpxExporter } from './modules/gpxExporter.js';
 import { KmlExporter } from './modules/kmlExporter.js';
-import { YamlExporter } from './modules/yamlExporter.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { MapPackExporter } from './modules/mapPackExporter.js';
@@ -2507,7 +2506,7 @@ function syncIntervalTimesFromWP() {
   enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
-// =========== Export / Import (GPX / KML / YAML) ===========
+// =========== Export / Import (GPX / KML) ===========
 
 const exportModal = document.getElementById('export-modal');
 const btnExportConfirm = document.getElementById('btn-export-confirm');
@@ -3161,12 +3160,7 @@ function doExport(fmt) {
     KmlExporter.download(kml, `${filename}.kml`);
   }
 
-  if (fmt === 'yaml' || fmt === 'all') {
-    const yaml = YamlExporter.generate(wpData, routeName);
-    YamlExporter.download(yaml, `${filename}.yaml`);
-  }
-
-  const label = fmt === 'all' ? 'GPX + KML + YAML' : fmt.toUpperCase();
+  const label = fmt === 'all' ? 'GPX + KML' : fmt.toUpperCase();
   showNotification(`${label} 檔案已匯出`, 'success');
 }
 
@@ -3236,7 +3230,7 @@ function restoreImportedTrack(session) {
 }
 
 /**
- * Apply a parsed import result (from GpxExporter / KmlExporter / YamlExporter)
+ * Apply a parsed import result (from GpxExporter / KmlExporter)
  * to the map — same semantics as the original inline importFile logic.
  * Extracted so that .melmap imports can reuse it.
  */
@@ -3394,8 +3388,6 @@ function importFile(e) {
         result = GpxExporter.parse(evt.target.result);
       } else if (ext === 'kml') {
         result = KmlExporter.parse(evt.target.result);
-      } else if (ext === 'yaml' || ext === 'yml') {
-        result = YamlExporter.parse(evt.target.result);
       } else {
         showNotification('不支援的檔案格式', 'error');
         return;

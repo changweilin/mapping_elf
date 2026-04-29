@@ -98,7 +98,7 @@
             fill="currentColor" />
         </svg>
       </button>
-      <button class="tool-btn" id="btn-import-gpx" title="匯入路線（GPX / KML / YAML）">
+      <button class="tool-btn" id="btn-import-gpx" title="匯入路線（GPX / KML）">
         <svg viewBox="0 0 24 24" width="20" height="20">
           <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
         </svg>
@@ -984,11 +984,7 @@
         </label>
         <label class="export-option">
           <input type="radio" name="export-fmt" value="all">
-          <span>GPX + KML + YAML <small>（同時匯出三份）</small></span>
-        </label>
-        <label class="export-option">
-          <input type="radio" name="export-fmt" value="yaml">
-          <span>YAML <small>（純文字天氣計畫，含 Windy 連結）</small></span>
+          <span>GPX + KML <small>（同時匯出兩份）</small></span>
         </label>
         <label class="export-option">
           <input type="radio" name="export-fmt" value="melmap">
@@ -1077,7 +1073,7 @@
   <div id="notifications" class="notifications"></div>
 
   <!-- Hidden file input for route / .melmap import -->
-  <input type="file" id="gpx-file-input" accept=".gpx,.kml,.yaml,.yml,.melmap,.zip" style="display:none" />
+  <input type="file" id="gpx-file-input" accept=".gpx,.kml,.melmap,.zip" style="display:none" />
 
   <script type="module" src="./src/main.js"></script>
 </body>
