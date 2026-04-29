@@ -1498,10 +1498,8 @@ window.addEventListener('keydown', (e) => {
       const curMode = _wcStates.get(activeColIdx) || 'compact';
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode));
-      if (nextMode === 'full') {
-        requestAnimationFrame(() => panMapToCenterFullCard(activeColIdx));
-      }
+      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+      highlightPoint(activeColIdx);
       return;
     }
     if (k === 'arrowdown') {
@@ -6722,14 +6720,16 @@ function closeWeatherCard(colIdx) {
 }
 
 /** Set the card mode and re-render. */
-function setWeatherCardMode(colIdx, mode) {
+function setWeatherCardMode(colIdx, mode, options = {}) {
   if (mode === 'minimized') {
     closeWeatherCard(colIdx);
     return;
   }
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
-  if (mode === 'full') scheduleWeatherCardCenter(colIdx);
+  if (mode === 'full' && options.center !== false) {
+    scheduleWeatherCardCenter(colIdx, { settle: true });
+  }
 }
 
 /** Navigate a specific card holder to the next/prev point that has weather data. */
@@ -6919,7 +6919,7 @@ function _renderWeatherCard(colIdx) {
 
   mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
     _bindWeatherCardEvents(colIdx, wrapper);
-    if (isFull && isHighlighted) scheduleWeatherCardCenter(colIdx);
+    if (isFull) scheduleWeatherCardCenter(colIdx, { settle: isHighlighted });
   }, !pt.isWaypoint, pt.wpIndex);
 }
 
@@ -7053,7 +7053,8 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     const curMode = _wcStates.get(colIdx) || 'compact';
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
     const targets = getCollectiveIndices(colIdx);
-    targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+    highlightPoint(colIdx);
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -7151,7 +7152,8 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         const curMode = _wcStates.get(colIdx) || 'compact';
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
         const targets = getCollectiveIndices(colIdx);
-        targets.forEach(idx => setWeatherCardMode(idx, nextMode));
+        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+        highlightPoint(colIdx);
       } else {
         // Swipe down: close
         const targets = getCollectiveIndices(colIdx);
@@ -7310,10 +7312,15 @@ function panMapToCenterFullCard(colIdx) {
   map.panBy([dx, dy], { animate: true, duration: 0.25 });
 }
 
-function scheduleWeatherCardCenter(colIdx) {
+function scheduleWeatherCardCenter(colIdx, options = {}) {
+  const center = () => panMapToCenterFullCard(colIdx);
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => panMapToCenterFullCard(colIdx));
+    requestAnimationFrame(center);
   });
+  if (options.settle) {
+    setTimeout(center, 120);
+    setTimeout(center, 280);
+  }
 }
 
 /**
@@ -7408,7 +7415,7 @@ function highlightPoint(colIdx, toggle = false) {
   // above the bottom-panel divider). Otherwise just centre the marker.
   const mode = _wcStates.get(colIdx);
   if (mode === 'full') {
-    scheduleWeatherCardCenter(colIdx);
+    scheduleWeatherCardCenter(colIdx, { settle: true });
   } else if (mode === 'compact') {
     panMapToCenterFullCard(colIdx);
   } else if (waypointCentering) {
