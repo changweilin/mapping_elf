@@ -62,6 +62,19 @@ export class ElevationProfile {
     this.chart.update('active');
   }
 
+  /** Pan the horizontal zoom window so a sampled point is as centered as possible. */
+  centerHorizontallyAtIndex(idx) {
+    if (!this.chart || idx < 0 || idx >= this.elevations.length || !this._isHorizontallyZoomed()) return;
+
+    const span = this.zoomMax - this.zoomMin;
+    const range = this._normalizeZoomRange(idx - span / 2, idx + span / 2);
+    this.zoomMin = range.min;
+    this.zoomMax = range.max;
+    this.chart.options.scales.x.min = this.zoomMin;
+    this.chart.options.scales.x.max = this.zoomMax;
+    this.chart.update('none');
+  }
+
   /** Hide the programmatic crosshair */
   hideCrosshair() {
     if (!this.chart) return;

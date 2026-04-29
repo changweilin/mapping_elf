@@ -167,6 +167,10 @@ class LazyElevationProfile {
     this.instance?.showCrosshairAtIndex(idx);
   }
 
+  centerHorizontallyAtIndex(idx) {
+    this.instance?.centerHorizontallyAtIndex(idx);
+  }
+
   hideCrosshair() {
     this.instance?.hideCrosshair();
   }
@@ -7370,6 +7374,7 @@ function highlightPoint(colIdx, toggle = false) {
     if (fullDist > 0) {
       const frac = Math.max(0, Math.min(1, (pt._cum || 0) / fullDist));
       const idx = Math.round(frac * (sampledPts.length - 1));
+      elevationProfile.centerHorizontallyAtIndex(idx);
       elevationProfile.showCrosshairAtIndex(idx);
     }
   }
