@@ -16,6 +16,77 @@ function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
 }
 
+function getLocationPermissionHelpMessage() {
+  const capacitor = window.Capacitor;
+  const platform = capacitor?.getPlatform?.() || 'web';
+  const isNativeApp = !!capacitor?.isNativePlatform?.();
+
+  if (isNativeApp && platform === 'android') {
+    return [
+      '無法取得 GPS 位置，請開啟定位權限：',
+      '',
+      '1. 長按 Mapping Elf 圖示，點選「應用程式資訊」。',
+      '2. 進入「權限」或「應用程式權限」。',
+      '3. 點選「位置」，選擇「允許」。',
+      '4. 回到 Mapping Elf 後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認手機的系統「定位」總開關已開啟。',
+    ].join('\n');
+  }
+
+  if (isNativeApp && platform === 'ios') {
+    return [
+      '無法取得 GPS 位置，請開啟定位權限：',
+      '',
+      '1. 開啟 iPhone/iPad「設定」。',
+      '2. 往下找到「Mapping Elf」。',
+      '3. 點選「位置」。',
+      '4. 選擇「使用 App 期間」。',
+      '5. 回到 Mapping Elf 後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認「設定 > 隱私權與安全性 > 定位服務」已開啟。',
+    ].join('\n');
+  }
+
+  if (/Android/i.test(navigator.userAgent)) {
+    return [
+      '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
+      '',
+      '1. 點選網址列旁的鎖頭或網站設定圖示。',
+      '2. 進入「權限」或「網站設定」。',
+      '3. 將「位置」改成「允許」。',
+      '4. 重新整理頁面後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認手機的系統「定位」總開關已開啟。',
+    ].join('\n');
+  }
+
+  if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    return [
+      '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
+      '',
+      '1. 開啟 iPhone/iPad「設定」。',
+      '2. 找到目前使用的瀏覽器，例如 Safari 或 Chrome。',
+      '3. 確認「位置」允許使用。',
+      '4. 回到瀏覽器，重新整理頁面後再按一次定位按鈕。',
+      '',
+      '若仍無法定位，請確認「設定 > 隱私權與安全性 > 定位服務」已開啟。',
+    ].join('\n');
+  }
+
+  return [
+    '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
+    '',
+    '1. 點選網址列旁的網站設定或鎖頭圖示。',
+    '2. 將「位置」改成「允許」。',
+    '3. 重新整理頁面後再按一次定位按鈕。',
+  ].join('\n');
+}
+
+function showLocationPermissionHelp() {
+  window.alert(getLocationPermissionHelpMessage());
+}
+
 const IMPORTED_TRACK_EDIT_NOTICE = '匯入的軌跡無法編輯，需要規劃路線請點擊「重新規劃」。';
 let importedTrackEditNoticeAt = 0;
 
@@ -1248,9 +1319,15 @@ document.getElementById('map').addEventListener('click', () => {
   }
 }, true);
 
-btnMyLocation.addEventListener('click', () => {
-  mapManager.goToMyLocation();
+btnMyLocation.addEventListener('click', async () => {
   showNotification('正在定位...', 'info');
+  try {
+    await mapManager.goToMyLocation();
+  } catch (err) {
+    console.warn('Failed to get current location:', err);
+    showLocationPermissionHelp();
+    showNotification('無法取得目前位置，請確認定位權限已開啟', 'error');
+  }
 });
 
 btnExportGpx.addEventListener('click', openExportModal);

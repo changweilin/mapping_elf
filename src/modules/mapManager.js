@@ -1681,19 +1681,31 @@ export class MapManager {
   }
 
   goToMyLocation() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14));
-        // Drop a map cursor at the GPS fix instead of adding a waypoint —
-        // user can long-press the cursor to set as waypoint / copy / show weather.
-        this.setMapCursor(lat, lng);
-        this.onGpsFix?.(lat, lng);
-      },
-      () => { }
-    );
+    if (!navigator.geolocation) {
+      return Promise.reject(new Error('Geolocation is not supported'));
+    }
+
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          this.map.invalidateSize({ animate: false });
+          this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14), { animate: true });
+          // Drop a map cursor at the GPS fix instead of adding a waypoint —
+          // user can long-press the cursor to set as waypoint / copy / show weather.
+          this.setMapCursor(lat, lng);
+          this.onGpsFix?.(lat, lng);
+          resolve({ lat, lng });
+        },
+        reject,
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        }
+      );
+    });
   }
 
   setWaypointsFromImport(coords, metadata = null) {
