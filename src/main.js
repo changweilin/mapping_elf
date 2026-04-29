@@ -81,6 +81,7 @@ const LS_PACE_UNIT_KEY = 'mappingElf_paceUnit';
 const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
+const LS_PANEL_WIDTH_KEY = 'mappingElf_panelWidth';
 
 const COUNTRY_SEARCH_LANGUAGES = {
   tw: ['zh-TW'],
@@ -576,6 +577,8 @@ const btnToggleTheme = document.getElementById('btn-toggle-theme');
 const btnMyLocation = document.getElementById('btn-my-location');
 const btnExportGpx = document.getElementById('btn-export-gpx');
 const btnImportGpx = document.getElementById('btn-import-gpx');
+const btnPanelNarrow = document.getElementById('btn-panel-narrow');
+const btnPanelWiden = document.getElementById('btn-panel-widen');
 const btnClearRoute = document.getElementById('btn-clear-route');
 const btnReplanRoute = document.getElementById('btn-replan-route');
 const btnUndo = document.getElementById('btn-undo');
@@ -1007,6 +1010,41 @@ function isPointIconVisible(colIdx) {
   return showImIcon;
 }
 
+const PANEL_WIDTH_DEFAULT = 380;
+const PANEL_WIDTH_MIN = 300;
+const PANEL_WIDTH_MAX = 560;
+const PANEL_WIDTH_STEP = 40;
+
+function clampPanelWidth(width) {
+  return Math.max(PANEL_WIDTH_MIN, Math.min(PANEL_WIDTH_MAX, width));
+}
+
+function getCurrentPanelWidth() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--panel-width');
+  return parseInt(raw, 10) || PANEL_WIDTH_DEFAULT;
+}
+
+function applySidePanelWidth(width, persist = true) {
+  const nextWidth = clampPanelWidth(width);
+  document.documentElement.style.setProperty('--panel-width', `${nextWidth}px`);
+  if (persist) {
+    localStorage.setItem(LS_PANEL_WIDTH_KEY, String(nextWidth));
+  }
+  requestAnimationFrame(() => {
+    mapManager?.map?.invalidateSize?.({ animate: false, pan: false });
+    elevationProfile?.chart?.resize?.();
+  });
+}
+
+function loadSidePanelWidth() {
+  const savedWidth = parseInt(localStorage.getItem(LS_PANEL_WIDTH_KEY) || '', 10);
+  if (Number.isFinite(savedWidth)) {
+    applySidePanelWidth(savedWidth, false);
+  }
+}
+
+loadSidePanelWidth();
+
 function updateThemeIcons() {
   const isLight = document.documentElement.classList.contains('light-theme');
   if (isLight) {
@@ -1046,6 +1084,14 @@ if (btnToggleTheme) {
 }
 
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+btnPanelNarrow?.addEventListener('click', () => {
+  applySidePanelWidth(getCurrentPanelWidth() - PANEL_WIDTH_STEP);
+});
+
+btnPanelWiden?.addEventListener('click', () => {
+  applySidePanelWidth(getCurrentPanelWidth() + PANEL_WIDTH_STEP);
+});
 
 // 手機版右滑收起側邊欄
 let panelTouchStartX = 0;
@@ -7921,6 +7967,7 @@ function resetToDefaults() {
     LS_PACE_UNIT_KEY,
     LS_WINDY_LAYER_KEY,
     LS_WINDY_MODEL_KEY,
+    LS_PANEL_WIDTH_KEY,
     LS_MAP_VIEW_KEY
   ];
   keysToClear.forEach(key => localStorage.removeItem(key));

@@ -543,33 +543,33 @@
           </svg>
           <span class="h3-label">檔案管理</span>
         </h3>
+        <div class="section-actions file-header-actions" onclick="event.stopPropagation()">
+          <button class="icon-btn file-header-btn" id="btn-import-gpx" title="匯入路線（GPX / KML）" aria-label="匯入路線">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn file-header-btn accent" id="btn-export-gpx" title="匯出路線" aria-label="匯出路線">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn file-header-btn panel-width-btn" id="btn-panel-narrow" title="縮窄側欄" aria-label="縮窄側欄">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M4 12l6-6v4h10v4H10v4l-6-6z" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn file-header-btn panel-width-btn" id="btn-panel-widen" title="加寬側欄" aria-label="加寬側欄">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M20 12l-6 6v-4H4v-4h10V6l6 6z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
         <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
           <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
         </svg>
       </div>
       <div class="collapsible-body collapsed" id="file-management-body">
-        <div class="settings-actions-btn-row file-management-actions">
-          <button class="btn-secondary file-action-btn" id="btn-import-gpx" title="匯入路線（GPX / KML）">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
-            </svg>
-            <span>匯入</span>
-          </button>
-          <button class="btn-secondary file-action-btn accent" id="btn-export-gpx" title="匯出路線">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
-            </svg>
-            <span>匯出</span>
-          </button>
-          <button class="btn-secondary file-action-btn" id="btn-reset-defaults" title="全部回到預設">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path
-                d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 13c0-4.42-3.58-8-8-8zm-7 8c0 1.01.25 1.97.7 2.8l-1.46 1.46A7.93 7.93 0 0 1 4 13c0-4.42 3.58-8 8-8v3l5-5-5-5v3c-3.31 0-6 2.69-6 6z"
-                fill="currentColor" />
-            </svg>
-            <span>重置</span>
-          </button>
-        </div>
         <div class="pace-checks-row file-import-options">
           <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
             <input type="checkbox" id="import-auto-sort-enable">
@@ -579,6 +579,16 @@
             <input type="checkbox" id="import-auto-name-enable">
             <span>匯入自動命名</span>
           </label>
+        </div>
+        <div class="settings-actions-btn-row file-management-actions file-management-footer">
+          <button class="btn-secondary file-action-btn" id="btn-reset-defaults" title="全部回到預設">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path
+                d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 13c0-4.42-3.58-8-8-8zm-7 8c0 1.01.25 1.97.7 2.8l-1.46 1.46A7.93 7.93 0 0 1 4 13c0-4.42 3.58-8 8-8v3l5-5-5-5v3c-3.31 0-6 2.69-6 6z"
+                fill="currentColor" />
+            </svg>
+            <span>回到預設</span>
+          </button>
         </div>
       </div>
     </section>
