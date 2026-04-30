@@ -2853,7 +2853,6 @@ function updateWeatherTimeAdjustButtons() {
     if (!thDate || !thTime) return;
 
     let canMinusDay = !locked;
-    let canMinusHour = !locked;
     const canPlus = !locked;
 
     if (strictLinearMode && !locked && i > 0) {
@@ -2861,7 +2860,6 @@ function updateWeatherTimeAdjustButtons() {
       const curMs = colToMs(thDate);
       const prevMs = prevTh ? colToMs(prevTh) : -Infinity;
       canMinusDay = curMs - 86400000 >= prevMs;
-      canMinusHour = curMs - 3600000 >= prevMs;
     }
 
     const dayMinus = thDate.querySelector('.wt-adj-day-minus');
@@ -2871,7 +2869,7 @@ function updateWeatherTimeAdjustButtons() {
 
     if (dayMinus) dayMinus.disabled = !canMinusDay;
     if (dayPlus) dayPlus.disabled = !canPlus;
-    if (hourMinus) hourMinus.disabled = !canMinusHour;
+    if (hourMinus) hourMinus.disabled = locked;
     if (hourPlus) hourPlus.disabled = !canPlus;
   });
 }
@@ -2896,11 +2894,32 @@ function syncIntervalTimesFromWP() {
   enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
-function syncPaceWeatherTimes() {
+function syncPaceWeatherTimes(anchorIdx = null) {
+  const container = document.getElementById('weather-table-container');
+  let anchorEntry = null;
+  if (container && anchorIdx != null && weatherPoints[anchorIdx]?.isWaypoint) {
+    anchorEntry = {
+      date: container.querySelector(`.wt-th-date[data-idx="${anchorIdx}"] .wt-date-input`)?.value || '',
+      hour: container.querySelector(`.wt-th-time[data-idx="${anchorIdx}"] .wt-time-select`)?.value ?? '8',
+    };
+  }
+
   cascadeWeatherTimes();
+  if (anchorEntry?.date) {
+    const di = container.querySelector(`.wt-th-date[data-idx="${anchorIdx}"] .wt-date-input`);
+    const hs = container.querySelector(`.wt-th-time[data-idx="${anchorIdx}"] .wt-time-select`);
+    if (di) di.value = anchorEntry.date;
+    if (hs) hs.value = String(anchorEntry.hour);
+  }
   enforceTimeOrdering();
   saveWeatherSettings();
   cascadeWeatherTimes();
+  if (anchorEntry?.date) {
+    const di = container.querySelector(`.wt-th-date[data-idx="${anchorIdx}"] .wt-date-input`);
+    const hs = container.querySelector(`.wt-th-time[data-idx="${anchorIdx}"] .wt-time-select`);
+    if (di) di.value = anchorEntry.date;
+    if (hs) hs.value = String(anchorEntry.hour);
+  }
   enforceTimeOrdering();
 }
 
@@ -5741,7 +5760,7 @@ function handleWeatherTimeChange(idx, th) {
   // We save settings after the linear shift so the cascade/enforce logic sees the new waypoint times.
   saveWeatherSettings();
   if (speedIntervalMode) {
-    syncPaceWeatherTimes();
+    syncPaceWeatherTimes(idx);
   } else {
     syncIntervalTimesFromWP();
   }
