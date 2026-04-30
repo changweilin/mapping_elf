@@ -6906,22 +6906,30 @@ function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '
 function buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour) {
   const tableDateInput = document.querySelector(`#weather-table-container .wt-th-date[data-idx="${colIdx}"] .wt-date-input`);
   const tableTimeSelect = document.querySelector(`#weather-table-container .wt-th-time[data-idx="${colIdx}"] .wt-time-select`);
+  const tableDateHead = tableDateInput?.closest('th');
+  const tableTimeHead = tableTimeSelect?.closest('th');
   const locked = (tableDateInput?.disabled || tableTimeSelect?.disabled) ?? !pt?.isWaypoint;
   const disabledAttr = locked ? ' disabled' : '';
   const minValue = tableDateInput?.min || '';
   const minAttr = minValue ? ` min="${minValue}"` : '';
+  const dayMinusDisabled = locked || !!tableDateHead?.querySelector('.wt-adj-day-minus')?.disabled;
+  const dayPlusDisabled = locked || !!tableDateHead?.querySelector('.wt-adj-day-plus')?.disabled;
+  const hourMinusDisabled = locked || !!tableTimeHead?.querySelector('.wt-adj-hour-minus')?.disabled;
+  const hourPlusDisabled = locked || !!tableTimeHead?.querySelector('.wt-adj-hour-plus')?.disabled;
 
   return `<div class="wc-info-grid wc-time-grid">
     <div class="wc-info-item wc-time-item">
-      <span class="wc-info-label">日期</span>
       <span class="wc-time-edit-wrap">
+        <button class="wc-time-adj-btn wc-adj-date-minus" title="減少 1 天" aria-label="減少 1 天"${dayMinusDisabled ? ' disabled' : ''}>-</button>
         <input type="date" class="wc-date-input" value="${dateStr}"${disabledAttr}${minAttr}>
+        <button class="wc-time-adj-btn wc-adj-date-plus" title="增加 1 天" aria-label="增加 1 天"${dayPlusDisabled ? ' disabled' : ''}>+</button>
       </span>
     </div>
     <div class="wc-info-item wc-time-item">
-      <span class="wc-info-label">時間</span>
       <span class="wc-time-edit-wrap">
+        <button class="wc-time-adj-btn wc-adj-hour-minus" title="減少 1 小時" aria-label="減少 1 小時"${hourMinusDisabled ? ' disabled' : ''}>-</button>
         <select class="wc-time-select"${disabledAttr}>${timeOpts(hour)}</select>
+        <button class="wc-time-adj-btn wc-adj-hour-plus" title="增加 1 小時" aria-label="增加 1 小時"${hourPlusDisabled ? ' disabled' : ''}>+</button>
       </span>
     </div>
   </div>`;
@@ -7217,6 +7225,17 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
       }
     });
   });
+
+  const bindCardTimeAdjust = (selector, deltaMs) => {
+    root.querySelector(selector)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      shiftWaypointTime(colIdx, deltaMs);
+    });
+  };
+  bindCardTimeAdjust('.wc-adj-date-minus', -86400000);
+  bindCardTimeAdjust('.wc-adj-date-plus', 86400000);
+  bindCardTimeAdjust('.wc-adj-hour-minus', -3600000);
+  bindCardTimeAdjust('.wc-adj-hour-plus', 3600000);
 
   // Touch gestures: swipe detection
   let _touchStartX = 0, _touchStartY = 0;
