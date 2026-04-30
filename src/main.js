@@ -147,15 +147,20 @@ class LazyElevationProfile {
   get turnaroundFrac() { return this.instance?.turnaroundFrac ?? null; }
 
   async update(...args) {
-    return (await this.load()).update(...args);
+    const result = await (await this.load()).update(...args);
+    bumpElevationVersion();
+    return result;
   }
 
   async updateWithData(...args) {
-    return (await this.load()).updateWithData(...args);
+    const result = await (await this.load()).updateWithData(...args);
+    bumpElevationVersion();
+    return result;
   }
 
   clear() {
     if (this.instance) this.instance.clear();
+    bumpElevationVersion();
   }
 
   toggleCollapse() {
@@ -397,16 +402,38 @@ let waypointCumDistM = [];
 let routeMetricsCache = null;
 let paceComputationCache = null;
 
-function routeMetricsSignature(coords = currentRouteCoords, wps = mapManager?.waypoints || []) {
-  const coordKey = coords.map((c) => `${c[0]},${c[1]}`).join('|');
-  const wpKey = wps.map((w) => `${w[0]},${w[1]}`).join('|');
-  return `${coordKey}::${wpKey}`;
+let routeVersion = 0;
+let waypointVersion = 0;
+let paceVersion = 0;
+let elevationVersion = 0;
+
+function bumpRouteVersion() {
+  routeVersion += 1;
+  routeMetricsCache = null;
 }
 
-function getRouteMetrics(coords = currentRouteCoords, wps = mapManager.waypoints) {
-  const signature = routeMetricsSignature(coords, wps);
-  if (routeMetricsCache?.signature === signature) return routeMetricsCache;
+function bumpWaypointVersion() {
+  waypointVersion += 1;
+  routeMetricsCache = null;
+}
 
+function bumpPaceVersion() {
+  paceVersion += 1;
+  paceComputationCache = null;
+}
+
+function bumpElevationVersion() {
+  elevationVersion += 1;
+  paceComputationCache = null;
+}
+
+function setCurrentRouteData(coords = [], elevations = []) {
+  currentRouteCoords = coords;
+  currentElevations = elevations;
+  bumpRouteVersion();
+}
+
+function computeRouteMetrics(coords, wps) {
   let totalDistM = 0;
   const routeDists = coords.length ? [0] : [];
   if (coords.length > 1) {
@@ -439,22 +466,38 @@ function getRouteMetrics(coords = currentRouteCoords, wps = mapManager.waypoints
     });
   }
 
-  routeMetricsCache = { signature, routeDists, totalDistM, wpCumDist, wpRouteIndices };
+  return { routeDists, totalDistM, wpCumDist, wpRouteIndices };
+}
+
+function getRouteMetrics(coords = currentRouteCoords, wps = mapManager.waypoints) {
+  const isCurrentState = coords === currentRouteCoords && wps === mapManager.waypoints;
+  if (isCurrentState
+    && routeMetricsCache?.routeVersion === routeVersion
+    && routeMetricsCache?.waypointVersion === waypointVersion) {
+    return routeMetricsCache;
+  }
+
+  const metrics = computeRouteMetrics(coords, wps);
+  if (!isCurrentState) return metrics;
+  routeMetricsCache = { ...metrics, routeVersion, waypointVersion };
   return routeMetricsCache;
 }
 
-function paceComputationSignature(elevs, dists, activity, params) {
-  const eKey = elevs.join(',');
-  const dKey = dists.join(',');
-  return `${activity}|${eKey}|${dKey}|${JSON.stringify(params)}`;
-}
-
 function getPaceComputation(elevs, dists, activity = speedActivity, params = paceParams) {
-  const signature = paceComputationSignature(elevs, dists, activity, params);
-  if (paceComputationCache?.signature === signature) return paceComputationCache;
+  const isCurrentState = elevs === elevationProfile.elevations
+    && dists === elevationProfile.distances
+    && activity === speedActivity
+    && params === paceParams;
+  if (isCurrentState
+    && paceComputationCache?.paceVersion === paceVersion
+    && paceComputationCache?.elevationVersion === elevationVersion) {
+    return paceComputationCache;
+  }
+
   const times = computeCumulativeTimes(elevs, dists, activity, params);
   const trip = computeTripStats(elevs, dists, activity, params);
-  paceComputationCache = { signature, times, trip };
+  if (!isCurrentState) return { times, trip };
+  paceComputationCache = { paceVersion, elevationVersion, times, trip };
   return paceComputationCache;
 }
 
@@ -526,6 +569,7 @@ function _restoreSnapshot(snap) {
     // Nav mode
     roundTripMode = snap.roundTripMode;
     oLoopMode = snap.oLoopMode;
+    bumpRouteVersion();
     localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
     localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
     const modeVal = roundTripMode ? 'roundtrip' : oLoopMode ? 'oloop' : 'single';
@@ -644,6 +688,8 @@ function applySettingsFromStorage() {
     calibrationEnabled: paceCalibration.enabled,
     calibrationFactor: paceCalibration.factor,
   };
+  bumpRouteVersion();
+  bumpPaceVersion();
 
   // Update UI components that depend on these globals
   routeEngine.setMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking');
@@ -901,6 +947,7 @@ function savePaceCalibration() {
   localStorage.setItem(LS_PACE_CALIBRATION_KEY, JSON.stringify(paceCalibration));
   syncCalibrationIntoPaceParams();
   localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+  bumpPaceVersion();
 }
 
 function formatCalibrationTrackSummary(track) {
@@ -1511,8 +1558,7 @@ btnClearRoute.addEventListener('click', () => {
   weatherPoints = [];
   cachedWeatherData = {};
   localStorage.removeItem(LS_WEATHER_CACHE_KEY);
-  currentRouteCoords = [];
-  currentElevations = [];
+  setCurrentRouteData([], []);
   lastWaypoints = [];
   pendingNewWaypointIndex = null;
   waypointCumDistM = [];
@@ -1850,6 +1896,7 @@ routeModeRadios.forEach((radio) => {
   radio.addEventListener('change', (e) => {
     routeEngine.setMode(e.target.value);
     localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
+    bumpRouteVersion();
     if (mapManager.waypoints.length >= 2) {
       onWaypointsChanged(mapManager.waypoints);
     }
@@ -1861,6 +1908,7 @@ routeModeRadios.forEach((radio) => {
 
 async function onWaypointsChanged(waypoints) {
   ensureWaypointIds();
+  bumpWaypointVersion();
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
   historyRecord();
 
@@ -1915,8 +1963,7 @@ async function onWaypointsChanged(waypoints) {
       elevationProfile.clear();
       resetStats();
       hideAlternatives();
-      currentRouteCoords = [];
-      currentElevations = [];
+      setCurrentRouteData([], []);
       allAlternatives = [];
       renderWeatherPanel();
       autoFetchWeather({ force: false });
@@ -1932,8 +1979,7 @@ async function onWaypointsChanged(waypoints) {
       elevationProfile.clear();
       resetStats();
       hideAlternatives();
-      currentRouteCoords = [];
-      currentElevations = [];
+      setCurrentRouteData([], []);
       allAlternatives = [];
       const _wc = document.getElementById('weather-table-container');
       if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
@@ -2024,8 +2070,7 @@ async function selectAlternative(index) {
   selectedAltIndex = index;
   const route = allAlternatives[index];
 
-  currentRouteCoords = route.coords;
-  currentElevations = route.fullElevations || route.elevations;
+  setCurrentRouteData(route.coords, route.fullElevations || route.elevations);
 
   // Update map selection - set triggeredByUI to true to prevent recursion
   mapManager.selectRoute(allAlternatives, index, true);
@@ -3173,8 +3218,7 @@ function loadFavorite(fav) {
     weatherPoints = [];
     waypointCumDistM = [];
     waypointGradColors = [];
-    currentRouteCoords = [];
-    currentElevations = [];
+    setCurrentRouteData([], []);
     allAlternatives = [];
     lastWaypoints = [];
     pendingNewWaypointIndex = null;
@@ -3558,8 +3602,7 @@ async function restoreImportedTrack(session) {
   syncTrackModeUI();
 
   mapManager.drawRoute(coords);
-  currentRouteCoords = coords;
-  currentElevations = elevations;
+  setCurrentRouteData(coords, elevations);
 
   if (waypoints.length > 0) {
     skipAutoGeocode = true;
@@ -3639,8 +3682,7 @@ async function _applyImportedResultCore(result) {
 
     // 3. Draw the track polyline directly
     mapManager.drawRoute(coords);
-    currentRouteCoords = coords;
-    currentElevations = elevations;
+    setCurrentRouteData(coords, elevations);
 
     // 4. Load waypoints as decorative markers (no routing triggered)
     if (result.waypoints.length > 0) {
@@ -7587,6 +7629,7 @@ async function init() {
         if (!radio.checked) return;
         roundTripMode = radio.value === 'roundtrip';
         oLoopMode = radio.value === 'oloop';
+        bumpRouteVersion();
         localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
         localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
         if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
@@ -7651,6 +7694,7 @@ async function init() {
             flatEl.value = newDisplay;
             paceParams = { ...paceParams, flatPaceKmH: newKmh };
             localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+            bumpPaceVersion();
           }
         }
         prevActivity = newActivity;
@@ -7667,6 +7711,7 @@ async function init() {
       } else {
         segmentIntervalKm = 0;
       }
+      bumpPaceVersion();
 
       if (segmentInputEl) segmentInputEl.disabled = mode !== 'distance';
 
@@ -7746,6 +7791,7 @@ async function init() {
     };
     syncCalibrationIntoPaceParams();
     localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+    bumpPaceVersion();
     updateFlatPlaceholder();
     applyFatigueToggle();
     updateTimeStat();
@@ -7789,6 +7835,7 @@ async function init() {
     perSegmentEl.addEventListener('change', () => {
       perSegmentMode = perSegmentEl.checked;
       localStorage.setItem(LS_PER_SEGMENT_KEY, perSegmentMode ? '1' : '0');
+      bumpPaceVersion();
       renderWeatherPanel();
     });
   }
