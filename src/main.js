@@ -2896,6 +2896,14 @@ function syncIntervalTimesFromWP() {
   enforceTimeOrdering(); // re-check: cascade may have exposed new violations
 }
 
+function syncPaceWeatherTimes() {
+  cascadeWeatherTimes();
+  enforceTimeOrdering();
+  saveWeatherSettings();
+  cascadeWeatherTimes();
+  enforceTimeOrdering();
+}
+
 // =========== Export / Import (GPX / KML) ===========
 
 const exportModal = document.getElementById('export-modal');
@@ -5733,7 +5741,7 @@ function handleWeatherTimeChange(idx, th) {
   // We save settings after the linear shift so the cascade/enforce logic sees the new waypoint times.
   saveWeatherSettings();
   if (speedIntervalMode) {
-    cascadeWeatherTimes();
+    syncPaceWeatherTimes();
   } else {
     syncIntervalTimesFromWP();
   }
@@ -6156,7 +6164,7 @@ function renderWeatherPanel() {
   });
 
   // Initial cascade + enforce on first render
-  if (speedIntervalMode) cascadeWeatherTimes();
+  if (speedIntervalMode) syncPaceWeatherTimes();
   else syncIntervalTimes();
   updateDateConstraints();
   updateWeatherTimeAdjustButtons();
@@ -6895,6 +6903,30 @@ function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '
   return html;
 }
 
+function buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour) {
+  const tableDateInput = document.querySelector(`#weather-table-container .wt-th-date[data-idx="${colIdx}"] .wt-date-input`);
+  const tableTimeSelect = document.querySelector(`#weather-table-container .wt-th-time[data-idx="${colIdx}"] .wt-time-select`);
+  const locked = (tableDateInput?.disabled || tableTimeSelect?.disabled) ?? !pt?.isWaypoint;
+  const disabledAttr = locked ? ' disabled' : '';
+  const minValue = tableDateInput?.min || '';
+  const minAttr = minValue ? ` min="${minValue}"` : '';
+
+  return `<div class="wc-info-grid wc-time-grid">
+    <div class="wc-info-item wc-time-item">
+      <span class="wc-info-label">日期</span>
+      <span class="wc-time-edit-wrap">
+        <input type="date" class="wc-date-input" value="${dateStr}"${disabledAttr}${minAttr}>
+      </span>
+    </div>
+    <div class="wc-info-item wc-time-item">
+      <span class="wc-info-label">時間</span>
+      <span class="wc-time-edit-wrap">
+        <select class="wc-time-select"${disabledAttr}>${timeOpts(hour)}</select>
+      </span>
+    </div>
+  </div>`;
+}
+
 /** Render a specific weather card. */
 function _renderWeatherCard(colIdx) {
   const state = _wcStates.get(colIdx);
@@ -6979,6 +7011,7 @@ function _renderWeatherCard(colIdx) {
     html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
+    html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
     html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
     html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer));
     html += buildWeatherCardSectionHtml(WEATHER_CARD_BOTTOM_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-bottom-facts');
@@ -7848,7 +7881,7 @@ async function init() {
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
       if (strictLinearMode) {
-        if (speedIntervalMode) cascadeWeatherTimes();
+        if (speedIntervalMode) syncPaceWeatherTimes();
         else syncIntervalTimes();
       }
       renderWeatherPanel();

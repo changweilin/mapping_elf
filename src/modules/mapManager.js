@@ -749,10 +749,12 @@ export class MapManager {
     // causing the marker to jump off-screen on the first touchmove.
     let _longPressTimer = null;
     let _touchStartX = 0, _touchStartY = 0;
-    marker.on('touchstart', (e) => {
+    const getTouchPoint = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
+    const startTouchLongPress = (oe) => {
       _isTouchActive = true;
       if (_dragModeActive) return;
-      const touch = e.originalEvent.touches[0];
+      const touch = getTouchPoint(oe);
+      if (!touch) return;
       _touchStartX = touch.clientX;
       _touchStartY = touch.clientY;
 
@@ -851,10 +853,11 @@ export class MapManager {
         document.addEventListener('touchmove', onTouchMove, { passive: false });
         document.addEventListener('touchend', onTouchEnd);
       }, 500);
-    });
-    marker.on('touchmove', (e) => {
+    };
+    const moveTouchLongPress = (oe) => {
       if (_longPressTimer) {
-        const touch = e.originalEvent.touches[0];
+        const touch = getTouchPoint(oe);
+        if (!touch) return;
         const dx = touch.clientX - _touchStartX;
         const dy = touch.clientY - _touchStartY;
         if (dx * dx + dy * dy > 64) {
@@ -862,14 +865,50 @@ export class MapManager {
           _longPressTimer = null;
         }
       }
-    });
-    marker.on('touchend', () => {
+    };
+    const endTouchLongPress = () => {
       _isTouchActive = false;
       if (_longPressTimer) {
         clearTimeout(_longPressTimer);
         _longPressTimer = null;
       }
+    };
+    marker.on('touchstart', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      startTouchLongPress(e.originalEvent);
     });
+    marker.on('touchmove', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      moveTouchLongPress(e.originalEvent);
+    });
+    marker.on('touchend', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      endTouchLongPress();
+    });
+    marker.on('touchcancel', endTouchLongPress);
+
+    marker._bindWaypointDomFallback = () => {
+      const el = marker.getElement?.();
+      if (!el || el._mappingElfWaypointDomBound) return;
+      el._mappingElfWaypointDomBound = true;
+      el.addEventListener('touchstart', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
+        startTouchLongPress(oe);
+      }, { passive: true, capture: true });
+      el.addEventListener('touchmove', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        moveTouchLongPress(oe);
+      }, { passive: true, capture: true });
+      el.addEventListener('touchend', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        endTouchLongPress();
+      }, { passive: true, capture: true });
+      el.addEventListener('touchcancel', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        endTouchLongPress();
+      }, { passive: true, capture: true });
+    };
 
     // Click/tap: cancel drag mode; on normal click → notify selection or weather badge
     marker.on('click', (e) => {
@@ -961,6 +1000,7 @@ export class MapManager {
 
     this.waypointMarkers.splice(idx, 0, marker);
     this._updateMarkerIcons();
+    marker._bindWaypointDomFallback?.();
     this.onWaypointChange(this.waypoints);
   }
 
@@ -1826,6 +1866,7 @@ export class MapManager {
       marker._wpIndex = i;
       marker.setIcon(this._createIcon(i));
       this._applyColorToMarker(marker, i);
+      marker._bindWaypointDomFallback?.();
     });
   }
 

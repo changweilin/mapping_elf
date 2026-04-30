@@ -512,6 +512,8 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   font-weight: 700;
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 
 .wp-icon-inner {
@@ -4662,6 +4664,17 @@ body.modal-open {
   margin-top: 6px;
 }
 
+.wc-time-grid {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 2px 8px;
+  margin-top: 8px;
+}
+
+.wc-time-item {
+  align-items: center;
+  gap: 4px;
+}
+
 .wc-info-item {
   display: flex;
   justify-content: space-between;
@@ -4719,6 +4732,8 @@ body.modal-open {
   display: flex;
   gap: 6px;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .wc-info-item .wc-date-input,
@@ -4748,7 +4763,19 @@ body.modal-open {
 }
 
 .wc-info-item .wc-date-input {
+  width: min(100%, 104px);
   max-width: 105px;
+}
+
+.wc-info-item .wc-time-select {
+  width: min(100%, 70px);
+  max-width: 78px;
+}
+
+.wc-info-item .wc-date-input:disabled,
+.wc-info-item .wc-time-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 html:not(.light-theme) .wc-date-input,
