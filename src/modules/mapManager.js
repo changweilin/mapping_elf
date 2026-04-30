@@ -682,6 +682,13 @@ export class MapManager {
           return;
         }
 
+        if (layerToggledByLongPress) {
+          this._blockMapClick();
+          const idx = this.waypointMarkers.indexOf(marker);
+          this._deferTopWaypointLayerHighlight(idx);
+          return;
+        }
+
         _dragModeActive = true;
         _justDragged = true; // Prevent subsequent click from triggering redundant highlight
         marker.getElement()?.classList.add('is-dragging');
@@ -770,6 +777,14 @@ export class MapManager {
           } else {
             this._notifyFrozenInteraction('waypoint-drag');
           }
+          _isTouchActive = false;
+          return;
+        }
+
+        if (layerToggledByLongPress) {
+          this._blockMapClick();
+          const idx = this.waypointMarkers.indexOf(marker);
+          this._deferTopWaypointLayerHighlight(idx);
           _isTouchActive = false;
           return;
         }

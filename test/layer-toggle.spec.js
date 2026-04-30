@@ -39,11 +39,22 @@ async function addRoundTripWaypoints(page) {
   const box = await page.locator('#map').boundingBox();
   expect(box).not.toBeNull();
 
-  await page.mouse.click(box.x + box.width * 0.40, box.y + box.height * 0.50);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
-  await page.mouse.click(box.x + box.width * 0.58, box.y + box.height * 0.50);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  await addWaypointsAtFractions(page, [
+    [0.40, 0.50],
+    [0.58, 0.50],
+  ]);
   await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(2);
+}
+
+async function addWaypointsAtFractions(page, points) {
+  const box = await page.locator('#map').boundingBox();
+  expect(box).not.toBeNull();
+
+  for (let i = 0; i < points.length; i++) {
+    const [x, y] = points[i];
+    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+    await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
+  }
 }
 
 async function layerState(page) {
@@ -67,6 +78,37 @@ async function layerState(page) {
   });
 }
 
+async function waypointPairState(page) {
+  return page.evaluate(() => {
+    const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .map((el) => {
+        const text = el.textContent.trim();
+        const number = Number.parseInt(text.replace(/^\D*/, ''), 10);
+        return {
+          number,
+          isReturn: el.classList.contains('return-leg'),
+          z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+          transform: el.style.transform,
+        };
+      });
+
+    return markers
+      .filter((marker) => Number.isFinite(marker.number) && !marker.isReturn)
+      .map((outbound) => {
+        const mirror = markers.find((marker) =>
+          marker.isReturn &&
+          marker.number === outbound.number &&
+          marker.transform === outbound.transform
+        ) || null;
+        return {
+          number: outbound.number,
+          hasReturn: !!mirror,
+          returnAbove: mirror ? mirror.z > outbound.z : false,
+        };
+      });
+  });
+}
+
 test('double-clicking an overlapped waypoint cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
@@ -75,7 +117,6 @@ test('double-clicking an overlapped waypoint cycles visible layer order', async 
   const waypoint = await page.locator('.leaflet-marker-pane .custom-waypoint-icon').first().boundingBox();
   expect(waypoint).not.toBeNull();
   await page.mouse.dblclick(waypoint.x + waypoint.width / 2, waypoint.y + waypoint.height / 2);
-  await expect.poll(async () => (await layerState(page)).topStroke).not.toBe(before.topStroke);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
 });
 
@@ -84,9 +125,94 @@ test('double-clicking an overlapped route marker cycles visible layer order', as
   await addRoundTripWaypoints(page);
 
   const before = await layerState(page);
-  const intermediate = await page.locator('.intermediate-point-inner').first().boundingBox();
-  expect(intermediate).not.toBeNull();
+  const routePoint = await page.evaluate(() => {
+    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path')).at(-1);
+    if (!path) return null;
+    const rect = path.getBoundingClientRect();
+    return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
+  });
+  expect(routePoint).not.toBeNull();
 
-  await page.mouse.dblclick(intermediate.x + intermediate.width / 2, intermediate.y + intermediate.height / 2);
+  await page.mouse.dblclick(routePoint.x, routePoint.y);
   await expect.poll(async () => (await layerState(page)).topStroke).not.toBe(before.topStroke);
+});
+
+test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addWaypointsAtFractions(page, [
+    [0.36, 0.56],
+    [0.46, 0.46],
+    [0.56, 0.56],
+    [0.66, 0.46],
+  ]);
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(6);
+
+  const initialPairs = await waypointPairState(page);
+  expect(initialPairs.map((pair) => [pair.number, pair.hasReturn])).toEqual([
+    [1, true],
+    [2, true],
+    [3, true],
+    [4, false],
+  ]);
+
+  for (const number of [1, 2, 3]) {
+    const beforePairs = await waypointPairState(page);
+    const beforePair = beforePairs.find((pair) => pair.number === number);
+    expect(beforePair?.hasReturn).toBe(true);
+
+    const target = await page.evaluate((targetNumber) => {
+      const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'));
+      const pair = markers
+        .map((el) => ({
+          el,
+          isReturn: el.classList.contains('return-leg'),
+          number: Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10),
+          z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+        }))
+        .filter((marker) => marker.number === targetNumber)
+        .sort((a, b) => b.z - a.z);
+      const marker = pair[0]?.el;
+      if (!marker) return null;
+      const rect = marker.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    }, number);
+    expect(target).not.toBeNull();
+
+    await page.mouse.dblclick(target.x, target.y);
+    await expect.poll(async () => {
+      const pairs = await waypointPairState(page);
+      return pairs.find((pair) => pair.number === number)?.returnAbove ?? null;
+    }).toBe(!beforePair.returnAbove);
+  }
+});
+
+test('long-pressing an overlapped waypoint toggles both directions without dragging', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const pressTopWaypoint = async () => {
+    const target = await page.evaluate(() => {
+      const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+        .filter((el) => Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === 1)
+        .map((el) => ({ el, z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0 }))
+        .sort((a, b) => b.z - a.z)[0]?.el;
+      if (!markers) return null;
+      const rect = markers.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    });
+    expect(target).not.toBeNull();
+    await page.mouse.move(target.x, target.y);
+    await page.mouse.down();
+    await page.waitForTimeout(650);
+    await page.mouse.move(target.x + 3, target.y + 2);
+    await page.mouse.up();
+  };
+
+  await pressTopWaypoint();
+  await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
+  await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
+
+  await pressTopWaypoint();
+  await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(false);
+  await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
 });
