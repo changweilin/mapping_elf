@@ -32,6 +32,31 @@ const TILE_LAYERS = {
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function buildWeatherRoundIconHtml(icon) {
+  const normalized = String(icon || '').replace(/\ufe0f/g, '');
+  const map = {
+    '☀': 'sun',
+    '🌤': 'partly',
+    '⛅': 'partly',
+    '☁': 'cloud',
+    '🌫': 'fog',
+    '🌦': 'shower',
+    '🌧': 'rain',
+    '🌨': 'snow',
+    '❄': 'snow',
+    '⛈': 'storm',
+    '❓': 'unknown',
+  };
+  const meta = { cls: map[normalized] || 'unknown', symbol: icon || '?' };
+  return `<span class="weather-round-icon weather-round-icon--${meta.cls}" data-raw-icon="${escapeHtml(icon || '')}" aria-hidden="true">${escapeHtml(meta.symbol)}</span>`;
+}
+
 // Colors for alternative routes
 const ROUTE_COLORS = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171'];
 const ROUTE_ALT_OPACITY = 0.4;
@@ -1462,7 +1487,7 @@ export class MapManager {
         color = interpolateRouteColor(t);
       }
 
-      const weatherHtml = pt.weatherIcon ? `<div class="wp-weather-badge">${pt.weatherIcon}</div>` : '';
+      const weatherHtml = pt.weatherIcon ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weatherIcon)}</div>` : '';
       const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
 
       const icon = L.divIcon({
@@ -1699,7 +1724,7 @@ export class MapManager {
     const isEndpoint = (pt.wpIndex === 0 || pt.wpIndex === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
     const num = (pt.wpIndex ?? 0) + 1;
-    const weatherHtml = pt.weather ? `<div class="wp-weather-badge">${pt.weather}</div>` : '';
+    const weatherHtml = pt.weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weather)}</div>` : '';
     const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
     const innerStyle = pt.color
       ? `style="background:${pt.color}; box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${pt.color}55;"`
@@ -1855,7 +1880,7 @@ export class MapManager {
     if (this.stackedWaypointFlags?.[index]) cls += (cls ? ' ' : '') + 'is-stacked';
 
     const weather = this.waypointWeather[index];
-    const weatherHtml = weather ? `<div class="wp-weather-badge">${weather}</div>` : '';
+    const weatherHtml = weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(weather)}</div>` : '';
 
     const isEndpoint = (index === 0 || index === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;

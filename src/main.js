@@ -2872,6 +2872,7 @@ function updateWeatherTimeAdjustButtons() {
     if (hourMinus) hourMinus.disabled = locked;
     if (hourPlus) hourPlus.disabled = !canPlus;
   });
+  refreshWeatherDateDisplays(container);
 }
 
 function syncIntervalTimes() {
@@ -4595,6 +4596,29 @@ let cachedWeatherData = (() => {
 const weatherCoordKey = (lat, lng, date, hour) =>
   `${lat.toFixed(4)},${lng.toFixed(4)},${date},${hour}`;
 
+function getWeatherIconMeta(icon) {
+  const normalized = String(icon || '').replace(/\ufe0f/g, '');
+  const map = {
+    '☀': 'sun',
+    '🌤': 'partly',
+    '⛅': 'partly',
+    '☁': 'cloud',
+    '🌫': 'fog',
+    '🌦': 'shower',
+    '🌧': 'rain',
+    '🌨': 'snow',
+    '❄': 'snow',
+    '⛈': 'storm',
+    '❓': 'unknown',
+  };
+  return { cls: map[normalized] || 'unknown', symbol: icon || '?' };
+}
+
+function buildWeatherRoundIconHtml(icon, extraClass = '') {
+  const meta = getWeatherIconMeta(icon);
+  return `<span class="weather-round-icon weather-round-icon--${meta.cls}${extraClass ? ` ${extraClass}` : ''}" data-raw-icon="${_escapeHtml(icon || '')}" aria-hidden="true">${_escapeHtml(meta.symbol)}</span>`;
+}
+
 function getCellValue(data, key, pt) {
   const v = (a, b) => a != null ? a : (b != null ? b : '—');
   if (key === 'distance' && pt && Number.isFinite(pt._cum)) return formatDistance(pt._cum);
@@ -4670,7 +4694,7 @@ function updateWeatherTableCell(cell, key, val) {
     const parts = val.split(' ');
     const icon = parts[0];
     const desc = parts.slice(1).join(' ');
-    const html = `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${icon}</span> ${desc}`;
+    const html = `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${buildWeatherRoundIconHtml(icon)}</span> ${desc}`;
     if (valueEl) valueEl.innerHTML = html;
     else cell.innerHTML = html;
   } else if (valueEl) {
@@ -5796,6 +5820,21 @@ const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
   `<option value="${h}"${h === sel ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
 ).join('');
 
+function buildDayFirstDateHtml(dateStr) {
+  const [year, month, day] = String(dateStr || '').split('-');
+  if (!year || !month || !day) return '<span class="wt-date-display"><span class="wt-date-day">--</span></span>';
+  return `<span class="wt-date-display" aria-hidden="true"><span class="wt-date-day">${day}</span><span class="wt-date-meta">${month}/${year}</span></span>`;
+}
+
+function refreshWeatherDateDisplays(root = document) {
+  root.querySelectorAll('.wt-date-picker').forEach((wrap) => {
+    const input = wrap.querySelector('.wt-date-input');
+    const display = wrap.querySelector('.wt-date-display');
+    if (!input || !display) return;
+    display.outerHTML = buildDayFirstDateHtml(input.value);
+  });
+}
+
 function renderWeatherPanel() {
   const previousWeatherPoints = weatherPoints;
   const previousCardStates = new Map();
@@ -6004,7 +6043,8 @@ function renderWeatherPanel() {
     html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
       <div class="wt-adj-wrap">
         <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
-        <span class="wt-picker-icon wt-date-picker" title="選擇日期">
+        <span class="wt-picker-icon wt-date-picker has-day-first" title="選擇日期">
+          ${buildDayFirstDateHtml(date)}
           <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
         </span>
         <button class="wt-adj-btn wt-adj-day-plus" title="後一天"${canPlus ? '' : ' disabled'}>+</button>
@@ -6151,6 +6191,7 @@ function renderWeatherPanel() {
     el.addEventListener('change', (e) => {
       const th = e.target.closest('th');
       if (th) handleWeatherTimeChange(parseInt(th.dataset.idx), th);
+      refreshWeatherDateDisplays(container);
     })
   );
 
@@ -7005,7 +7046,7 @@ function _renderWeatherCard(colIdx) {
   // Header
   const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title" title="${pt.label || cardLabel}">${wIcon} ${cardLabel}</span>`;
+  html += `<span class="wc-title" title="${pt.label || cardLabel}">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${cardLabel}</span>`;
   if (isFull) {
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
@@ -7035,7 +7076,7 @@ function _renderWeatherCard(colIdx) {
     html += `</div>`;
   } else {
     const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
-    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
@@ -7120,14 +7161,14 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   let html = `<div class="weather-card full cursor-weather-card" data-cursor-card="1" style="${cardStyle}">`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title">${wIcon} ${title}</span>`;
+  html += `<span class="wc-title">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${title}</span>`;
   html += `<button class="wc-btn q-close" title="關閉">`;
   html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
   html += `</div>`;
 
   html += `<div class="wc-body">`;
   const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(lat, lng, dateStr, hour, 'temp'), 14);
-  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
 
   if (status === 'ok') {
     html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-top-stats');

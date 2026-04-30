@@ -570,16 +570,13 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 
 .wp-weather-badge {
   position: absolute;
-  top: -22px;
+  top: -27px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 15px;
   line-height: 1;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   pointer-events: auto;
   cursor: pointer;
   white-space: nowrap;
-  filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.3));
   transition: transform var(--transition-fast);
   z-index: 10;
 }
@@ -3618,18 +3615,77 @@ body.is-resizing {
 
 .wt-weather-icon-trigger {
   cursor: pointer;
-  display: inline-block;
-  padding: 0 2px;
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   transition: all var(--transition-fast);
-  font-size: 1.2em;
   vertical-align: middle;
 }
 
 .wt-weather-icon-trigger:hover {
-  background: rgba(255, 255, 255, 0.1);
   transform: scale(1.2);
-  text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
+
+.weather-round-icon {
+  --weather-icon-bg: rgba(100, 116, 139, 0.24);
+  --weather-icon-ring: #94a3b8;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--weather-icon-bg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.26), inset 0 0 0 2px var(--weather-icon-ring), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  text-shadow: none;
+}
+
+.weather-round-icon--sun {
+  --weather-icon-bg: rgba(245, 158, 11, 0.28);
+  --weather-icon-ring: #f59e0b;
+}
+
+.weather-round-icon--partly {
+  --weather-icon-bg: rgba(56, 189, 248, 0.28);
+  --weather-icon-ring: #38bdf8;
+}
+
+.weather-round-icon--cloud,
+.weather-round-icon--fog {
+  --weather-icon-bg: rgba(148, 163, 184, 0.3);
+  --weather-icon-ring: #cbd5e1;
+}
+
+.weather-round-icon--rain,
+.weather-round-icon--shower {
+  --weather-icon-bg: rgba(37, 99, 235, 0.3);
+  --weather-icon-ring: #60a5fa;
+}
+
+.weather-round-icon--snow {
+  --weather-icon-bg: rgba(224, 242, 254, 0.42);
+  --weather-icon-ring: #7dd3fc;
+}
+
+.weather-round-icon--storm {
+  --weather-icon-bg: rgba(124, 58, 237, 0.34);
+  --weather-icon-ring: #a78bfa;
+}
+
+.weather-round-icon--unknown {
+  --weather-icon-bg: rgba(71, 85, 105, 0.28);
+  --weather-icon-ring: #94a3b8;
+}
+
+.wp-weather-badge .weather-round-icon {
+  width: 30px;
+  height: 30px;
+  font-size: 17px;
 }
 
 .wt-label-cell {
@@ -3768,6 +3824,59 @@ body.is-resizing {
   font-size: 11px;
   outline: none;
   box-sizing: border-box;
+}
+
+.wt-date-picker.has-day-first {
+  min-width: 58px;
+  min-height: 27px;
+}
+
+.wt-date-picker.has-day-first .wt-date-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.wt-date-picker.has-day-first .wt-date-input:focus {
+  opacity: 1;
+  z-index: 2;
+}
+
+.wt-date-display {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  min-height: 25px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.wt-date-day {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.wt-date-meta {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.wt-date-picker.has-day-first .wt-date-input:focus + .wt-date-display,
+.wt-date-picker.has-day-first:focus-within .wt-date-display {
+  opacity: 0;
 }
 
 .wt-date-input,
@@ -4663,8 +4772,24 @@ body.modal-open {
 }
 
 .wc-weather-icon {
-  font-size: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
+}
+
+.wc-main-weather-icon {
+  width: 36px;
+  height: 36px;
+  font-size: 21px;
+}
+
+.wc-title-weather-icon {
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+  margin-right: 2px;
+  vertical-align: -4px;
 }
 
 .wc-weather-desc {
