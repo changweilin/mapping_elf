@@ -4,7 +4,30 @@
  * Conservative, explainable estimator for hiking-first route planning.
  * The same segment model feeds elapsed time, rest/fatigue, and kcal stats.
  */
-import L from 'leaflet';
+
+const MERCATOR_R = 6378137;
+const MERCATOR_MAX_LAT = 85.0511287798;
+
+function clampMercatorLat(lat) {
+  return Math.max(-MERCATOR_MAX_LAT, Math.min(MERCATOR_MAX_LAT, lat));
+}
+
+function projectMercator(lat, lng) {
+  const d = Math.PI / 180;
+  const clampedLat = clampMercatorLat(lat);
+  return {
+    x: MERCATOR_R * lng * d,
+    y: MERCATOR_R * Math.log(Math.tan((Math.PI / 4) + (clampedLat * d / 2))),
+  };
+}
+
+function unprojectMercator(x, y) {
+  const d = 180 / Math.PI;
+  return {
+    lat: (2 * Math.atan(Math.exp(y / MERCATOR_R)) - (Math.PI / 2)) * d,
+    lng: x * d / MERCATOR_R,
+  };
+}
 
 export const ACTIVITY_PROFILES = {
   walking: { name: 'walking', speedKmH: 3.5, ascentMH: 400, descentMH: 700, fatigue: false, baseMET: 3.5 },
@@ -385,10 +408,9 @@ export function computeHourlyPoints(sampledCoords, elevations, distances, activi
           if (times[j] >= nextH) {
             const span = times[j] - times[j - 1];
             const f = span > 0 ? (nextH - times[j - 1]) / span : 0;
-            const p1 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[j - 1][0], sampledCoords[j - 1][1]));
-            const p2 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[j][0], sampledCoords[j][1]));
-            const res = L.point(p1.x + f * (p2.x - p1.x), p1.y + f * (p2.y - p1.y));
-            const unp = L.Projection.SphericalMercator.unproject(res);
+            const p1 = projectMercator(sampledCoords[j - 1][0], sampledCoords[j - 1][1]);
+            const p2 = projectMercator(sampledCoords[j][0], sampledCoords[j][1]);
+            const unp = unprojectMercator(p1.x + f * (p2.x - p1.x), p1.y + f * (p2.y - p1.y));
 
             result.push({
               lat: unp.lat,
@@ -409,10 +431,9 @@ export function computeHourlyPoints(sampledCoords, elevations, distances, activi
         if (times[i] >= nextH) {
           const span = times[i] - times[i - 1];
           const f = span > 0 ? (nextH - times[i - 1]) / span : 0;
-          const p1 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[i - 1][0], sampledCoords[i - 1][1]));
-          const p2 = L.Projection.SphericalMercator.project(L.latLng(sampledCoords[i][0], sampledCoords[i][1]));
-          const res = L.point(p1.x + f * (p2.x - p1.x), p1.y + f * (p2.y - p1.y));
-          const unp = L.Projection.SphericalMercator.unproject(res);
+          const p1 = projectMercator(sampledCoords[i - 1][0], sampledCoords[i - 1][1]);
+          const p2 = projectMercator(sampledCoords[i][0], sampledCoords[i][1]);
+          const unp = unprojectMercator(p1.x + f * (p2.x - p1.x), p1.y + f * (p2.y - p1.y));
 
           result.push({
             lat: unp.lat,

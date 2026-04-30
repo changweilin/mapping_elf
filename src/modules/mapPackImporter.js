@@ -25,7 +25,6 @@ export class MapPackImporter {
    * @returns {Promise<{zip, manifest, hasGpx, hasState, hasTiles}>}
    */
   static async parse(file) {
-    console.log('MapPackImporter: Parsing file...', file.name);
     try {
       const zip = await JSZip.loadAsync(file);
       return MapPackImporter._buildParsed(zip);

@@ -22,7 +22,6 @@ export class OfflineManager {
     if ('serviceWorker' in navigator) {
       try {
         await navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js', { scope: import.meta.env.BASE_URL });
-        console.log('Service Worker registered');
       } catch (err) {
         console.warn('SW registration failed:', err.message);
       }

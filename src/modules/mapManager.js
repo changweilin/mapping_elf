@@ -32,6 +32,31 @@ const TILE_LAYERS = {
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function buildWeatherRoundIconHtml(icon) {
+  const normalized = String(icon || '').replace(/\ufe0f/g, '');
+  const map = {
+    '☀': 'sun',
+    '🌤': 'partly',
+    '⛅': 'partly',
+    '☁': 'cloud',
+    '🌫': 'fog',
+    '🌦': 'shower',
+    '🌧': 'rain',
+    '🌨': 'snow',
+    '❄': 'snow',
+    '⛈': 'storm',
+    '❓': 'unknown',
+  };
+  const meta = { cls: map[normalized] || 'unknown', symbol: icon || '?' };
+  return `<span class="weather-round-icon weather-round-icon--${meta.cls}" data-raw-icon="${escapeHtml(icon || '')}" aria-hidden="true">${escapeHtml(meta.symbol)}</span>`;
+}
+
 // Colors for alternative routes
 const ROUTE_COLORS = ['#6ee7b7', '#60a5fa', '#f59e0b', '#f87171'];
 const ROUTE_ALT_OPACITY = 0.4;
@@ -40,6 +65,15 @@ const ROUTE_SELECTED_OPACITY = 0.9;
 // Max gradient chunks for the selected route polyline
 const GRADIENT_CHUNKS = 80;
 const STACKED_WAYPOINT_TOLERANCE_M = 30;
+const ROUTE_OVERLAP_PROXIMITY_PX = {
+  mouse: 18,
+  touch: 28,
+};
+const ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX = {
+  mouse: 10,
+  touch: 18,
+};
+const ROUTE_LAYER_DEBUG_KEY = 'mappingElfDebugRouteLayerCycle';
 
 export class MapManager {
   constructor(containerId, onWaypointChange) {
@@ -663,12 +697,12 @@ export class MapManager {
         let layerToggledByLongPress = false;
         let manualDragMoved = false;
 
-        // Long-press on overlapping waypoint toggles display level independently of track.
+        // Long-press on overlapping waypoint cycles the route/waypoint stack.
         // Selection is applied on release so the highlight does not appear while
         // the pointer/finger is still held down.
         const wpIdx = this.waypointMarkers.indexOf(marker);
         if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
-          this._toggleWaypointLayer(wpIdx, { select: false });
+          this._cycleWaypointOverlapLayers(wpIdx, marker.getLatLng(), { select: false });
           layerToggledByLongPress = true;
         }
 
@@ -679,6 +713,13 @@ export class MapManager {
           } else {
             this._notifyFrozenInteraction('waypoint-drag');
           }
+          return;
+        }
+
+        if (layerToggledByLongPress) {
+          this._blockMapClick();
+          const idx = this.waypointMarkers.indexOf(marker);
+          this._deferTopWaypointLayerHighlight(idx);
           return;
         }
 
@@ -742,10 +783,12 @@ export class MapManager {
     // causing the marker to jump off-screen on the first touchmove.
     let _longPressTimer = null;
     let _touchStartX = 0, _touchStartY = 0;
-    marker.on('touchstart', (e) => {
+    const getTouchPoint = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
+    const startTouchLongPress = (oe) => {
       _isTouchActive = true;
       if (_dragModeActive) return;
-      const touch = e.originalEvent.touches[0];
+      const touch = getTouchPoint(oe);
+      if (!touch) return;
       _touchStartX = touch.clientX;
       _touchStartY = touch.clientY;
 
@@ -754,12 +797,12 @@ export class MapManager {
         let layerToggledByLongPress = false;
         let manualDragMoved = false;
 
-        // Long-press on overlapping waypoint toggles display level independently of track.
+        // Long-press on overlapping waypoint cycles the route/waypoint stack.
         // Selection is applied on release so the highlight does not appear while
         // the pointer/finger is still held down.
         const wpIdx = this.waypointMarkers.indexOf(marker);
         if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
-          this._toggleWaypointLayer(wpIdx, { select: false });
+          this._cycleWaypointOverlapLayers(wpIdx, marker.getLatLng(), { select: false });
           layerToggledByLongPress = true;
         }
 
@@ -770,6 +813,14 @@ export class MapManager {
           } else {
             this._notifyFrozenInteraction('waypoint-drag');
           }
+          _isTouchActive = false;
+          return;
+        }
+
+        if (layerToggledByLongPress) {
+          this._blockMapClick();
+          const idx = this.waypointMarkers.indexOf(marker);
+          this._deferTopWaypointLayerHighlight(idx);
           _isTouchActive = false;
           return;
         }
@@ -836,10 +887,11 @@ export class MapManager {
         document.addEventListener('touchmove', onTouchMove, { passive: false });
         document.addEventListener('touchend', onTouchEnd);
       }, 500);
-    });
-    marker.on('touchmove', (e) => {
+    };
+    const moveTouchLongPress = (oe) => {
       if (_longPressTimer) {
-        const touch = e.originalEvent.touches[0];
+        const touch = getTouchPoint(oe);
+        if (!touch) return;
         const dx = touch.clientX - _touchStartX;
         const dy = touch.clientY - _touchStartY;
         if (dx * dx + dy * dy > 64) {
@@ -847,14 +899,50 @@ export class MapManager {
           _longPressTimer = null;
         }
       }
-    });
-    marker.on('touchend', () => {
+    };
+    const endTouchLongPress = () => {
       _isTouchActive = false;
       if (_longPressTimer) {
         clearTimeout(_longPressTimer);
         _longPressTimer = null;
       }
+    };
+    marker.on('touchstart', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      startTouchLongPress(e.originalEvent);
     });
+    marker.on('touchmove', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      moveTouchLongPress(e.originalEvent);
+    });
+    marker.on('touchend', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      endTouchLongPress();
+    });
+    marker.on('touchcancel', endTouchLongPress);
+
+    marker._bindWaypointDomFallback = () => {
+      const el = marker.getElement?.();
+      if (!el || el._mappingElfWaypointDomBound) return;
+      el._mappingElfWaypointDomBound = true;
+      el.addEventListener('touchstart', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
+        startTouchLongPress(oe);
+      }, { passive: true, capture: true });
+      el.addEventListener('touchmove', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        moveTouchLongPress(oe);
+      }, { passive: true, capture: true });
+      el.addEventListener('touchend', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        endTouchLongPress();
+      }, { passive: true, capture: true });
+      el.addEventListener('touchcancel', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        endTouchLongPress();
+      }, { passive: true, capture: true });
+    };
 
     // Click/tap: cancel drag mode; on normal click → notify selection or weather badge
     marker.on('click', (e) => {
@@ -889,7 +977,7 @@ export class MapManager {
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
         if (this._hasReturnWaypointPair(idx)) {
-          this._toggleWaypointLayer(idx, { select: false });
+          this._cycleWaypointOverlapLayers(idx, marker.getLatLng(), { select: false });
           this._deferTopWaypointLayerHighlight(idx);
         } else {
           this._deferWaypointSelect(idx, false, true);
@@ -946,6 +1034,7 @@ export class MapManager {
 
     this.waypointMarkers.splice(idx, 0, marker);
     this._updateMarkerIcons();
+    marker._bindWaypointDomFallback?.();
     this.onWaypointChange(this.waypoints);
   }
 
@@ -1282,10 +1371,12 @@ export class MapManager {
       lineJoin: 'round',
     }).addTo(this.map);
 
+    const primaryLegId = legIds[startI] ?? 0;
     const legSet = new Set();
-    for (let i = startI; i <= endI; i++) legSet.add(legIds[i] ?? 0);
+    for (let i = startI; i < endI; i++) legSet.add(legIds[i] ?? primaryLegId);
+    if (legSet.size === 0) legSet.add(primaryLegId);
     pl._isReturn = isReturn;
-    pl._legId = legIds[Math.floor((startI + endI) / 2)] ?? 0;
+    pl._legId = primaryLegId;
     pl._legIds = Array.from(legSet);
     pl._routeStartI = startI;
     pl._routeEndI = endI;
@@ -1396,7 +1487,7 @@ export class MapManager {
         color = interpolateRouteColor(t);
       }
 
-      const weatherHtml = pt.weatherIcon ? `<div class="wp-weather-badge">${pt.weatherIcon}</div>` : '';
+      const weatherHtml = pt.weatherIcon ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weatherIcon)}</div>` : '';
       const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
 
       const icon = L.divIcon({
@@ -1424,6 +1515,44 @@ export class MapManager {
 
         if (this.onIntermediateSelect) this.onIntermediateSelect(pt.lat, pt.lng);
       });
+
+      marker.on('dblclick', (e) => {
+        L.DomEvent.stop(e);
+        this._cycleOverlappingLayers(null, marker.getLatLng());
+      });
+
+      let lpTimer = null;
+      let startX = 0, startY = 0;
+      const startLP = (e) => {
+        const oe = e.originalEvent;
+        if (oe.button !== undefined && oe.button !== 0) return;
+        const touch = oe.touches ? oe.touches[0] : oe;
+        startX = touch.clientX;
+        startY = touch.clientY;
+        lpTimer = setTimeout(() => {
+          lpTimer = null;
+          if (navigator.vibrate) navigator.vibrate(40);
+          this._cycleOverlappingLayers(null, marker.getLatLng());
+        }, 500);
+      };
+      const moveLP = (e) => {
+        if (!lpTimer) return;
+        const oe = e.originalEvent;
+        const touch = oe.touches ? oe.touches[0] : oe;
+        if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > 10) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      };
+      const endLP = () => {
+        if (lpTimer) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      };
+      marker.on('mousedown touchstart', startLP);
+      marker.on('mousemove touchmove', moveLP);
+      marker.on('mouseup touchend mouseleave touchcancel', endLP);
       this.intermediateMarkers.push(marker);
     });
   }
@@ -1507,7 +1636,7 @@ export class MapManager {
       marker.on('dblclick', (e) => {
         L.DomEvent.stopPropagation(e);
         this._clearWaypointClickTimeout();
-        this._toggleWaypointLayer(marker._wpIndex, { select: false });
+        this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
         this._deferTopWaypointLayerHighlight(marker._wpIndex);
       });
 
@@ -1548,7 +1677,7 @@ export class MapManager {
         _lpTimer = setTimeout(() => {
           _lpTimer = null;
           if (navigator.vibrate) navigator.vibrate(40);
-          this._toggleWaypointLayer(marker._wpIndex, { select: false });
+          this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
           _pendingLPHighlight = true;
         }, 500);
 
@@ -1573,7 +1702,7 @@ export class MapManager {
       marker.on('mouseleave touchcancel', cancelLP);
       marker.on('contextmenu', (e) => {
         L.DomEvent.stop(e);
-        this._toggleWaypointLayer(marker._wpIndex, { select: false });
+        this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
         this._deferTopWaypointLayerHighlight(marker._wpIndex);
       });
 
@@ -1595,7 +1724,7 @@ export class MapManager {
     const isEndpoint = (pt.wpIndex === 0 || pt.wpIndex === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
     const num = (pt.wpIndex ?? 0) + 1;
-    const weatherHtml = pt.weather ? `<div class="wp-weather-badge">${pt.weather}</div>` : '';
+    const weatherHtml = pt.weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weather)}</div>` : '';
     const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
     const innerStyle = pt.color
       ? `style="background:${pt.color}; box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${pt.color}55;"`
@@ -1751,7 +1880,7 @@ export class MapManager {
     if (this.stackedWaypointFlags?.[index]) cls += (cls ? ' ' : '') + 'is-stacked';
 
     const weather = this.waypointWeather[index];
-    const weatherHtml = weather ? `<div class="wp-weather-badge">${weather}</div>` : '';
+    const weatherHtml = weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(weather)}</div>` : '';
 
     const isEndpoint = (index === 0 || index === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
@@ -1771,6 +1900,7 @@ export class MapManager {
       marker._wpIndex = i;
       marker.setIcon(this._createIcon(i));
       this._applyColorToMarker(marker, i);
+      marker._bindWaypointDomFallback?.();
     });
   }
 
@@ -1801,39 +1931,69 @@ export class MapManager {
     let lpTimer = null;
     let lpTriggered = false;
     let startX = 0, startY = 0;
+    let startSource = 'mouse';
 
-    polyline.on('mousedown touchstart', (e) => {
-      const oe = e.originalEvent;
+    const domEventPoint = (oe) => {
+      const touch = oe.touches ? oe.touches[0] : (oe.changedTouches ? oe.changedTouches[0] : oe);
+      return touch ? { x: touch.clientX, y: touch.clientY } : { x: 0, y: 0 };
+    };
+
+    const domEventSource = (oe) => (
+      oe?.type?.startsWith('touch') || oe?.touches || oe?.changedTouches ? 'touch' : 'mouse'
+    );
+
+    const domEventLatLng = (oe) => {
+      const point = domEventPoint(oe);
+      const rect = this.map.getContainer().getBoundingClientRect();
+      return this.map.containerPointToLatLng([point.x - rect.left, point.y - rect.top]);
+    };
+
+    const startLongPress = (oe, latlng) => {
       if (oe.button !== undefined && oe.button !== 0) return;
       lpTriggered = false;
-      const touch = oe.touches ? oe.touches[0] : oe;
-      startX = touch.clientX;
-      startY = touch.clientY;
+      const point = domEventPoint(oe);
+      startX = point.x;
+      startY = point.y;
+      startSource = domEventSource(oe);
 
       lpTimer = setTimeout(() => {
         lpTimer = null;
         lpTriggered = true;
         if (navigator.vibrate) navigator.vibrate(40);
-        this._cycleOverlappingLayers(polyline, e.latlng);
+        this._cycleOverlappingLayers(polyline, latlng, { source: startSource });
       }, 500);
-    });
+    };
 
-    polyline.on('mousemove touchmove', (e) => {
+    const moveLongPress = (oe) => {
       if (!lpTimer) return;
-      const oe = e.originalEvent;
-      const touch = oe.touches ? oe.touches[0] : oe;
-      if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > 10) {
+      const point = domEventPoint(oe);
+      const source = domEventSource(oe);
+      const tolerance = ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX[source] ?? ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX.mouse;
+      if (Math.hypot(point.x - startX, point.y - startY) > tolerance) {
         clearTimeout(lpTimer);
         lpTimer = null;
+        this._debugRouteLayerCycle('long-press-cancelled-by-move', { source, tolerance });
       }
-    });
+    };
 
-    polyline.on('mouseup touchend mouseleave touchcancel', () => {
+    const endLongPress = () => {
       if (lpTimer) {
         clearTimeout(lpTimer);
         lpTimer = null;
       }
+    };
+
+    polyline.on('mousedown touchstart', (e) => {
+      if (e.originalEvent?._mappingElfRouteDomHandled) return;
+      startLongPress(e.originalEvent, e.latlng);
     });
+
+    polyline.on('mousemove touchmove', (e) => {
+      if (e.originalEvent?._mappingElfRouteDomHandled) return;
+      moveLongPress(e.originalEvent);
+    });
+
+    polyline.on('mouseup touchend mouseleave touchcancel', endLongPress);
 
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
@@ -1857,14 +2017,46 @@ export class MapManager {
     });
 
     polyline.on('dblclick', (e) => {
+      if (e.originalEvent?._mappingElfRouteDomHandled) return;
       L.DomEvent.stop(e);
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
       }
       // 雙擊保留切換功能
-      this._cycleOverlappingLayers(polyline, e.latlng);
+      this._cycleOverlappingLayers(polyline, e.latlng, { source: 'mouse' });
     });
+
+    const el = polyline.getElement?.();
+    if (!el) return;
+
+    const bindPathEvent = (types, handler, opts = {}) => {
+      types.forEach((type) => el.addEventListener(type, handler, opts));
+    };
+    bindPathEvent(['mousedown', 'touchstart'], (oe) => {
+      oe._mappingElfRouteDomHandled = true;
+      startLongPress(oe, domEventLatLng(oe));
+    }, { passive: true, capture: true });
+    bindPathEvent(['mousemove', 'touchmove'], (oe) => {
+      oe._mappingElfRouteDomHandled = true;
+      moveLongPress(oe);
+    }, { passive: true, capture: true });
+    bindPathEvent(['mouseup', 'touchend', 'mouseleave', 'touchcancel'], (oe) => {
+      oe._mappingElfRouteDomHandled = true;
+      endLongPress();
+    }, { passive: true, capture: true });
+    bindPathEvent(['dblclick'], (oe) => {
+      oe._mappingElfRouteDomHandled = true;
+      oe.preventDefault();
+      oe.stopPropagation();
+      oe.stopImmediatePropagation?.();
+      L.DomEvent.stop(oe);
+      if (this._clickTimeout) {
+        clearTimeout(this._clickTimeout);
+        this._clickTimeout = null;
+      }
+      this._cycleOverlappingLayers(polyline, domEventLatLng(oe), { source: domEventSource(oe) });
+    }, { capture: true });
   }
 
   /**
@@ -1891,32 +2083,46 @@ export class MapManager {
    * trips, multi-turnaround, figure-8, repeated laps, arbitrary self-crossings.
    * Falls back to spatial proximity grouping if leg ids weren't computed.
    */
-  _cycleOverlappingLayers(clickedObject, latlng) {
-    if (!this.gradientPolylines.length) return;
+  _cycleOverlappingLayers(clickedObject, latlng, options = {}) {
+    if (!this.gradientPolylines.length) {
+      this._debugRouteLayerCycle('no-gradient-polylines', options);
+      return false;
+    }
 
     // Refresh leg IDs on all markers to ensure they match current route state
     this._syncAllMarkerLegIds();
 
-    const nearby = this._findOverlappingRouteChunks(latlng, clickedObject);
+    const source = options.source === 'touch' ? 'touch' : 'mouse';
+    const proximityPx = options.proximityPx ?? ROUTE_OVERLAP_PROXIMITY_PX[source] ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
+    const nearby = this._findOverlappingRouteChunks(latlng, clickedObject, { proximityPx });
     const legs = this._uniqueNearbyLegs(nearby);
-    if (legs.length < 2) return;
+    if (nearby.length < 2) {
+      this._debugRouteLayerCycle('nearby-chunks-too-few', { source, proximityPx, nearby: nearby.length, legs });
+    }
+    if (legs.length < 2) {
+      this._debugRouteLayerCycle('nearby-legs-too-few', { source, proximityPx, nearby: nearby.length, legs });
+      return false;
+    }
 
-    const key = this._overlapStackKey(legs, latlng);
-    const clickedLeg = clickedObject?._legId;
+    const key = this._overlapStackKey(legs);
+    const clickedLegs = this._polylineLegIds(clickedObject);
+    const clickedLeg = clickedLegs.find((leg) => legs.includes(leg));
     const previousLeg = this._overlapCycleState.has(key)
       ? this._overlapCycleState.get(key)
-      : (legs.includes(clickedLeg) ? clickedLeg : legs[0]);
+      : (clickedLeg !== undefined ? clickedLeg : (this._frontmostNearbyLeg(nearby, legs) ?? legs[0]));
     const previousIdx = Math.max(0, legs.indexOf(previousLeg));
     const nextLeg = legs[(previousIdx + 1) % legs.length];
     this._overlapCycleState.set(key, nextLeg);
 
     this._bringOverlapLegToFront(legs, nextLeg);
     this._syncOverlapMarkerStack(legs, nextLeg, latlng);
+    this._debugRouteLayerCycle('switched', { source, proximityPx, legs, previousLeg, nextLeg });
+    return true;
   }
 
-  _findOverlappingRouteChunks(latlng, clickedObject = null) {
+  _findOverlappingRouteChunks(latlng, clickedObject = null, options = {}) {
     const clickPx = this.map.latLngToContainerPoint(latlng);
-    const PROX_PX = 10;
+    const proximityPx = options.proximityPx ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
     const near = [];
 
     const segmentDistancePx = (p, a, b) => {
@@ -1949,7 +2155,7 @@ export class MapManager {
 
     this.gradientPolylines.forEach((pl) => {
       const d = minDistanceToPolyline(pl);
-      if (d <= PROX_PX) near.push({ pl, d });
+      if (d <= proximityPx) near.push({ pl, d });
     });
     if (clickedObject?.getLatLngs && !near.some((item) => item.pl === clickedObject)) {
       near.push({ pl: clickedObject, d: 0 });
@@ -1961,8 +2167,7 @@ export class MapManager {
     const seen = new Set();
     const legs = [];
     nearby.forEach(({ pl }) => {
-      const ids = Array.isArray(pl._legIds) && pl._legIds.length ? pl._legIds : [pl._legId];
-      ids.forEach((id) => {
+      this._polylineLegIds(pl).forEach((id) => {
         if (id === undefined || seen.has(id)) return;
         seen.add(id);
         legs.push(id);
@@ -1971,17 +2176,53 @@ export class MapManager {
     return legs.sort((a, b) => a - b);
   }
 
-  _overlapStackKey(legs, latlng) {
-    const lat = Math.round(latlng.lat * 10000);
-    const lng = Math.round(latlng.lng * 10000);
-    return `${legs.join('|')}@${lat},${lng}`;
+  _frontmostNearbyLeg(nearby, legs) {
+    const legSet = new Set(legs);
+    let frontLeg;
+    let frontIndex = -1;
+    nearby.forEach(({ pl }) => {
+      const matchingLegs = this._polylineLegIds(pl).filter((id) => legSet.has(id));
+      if (!matchingLegs.length) return;
+      const el = pl.getElement?.();
+      const idx = el?.parentNode ? Array.prototype.indexOf.call(el.parentNode.children, el) : -1;
+      if (idx > frontIndex) {
+        frontIndex = idx;
+        frontLeg = matchingLegs[0];
+      }
+    });
+    return frontLeg;
+  }
+
+  _polylineLegIds(polyline) {
+    if (!polyline) return [];
+    const ids = [];
+    if (polyline._legId !== undefined) ids.push(polyline._legId);
+    if (Array.isArray(polyline._legIds)) {
+      polyline._legIds.forEach((id) => {
+        if (id !== undefined && !ids.includes(id)) ids.push(id);
+      });
+    }
+    return ids;
+  }
+
+  _debugRouteLayerCycle(reason, details = {}) {
+    try {
+      if (localStorage.getItem(ROUTE_LAYER_DEBUG_KEY) !== '1') return;
+      console.debug('[MappingElf route-layer-cycle]', reason, details);
+    } catch (_) {
+      // Ignore storage access failures; route cycling should never depend on debug logging.
+    }
+  }
+
+  _overlapStackKey(legs) {
+    return legs.join('|');
   }
 
   _bringOverlapLegToFront(legs, topLeg) {
     const ordered = legs.filter((leg) => leg !== topLeg).concat(topLeg);
     ordered.forEach((leg) => {
       this.gradientPolylines
-        .filter((pl) => pl._legId === leg || pl._legIds?.includes(leg))
+        .filter((pl) => this._polylineLegIds(pl).includes(leg))
         .forEach((pl) => pl.bringToFront());
     });
   }
@@ -2236,6 +2477,20 @@ export class MapManager {
     this._resetWaypointMarkerZ();
 
     if (select) this._highlightTopWaypointLayer(idx);
+  }
+
+  _cycleWaypointOverlapLayers(idx, latlng, { select = true } = {}) {
+    if (idx === undefined || idx < 0 || !this._hasReturnWaypointPair(idx)) return false;
+
+    const wasOutboundOnTop = this.waypointLayerSwapped[idx] ?? true;
+    const switchedRoute = this._cycleOverlappingLayers(null, latlng);
+    if (!switchedRoute) {
+      this._toggleWaypointLayer(idx, { select: false });
+    } else if ((this.waypointLayerSwapped[idx] ?? true) === wasOutboundOnTop) {
+      this._toggleWaypointLayer(idx, { select: false });
+    }
+    if (select) this._highlightTopWaypointLayer(idx);
+    return true;
   }
 
   _clearWaypointClickTimeout() {

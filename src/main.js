@@ -147,15 +147,20 @@ class LazyElevationProfile {
   get turnaroundFrac() { return this.instance?.turnaroundFrac ?? null; }
 
   async update(...args) {
-    return (await this.load()).update(...args);
+    const result = await (await this.load()).update(...args);
+    bumpElevationVersion();
+    return result;
   }
 
   async updateWithData(...args) {
-    return (await this.load()).updateWithData(...args);
+    const result = await (await this.load()).updateWithData(...args);
+    bumpElevationVersion();
+    return result;
   }
 
   clear() {
     if (this.instance) this.instance.clear();
+    bumpElevationVersion();
   }
 
   toggleCollapse() {
@@ -394,6 +399,108 @@ let waypointGradColors = [];
 // Empty until the first route is calculated.
 let waypointCumDistM = [];
 
+let routeMetricsCache = null;
+let paceComputationCache = null;
+
+let routeVersion = 0;
+let waypointVersion = 0;
+let paceVersion = 0;
+let elevationVersion = 0;
+
+function bumpRouteVersion() {
+  routeVersion += 1;
+  routeMetricsCache = null;
+}
+
+function bumpWaypointVersion() {
+  waypointVersion += 1;
+  routeMetricsCache = null;
+}
+
+function bumpPaceVersion() {
+  paceVersion += 1;
+  paceComputationCache = null;
+}
+
+function bumpElevationVersion() {
+  elevationVersion += 1;
+  paceComputationCache = null;
+}
+
+function setCurrentRouteData(coords = [], elevations = []) {
+  currentRouteCoords = coords;
+  currentElevations = elevations;
+  bumpRouteVersion();
+}
+
+function computeRouteMetrics(coords, wps) {
+  let totalDistM = 0;
+  const routeDists = coords.length ? [0] : [];
+  if (coords.length > 1) {
+    for (let j = 1; j < coords.length; j++) {
+      totalDistM += haversineDistance(coords[j - 1], coords[j]);
+      routeDists.push(totalDistM);
+    }
+  }
+
+  const wpCumDist = [];
+  const wpRouteIndices = [];
+  if (coords.length > 1) {
+    let searchStart = 0;
+    for (let i = 0; i < wps.length; i++) {
+      let minDist = Infinity;
+      let minIdx = searchStart;
+      for (let j = searchStart; j < coords.length; j++) {
+        const d = haversineDistance(wps[i], coords[j]);
+        if (d < minDist) { minDist = d; minIdx = j; }
+        if (minDist === 0) break;
+      }
+      wpRouteIndices.push(minIdx);
+      wpCumDist.push(routeDists[minIdx] || 0);
+      searchStart = minIdx;
+    }
+  } else {
+    wps.forEach(() => {
+      wpRouteIndices.push(0);
+      wpCumDist.push(0);
+    });
+  }
+
+  return { routeDists, totalDistM, wpCumDist, wpRouteIndices };
+}
+
+function getRouteMetrics(coords = currentRouteCoords, wps = mapManager.waypoints) {
+  const isCurrentState = coords === currentRouteCoords && wps === mapManager.waypoints;
+  if (isCurrentState
+    && routeMetricsCache?.routeVersion === routeVersion
+    && routeMetricsCache?.waypointVersion === waypointVersion) {
+    return routeMetricsCache;
+  }
+
+  const metrics = computeRouteMetrics(coords, wps);
+  if (!isCurrentState) return metrics;
+  routeMetricsCache = { ...metrics, routeVersion, waypointVersion };
+  return routeMetricsCache;
+}
+
+function getPaceComputation(elevs, dists, activity = speedActivity, params = paceParams) {
+  const isCurrentState = elevs === elevationProfile.elevations
+    && dists === elevationProfile.distances
+    && activity === speedActivity
+    && params === paceParams;
+  if (isCurrentState
+    && paceComputationCache?.paceVersion === paceVersion
+    && paceComputationCache?.elevationVersion === elevationVersion) {
+    return paceComputationCache;
+  }
+
+  const times = computeCumulativeTimes(elevs, dists, activity, params);
+  const trip = computeTripStats(elevs, dists, activity, params);
+  if (!isCurrentState) return { times, trip };
+  paceComputationCache = { paceVersion, elevationVersion, times, trip };
+  return paceComputationCache;
+}
+
 
 // =========== Initialize Modules ===========
 const routeEngine = new RouteEngine();
@@ -462,6 +569,7 @@ function _restoreSnapshot(snap) {
     // Nav mode
     roundTripMode = snap.roundTripMode;
     oLoopMode = snap.oLoopMode;
+    bumpRouteVersion();
     localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
     localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
     const modeVal = roundTripMode ? 'roundtrip' : oLoopMode ? 'oloop' : 'single';
@@ -580,6 +688,8 @@ function applySettingsFromStorage() {
     calibrationEnabled: paceCalibration.enabled,
     calibrationFactor: paceCalibration.factor,
   };
+  bumpRouteVersion();
+  bumpPaceVersion();
 
   // Update UI components that depend on these globals
   routeEngine.setMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking');
@@ -837,6 +947,7 @@ function savePaceCalibration() {
   localStorage.setItem(LS_PACE_CALIBRATION_KEY, JSON.stringify(paceCalibration));
   syncCalibrationIntoPaceParams();
   localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+  bumpPaceVersion();
 }
 
 function formatCalibrationTrackSummary(track) {
@@ -1447,8 +1558,7 @@ btnClearRoute.addEventListener('click', () => {
   weatherPoints = [];
   cachedWeatherData = {};
   localStorage.removeItem(LS_WEATHER_CACHE_KEY);
-  currentRouteCoords = [];
-  currentElevations = [];
+  setCurrentRouteData([], []);
   lastWaypoints = [];
   pendingNewWaypointIndex = null;
   waypointCumDistM = [];
@@ -1659,8 +1769,6 @@ async function openMappackImportModal(file) {
 
 document.getElementById('btn-mappack-import-confirm')?.addEventListener('click', async () => {
   if (!_pendingMappack) return;
-  console.log('Mappack import confirm clicked');
-
   const restoreRoute = document.getElementById('mappack-restore-route').checked;
   const restoreTiles = document.getElementById('mappack-restore-tiles').checked;
   const restoreState = document.getElementById('mappack-restore-state').checked;
@@ -1679,7 +1787,6 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
   if (progressFill) progressFill.style.width = '0%';
 
   try {
-    console.log('Applying mappack...', { restoreRoute, restoreTiles, restoreState });
     const { MapPackImporter } = await ensureMapPackModules();
     const applied = await MapPackImporter.apply(parsed, {
       restoreRoute,
@@ -1695,8 +1802,6 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
         if (progressFill) progressFill.style.width = `${pct}%`;
       },
     });
-
-    console.log('Mappack apply result:', applied);
 
     if (applied.layer) {
       mapManager.switchLayer(applied.layer);
@@ -1791,6 +1896,7 @@ routeModeRadios.forEach((radio) => {
   radio.addEventListener('change', (e) => {
     routeEngine.setMode(e.target.value);
     localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
+    bumpRouteVersion();
     if (mapManager.waypoints.length >= 2) {
       onWaypointsChanged(mapManager.waypoints);
     }
@@ -1802,6 +1908,7 @@ routeModeRadios.forEach((radio) => {
 
 async function onWaypointsChanged(waypoints) {
   ensureWaypointIds();
+  bumpWaypointVersion();
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
   historyRecord();
 
@@ -1856,8 +1963,7 @@ async function onWaypointsChanged(waypoints) {
       elevationProfile.clear();
       resetStats();
       hideAlternatives();
-      currentRouteCoords = [];
-      currentElevations = [];
+      setCurrentRouteData([], []);
       allAlternatives = [];
       renderWeatherPanel();
       autoFetchWeather({ force: false });
@@ -1873,8 +1979,7 @@ async function onWaypointsChanged(waypoints) {
       elevationProfile.clear();
       resetStats();
       hideAlternatives();
-      currentRouteCoords = [];
-      currentElevations = [];
+      setCurrentRouteData([], []);
       allAlternatives = [];
       const _wc = document.getElementById('weather-table-container');
       if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
@@ -1965,8 +2070,7 @@ async function selectAlternative(index) {
   selectedAltIndex = index;
   const route = allAlternatives[index];
 
-  currentRouteCoords = route.coords;
-  currentElevations = route.fullElevations || route.elevations;
+  setCurrentRouteData(route.coords, route.fullElevations || route.elevations);
 
   // Update map selection - set triggeredByUI to true to prevent recursion
   mapManager.selectRoute(allAlternatives, index, true);
@@ -2463,11 +2567,12 @@ function updateTimeStat() {
     if (statIntake) statIntake.textContent = '—';
     return;
   }
-  const times = computeCumulativeTimes(elevs, dists, speedActivity, paceParams);
+  const pace = getPaceComputation(elevs, dists);
+  const times = pace.times;
   const totalH = times[times.length - 1] || 0;
   statTime.textContent = formatDuration(totalH, getLanguage());
 
-  const trip = computeTripStats(elevs, dists, speedActivity, paceParams);
+  const trip = pace.trip;
   if (statKcal) statKcal.textContent = `${trip.kcalExpended.toLocaleString()} kcal`;
   if (statIntake) statIntake.textContent = `${trip.kcalSuggested.toLocaleString()} kcal`;
 }
@@ -2748,7 +2853,6 @@ function updateWeatherTimeAdjustButtons() {
     if (!thDate || !thTime) return;
 
     let canMinusDay = !locked;
-    let canMinusHour = !locked;
     const canPlus = !locked;
 
     if (strictLinearMode && !locked && i > 0) {
@@ -2756,7 +2860,6 @@ function updateWeatherTimeAdjustButtons() {
       const curMs = colToMs(thDate);
       const prevMs = prevTh ? colToMs(prevTh) : -Infinity;
       canMinusDay = curMs - 86400000 >= prevMs;
-      canMinusHour = curMs - 3600000 >= prevMs;
     }
 
     const dayMinus = thDate.querySelector('.wt-adj-day-minus');
@@ -2766,9 +2869,10 @@ function updateWeatherTimeAdjustButtons() {
 
     if (dayMinus) dayMinus.disabled = !canMinusDay;
     if (dayPlus) dayPlus.disabled = !canPlus;
-    if (hourMinus) hourMinus.disabled = !canMinusHour;
+    if (hourMinus) hourMinus.disabled = locked;
     if (hourPlus) hourPlus.disabled = !canPlus;
   });
+  refreshWeatherDateDisplays(container);
 }
 
 function syncIntervalTimes() {
@@ -2789,6 +2893,35 @@ function syncIntervalTimesFromWP() {
   enforceTimeOrdering();
   cascadeIntervalTimes(true);
   enforceTimeOrdering(); // re-check: cascade may have exposed new violations
+}
+
+function syncPaceWeatherTimes(anchorIdx = null) {
+  const container = document.getElementById('weather-table-container');
+  let anchorEntry = null;
+  if (container && anchorIdx != null && weatherPoints[anchorIdx]?.isWaypoint) {
+    anchorEntry = {
+      date: container.querySelector(`.wt-th-date[data-idx="${anchorIdx}"] .wt-date-input`)?.value || '',
+      hour: container.querySelector(`.wt-th-time[data-idx="${anchorIdx}"] .wt-time-select`)?.value ?? '8',
+    };
+  }
+
+  cascadeWeatherTimes();
+  if (anchorEntry?.date) {
+    const di = container.querySelector(`.wt-th-date[data-idx="${anchorIdx}"] .wt-date-input`);
+    const hs = container.querySelector(`.wt-th-time[data-idx="${anchorIdx}"] .wt-time-select`);
+    if (di) di.value = anchorEntry.date;
+    if (hs) hs.value = String(anchorEntry.hour);
+  }
+  enforceTimeOrdering();
+  saveWeatherSettings();
+  cascadeWeatherTimes();
+  if (anchorEntry?.date) {
+    const di = container.querySelector(`.wt-th-date[data-idx="${anchorIdx}"] .wt-date-input`);
+    const hs = container.querySelector(`.wt-th-time[data-idx="${anchorIdx}"] .wt-time-select`);
+    if (di) di.value = anchorEntry.date;
+    if (hs) hs.value = String(anchorEntry.hour);
+  }
+  enforceTimeOrdering();
 }
 
 // =========== Export / Import (GPX / KML) ===========
@@ -3113,8 +3246,7 @@ function loadFavorite(fav) {
     weatherPoints = [];
     waypointCumDistM = [];
     waypointGradColors = [];
-    currentRouteCoords = [];
-    currentElevations = [];
+    setCurrentRouteData([], []);
     allAlternatives = [];
     lastWaypoints = [];
     pendingNewWaypointIndex = null;
@@ -3498,8 +3630,7 @@ async function restoreImportedTrack(session) {
   syncTrackModeUI();
 
   mapManager.drawRoute(coords);
-  currentRouteCoords = coords;
-  currentElevations = elevations;
+  setCurrentRouteData(coords, elevations);
 
   if (waypoints.length > 0) {
     skipAutoGeocode = true;
@@ -3579,8 +3710,7 @@ async function _applyImportedResultCore(result) {
 
     // 3. Draw the track polyline directly
     mapManager.drawRoute(coords);
-    currentRouteCoords = coords;
-    currentElevations = elevations;
+    setCurrentRouteData(coords, elevations);
 
     // 4. Load waypoints as decorative markers (no routing triggered)
     if (result.waypoints.length > 0) {
@@ -4466,6 +4596,29 @@ let cachedWeatherData = (() => {
 const weatherCoordKey = (lat, lng, date, hour) =>
   `${lat.toFixed(4)},${lng.toFixed(4)},${date},${hour}`;
 
+function getWeatherIconMeta(icon) {
+  const normalized = String(icon || '').replace(/\ufe0f/g, '');
+  const map = {
+    '☀': 'sun',
+    '🌤': 'partly',
+    '⛅': 'partly',
+    '☁': 'cloud',
+    '🌫': 'fog',
+    '🌦': 'shower',
+    '🌧': 'rain',
+    '🌨': 'snow',
+    '❄': 'snow',
+    '⛈': 'storm',
+    '❓': 'unknown',
+  };
+  return { cls: map[normalized] || 'unknown', symbol: icon || '?' };
+}
+
+function buildWeatherRoundIconHtml(icon, extraClass = '') {
+  const meta = getWeatherIconMeta(icon);
+  return `<span class="weather-round-icon weather-round-icon--${meta.cls}${extraClass ? ` ${extraClass}` : ''}" data-raw-icon="${_escapeHtml(icon || '')}" aria-hidden="true">${_escapeHtml(meta.symbol)}</span>`;
+}
+
 function getCellValue(data, key, pt) {
   const v = (a, b) => a != null ? a : (b != null ? b : '—');
   if (key === 'distance' && pt && Number.isFinite(pt._cum)) return formatDistance(pt._cum);
@@ -4541,7 +4694,7 @@ function updateWeatherTableCell(cell, key, val) {
     const parts = val.split(' ');
     const icon = parts[0];
     const desc = parts.slice(1).join(' ');
-    const html = `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${icon}</span> ${desc}`;
+    const html = `<span class="wt-weather-icon-trigger" title="點擊展開天氣卡">${buildWeatherRoundIconHtml(icon)}</span> ${desc}`;
     if (valueEl) valueEl.innerHTML = html;
     else cell.innerHTML = html;
   } else if (valueEl) {
@@ -4640,14 +4793,12 @@ function shiftAllDates(deltaDays, deltaHours) {
 
   const deltaMs = deltaDays * 86400000 + deltaHours * 3600000;
   const N = weatherPoints.length;
-  console.log(`shiftAllDates deltaDays=${deltaDays} deltaHours=${deltaHours} N=${N}`);
   for (let i = 0; i < N; i++) {
     if (!weatherPoints[i]?.isWaypoint) continue;
     const th = container.querySelector(`.wt-col-head[data-idx="${i}"]`);
     if (th) {
       const currentMs = colToMs(th);
       const newMs = currentMs + deltaMs;
-      console.log(`  Updating col ${i}: currentMs=${currentMs} -> newMs=${newMs}`);
       setColToMs(th, newMs);
     }
   }
@@ -4717,12 +4868,10 @@ function shiftToNow(mode /* 'day' | 'hour' */) {
     const cur = new Date(curDate + 'T00:00:00');
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const deltaDays = Math.round((today - cur) / 86400000);
-    console.log(`shiftToNow day: curDate=${curDate} today=${today.toISOString()} deltaDays=${deltaDays}`);
     if (deltaDays !== 0) shiftAllDates(deltaDays, 0);
   } else {
     const hs = container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`);
     const curHour = parseInt(hs?.value ?? '');
-    console.log(`shiftToNow hour: curHour=${curHour} nowHour=${now.getHours()}`);
     if (Number.isNaN(curHour)) return;
     const deltaHours = now.getHours() - curHour;
     if (deltaHours !== 0) shiftAllDates(0, deltaHours);
@@ -4737,7 +4886,6 @@ function initWeatherControls() {
   document.getElementById('weather-table-container')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
-    console.log('Delegated click caught:', btn.dataset.action);
     switch (btn.dataset.action) {
       case 'toggle-weather-table': toggleWeatherTableCollapsed(); break;
       case 'fetch': fetchAllWeatherData({ force: true }); break;
@@ -5187,33 +5335,10 @@ function buildWeatherPoints() {
   if (wps.length === 0) return [];
 
   // --- Compute cumulative distances for waypoints along the route ---
-  let totalDistM = 0;
-  const routeDists = coords.length ? [0] : [];
-  const wpCumDist = [];
-  if (coords.length > 1) {
-    for (let j = 1; j < coords.length; j++) {
-      totalDistM += haversineDistance(coords[j - 1], coords[j]);
-      routeDists.push(totalDistM);
-    }
-    let searchStart = 0;
-    for (let i = 0; i < wps.length; i++) {
-      let minDist = Infinity, minIdx = searchStart;
-      for (let j = searchStart; j < coords.length; j++) {
-        const d = haversineDistance(wps[i], coords[j]);
-        if (d < minDist) { minDist = d; minIdx = j; }
-        // Only break when we have an exact match (anchored endpoint) to avoid
-        // a false-minimum from a curve that temporarily approaches then veers away.
-        if (minDist === 0) break;
-      }
-      let cum = 0;
-      for (let j = 1; j <= minIdx; j++) cum += haversineDistance(coords[j - 1], coords[j]);
-      wpCumDist.push(cum);
-      searchStart = minIdx;
-    }
-  } else {
-    // No route coords — suppress all distance labels
-    wps.forEach(() => wpCumDist.push(0));
-  }
+  const routeMetrics = getRouteMetrics(coords, wps);
+  const totalDistM = routeMetrics.totalDistM;
+  const routeDists = routeMetrics.routeDists;
+  const wpCumDist = [...routeMetrics.wpCumDist];
   // Expose for sidebar distance display
   waypointCumDistM = [...wpCumDist];
 
@@ -5223,10 +5348,9 @@ function buildWeatherPoints() {
   const sampledElevs = elevationProfile.elevations;
   const sampledDists = elevationProfile.distances;
   let cumTimes = null;
-  let fullTotalDistBuild = 0;
-  for (let j = 1; j < coords.length; j++) fullTotalDistBuild += haversineDistance(coords[j - 1], coords[j]);
+  const fullTotalDistBuild = totalDistM;
   if ((speedIntervalMode || segmentIntervalKm > 0) && sampledPts && sampledPts.length > 1 && sampledElevs.length > 1) {
-    cumTimes = computeCumulativeTimes(sampledElevs, sampledDists, speedActivity, paceParams);
+    cumTimes = getPaceComputation(sampledElevs, sampledDists).times;
   }
 
   /** Get elapsed hours for a given cumDistM (full-route metres). */
@@ -5595,8 +5719,8 @@ function computeWeatherPointPositions() {
   const N = weatherPoints.length;
   if (N === 0) return [];
 
-  const totalDist = (currentRouteCoords.length > 1 && elevationProfile.distances.length > 0)
-    ? elevationProfile.distances.at(-1)
+  const totalDist = currentRouteCoords.length > 1
+    ? getRouteMetrics().totalDistM
     : (weatherPoints.at(-1)?._cum || 1);
 
   if (totalDist === 0) return weatherPoints.map((_, i) => N <= 1 ? 0.5 : i / (N - 1));
@@ -5660,7 +5784,7 @@ function handleWeatherTimeChange(idx, th) {
   // We save settings after the linear shift so the cascade/enforce logic sees the new waypoint times.
   saveWeatherSettings();
   if (speedIntervalMode) {
-    cascadeWeatherTimes();
+    syncPaceWeatherTimes(idx);
   } else {
     syncIntervalTimesFromWP();
   }
@@ -5695,6 +5819,21 @@ function refreshOpenWeatherCards() {
 const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
   `<option value="${h}"${h === sel ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
 ).join('');
+
+function buildDayFirstDateHtml(dateStr) {
+  const [year, month, day] = String(dateStr || '').split('-');
+  if (!year || !month || !day) return '<span class="wt-date-display"><span class="wt-date-day">--</span></span>';
+  return `<span class="wt-date-display" aria-hidden="true"><span class="wt-date-day">${day}</span><span class="wt-date-meta">${month}/${year}</span></span>`;
+}
+
+function refreshWeatherDateDisplays(root = document) {
+  root.querySelectorAll('.wt-date-picker').forEach((wrap) => {
+    const input = wrap.querySelector('.wt-date-input');
+    const display = wrap.querySelector('.wt-date-display');
+    if (!input || !display) return;
+    display.outerHTML = buildDayFirstDateHtml(input.value);
+  });
+}
 
 function renderWeatherPanel() {
   const previousWeatherPoints = weatherPoints;
@@ -5904,7 +6043,8 @@ function renderWeatherPanel() {
     html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
       <div class="wt-adj-wrap">
         <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
-        <span class="wt-picker-icon wt-date-picker" title="選擇日期">
+        <span class="wt-picker-icon wt-date-picker has-day-first" title="選擇日期">
+          ${buildDayFirstDateHtml(date)}
           <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
         </span>
         <button class="wt-adj-btn wt-adj-day-plus" title="後一天"${canPlus ? '' : ' disabled'}>+</button>
@@ -6020,7 +6160,6 @@ function renderWeatherPanel() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation(); // prevent header/column highlight click from triggering
       const action = btn.dataset.action;
-      console.log('Direct button click:', action);
       switch (action) {
         case 'toggle-weather-table': toggleWeatherTableCollapsed(); break;
         case 'fetch': fetchAllWeatherData({ force: true }); break;
@@ -6052,6 +6191,7 @@ function renderWeatherPanel() {
     el.addEventListener('change', (e) => {
       const th = e.target.closest('th');
       if (th) handleWeatherTimeChange(parseInt(th.dataset.idx), th);
+      refreshWeatherDateDisplays(container);
     })
   );
 
@@ -6084,7 +6224,7 @@ function renderWeatherPanel() {
   });
 
   // Initial cascade + enforce on first render
-  if (speedIntervalMode) cascadeWeatherTimes();
+  if (speedIntervalMode) syncPaceWeatherTimes();
   else syncIntervalTimes();
   updateDateConstraints();
   updateWeatherTimeAdjustButtons();
@@ -6528,7 +6668,6 @@ function autoFetchWeather(options = {}) {
     // and if the "Fetch" button is not currently disabled (meaning a fetch is in progress)
     const fetchBtn = document.querySelector('[data-action="fetch"]');
     if (!isProcessing && fetchBtn && !fetchBtn.disabled) {
-      console.log('Triggering auto weather fetch...', options);
       fetchAllWeatherData(options);
     }
   }, 1000); // 1s delay to let everything settle
@@ -6536,7 +6675,6 @@ function autoFetchWeather(options = {}) {
 
 async function fetchAllWeatherData(options = {}) {
   const { force = false, onlyWaypointIndex = null, onlyColIndex = null } = options;
-  console.log('fetchAllWeatherData triggered', { force, onlyWaypointIndex, onlyColIndex });
   if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
 
   const container = document.getElementById('weather-table-container');
@@ -6825,6 +6963,38 @@ function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '
   return html;
 }
 
+function buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour) {
+  const tableDateInput = document.querySelector(`#weather-table-container .wt-th-date[data-idx="${colIdx}"] .wt-date-input`);
+  const tableTimeSelect = document.querySelector(`#weather-table-container .wt-th-time[data-idx="${colIdx}"] .wt-time-select`);
+  const tableDateHead = tableDateInput?.closest('th');
+  const tableTimeHead = tableTimeSelect?.closest('th');
+  const locked = (tableDateInput?.disabled || tableTimeSelect?.disabled) ?? !pt?.isWaypoint;
+  const disabledAttr = locked ? ' disabled' : '';
+  const minValue = tableDateInput?.min || '';
+  const minAttr = minValue ? ` min="${minValue}"` : '';
+  const dayMinusDisabled = locked || !!tableDateHead?.querySelector('.wt-adj-day-minus')?.disabled;
+  const dayPlusDisabled = locked || !!tableDateHead?.querySelector('.wt-adj-day-plus')?.disabled;
+  const hourMinusDisabled = locked || !!tableTimeHead?.querySelector('.wt-adj-hour-minus')?.disabled;
+  const hourPlusDisabled = locked || !!tableTimeHead?.querySelector('.wt-adj-hour-plus')?.disabled;
+
+  return `<div class="wc-info-grid wc-time-grid">
+    <div class="wc-info-item wc-time-item">
+      <span class="wc-time-edit-wrap">
+        <button class="wc-time-adj-btn wc-adj-date-minus" title="減少 1 天" aria-label="減少 1 天"${dayMinusDisabled ? ' disabled' : ''}>-</button>
+        <input type="date" class="wc-date-input" value="${dateStr}"${disabledAttr}${minAttr}>
+        <button class="wc-time-adj-btn wc-adj-date-plus" title="增加 1 天" aria-label="增加 1 天"${dayPlusDisabled ? ' disabled' : ''}>+</button>
+      </span>
+    </div>
+    <div class="wc-info-item wc-time-item">
+      <span class="wc-time-edit-wrap">
+        <button class="wc-time-adj-btn wc-adj-hour-minus" title="減少 1 小時" aria-label="減少 1 小時"${hourMinusDisabled ? ' disabled' : ''}>-</button>
+        <select class="wc-time-select"${disabledAttr}>${timeOpts(hour)}</select>
+        <button class="wc-time-adj-btn wc-adj-hour-plus" title="增加 1 小時" aria-label="增加 1 小時"${hourPlusDisabled ? ' disabled' : ''}>+</button>
+      </span>
+    </div>
+  </div>`;
+}
+
 /** Render a specific weather card. */
 function _renderWeatherCard(colIdx) {
   const state = _wcStates.get(colIdx);
@@ -6876,7 +7046,7 @@ function _renderWeatherCard(colIdx) {
   // Header
   const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title" title="${pt.label || cardLabel}">${wIcon} ${cardLabel}</span>`;
+  html += `<span class="wc-title" title="${pt.label || cardLabel}">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${cardLabel}</span>`;
   if (isFull) {
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
@@ -6906,9 +7076,10 @@ function _renderWeatherCard(colIdx) {
     html += `</div>`;
   } else {
     const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
-    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
+    html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
     html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
     html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer));
     html += buildWeatherCardSectionHtml(WEATHER_CARD_BOTTOM_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-bottom-facts');
@@ -6990,14 +7161,14 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   let html = `<div class="weather-card full cursor-weather-card" data-cursor-card="1" style="${cardStyle}">`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title">${wIcon} ${title}</span>`;
+  html += `<span class="wc-title">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${title}</span>`;
   html += `<button class="wc-btn q-close" title="關閉">`;
   html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
   html += `</div>`;
 
   html += `<div class="wc-body">`;
   const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(lat, lng, dateStr, hour, 'temp'), 14);
-  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${wIcon}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
 
   if (status === 'ok') {
     html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-top-stats');
@@ -7114,6 +7285,17 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
       }
     });
   });
+
+  const bindCardTimeAdjust = (selector, deltaMs) => {
+    root.querySelector(selector)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      shiftWaypointTime(colIdx, deltaMs);
+    });
+  };
+  bindCardTimeAdjust('.wc-adj-date-minus', -86400000);
+  bindCardTimeAdjust('.wc-adj-date-plus', 86400000);
+  bindCardTimeAdjust('.wc-adj-hour-minus', -3600000);
+  bindCardTimeAdjust('.wc-adj-hour-plus', 3600000);
 
   // Touch gestures: swipe detection
   let _touchStartX = 0, _touchStartY = 0;
@@ -7244,6 +7426,35 @@ function highlightWeatherColumn(colIdx) {
   });
 }
 
+function centerWeatherColumn(colIdx, behavior = 'smooth') {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+
+  const scroller = container.closest('.bp-weather-scroll') || container.parentElement;
+  if (!scroller) return;
+
+  const th = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"]`)
+    || container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`)
+    || container.querySelector(`[data-col="${colIdx}"]`);
+  if (!th) return;
+
+  const scrollerRect = scroller.getBoundingClientRect();
+  const thRect = th.getBoundingClientRect();
+  const currentLeft = scroller.scrollLeft || 0;
+  const targetLeft = currentLeft
+    + (thRect.left - scrollerRect.left)
+    - (scroller.clientWidth / 2)
+    + (thRect.width / 2);
+  const maxLeft = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+  const left = Math.max(0, Math.min(maxLeft, targetLeft));
+
+  if (typeof scroller.scrollTo === 'function') {
+    scroller.scrollTo({ left, behavior });
+  } else {
+    scroller.scrollLeft = left;
+  }
+}
+
 /**
  * Compute the safe viewport area inside the map container, excluding the
  * regions occluded by the side-panel (right) and the bottom-panel (bottom).
@@ -7363,14 +7574,13 @@ function highlightPoint(colIdx, toggle = false) {
 
   // 1. Weather table — highlight exactly the clicked column
   highlightWeatherColumn(colIdx);
+  centerWeatherColumn(colIdx);
 
   // 2. Elevation chart — crosshair at this column's route position
   const sampledPts = elevationProfile.points;
   const sampledDists = elevationProfile.distances;
   if (sampledPts && sampledPts.length > 1 && currentRouteCoords.length > 1) {
-    let fullDist = 0;
-    for (let j = 1; j < currentRouteCoords.length; j++)
-      fullDist += haversineDistance(currentRouteCoords[j - 1], currentRouteCoords[j]);
+    const fullDist = getRouteMetrics().totalDistM;
     if (fullDist > 0) {
       const frac = Math.max(0, Math.min(1, (pt._cum || 0) / fullDist));
       const idx = Math.round(frac * (sampledPts.length - 1));
@@ -7454,11 +7664,7 @@ function updateElevationMarkers() {
   const sampledPts = elevationProfile.points;
   const sampledDists = elevationProfile.distances;
 
-  // Compute total distance along full route coords for fraction mapping
-  let fullTotalDist = 0;
-  for (let j = 1; j < currentRouteCoords.length; j++) {
-    fullTotalDist += haversineDistance(currentRouteCoords[j - 1], currentRouteCoords[j]);
-  }
+  const fullTotalDist = getRouteMetrics().totalDistM;
 
   const markers = [];
   weatherPoints.forEach((pt, colIdx) => {
@@ -7565,6 +7771,7 @@ async function init() {
         if (!radio.checked) return;
         roundTripMode = radio.value === 'roundtrip';
         oLoopMode = radio.value === 'oloop';
+        bumpRouteVersion();
         localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
         localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
         if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
@@ -7629,6 +7836,7 @@ async function init() {
             flatEl.value = newDisplay;
             paceParams = { ...paceParams, flatPaceKmH: newKmh };
             localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+            bumpPaceVersion();
           }
         }
         prevActivity = newActivity;
@@ -7645,6 +7853,7 @@ async function init() {
       } else {
         segmentIntervalKm = 0;
       }
+      bumpPaceVersion();
 
       if (segmentInputEl) segmentInputEl.disabled = mode !== 'distance';
 
@@ -7724,6 +7933,7 @@ async function init() {
     };
     syncCalibrationIntoPaceParams();
     localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+    bumpPaceVersion();
     updateFlatPlaceholder();
     applyFatigueToggle();
     updateTimeStat();
@@ -7767,6 +7977,7 @@ async function init() {
     perSegmentEl.addEventListener('change', () => {
       perSegmentMode = perSegmentEl.checked;
       localStorage.setItem(LS_PER_SEGMENT_KEY, perSegmentMode ? '1' : '0');
+      bumpPaceVersion();
       renderWeatherPanel();
     });
   }
@@ -7779,7 +7990,7 @@ async function init() {
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
       if (strictLinearMode) {
-        if (speedIntervalMode) cascadeWeatherTimes();
+        if (speedIntervalMode) syncPaceWeatherTimes();
         else syncIntervalTimes();
       }
       renderWeatherPanel();

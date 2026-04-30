@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:smoke": "playwright test",
-    "test:chunks": "node test/chunk-output.mjs"
+    "test:chunks": "node test/chunk-output.mjs",
+    "test:numeric": "node test/numeric-regression.mjs"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
