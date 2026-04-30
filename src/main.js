@@ -7385,6 +7385,35 @@ function highlightWeatherColumn(colIdx) {
   });
 }
 
+function centerWeatherColumn(colIdx, behavior = 'smooth') {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+
+  const scroller = container.closest('.bp-weather-scroll') || container.parentElement;
+  if (!scroller) return;
+
+  const th = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"]`)
+    || container.querySelector(`.wt-col-head[data-idx="${colIdx}"]`)
+    || container.querySelector(`[data-col="${colIdx}"]`);
+  if (!th) return;
+
+  const scrollerRect = scroller.getBoundingClientRect();
+  const thRect = th.getBoundingClientRect();
+  const currentLeft = scroller.scrollLeft || 0;
+  const targetLeft = currentLeft
+    + (thRect.left - scrollerRect.left)
+    - (scroller.clientWidth / 2)
+    + (thRect.width / 2);
+  const maxLeft = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+  const left = Math.max(0, Math.min(maxLeft, targetLeft));
+
+  if (typeof scroller.scrollTo === 'function') {
+    scroller.scrollTo({ left, behavior });
+  } else {
+    scroller.scrollLeft = left;
+  }
+}
+
 /**
  * Compute the safe viewport area inside the map container, excluding the
  * regions occluded by the side-panel (right) and the bottom-panel (bottom).
@@ -7504,6 +7533,7 @@ function highlightPoint(colIdx, toggle = false) {
 
   // 1. Weather table — highlight exactly the clicked column
   highlightWeatherColumn(colIdx);
+  centerWeatherColumn(colIdx);
 
   // 2. Elevation chart — crosshair at this column's route position
   const sampledPts = elevationProfile.points;
