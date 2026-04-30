@@ -40,6 +40,15 @@ const ROUTE_SELECTED_OPACITY = 0.9;
 // Max gradient chunks for the selected route polyline
 const GRADIENT_CHUNKS = 80;
 const STACKED_WAYPOINT_TOLERANCE_M = 30;
+const ROUTE_OVERLAP_PROXIMITY_PX = {
+  mouse: 18,
+  touch: 28,
+};
+const ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX = {
+  mouse: 10,
+  touch: 18,
+};
+const ROUTE_LAYER_DEBUG_KEY = 'mappingElfDebugRouteLayerCycle';
 
 export class MapManager {
   constructor(containerId, onWaypointChange) {
@@ -1897,11 +1906,16 @@ export class MapManager {
     let lpTimer = null;
     let lpTriggered = false;
     let startX = 0, startY = 0;
+    let startSource = 'mouse';
 
     const domEventPoint = (oe) => {
       const touch = oe.touches ? oe.touches[0] : (oe.changedTouches ? oe.changedTouches[0] : oe);
       return touch ? { x: touch.clientX, y: touch.clientY } : { x: 0, y: 0 };
     };
+
+    const domEventSource = (oe) => (
+      oe?.type?.startsWith('touch') || oe?.touches || oe?.changedTouches ? 'touch' : 'mouse'
+    );
 
     const domEventLatLng = (oe) => {
       const point = domEventPoint(oe);
@@ -1915,21 +1929,25 @@ export class MapManager {
       const point = domEventPoint(oe);
       startX = point.x;
       startY = point.y;
+      startSource = domEventSource(oe);
 
       lpTimer = setTimeout(() => {
         lpTimer = null;
         lpTriggered = true;
         if (navigator.vibrate) navigator.vibrate(40);
-        this._cycleOverlappingLayers(polyline, latlng);
+        this._cycleOverlappingLayers(polyline, latlng, { source: startSource });
       }, 500);
     };
 
     const moveLongPress = (oe) => {
       if (!lpTimer) return;
       const point = domEventPoint(oe);
-      if (Math.hypot(point.x - startX, point.y - startY) > 10) {
+      const source = domEventSource(oe);
+      const tolerance = ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX[source] ?? ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX.mouse;
+      if (Math.hypot(point.x - startX, point.y - startY) > tolerance) {
         clearTimeout(lpTimer);
         lpTimer = null;
+        this._debugRouteLayerCycle('long-press-cancelled-by-move', { source, tolerance });
       }
     };
 
@@ -1981,7 +1999,7 @@ export class MapManager {
         this._clickTimeout = null;
       }
       // 雙擊保留切換功能
-      this._cycleOverlappingLayers(polyline, e.latlng);
+      this._cycleOverlappingLayers(polyline, e.latlng, { source: 'mouse' });
     });
 
     const el = polyline.getElement?.();
@@ -2012,7 +2030,7 @@ export class MapManager {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
       }
-      this._cycleOverlappingLayers(polyline, domEventLatLng(oe));
+      this._cycleOverlappingLayers(polyline, domEventLatLng(oe), { source: domEventSource(oe) });
     }, { capture: true });
   }
 
@@ -2040,33 +2058,46 @@ export class MapManager {
    * trips, multi-turnaround, figure-8, repeated laps, arbitrary self-crossings.
    * Falls back to spatial proximity grouping if leg ids weren't computed.
    */
-  _cycleOverlappingLayers(clickedObject, latlng) {
-    if (!this.gradientPolylines.length) return false;
+  _cycleOverlappingLayers(clickedObject, latlng, options = {}) {
+    if (!this.gradientPolylines.length) {
+      this._debugRouteLayerCycle('no-gradient-polylines', options);
+      return false;
+    }
 
     // Refresh leg IDs on all markers to ensure they match current route state
     this._syncAllMarkerLegIds();
 
-    const nearby = this._findOverlappingRouteChunks(latlng, clickedObject);
+    const source = options.source === 'touch' ? 'touch' : 'mouse';
+    const proximityPx = options.proximityPx ?? ROUTE_OVERLAP_PROXIMITY_PX[source] ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
+    const nearby = this._findOverlappingRouteChunks(latlng, clickedObject, { proximityPx });
     const legs = this._uniqueNearbyLegs(nearby);
-    if (legs.length < 2) return false;
+    if (nearby.length < 2) {
+      this._debugRouteLayerCycle('nearby-chunks-too-few', { source, proximityPx, nearby: nearby.length, legs });
+    }
+    if (legs.length < 2) {
+      this._debugRouteLayerCycle('nearby-legs-too-few', { source, proximityPx, nearby: nearby.length, legs });
+      return false;
+    }
 
-    const key = this._overlapStackKey(legs, latlng);
-    const clickedLeg = clickedObject?._legId;
+    const key = this._overlapStackKey(legs);
+    const clickedLegs = this._polylineLegIds(clickedObject);
+    const clickedLeg = clickedLegs.find((leg) => legs.includes(leg));
     const previousLeg = this._overlapCycleState.has(key)
       ? this._overlapCycleState.get(key)
-      : (legs.includes(clickedLeg) ? clickedLeg : (this._frontmostNearbyLeg(nearby, legs) ?? legs[0]));
+      : (clickedLeg !== undefined ? clickedLeg : (this._frontmostNearbyLeg(nearby, legs) ?? legs[0]));
     const previousIdx = Math.max(0, legs.indexOf(previousLeg));
     const nextLeg = legs[(previousIdx + 1) % legs.length];
     this._overlapCycleState.set(key, nextLeg);
 
     this._bringOverlapLegToFront(legs, nextLeg);
     this._syncOverlapMarkerStack(legs, nextLeg, latlng);
+    this._debugRouteLayerCycle('switched', { source, proximityPx, legs, previousLeg, nextLeg });
     return true;
   }
 
-  _findOverlappingRouteChunks(latlng, clickedObject = null) {
+  _findOverlappingRouteChunks(latlng, clickedObject = null, options = {}) {
     const clickPx = this.map.latLngToContainerPoint(latlng);
-    const PROX_PX = 18;
+    const proximityPx = options.proximityPx ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
     const near = [];
 
     const segmentDistancePx = (p, a, b) => {
@@ -2099,7 +2130,7 @@ export class MapManager {
 
     this.gradientPolylines.forEach((pl) => {
       const d = minDistanceToPolyline(pl);
-      if (d <= PROX_PX) near.push({ pl, d });
+      if (d <= proximityPx) near.push({ pl, d });
     });
     if (clickedObject?.getLatLngs && !near.some((item) => item.pl === clickedObject)) {
       near.push({ pl: clickedObject, d: 0 });
@@ -2111,8 +2142,7 @@ export class MapManager {
     const seen = new Set();
     const legs = [];
     nearby.forEach(({ pl }) => {
-      const ids = [pl._legId];
-      ids.forEach((id) => {
+      this._polylineLegIds(pl).forEach((id) => {
         if (id === undefined || seen.has(id)) return;
         seen.add(id);
         legs.push(id);
@@ -2126,28 +2156,48 @@ export class MapManager {
     let frontLeg;
     let frontIndex = -1;
     nearby.forEach(({ pl }) => {
-      if (!legSet.has(pl._legId)) return;
+      const matchingLegs = this._polylineLegIds(pl).filter((id) => legSet.has(id));
+      if (!matchingLegs.length) return;
       const el = pl.getElement?.();
       const idx = el?.parentNode ? Array.prototype.indexOf.call(el.parentNode.children, el) : -1;
       if (idx > frontIndex) {
         frontIndex = idx;
-        frontLeg = pl._legId;
+        frontLeg = matchingLegs[0];
       }
     });
     return frontLeg;
   }
 
-  _overlapStackKey(legs, latlng) {
-    const lat = Math.round(latlng.lat * 10000);
-    const lng = Math.round(latlng.lng * 10000);
-    return `${legs.join('|')}@${lat},${lng}`;
+  _polylineLegIds(polyline) {
+    if (!polyline) return [];
+    const ids = [];
+    if (polyline._legId !== undefined) ids.push(polyline._legId);
+    if (Array.isArray(polyline._legIds)) {
+      polyline._legIds.forEach((id) => {
+        if (id !== undefined && !ids.includes(id)) ids.push(id);
+      });
+    }
+    return ids;
+  }
+
+  _debugRouteLayerCycle(reason, details = {}) {
+    try {
+      if (localStorage.getItem(ROUTE_LAYER_DEBUG_KEY) !== '1') return;
+      console.debug('[MappingElf route-layer-cycle]', reason, details);
+    } catch (_) {
+      // Ignore storage access failures; route cycling should never depend on debug logging.
+    }
+  }
+
+  _overlapStackKey(legs) {
+    return legs.join('|');
   }
 
   _bringOverlapLegToFront(legs, topLeg) {
     const ordered = legs.filter((leg) => leg !== topLeg).concat(topLeg);
     ordered.forEach((leg) => {
       this.gradientPolylines
-        .filter((pl) => pl._legId === leg)
+        .filter((pl) => this._polylineLegIds(pl).includes(leg))
         .forEach((pl) => pl.bringToFront());
     });
   }
