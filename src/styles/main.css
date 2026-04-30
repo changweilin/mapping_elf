@@ -3770,6 +3770,34 @@ body.is-resizing {
   box-sizing: border-box;
 }
 
+.wt-date-input,
+.wc-date-input {
+  text-align: right;
+  padding-right: 2px;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 100%);
+}
+
+.wt-date-input::-webkit-calendar-picker-indicator,
+.wc-date-input::-webkit-calendar-picker-indicator {
+  display: none;
+  width: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.wt-date-input::-webkit-datetime-edit,
+.wc-date-input::-webkit-datetime-edit {
+  padding: 0;
+}
+
+.wt-date-input:focus,
+.wc-date-input:focus {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .wt-picker-icon {
   position: relative;
   flex: 1;
