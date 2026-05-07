@@ -5201,6 +5201,17 @@ html.light-theme .wc-time-select {
   color: #0077b5 !important;
 }
 
+.demo-link img {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.demo-link:hover {
+  color: #14b8a6 !important;
+}
+
 html.light-theme .github-link {
   color: #24292f;
 }
