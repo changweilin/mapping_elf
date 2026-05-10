@@ -500,7 +500,31 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 /* Theme-aware map tile contrast. Filters mirror the shared map layer
    reference while keeping the app's existing topo layer key. */
 .leaflet-layer.map-tiles .leaflet-tile {
-  transition: filter var(--transition-normal), opacity var(--transition-fast);
+  transition: opacity var(--transition-fast);
+  will-change: transform, opacity;
+}
+
+.map-container.is-map-zooming .leaflet-layer.map-tiles .leaflet-tile {
+  filter: none !important;
+  transition: none !important;
+}
+
+.map-container.is-map-zooming .marker-external-label,
+.map-container.is-map-zooming .wp-weather-badge {
+  visibility: hidden;
+}
+
+.map-container.is-map-zooming .custom-waypoint-icon,
+.map-container.is-map-zooming .intermediate-point-icon,
+.map-container.is-map-zooming .wp-icon-inner,
+.map-container.is-map-zooming .intermediate-point-inner {
+  transition: none !important;
+  animation: none !important;
+  box-shadow: none !important;
+}
+
+.leaflet-overlay-pane path.route-hit-line {
+  pointer-events: stroke;
 }
 
 .leaflet-layer.map-tiles-streets-dark .leaflet-tile {

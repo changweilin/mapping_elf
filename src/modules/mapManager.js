@@ -36,6 +36,11 @@ const TILE_LAYERS = {
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
 const MAP_TILE_THEMES = new Set(['dark', 'light']);
+const TILE_LAYER_PERFORMANCE_OPTIONS = {
+  updateWhenZooming: false,
+  updateInterval: 180,
+  keepBuffer: 3,
+};
 
 function normalizeMapTileTheme(themeName) {
   return MAP_TILE_THEMES.has(themeName) ? themeName : 'dark';
@@ -94,6 +99,7 @@ const ROUTE_SELECTED_OPACITY = 0.9;
 
 // Max gradient chunks for the selected route polyline
 const GRADIENT_CHUNKS = 80;
+const ROUTE_HIT_WEIGHT = 22;
 const STACKED_WAYPOINT_TOLERANCE_M = 30;
 const ROUTE_OVERLAP_PROXIMITY_PX = {
   mouse: 18,
@@ -124,6 +130,7 @@ export class MapManager {
     this.waypointMetadata = []; // Arbitrary metadata (ele, time, fileOrder) per waypoint index
     this.routePolylines = []; // Solid polylines for alternative routes
     this.gradientPolylines = []; // Gradient chunks for selected route
+    this.routeHitPolyline = null; // Transparent selected-route interaction target
     this._overlapCycleState = new Map(); // Spatial leg-set key -> visible leg index
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
@@ -148,6 +155,7 @@ export class MapManager {
     this._cursorWeatherPopup = null; // Ad-hoc weather card anchored at the cursor (independent of weatherPoints)
     this.onMapCursorAction = null; // callback(action, lat, lng)
     this.onGpsFix = null; // callback(lat, lng)
+    this._mapZoomingTimer = null;
 
     // Selection/Highlight state tracking
     this.highlightedWpIndex = -1;
@@ -157,16 +165,29 @@ export class MapManager {
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       zoomControl: true,
+      wheelDebounceTime: 24,
     });
 
     this.tileLayers = {};
     for (const [name, config] of Object.entries(TILE_LAYERS)) {
       this.tileLayers[name] = L.tileLayer(config.url, {
         ...config.options,
+        ...TILE_LAYER_PERFORMANCE_OPTIONS,
         className: tileLayerClassName(name, config, this.currentTileTheme),
       });
     }
     this.tileLayers.topo.addTo(this.map);
+
+    this.map.on('zoomstart', () => {
+      this._setMapZooming(true);
+    });
+    this.map.on('zoomend', () => {
+      if (this._mapZoomingTimer) clearTimeout(this._mapZoomingTimer);
+      this._mapZoomingTimer = setTimeout(() => {
+        this._mapZoomingTimer = null;
+        this._setMapZooming(false);
+      }, 120);
+    });
 
     this.map.on('click', (e) => {
       if (this.isFrozen) {
@@ -218,6 +239,12 @@ export class MapManager {
     this.map.on('contextmenu', () => {
       this._blockMapClick();
     });
+  }
+
+  _setMapZooming(isZooming) {
+    const el = this.map?.getContainer?.();
+    if (!el) return;
+    el.classList.toggle('is-map-zooming', isZooming);
   }
 
   _blockMapClick() {
@@ -1350,6 +1377,7 @@ export class MapManager {
     this._currentRouteLegIds = legIds;
     this._currentRouteCum = dists;
     this._syncAllMarkerLegIds();
+    this._drawSelectedRouteHit(routeCoords);
 
     // Find split distance closest to turnaround waypoint
     let splitD = -1;
@@ -1400,6 +1428,30 @@ export class MapManager {
     this._bringOutboundRouteSegmentsToFront();
   }
 
+  _drawSelectedRouteHit(routeCoords) {
+    if (this.routeHitPolyline) {
+      this.map.removeLayer(this.routeHitPolyline);
+      this.routeHitPolyline = null;
+    }
+
+    const pl = L.polyline(routeCoords, {
+      color: '#000',
+      weight: ROUTE_HIT_WEIGHT,
+      opacity: 0.01,
+      smoothFactor: 1,
+      lineCap: 'round',
+      lineJoin: 'round',
+      interactive: true,
+      bubblingMouseEvents: false,
+      className: 'route-hit-line',
+    }).addTo(this.map);
+
+    pl._isRouteHit = true;
+    this._bindRouteHoverEvents(pl);
+    this._bindGradientRouteEvents(pl);
+    this.routeHitPolyline = pl;
+  }
+
   _addGradientRouteChunk({ routeCoords, dists, legIds, startI, endI, totalD, splitD, splitIdx, isRoundTrip }) {
     const d = dists[startI];
     let color;
@@ -1427,6 +1479,8 @@ export class MapManager {
       opacity: ROUTE_SELECTED_OPACITY,
       lineCap: 'round',
       lineJoin: 'round',
+      interactive: false,
+      className: 'route-gradient-line',
     }).addTo(this.map);
 
     const primaryLegId = legIds[startI] ?? 0;
@@ -1440,8 +1494,6 @@ export class MapManager {
     pl._routeEndI = endI;
     pl._routeDrawOrder = this.gradientPolylines.length;
 
-    this._bindRouteHoverEvents(pl);
-    this._bindGradientRouteEvents(pl);
     this.gradientPolylines.push(pl);
   }
 
@@ -1518,6 +1570,10 @@ export class MapManager {
   }
 
   clearGradientRoute() {
+    if (this.routeHitPolyline) {
+      this.map.removeLayer(this.routeHitPolyline);
+      this.routeHitPolyline = null;
+    }
     this.gradientPolylines.forEach((pl) => this.map.removeLayer(pl));
     this.gradientPolylines = [];
     this._overlapCycleState.clear();
