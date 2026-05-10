@@ -10,11 +10,13 @@
 import { LS_STATE_KEYS, MELMAP_VERSION, SUBDOMAINS } from './mapPackExporter.js';
 import JSZip from 'jszip';
 
+const RETINA_SUFFIXES = ['', '@2x'];
+
 // Keep in sync with src/modules/mapManager.js TILE_LAYERS — used to rebuild
 // cache keys so the Service Worker finds tiles on the next render.
 const TILE_URL_TEMPLATES = {
-  streets: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  topo: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+  streets: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+  topo: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
   satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 };
 
@@ -144,7 +146,13 @@ export class MapPackImporter {
       .replace('{z}', z)
       .replace('{x}', x)
       .replace('{y}', y);
-    if (!base.includes('{s}')) return [base];
-    return SUBDOMAINS.map((s) => base.replace('{s}', s));
+    const retinaBases = base.includes('{r}')
+      ? RETINA_SUFFIXES.map((suffix) => base.replace('{r}', suffix))
+      : [base];
+    return retinaBases.flatMap((retinaBase) => (
+      retinaBase.includes('{s}')
+        ? SUBDOMAINS.map((s) => retinaBase.replace('{s}', s))
+        : [retinaBase]
+    ));
   }
 }

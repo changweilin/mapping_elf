@@ -7,21 +7,25 @@ import { interpolateRouteColor, interpolateReturnColor, cumulativeDistances } fr
 
 const TILE_LAYERS = {
   streets: {
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    cssClass: 'map-tiles-streets',
     options: {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      attribution: '&copy; OpenStreetMap &copy; CARTO',
       maxZoom: 19,
+      subdomains: ['a', 'b', 'c'],
     },
   },
   topo: {
-    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    cssClass: 'map-tiles-topo map-tiles-terrain',
     options: {
-      attribution: '&copy; OpenTopoMap',
-      maxZoom: 17,
+      attribution: 'Tiles &copy; Esri',
+      maxZoom: 19,
     },
   },
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    cssClass: 'map-tiles-satellite',
     options: {
       attribution: '&copy; Esri',
       maxZoom: 19,
@@ -31,6 +35,14 @@ const TILE_LAYERS = {
 
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
+
+function tileLayerClassName(name, config) {
+  return [...new Set(['map-tiles', `map-tiles-${name}`, config.cssClass]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/\s+/))
+    .filter(Boolean))]
+    .join(' ');
+}
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
@@ -130,7 +142,10 @@ export class MapManager {
 
     this.tileLayers = {};
     for (const [name, config] of Object.entries(TILE_LAYERS)) {
-      this.tileLayers[name] = L.tileLayer(config.url, config.options);
+      this.tileLayers[name] = L.tileLayer(config.url, {
+        ...config.options,
+        className: tileLayerClassName(name, config),
+      });
     }
     this.tileLayers.topo.addTo(this.map);
 

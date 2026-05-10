@@ -80,6 +80,15 @@ export class OfflineManager {
     );
   }
 
+  buildTileUrl(urlTemplate, z, x, y, subdomain = 'a') {
+    return urlTemplate
+      .replace('{z}', z)
+      .replace('{x}', x)
+      .replace('{y}', y)
+      .replace('{s}', subdomain)
+      .replace('{r}', '');
+  }
+
   async downloadArea(bounds, layerInfo, onProgress) {
     if (!('caches' in window)) throw new Error('不支援離線快取');
 
@@ -99,11 +108,7 @@ export class OfflineManager {
 
       for (let x = xMin; x <= xMax; x++) {
         for (let y = yMin; y <= yMax; y++) {
-          const url = layerInfo.urlTemplate
-            .replace('{z}', z)
-            .replace('{x}', x)
-            .replace('{y}', y)
-            .replace('{s}', 'a'); // hardcode sub-domain 'a' for simple fetch
+          const url = this.buildTileUrl(layerInfo.urlTemplate, z, x, y);
           urlsToCache.push(url);
         }
       }
@@ -171,11 +176,7 @@ export class OfflineManager {
 
     const urlsToCache = [...tileSet].map(key => {
       const [z, x, y] = key.split('/').map(Number);
-      return layerInfo.urlTemplate
-        .replace('{z}', z)
-        .replace('{x}', x)
-        .replace('{y}', y)
-        .replace('{s}', 'a');
+      return this.buildTileUrl(layerInfo.urlTemplate, z, x, y);
     });
 
     if (urlsToCache.length > 5000) {

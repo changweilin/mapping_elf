@@ -497,6 +497,38 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   color: var(--accent-primary) !important;
 }
 
+/* Theme-aware map tile contrast. Filters mirror the shared map layer
+   reference while keeping the app's existing topo layer key. */
+.leaflet-layer.map-tiles .leaflet-tile {
+  transition: filter var(--transition-normal), opacity var(--transition-fast);
+}
+
+html:not(.light-theme) .leaflet-layer.map-tiles-streets .leaflet-tile {
+  filter: invert(0.72) hue-rotate(200deg) brightness(1.20) contrast(1.86) saturate(0.88);
+}
+
+html.light-theme .leaflet-layer.map-tiles-streets .leaflet-tile {
+  filter: brightness(0.84) contrast(1.26) saturate(0.86);
+}
+
+html:not(.light-theme) .leaflet-layer.map-tiles-terrain .leaflet-tile,
+html:not(.light-theme) .leaflet-layer.map-tiles-topo .leaflet-tile {
+  filter: invert(0.74) hue-rotate(180deg) brightness(1.18) contrast(1.70) saturate(1.22);
+}
+
+html.light-theme .leaflet-layer.map-tiles-terrain .leaflet-tile,
+html.light-theme .leaflet-layer.map-tiles-topo .leaflet-tile {
+  filter: brightness(0.86) contrast(1.28) saturate(1.04);
+}
+
+html:not(.light-theme) .leaflet-layer.map-tiles-satellite .leaflet-tile {
+  filter: brightness(0.68) contrast(1.24) saturate(0.95);
+}
+
+html.light-theme .leaflet-layer.map-tiles-satellite .leaflet-tile {
+  filter: brightness(0.88) contrast(1.12) saturate(1.02);
+}
+
 /* Custom marker styles */
 .custom-waypoint-icon {
   cursor: pointer;
