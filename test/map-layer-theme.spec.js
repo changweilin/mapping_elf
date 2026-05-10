@@ -6,7 +6,7 @@ const TILE_BODY = Buffer.from(
 );
 
 async function mockTileRequests(page) {
-  await page.route(/basemaps\.cartocdn\.com|server\.arcgisonline\.com/, async (route) => {
+  await page.route(/basemaps\.cartocdn\.com|tile\.opentopomap\.org|server\.arcgisonline\.com/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'image/png',
@@ -28,7 +28,7 @@ async function openAppWithMapLayer(page, { theme = 'dark', layer = 'streets' } =
   await expect(page.locator('.leaflet-container')).toBeVisible();
 }
 
-test('street and terrain tiles use theme-aware contrast filters', async ({ page }) => {
+test('street and outdoor topo tiles use theme-aware contrast filters', async ({ page }) => {
   await openAppWithMapLayer(page, { theme: 'dark', layer: 'streets' });
 
   const streetTile = page.locator('.leaflet-layer.map-tiles-streets .leaflet-tile').first();
@@ -51,14 +51,14 @@ test('street and terrain tiles use theme-aware contrast filters', async ({ page 
   expect(lightStreetFilter).not.toBe(darkStreetFilter);
 
   await page.locator('#btn-layer-topo').click();
-  const terrainTile = page.locator('.leaflet-layer.map-tiles-topo.map-tiles-terrain .leaflet-tile').first();
-  await expect(terrainTile).toBeAttached();
-  await expect(page.locator('.leaflet-layer.map-tiles-topo.map-tiles-terrain'))
-    .toHaveClass(/map-tiles-terrain-light/);
+  const outdoorTile = page.locator('.leaflet-layer.map-tiles-topo.map-tiles-outdoor .leaflet-tile').first();
+  await expect(outdoorTile).toBeAttached();
+  await expect(page.locator('.leaflet-layer.map-tiles-topo.map-tiles-outdoor'))
+    .toHaveClass(/map-tiles-outdoor-light/);
 
-  const lightTerrainFilter = await terrainTile.evaluate((el) => getComputedStyle(el).filter);
-  expect(lightTerrainFilter).not.toBe('none');
-  expect(lightTerrainFilter).not.toBe(lightStreetFilter);
+  const lightOutdoorFilter = await outdoorTile.evaluate((el) => getComputedStyle(el).filter);
+  expect(lightOutdoorFilter).not.toBe('none');
+  expect(lightOutdoorFilter).not.toBe(lightStreetFilter);
 });
 
 test('dark map tiles keep their contrast filter while zooming', async ({ page }) => {

@@ -14,9 +14,9 @@ import JSZip from 'jszip';
 const MELMAP_VERSION = 1;
 const MAX_TILES = 8000;
 
-// CARTO uses {a,b,c} subdomains; Esri has no {s}. When writing tiles into
-// Cache API on import we replicate the response under every subdomain so
-// Leaflet's hash-based subdomain pick always hits.
+// CARTO/OpenTopoMap use {a,b,c} subdomains; Esri has no {s}. When writing
+// tiles into Cache API on import we replicate the response under every
+// subdomain so Leaflet's hash-based subdomain pick always hits.
 const SUBDOMAINS = ['a', 'b', 'c'];
 const RETINA_SUFFIXES = ['', '@2x'];
 

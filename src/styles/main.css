@@ -498,7 +498,7 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 }
 
 /* Theme-aware map tile contrast. Filters mirror the shared map layer
-   reference while keeping the app's existing topo layer key. */
+   reference while keeping the outdoor topo layer readable. */
 .leaflet-layer.map-tiles .leaflet-tile {
   transition: opacity var(--transition-fast);
   will-change: transform, opacity;
@@ -534,14 +534,14 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   filter: brightness(0.84) contrast(1.26) saturate(0.86);
 }
 
-.leaflet-layer.map-tiles-terrain-dark .leaflet-tile,
+.leaflet-layer.map-tiles-outdoor-dark .leaflet-tile,
 .leaflet-layer.map-tiles-topo-dark .leaflet-tile {
-  filter: invert(0.74) hue-rotate(180deg) brightness(1.18) contrast(1.70) saturate(1.22);
+  filter: invert(0.76) hue-rotate(180deg) brightness(1.14) contrast(1.62) saturate(1.12);
 }
 
-.leaflet-layer.map-tiles-terrain-light .leaflet-tile,
+.leaflet-layer.map-tiles-outdoor-light .leaflet-tile,
 .leaflet-layer.map-tiles-topo-light .leaflet-tile {
-  filter: brightness(0.86) contrast(1.28) saturate(1.04);
+  filter: brightness(0.88) contrast(1.24) saturate(1.02);
 }
 
 .leaflet-layer.map-tiles-satellite-dark .leaflet-tile {

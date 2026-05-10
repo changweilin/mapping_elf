@@ -16,11 +16,11 @@ const TILE_LAYERS = {
     },
   },
   topo: {
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-    cssClass: 'map-tiles-topo map-tiles-terrain',
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    cssClass: 'map-tiles-topo map-tiles-outdoor',
     options: {
-      attribution: 'Tiles &copy; Esri',
-      maxZoom: 19,
+      attribution: '&copy; OpenTopoMap',
+      maxZoom: 17,
     },
   },
   satellite: {

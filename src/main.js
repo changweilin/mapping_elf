@@ -696,7 +696,7 @@ function applySettingsFromStorage() {
   const modeRadio = document.querySelector(`input[name="route-mode"][value="${routeEngine.mode}"]`);
   if (modeRadio) modeRadio.checked = true;
 
-  const savedLayer = localStorage.getItem(LS_MAP_LAYER_KEY) || 'topo';
+  const savedLayer = getPersistedMapLayer();
   if (mapManager.currentLayerName !== savedLayer) {
     mapManager.switchLayer(savedLayer);
   }
@@ -918,16 +918,27 @@ const paceCalibrationList = document.getElementById('pace-calibration-list');
 const paceCalibrationFactor = document.getElementById('pace-calibration-factor');
 
 /** Convert km/h → displayed value in current unit */
-const kmhToDisplay = (v) =>
-  paceUnit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2)
-    : paceUnit === 'minkm' ? +(60 / v).toFixed(1)
+function kmhToDisplayForUnit(v, unit = paceUnit) {
+  return unit === 'shanhe' ? +(SHANHE_BASE / v).toFixed(2)
+    : unit === 'minkm' ? +(60 / v).toFixed(1)
       : +v.toFixed(2);
+}
 
 /** Convert displayed value → km/h */
-const displayToKmh = (v) =>
-  paceUnit === 'shanhe' ? SHANHE_BASE / v
-    : paceUnit === 'minkm' ? 60 / v
+function displayToKmhForUnit(v, unit = paceUnit) {
+  return unit === 'shanhe' ? SHANHE_BASE / v
+    : unit === 'minkm' ? 60 / v
       : v;
+}
+
+function formatKmhForUnit(v, unit = paceUnit) {
+  return unit === 'shanhe' ? (SHANHE_BASE / v).toFixed(2)
+    : unit === 'minkm' ? (60 / v).toFixed(1)
+      : v.toFixed(2);
+}
+
+const kmhToDisplay = (v) => kmhToDisplayForUnit(v);
+const displayToKmh = (v) => displayToKmhForUnit(v);
 
 function syncCalibrationIntoPaceParams() {
   paceParams = {
@@ -1844,11 +1855,25 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
 
 const LAYER_CYCLE_ORDER = ['streets', 'topo', 'satellite'];
 const isMobileLayerMode = () => window.matchMedia('(max-width: 768px)').matches;
+
+function normalizeMapLayerName(name) {
+  return LAYER_CYCLE_ORDER.includes(name) ? name : 'topo';
+}
+
+function getPersistedMapLayer() {
+  const raw = localStorage.getItem(LS_MAP_LAYER_KEY) || 'topo';
+  const normalized = normalizeMapLayerName(raw);
+  if (raw !== normalized) {
+    localStorage.setItem(LS_MAP_LAYER_KEY, normalized);
+  }
+  return normalized;
+}
+
 function applyLayerSelection(name) {
-  if (!LAYER_CYCLE_ORDER.includes(name)) return;
-  mapManager.switchLayer(name);
-  localStorage.setItem(LS_MAP_LAYER_KEY, name);
-  layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === name));
+  const layerName = normalizeMapLayerName(name);
+  mapManager.switchLayer(layerName);
+  localStorage.setItem(LS_MAP_LAYER_KEY, layerName);
+  layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === layerName));
 }
 function cycleLayer(step) {
   const cur = mapManager.currentLayerName;
@@ -5933,10 +5958,6 @@ function renderWeatherPanel() {
     : Math.max(panelW - labelW, visibleN * minColW);
   const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
 
-  const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
-    `<option value="${h}"${h === sel ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
-  ).join('');
-
   let html = `<button class="wt-ctrl-collapse" data-action="toggle-weather-table" title="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}" aria-label="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${weatherTableCollapsed ? 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z' : 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z'}" fill="currentColor"/></svg>
   </button>`;
@@ -7742,7 +7763,7 @@ async function init() {
   }
 
   // Restore map tile layer
-  const savedLayer = localStorage.getItem(LS_MAP_LAYER_KEY) || 'topo';
+  const savedLayer = getPersistedMapLayer();
   if (savedLayer) {
     mapManager.switchLayer(savedLayer);
     layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === savedLayer));
@@ -7820,20 +7841,14 @@ async function init() {
         const packEl = document.getElementById('pace-pack-weight');
         const rawDisplay = parseFloat(flatEl?.value);
         if (flatEl && !isNaN(rawDisplay) && flatEl.value !== '') {
-          const currentKmh = paceUnit === 'shanhe' ? SHANHE_BASE / rawDisplay
-            : paceUnit === 'minkm' ? 60 / rawDisplay
-              : rawDisplay;
+          const currentKmh = displayToKmhForUnit(rawDisplay);
           const body = parseFloat(bodyEl?.value) || 70;
           const pack = parseFloat(packEl?.value) || 0;
           const prevDefault = defaultSpeed(prevActivity, body, pack);
           const newDefault = defaultSpeed(newActivity, body, pack);
           if (prevDefault > 0) {
             const newKmh = +(currentKmh / prevDefault * newDefault).toFixed(2);
-            const newDisplay = paceUnit === 'shanhe'
-              ? (SHANHE_BASE / newKmh).toFixed(2)
-              : paceUnit === 'minkm'
-                ? (60 / newKmh).toFixed(1)
-                : newKmh.toFixed(2);
+            const newDisplay = formatKmhForUnit(newKmh);
             flatEl.value = newDisplay;
             paceParams = { ...paceParams, flatPaceKmH: newKmh };
             localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
@@ -7956,14 +7971,8 @@ async function init() {
       // Convert the currently displayed value to the new unit
       const rawDisplay = parseFloat(paceFlatInput?.value);
       if (!isNaN(rawDisplay) && paceFlatInput?.value !== '') {
-        const kmh = prevUnit === 'shanhe' ? SHANHE_BASE / rawDisplay
-          : prevUnit === 'minkm' ? 60 / rawDisplay
-            : rawDisplay;
-        const newDisplay = paceUnit === 'shanhe'
-          ? (SHANHE_BASE / kmh).toFixed(2)
-          : paceUnit === 'minkm'
-            ? (60 / kmh).toFixed(1)
-            : kmh.toFixed(2);
+        const kmh = displayToKmhForUnit(rawDisplay, prevUnit);
+        const newDisplay = formatKmhForUnit(kmh);
         if (paceFlatInput) paceFlatInput.value = newDisplay;
       }
 

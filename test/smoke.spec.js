@@ -11,6 +11,7 @@ function isExpectedExternalResourceNoise(text) {
   return text.includes('Failed to load resource')
     && (
       text.includes('net::ERR_NETWORK_ACCESS_DENIED')
+      || text.includes('net::ERR_NO_BUFFER_SPACE')
       || text.includes('the server responded with a status of 404 (Offline)')
     );
 }
