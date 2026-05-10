@@ -1346,6 +1346,7 @@ function returnToRouteAfterPanelUpdate({ closePanel = false } = {}) {
 
 function updateThemeIcons() {
   const isLight = document.documentElement.classList.contains('light-theme');
+  mapManager?.setTileTheme?.(isLight ? 'light' : 'dark');
   if (isLight) {
     if (iconMoon) iconMoon.style.display = 'none';
     if (iconSun) iconSun.style.display = 'block';

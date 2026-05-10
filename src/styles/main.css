@@ -503,29 +503,29 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   transition: filter var(--transition-normal), opacity var(--transition-fast);
 }
 
-html:not(.light-theme) .leaflet-layer.map-tiles-streets .leaflet-tile {
+.leaflet-layer.map-tiles-streets-dark .leaflet-tile {
   filter: invert(0.72) hue-rotate(200deg) brightness(1.20) contrast(1.86) saturate(0.88);
 }
 
-html.light-theme .leaflet-layer.map-tiles-streets .leaflet-tile {
+.leaflet-layer.map-tiles-streets-light .leaflet-tile {
   filter: brightness(0.84) contrast(1.26) saturate(0.86);
 }
 
-html:not(.light-theme) .leaflet-layer.map-tiles-terrain .leaflet-tile,
-html:not(.light-theme) .leaflet-layer.map-tiles-topo .leaflet-tile {
+.leaflet-layer.map-tiles-terrain-dark .leaflet-tile,
+.leaflet-layer.map-tiles-topo-dark .leaflet-tile {
   filter: invert(0.74) hue-rotate(180deg) brightness(1.18) contrast(1.70) saturate(1.22);
 }
 
-html.light-theme .leaflet-layer.map-tiles-terrain .leaflet-tile,
-html.light-theme .leaflet-layer.map-tiles-topo .leaflet-tile {
+.leaflet-layer.map-tiles-terrain-light .leaflet-tile,
+.leaflet-layer.map-tiles-topo-light .leaflet-tile {
   filter: brightness(0.86) contrast(1.28) saturate(1.04);
 }
 
-html:not(.light-theme) .leaflet-layer.map-tiles-satellite .leaflet-tile {
+.leaflet-layer.map-tiles-satellite-dark .leaflet-tile {
   filter: brightness(0.68) contrast(1.24) saturate(0.95);
 }
 
-html.light-theme .leaflet-layer.map-tiles-satellite .leaflet-tile {
+.leaflet-layer.map-tiles-satellite-light .leaflet-tile {
   filter: brightness(0.88) contrast(1.12) saturate(1.02);
 }
 

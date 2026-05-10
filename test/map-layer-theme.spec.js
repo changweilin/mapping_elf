@@ -34,11 +34,17 @@ test('street and terrain tiles use theme-aware contrast filters', async ({ page 
   const streetTile = page.locator('.leaflet-layer.map-tiles-streets .leaflet-tile').first();
   await expect(streetTile).toBeAttached();
 
+  const streetLayer = page.locator('.leaflet-layer.map-tiles-streets');
+  await expect(streetLayer).toHaveClass(/map-tiles-dark/);
+  await expect(streetLayer).toHaveClass(/map-tiles-streets-dark/);
+
   const darkStreetFilter = await streetTile.evaluate((el) => getComputedStyle(el).filter);
   expect(darkStreetFilter).not.toBe('none');
 
   await page.locator('#btn-toggle-theme').click();
   await expect(page.locator('html')).toHaveClass(/light-theme/);
+  await expect(streetLayer).toHaveClass(/map-tiles-light/);
+  await expect(streetLayer).toHaveClass(/map-tiles-streets-light/);
 
   const lightStreetFilter = await streetTile.evaluate((el) => getComputedStyle(el).filter);
   expect(lightStreetFilter).not.toBe('none');
@@ -47,6 +53,8 @@ test('street and terrain tiles use theme-aware contrast filters', async ({ page 
   await page.locator('#btn-layer-topo').click();
   const terrainTile = page.locator('.leaflet-layer.map-tiles-topo.map-tiles-terrain .leaflet-tile').first();
   await expect(terrainTile).toBeAttached();
+  await expect(page.locator('.leaflet-layer.map-tiles-topo.map-tiles-terrain'))
+    .toHaveClass(/map-tiles-terrain-light/);
 
   const lightTerrainFilter = await terrainTile.evaluate((el) => getComputedStyle(el).filter);
   expect(lightTerrainFilter).not.toBe('none');

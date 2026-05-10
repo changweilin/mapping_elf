@@ -35,12 +35,30 @@ const TILE_LAYERS = {
 
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
+const MAP_TILE_THEMES = new Set(['dark', 'light']);
 
-function tileLayerClassName(name, config) {
-  return [...new Set(['map-tiles', `map-tiles-${name}`, config.cssClass]
-    .filter(Boolean)
-    .flatMap((value) => String(value).split(/\s+/))
-    .filter(Boolean))]
+function normalizeMapTileTheme(themeName) {
+  return MAP_TILE_THEMES.has(themeName) ? themeName : 'dark';
+}
+
+function getDocumentMapTileTheme() {
+  return document.documentElement.classList.contains('light-theme') ? 'light' : 'dark';
+}
+
+function tileLayerClassName(name, config, themeName) {
+  const theme = normalizeMapTileTheme(themeName);
+  const layerClasses = [name, ...String(config.cssClass || '')
+    .split(/\s+/)
+    .map((value) => value.replace(/^map-tiles-/, ''))
+    .filter(Boolean)];
+  return [...new Set([
+    'map-tiles',
+    `map-tiles-${theme}`,
+    ...layerClasses.flatMap((layerClass) => [
+      `map-tiles-${layerClass}`,
+      `map-tiles-${layerClass}-${theme}`,
+    ]),
+  ].filter(Boolean))]
     .join(' ');
 }
 
@@ -110,6 +128,7 @@ export class MapManager {
     this.selectedRouteIndex = 0;
     this.hoverMarker = null;
     this.currentLayerName = 'topo';
+    this.currentTileTheme = getDocumentMapTileTheme();
     this.intermediateMarkers = [];
     this.returnWaypointMarkers = []; // Markers for round-trip return waypoints (same shape as outbound, dashed border)
     this.stackedWaypointFlags = []; // Per-waypoint flag: outbound marker shares lat/lng with a return marker
@@ -144,7 +163,7 @@ export class MapManager {
     for (const [name, config] of Object.entries(TILE_LAYERS)) {
       this.tileLayers[name] = L.tileLayer(config.url, {
         ...config.options,
-        className: tileLayerClassName(name, config),
+        className: tileLayerClassName(name, config, this.currentTileTheme),
       });
     }
     this.tileLayers.topo.addTo(this.map);
@@ -630,6 +649,30 @@ export class MapManager {
     this.map.removeLayer(this.tileLayers[this.currentLayerName]);
     this.tileLayers[layerName].addTo(this.map);
     this.currentLayerName = layerName;
+    this._syncTileLayerClassNames();
+  }
+
+  setTileTheme(themeName) {
+    const nextTheme = normalizeMapTileTheme(themeName);
+    if (this.currentTileTheme === nextTheme) {
+      this._syncTileLayerClassNames();
+      return;
+    }
+    this.currentTileTheme = nextTheme;
+    this._syncTileLayerClassNames();
+  }
+
+  _syncTileLayerClassNames() {
+    for (const [name, layer] of Object.entries(this.tileLayers)) {
+      const className = tileLayerClassName(name, TILE_LAYERS[name], this.currentTileTheme);
+      layer.options.className = className;
+      const container = layer.getContainer?.() || layer._container;
+      if (!container) continue;
+      for (const classToken of Array.from(container.classList)) {
+        if (classToken.startsWith('map-tiles')) container.classList.remove(classToken);
+      }
+      className.split(/\s+/).forEach((classToken) => container.classList.add(classToken));
+    }
   }
 
   setFrozen(val) {
