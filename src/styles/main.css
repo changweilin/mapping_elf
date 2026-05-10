@@ -505,7 +505,6 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 }
 
 .map-container.is-map-zooming .leaflet-layer.map-tiles .leaflet-tile {
-  filter: none !important;
   transition: none !important;
 }
 

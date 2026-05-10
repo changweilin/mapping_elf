@@ -60,3 +60,26 @@ test('street and terrain tiles use theme-aware contrast filters', async ({ page 
   expect(lightTerrainFilter).not.toBe('none');
   expect(lightTerrainFilter).not.toBe(lightStreetFilter);
 });
+
+test('dark map tiles keep their contrast filter while zooming', async ({ page }) => {
+  await openAppWithMapLayer(page, { theme: 'dark', layer: 'streets' });
+
+  const streetTile = page.locator('.leaflet-layer.map-tiles-streets-dark .leaflet-tile').first();
+  await expect(streetTile).toBeAttached();
+
+  const beforeZoomFilter = await streetTile.evaluate((el) => getComputedStyle(el).filter);
+  expect(beforeZoomFilter).not.toBe('none');
+
+  await page.locator('#map').evaluate((el) => el.classList.add('is-map-zooming'));
+
+  const zoomingStyle = await streetTile.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      filter: style.filter,
+      transitionDuration: style.transitionDuration,
+      transitionProperty: style.transitionProperty,
+    };
+  });
+  expect(zoomingStyle.filter).toBe(beforeZoomFilter);
+  expect(zoomingStyle.transitionDuration).toBe('0s');
+});
