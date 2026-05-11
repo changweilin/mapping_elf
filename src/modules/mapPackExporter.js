@@ -14,10 +14,11 @@ import JSZip from 'jszip';
 const MELMAP_VERSION = 1;
 const MAX_TILES = 8000;
 
-// OSM/Topo use {a,b,c} subdomains; Esri has no {s}. When writing tiles into
-// Cache API on import we replicate the response under every subdomain so
-// Leaflet's hash-based subdomain pick always hits.
+// CARTO/OpenTopoMap use {a,b,c} subdomains; Esri has no {s}. When writing
+// tiles into Cache API on import we replicate the response under every
+// subdomain so Leaflet's hash-based subdomain pick always hits.
 const SUBDOMAINS = ['a', 'b', 'c'];
+const RETINA_SUFFIXES = ['', '@2x'];
 
 const LS_STATE_KEYS = [
   'mappingElf_weather',
@@ -246,8 +247,14 @@ export class MapPackExporter {
       .replace('{z}', z)
       .replace('{x}', x)
       .replace('{y}', y);
-    if (!base.includes('{s}')) return [base];
-    return SUBDOMAINS.map((s) => base.replace('{s}', s));
+    const retinaBases = base.includes('{r}')
+      ? RETINA_SUFFIXES.map((suffix) => base.replace('{r}', suffix))
+      : [base];
+    return retinaBases.flatMap((retinaBase) => (
+      retinaBase.includes('{s}')
+        ? SUBDOMAINS.map((s) => retinaBase.replace('{s}', s))
+        : [retinaBase]
+    ));
   }
 
   static triggerDownload(blob, filename) {

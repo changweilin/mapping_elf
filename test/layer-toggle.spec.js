@@ -1,12 +1,18 @@
 import { expect, test } from '@playwright/test';
 
-async function openLayerTestApp(page) {
-  await page.addInitScript(() => {
+const VISIBLE_ROUTE_PATH_SELECTOR = '.leaflet-overlay-pane path:not(.route-hit-line)';
+const LONG_PRESS_MS = 650;
+
+async function openLayerTestApp(page, options = {}) {
+  const { roundTrip = '1', oLoop = '0' } = options;
+  await page.addInitScript(({ roundTrip, oLoop }) => {
     localStorage.clear();
     localStorage.setItem('mappingElf_routeMode', 'walking');
-    localStorage.setItem('mappingElf_roundTrip', '1');
-    localStorage.setItem('mappingElf_oLoop', '0');
-  });
+    localStorage.setItem('mappingElf_roundTrip', roundTrip);
+    localStorage.setItem('mappingElf_oLoop', oLoop);
+    localStorage.setItem('mappingElf_speedMode', '0');
+    localStorage.setItem('mappingElf_segmentKm', '0');
+  }, { roundTrip, oLoop });
 
   await page.route('**/route/v1/**', async (route) => {
     const url = new URL(route.request().url());
@@ -43,7 +49,8 @@ async function addRoundTripWaypoints(page) {
     [0.40, 0.50],
     [0.58, 0.50],
   ]);
-  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(2);
+  await expect(page.locator(VISIBLE_ROUTE_PATH_SELECTOR)).toHaveCount(2);
+  await expect(page.locator('.leaflet-overlay-pane path.route-hit-line')).toHaveCount(1);
 }
 
 async function addWaypointsAtFractions(page, points) {
@@ -57,9 +64,24 @@ async function addWaypointsAtFractions(page, points) {
   }
 }
 
+async function addWaypointByCoordinateSearch(page, lat, lng, expectedCount) {
+  await page.locator('#search-input').fill(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+  await page.locator('#btn-search').click();
+  const addButton = page.locator('#search-results .search-result-add').first();
+  await expect(addButton).toBeVisible();
+  await addButton.click();
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(expectedCount);
+}
+
+async function addCoordinateSearchWaypoints(page, coords) {
+  for (let i = 0; i < coords.length; i++) {
+    await addWaypointByCoordinateSearch(page, coords[i][0], coords[i][1], i + 1);
+  }
+}
+
 async function layerState(page) {
   return page.evaluate(() => {
-    const paths = Array.from(document.querySelectorAll('.leaflet-overlay-pane path'));
+    const paths = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)'));
     const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'));
     const waypointMarkers = markers.map((el) => ({
       isReturn: el.classList.contains('return-leg'),
@@ -76,6 +98,51 @@ async function layerState(page) {
       returnAboveOutbound: pairedOutbound && returnMarker ? returnMarker.z > pairedOutbound.z : false,
     };
   });
+}
+
+async function routeOverlapState(page) {
+  return page.evaluate((selector) => {
+    const paths = Array.from(document.querySelectorAll(selector));
+    if (paths.length === 0) {
+      return { point: null, overlapCount: 0, orderedStrokes: [], topStroke: null };
+    }
+
+    const rect = paths[0].getBoundingClientRect();
+    const point = {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+    const overlaps = paths
+      .map((el, domIndex) => {
+        const r = el.getBoundingClientRect();
+        return {
+          domIndex,
+          stroke: el.getAttribute('stroke') || getComputedStyle(el).stroke,
+          containsPoint: point.x >= r.left - 2
+            && point.x <= r.right + 2
+            && point.y >= r.top - 2
+            && point.y <= r.bottom + 2,
+        };
+      })
+      .filter((entry) => entry.containsPoint);
+
+    return {
+      point,
+      overlapCount: overlaps.length,
+      orderedStrokes: overlaps.map((entry) => entry.stroke),
+      topStroke: overlaps.at(-1)?.stroke || null,
+    };
+  }, VISIBLE_ROUTE_PATH_SELECTOR);
+}
+
+async function longPressRouteOverlap(page) {
+  const state = await routeOverlapState(page);
+  expect(state.point).not.toBeNull();
+  await page.mouse.move(state.point.x, state.point.y);
+  await page.mouse.down();
+  await page.waitForTimeout(LONG_PRESS_MS);
+  await page.mouse.move(state.point.x + 2, state.point.y + 1);
+  await page.mouse.up();
 }
 
 async function waypointPairState(page) {
@@ -126,7 +193,7 @@ test('double-clicking an overlapped route marker cycles visible layer order', as
 
   const before = await layerState(page);
   const routePoint = await page.evaluate(() => {
-    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path')).at(-1);
+    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
     if (!path) return null;
     const rect = path.getBoundingClientRect();
     return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
@@ -137,6 +204,22 @@ test('double-clicking an overlapped route marker cycles visible layer order', as
   await expect.poll(async () => (await layerState(page)).topStroke).not.toBe(before.topStroke);
 });
 
+test('clicking the selected route hit layer still inserts a waypoint', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const routePoint = await page.evaluate(() => {
+    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
+    if (!path) return null;
+    const rect = path.getBoundingClientRect();
+    return { x: rect.x + rect.width * 0.5, y: rect.y + rect.height / 2 };
+  });
+  expect(routePoint).not.toBeNull();
+
+  await page.mouse.click(routePoint.x, routePoint.y);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);
+});
+
 test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint', async ({ page }) => {
   await openLayerTestApp(page);
   await addWaypointsAtFractions(page, [
@@ -145,7 +228,7 @@ test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint',
     [0.56, 0.56],
     [0.66, 0.46],
   ]);
-  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(6);
+  await expect(page.locator(VISIBLE_ROUTE_PATH_SELECTOR)).toHaveCount(6);
 
   const initialPairs = await waypointPairState(page);
   expect(initialPairs.map((pair) => [pair.number, pair.hasReturn])).toEqual([
@@ -215,4 +298,33 @@ test('long-pressing an overlapped waypoint toggles both directions without dragg
   await pressTopWaypoint();
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(false);
   await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
+});
+
+test('long-pressing a route overlap with four stacked legs cycles every visible layer', async ({ page }) => {
+  await openLayerTestApp(page, { roundTrip: '0' });
+  await addCoordinateSearchWaypoints(page, [
+    [23.5000, 121.0000],
+    [23.5060, 121.0120],
+    [23.5000, 121.0000],
+    [23.5060, 121.0120],
+    [23.5000, 121.0000],
+  ]);
+
+  await expect(page.locator(VISIBLE_ROUTE_PATH_SELECTOR)).toHaveCount(4);
+  await expect.poll(async () => (await routeOverlapState(page)).overlapCount).toBeGreaterThanOrEqual(4);
+
+  const first = await routeOverlapState(page);
+  const cycle = [first.topStroke];
+  const waypointCount = page.locator('#waypoint-list .waypoint-item');
+
+  for (let i = 0; i < first.overlapCount; i++) {
+    const before = await routeOverlapState(page);
+    await longPressRouteOverlap(page);
+    await expect.poll(async () => (await routeOverlapState(page)).topStroke).not.toBe(before.topStroke);
+    cycle.push((await routeOverlapState(page)).topStroke);
+    await expect(waypointCount).toHaveCount(5);
+  }
+
+  expect(new Set(cycle.slice(0, -1)).size).toBeGreaterThanOrEqual(4);
+  expect(cycle.at(-1)).toBe(cycle[0]);
 });

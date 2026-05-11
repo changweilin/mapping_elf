@@ -7,6 +7,7 @@ const TILE_CACHE = 'mapping-elf-tiles';
 const APP_CACHE = 'mapping-elf-app-v1';
 
 const TILE_DOMAINS = [
+  'basemaps.cartocdn.com',
   'tile.openstreetmap.org',
   'tile.opentopomap.org',
   'server.arcgisonline.com',

@@ -7,10 +7,21 @@ const repoRoot = path.resolve(__dirname, '..');
 const sampleKml = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.kml');
 const sampleMelmap = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.melmap');
 
+function isExpectedExternalResourceNoise(text) {
+  return text.includes('Failed to load resource')
+    && (
+      text.includes('net::ERR_NETWORK_ACCESS_DENIED')
+      || text.includes('net::ERR_NO_BUFFER_SPACE')
+      || text.includes('the server responded with a status of 404 (Offline)')
+    );
+}
+
 async function openApp(page) {
   const consoleErrors = [];
   page.on('console', (msg) => {
-    if (msg.type() === 'error') consoleErrors.push(msg.text());
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (!isExpectedExternalResourceNoise(text)) consoleErrors.push(text);
   });
   page.on('pageerror', (err) => consoleErrors.push(err.message));
 
