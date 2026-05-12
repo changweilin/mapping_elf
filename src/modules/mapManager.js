@@ -775,6 +775,19 @@ export class MapManager {
       marker.getElement()?.classList.remove('is-dragging');
     };
 
+    const clientPointToLatLng = (clientX, clientY, source = 'mouse') => {
+      const rect = this.map.getContainer().getBoundingClientRect();
+      const yOffset = source === 'touch' ? 40 : 0;
+      return this.map.containerPointToLatLng([
+        clientX - rect.left,
+        clientY - rect.top - yOffset,
+      ]);
+    };
+
+    const restoreMapDragging = () => {
+      setTimeout(() => this.map.dragging.enable(), 0);
+    };
+
     // Desktop: right-click / context menu → Leaflet built-in drag.
     // Guard: on mobile Leaflet fires a synthetic contextmenu during a long-press
     // (before our 500ms timer). Do NOT call _enableDrag() then — enabling
@@ -793,31 +806,37 @@ export class MapManager {
 
     // Desktop: left-button long-press (500ms) → manual drag
     let _mouseLPTimer = null;
-    let _mouseStartX = 0, _mouseStartY = 0;
-    marker.on('mousedown', (e) => {
-      if (e.originalEvent.button !== 0 || _dragModeActive) return;
+    let _mousePendingClientX = 0, _mousePendingClientY = 0;
+    const startMouseLongPress = (oe) => {
+      if (oe.button !== 0 || _dragModeActive) return;
+      L.DomEvent.stop(oe);
 
-      _mouseStartX = e.originalEvent.clientX;
-      _mouseStartY = e.originalEvent.clientY;
+      _mousePendingClientX = oe.clientX;
+      _mousePendingClientY = oe.clientY;
+      this.map.dragging.disable();
 
       const cancelLP = () => {
         clearTimeout(_mouseLPTimer);
         _mouseLPTimer = null;
-        document.removeEventListener('mousemove', onMoveGuard);
-        document.removeEventListener('mouseup', cancelLP);
+        document.removeEventListener('mousemove', onPendingMove, true);
+        document.removeEventListener('mouseup', cancelLP, true);
+        if (!_dragModeActive) restoreMapDragging();
       };
-      const onMoveGuard = (ev) => {
-        const dx = ev.clientX - _mouseStartX, dy = ev.clientY - _mouseStartY;
-        if (dx * dx + dy * dy > 64) cancelLP();
+      const onPendingMove = (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        _mousePendingClientX = ev.clientX;
+        _mousePendingClientY = ev.clientY;
       };
 
       _mouseLPTimer = setTimeout(() => {
-        document.removeEventListener('mousemove', onMoveGuard);
-        document.removeEventListener('mouseup', cancelLP);
+        document.removeEventListener('mousemove', onPendingMove, true);
+        document.removeEventListener('mouseup', cancelLP, true);
         _mouseLPTimer = null;
 
         if (this.isFrozen) {
           this._notifyFrozenInteraction('waypoint-drag');
+          restoreMapDragging();
           return;
         }
 
@@ -830,13 +849,24 @@ export class MapManager {
         const dragStartLatLng = marker.getLatLng();
         this._startRubberBand(marker);
 
-        const onMove = (ev) => {
-          const latlng = this.map.mouseEventToLatLng(ev);
+        const moveTo = (clientX, clientY) => {
+          if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+          const latlng = clientPointToLatLng(clientX, clientY);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
-          this.updateTrashZoneHover(ev.clientX, ev.clientY);
+          this.updateTrashZoneHover(clientX, clientY);
+        };
+
+        moveTo(_mousePendingClientX, _mousePendingClientY);
+
+        const onMove = (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          moveTo(ev.clientX, ev.clientY);
         };
         const onUp = (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
           const dropAction = this.getTrashZoneDropAction(ev?.clientX, ev?.clientY);
           _dragModeActive = false;
           _justDragged = true;
@@ -845,11 +875,10 @@ export class MapManager {
           this.hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
-          this.map.dragging.enable();
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
+          restoreMapDragging();
+          document.removeEventListener('mousemove', onMove, true);
+          document.removeEventListener('mouseup', onUp, true);
           const idx = this.waypointMarkers.indexOf(marker);
-          const pos = marker.getLatLng();
           if (idx >= 0) {
             if (dropAction === 'delete') {
               if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -857,6 +886,11 @@ export class MapManager {
             } else if (dropAction === 'cancel') {
               marker.setLatLng(dragStartLatLng);
             } else {
+              const hasReleasePoint = Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY);
+              const pos = hasReleasePoint
+                ? clientPointToLatLng(ev.clientX, ev.clientY)
+                : marker.getLatLng();
+              marker.setLatLng(pos);
               this.waypoints[idx] = [pos.lat, pos.lng];
               this.onWaypointChange(this.waypoints);
               // Post-drag highlight (on release)
@@ -864,12 +898,17 @@ export class MapManager {
             }
           }
         };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
       }, 500);
 
-      document.addEventListener('mousemove', onMoveGuard);
-      document.addEventListener('mouseup', cancelLP);
+      document.addEventListener('mousemove', onPendingMove, true);
+      document.addEventListener('mouseup', cancelLP, true);
+    };
+
+    marker.on('mousedown', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      startMouseLongPress(e.originalEvent);
     });
 
     // Touch: long-press (500ms) → manual drag (mirrors desktop handler).
@@ -878,15 +917,16 @@ export class MapManager {
     // (500ms after the original touchstart) leaves the start position undefined,
     // causing the marker to jump off-screen on the first touchmove.
     let _longPressTimer = null;
-    let _touchStartX = 0, _touchStartY = 0;
+    let _touchPendingClientX = 0, _touchPendingClientY = 0;
     const getTouchPoint = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
     const startTouchLongPress = (oe) => {
       _isTouchActive = true;
       if (_dragModeActive) return;
       const touch = getTouchPoint(oe);
       if (!touch) return;
-      _touchStartX = touch.clientX;
-      _touchStartY = touch.clientY;
+      _touchPendingClientX = touch.clientX;
+      _touchPendingClientY = touch.clientY;
+      this.map.dragging.disable();
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
@@ -894,6 +934,7 @@ export class MapManager {
         if (this.isFrozen) {
           this._notifyFrozenInteraction('waypoint-drag');
           _isTouchActive = false;
+          restoreMapDragging();
           return;
         }
 
@@ -908,19 +949,24 @@ export class MapManager {
 
         let lastTouchClientX = null, lastTouchClientY = null;
 
+        const moveTo = (clientX, clientY) => {
+          if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+          lastTouchClientX = clientX;
+          lastTouchClientY = clientY;
+          const latlng = clientPointToLatLng(clientX, clientY, 'touch');
+          marker.setLatLng(latlng);
+          this._updateRubberBand(latlng);
+          this.updateTrashZoneHover(clientX, clientY);
+        };
+
+        moveTo(_touchPendingClientX, _touchPendingClientY);
+
         const onTouchMove = (ev) => {
           ev.preventDefault();
           const t = ev.touches[0];
-          lastTouchClientX = t.clientX;
-          lastTouchClientY = t.clientY;
+          if (!t) return;
+          moveTo(t.clientX, t.clientY);
           // 在手機版加入 Y 軸負偏移(-40px)，讓圖標浮在手指上方避免被遮擋
-          const rect = this.map.getContainer().getBoundingClientRect();
-          const x = t.clientX - rect.left;
-          const y = t.clientY - rect.top - 40;
-          const latlng = this.map.containerPointToLatLng([x, y]);
-          marker.setLatLng(latlng);
-          this._updateRubberBand(latlng);
-          this.updateTrashZoneHover(t.clientX, t.clientY);
         };
         const onTouchEnd = (ev) => {
           const ct = ev?.changedTouches?.[0];
@@ -935,11 +981,11 @@ export class MapManager {
           this.hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
-          this.map.dragging.enable();
+          restoreMapDragging();
           document.removeEventListener('touchmove', onTouchMove);
           document.removeEventListener('touchend', onTouchEnd);
+          document.removeEventListener('touchcancel', onTouchCancel);
           const idx = this.waypointMarkers.indexOf(marker);
-          const pos = marker.getLatLng();
           if (idx >= 0) {
             if (dropAction === 'delete') {
               if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -947,6 +993,11 @@ export class MapManager {
             } else if (dropAction === 'cancel') {
               marker.setLatLng(dragStartLatLng);
             } else {
+              const hasReleasePoint = Number.isFinite(cx) && Number.isFinite(cy);
+              const pos = hasReleasePoint
+                ? clientPointToLatLng(cx, cy, 'touch')
+                : marker.getLatLng();
+              marker.setLatLng(pos);
               this.waypoints[idx] = [pos.lat, pos.lng];
               this.onWaypointChange(this.waypoints);
               // Post-drag highlight (on release)
@@ -954,20 +1005,32 @@ export class MapManager {
             }
           }
         };
+        const onTouchCancel = () => {
+          _dragModeActive = false;
+          _isTouchActive = false;
+          _justDragged = true;
+          this._blockMapClick();
+          this._stopRubberBand();
+          this.hideTrashZone();
+          setTimeout(() => { _justDragged = false; }, 150);
+          marker.getElement()?.classList.remove('is-dragging');
+          restoreMapDragging();
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', onTouchEnd);
+          document.removeEventListener('touchcancel', onTouchCancel);
+          marker.setLatLng(dragStartLatLng);
+        };
         document.addEventListener('touchmove', onTouchMove, { passive: false });
         document.addEventListener('touchend', onTouchEnd);
+        document.addEventListener('touchcancel', onTouchCancel);
       }, 500);
     };
     const moveTouchLongPress = (oe) => {
       if (_longPressTimer) {
         const touch = getTouchPoint(oe);
         if (!touch) return;
-        const dx = touch.clientX - _touchStartX;
-        const dy = touch.clientY - _touchStartY;
-        if (dx * dx + dy * dy > 64) {
-          clearTimeout(_longPressTimer);
-          _longPressTimer = null;
-        }
+        _touchPendingClientX = touch.clientX;
+        _touchPendingClientY = touch.clientY;
       }
     };
     const endTouchLongPress = () => {
@@ -976,6 +1039,7 @@ export class MapManager {
         clearTimeout(_longPressTimer);
         _longPressTimer = null;
       }
+      if (!_dragModeActive) restoreMapDragging();
     };
     marker.on('touchstart', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
@@ -995,6 +1059,19 @@ export class MapManager {
       const el = marker.getElement?.();
       if (!el || el._mappingElfWaypointDomBound) return;
       el._mappingElfWaypointDomBound = true;
+      el.addEventListener('mousedown', (oe) => {
+        if (oe.button !== 0 || _dragModeActive) return;
+        oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
+        oe.preventDefault();
+        startMouseLongPress(oe);
+      }, { capture: true });
+      el.addEventListener('mouseup', () => {
+        if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
+      }, { capture: true });
+      el.addEventListener('mouseleave', () => {
+        if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
+      }, { capture: true });
       el.addEventListener('touchstart', (oe) => {
         oe._mappingElfWaypointDomHandled = true;
         oe.stopPropagation();
@@ -1756,12 +1833,15 @@ export class MapManager {
 
       // Long-press drags the paired editable waypoint; dblclick handles layer cycling.
       let _lpTimer = null;
-      let _startX = 0, _startY = 0;
+      let _pendingClientX = 0, _pendingClientY = 0;
       const getPointer = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
+      const restoreMapDragging = () => {
+        setTimeout(() => this.map.dragging.enable(), 0);
+      };
 
       const cleanupLPListeners = () => {
-        document.removeEventListener('mouseup', cancelLP);
-        document.removeEventListener('mousemove', moveLPFromDom);
+        document.removeEventListener('mouseup', cancelLP, true);
+        document.removeEventListener('mousemove', moveLPFromDom, true);
         document.removeEventListener('touchend', cancelLP);
         document.removeEventListener('touchmove', moveLPFromDom);
         document.removeEventListener('touchcancel', cancelLP);
@@ -1770,6 +1850,7 @@ export class MapManager {
       const cancelLP = () => {
         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
         cleanupLPListeners();
+        if (!_returnDragActive) restoreMapDragging();
       };
 
       const clientPointToLatLng = (clientX, clientY, source) => {
@@ -1781,11 +1862,15 @@ export class MapManager {
         ]);
       };
 
-      const startManualReturnDrag = (source) => {
+      const startManualReturnDrag = (source, initialClientX, initialClientY) => {
         const pairedMarker = this.waypointMarkers[marker._wpIndex];
-        if (!pairedMarker) return;
+        if (!pairedMarker) {
+          restoreMapDragging();
+          return;
+        }
         if (this.isFrozen) {
           this._notifyFrozenInteraction('waypoint-drag');
+          restoreMapDragging();
           return;
         }
 
@@ -1801,6 +1886,7 @@ export class MapManager {
         let lastClientY = null;
 
         const moveTo = (clientX, clientY) => {
+          if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
           lastClientX = clientX;
           lastClientY = clientY;
           const latlng = clientPointToLatLng(clientX, clientY, source);
@@ -1811,8 +1897,8 @@ export class MapManager {
         };
 
         const cleanupDragListeners = () => {
-          document.removeEventListener('mousemove', onMouseMove);
-          document.removeEventListener('mouseup', onPointerUp);
+          document.removeEventListener('mousemove', onMouseMove, true);
+          document.removeEventListener('mouseup', onPointerUp, true);
           document.removeEventListener('touchmove', onTouchMove);
           document.removeEventListener('touchend', onPointerUp);
           document.removeEventListener('touchcancel', onPointerUp);
@@ -1828,7 +1914,7 @@ export class MapManager {
           setTimeout(() => { _returnJustDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           pairedMarker.getElement()?.classList.remove('is-dragging');
-          this.map.dragging.enable();
+          restoreMapDragging();
           cleanupDragListeners();
 
           const idx = this.waypointMarkers.indexOf(pairedMarker);
@@ -1840,7 +1926,12 @@ export class MapManager {
             pairedMarker.setLatLng(dragStartLatLng);
             marker.setLatLng(dragStartLatLng);
           } else {
-            const pos = pairedMarker.getLatLng();
+            const hasReleasePoint = Number.isFinite(clientX) && Number.isFinite(clientY);
+            const pos = hasReleasePoint
+              ? clientPointToLatLng(clientX, clientY, source)
+              : pairedMarker.getLatLng();
+            pairedMarker.setLatLng(pos);
+            marker.setLatLng(pos);
             this.waypoints[idx] = [pos.lat, pos.lng];
             this.onWaypointChange(this.waypoints);
             this.onWaypointSelect?.(idx, (this.waypointLayerSwapped[idx] ?? true) === false);
@@ -1848,6 +1939,8 @@ export class MapManager {
         };
 
         function onMouseMove(ev) {
+          ev.stopPropagation();
+          ev.preventDefault();
           moveTo(ev.clientX, ev.clientY);
         }
 
@@ -1859,6 +1952,8 @@ export class MapManager {
         }
 
         function onPointerUp(ev) {
+          ev.stopPropagation?.();
+          ev.preventDefault?.();
           const point = getPointer(ev);
           finishDrag(
             point?.clientX ?? lastClientX,
@@ -1866,13 +1961,15 @@ export class MapManager {
           );
         }
 
+        moveTo(initialClientX, initialClientY);
+
         if (source === 'touch') {
           document.addEventListener('touchmove', onTouchMove, { passive: false });
           document.addEventListener('touchend', onPointerUp);
           document.addEventListener('touchcancel', onPointerUp);
         } else {
-          document.addEventListener('mousemove', onMouseMove);
-          document.addEventListener('mouseup', onPointerUp);
+          document.addEventListener('mousemove', onMouseMove, true);
+          document.addEventListener('mouseup', onPointerUp, true);
         }
       };
       
@@ -1880,22 +1977,24 @@ export class MapManager {
         const oe = e.originalEvent;
         if (oe.button !== undefined && oe.button !== 0) return;
         L.DomEvent.stopPropagation(oe);
-        cancelLP();
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        cleanupLPListeners();
         const point = getPointer(oe);
         if (!point) return;
-        _startX = point.clientX;
-        _startY = point.clientY;
+        _pendingClientX = point.clientX;
+        _pendingClientY = point.clientY;
         const source = oe.touches || oe.type?.startsWith('touch') ? 'touch' : 'mouse';
+        this.map.dragging.disable();
         
         _lpTimer = setTimeout(() => {
           _lpTimer = null;
           cleanupLPListeners();
           if (navigator.vibrate) navigator.vibrate(40);
-          startManualReturnDrag(source);
+          startManualReturnDrag(source, _pendingClientX, _pendingClientY);
         }, 500);
 
-        document.addEventListener('mouseup', cancelLP);
-        document.addEventListener('mousemove', moveLPFromDom);
+        document.addEventListener('mouseup', cancelLP, true);
+        document.addEventListener('mousemove', moveLPFromDom, true);
         document.addEventListener('touchend', cancelLP);
         document.addEventListener('touchmove', moveLPFromDom, { passive: true });
         document.addEventListener('touchcancel', cancelLP);
@@ -1905,14 +2004,15 @@ export class MapManager {
         if (!_lpTimer) return;
         const point = getPointer(e.originalEvent);
         if (!point) return;
-        if (Math.hypot(point.clientX - _startX, point.clientY - _startY) > 10) {
-          clearTimeout(_lpTimer);
-          _lpTimer = null;
-          cleanupLPListeners();
-        }
+        _pendingClientX = point.clientX;
+        _pendingClientY = point.clientY;
       };
 
       function moveLPFromDom(oe) {
+        if (_lpTimer) {
+          oe.stopPropagation?.();
+          if (!oe.touches) oe.preventDefault?.();
+        }
         moveLP({ originalEvent: oe });
       }
 

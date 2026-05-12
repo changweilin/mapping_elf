@@ -235,6 +235,85 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   animation: loadingSlide 1.2s ease-in-out infinite;
 }
 
+.app-busy-overlay {
+  z-index: 10020;
+  background: rgba(15, 23, 42, 0.46);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.app-busy-overlay .loading-content {
+  min-width: min(320px, calc(100vw - 32px));
+  padding: 22px 24px 20px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.86);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+
+html.light-theme .app-busy-overlay {
+  background: rgba(226, 232, 240, 0.5);
+}
+
+html.light-theme .app-busy-overlay .loading-content {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(100, 116, 139, 0.22);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.16);
+}
+
+.app-busy-overlay .loading-icon {
+  margin-bottom: 10px;
+}
+
+.app-busy-overlay .loading-content h2 {
+  font-size: 22px;
+}
+
+.app-busy-overlay .loading-content p {
+  margin-bottom: 14px;
+}
+
+.app-busy-overlay .loading-bar {
+  width: 240px;
+  max-width: 100%;
+}
+
+.app-busy-overlay .loading-bar-fill.is-determinate {
+  width: var(--busy-progress, 0%);
+  animation: none;
+  transition: width 0.2s ease;
+}
+
+.loading-progress-text {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+body.route-weather-busy #map,
+body.route-weather-busy .map-action-btns,
+body.route-weather-busy #waypoint-list,
+body.route-weather-busy #alternatives-list,
+body.route-weather-busy #bottom-panel,
+body.route-weather-busy .weather-popup {
+  pointer-events: none !important;
+}
+
+body.route-weather-busy #map,
+body.route-weather-busy #waypoint-list,
+body.route-weather-busy #alternatives-list,
+body.route-weather-busy #bottom-panel,
+body.route-weather-busy .weather-popup .weather-card {
+  filter: saturate(0.75);
+  opacity: 0.72;
+}
+
+body.route-weather-busy .route-edit-control:disabled,
+body.route-weather-busy .weather-edit-control:disabled {
+  cursor: wait;
+}
+
 @keyframes pulse {
 
   0%,
@@ -568,7 +647,20 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
   -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.custom-waypoint-icon,
+.custom-waypoint-icon * {
+  user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
 }
 
 .wp-icon-inner {

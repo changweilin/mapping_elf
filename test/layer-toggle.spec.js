@@ -4,20 +4,30 @@ const VISIBLE_ROUTE_PATH_SELECTOR = '.leaflet-overlay-pane path:not(.route-hit-l
 const LONG_PRESS_MS = 650;
 
 async function openLayerTestApp(page, options = {}) {
-  const { roundTrip = '1', oLoop = '0' } = options;
-  await page.addInitScript(({ roundTrip, oLoop }) => {
+  const {
+    roundTrip = '1',
+    oLoop = '0',
+    routeDelayMs = 0,
+    weatherDelayMs = 0,
+    importedTrackSession = null,
+  } = options;
+  await page.addInitScript(({ roundTrip, oLoop, importedTrackSession }) => {
     localStorage.clear();
     localStorage.setItem('mappingElf_routeMode', 'walking');
     localStorage.setItem('mappingElf_roundTrip', roundTrip);
     localStorage.setItem('mappingElf_oLoop', oLoop);
     localStorage.setItem('mappingElf_speedMode', '0');
     localStorage.setItem('mappingElf_segmentKm', '0');
-  }, { roundTrip, oLoop });
+    if (importedTrackSession) {
+      localStorage.setItem('mappingElf_importedTrack', JSON.stringify(importedTrackSession));
+    }
+  }, { roundTrip, oLoop, importedTrackSession });
 
   await page.route('**/route/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const coordPart = url.pathname.split('/').pop();
     const coords = coordPart.split(';').map((coord) => coord.split(',').map(Number));
+    if (routeDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, routeDelayMs));
     await route.fulfill({
       json: {
         code: 'Ok',
@@ -28,6 +38,50 @@ async function openLayerTestApp(page, options = {}) {
         }],
       },
     });
+  });
+
+  const weatherPayload = () => ({
+    daily: {
+      time: ['2026-05-12'],
+      temperature_2m_max: [24],
+      temperature_2m_min: [18],
+      precipitation_sum: [0],
+      weathercode: [1],
+      windspeed_10m_max: [12],
+      windgusts_10m_max: [18],
+      sunrise: ['2026-05-12T05:10'],
+      sunset: ['2026-05-12T18:30'],
+      sunshine_duration: [18000],
+      precipitation_probability_max: [10],
+      uv_index_max: [7],
+      shortwave_radiation_sum: [19],
+    },
+    hourly: {
+      time: Array.from({ length: 24 }, (_, h) => `2026-05-12T${String(h).padStart(2, '0')}:00`),
+      temperature_2m: Array.from({ length: 24 }, () => 21),
+      apparent_temperature: Array.from({ length: 24 }, () => 20),
+      relative_humidity_2m: Array.from({ length: 24 }, () => 65),
+      dewpoint_2m: Array.from({ length: 24 }, () => 14),
+      precipitation: Array.from({ length: 24 }, () => 0),
+      precipitation_probability: Array.from({ length: 24 }, () => 10),
+      weathercode: Array.from({ length: 24 }, () => 1),
+      windspeed_10m: Array.from({ length: 24 }, () => 10),
+      windgusts_10m: Array.from({ length: 24 }, () => 16),
+      uv_index: Array.from({ length: 24 }, () => 4),
+      visibility: Array.from({ length: 24 }, () => 10000),
+      cloudcover: Array.from({ length: 24 }, () => 25),
+    },
+    elevation: 100,
+  });
+
+  await page.route('**/v1/forecast**', async (route) => {
+    if (weatherDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, weatherDelayMs));
+    await route.fulfill({ json: weatherPayload() });
+  });
+
+  await page.route('**/v1/archive**', async (route) => {
+    if (weatherDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, weatherDelayMs));
+    await route.fulfill({ json: weatherPayload() });
   });
 
   await page.route('**/v1/elevation**', async (route) => {
@@ -201,6 +255,39 @@ async function topWaypointCenter(page, number) {
   return target;
 }
 
+async function waypointCenter(page, number, isReturn) {
+  const target = await page.evaluate(({ targetNumber, targetIsReturn }) => {
+    const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .filter((el) =>
+        Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === targetNumber &&
+        el.classList.contains('return-leg') === targetIsReturn
+      )
+      .map((el) => ({
+        el,
+        z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+      }))
+      .sort((a, b) => b.z - a.z)[0]?.el;
+    if (!marker) return null;
+    const rect = marker.getBoundingClientRect();
+    return {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+    };
+  }, { targetNumber: number, targetIsReturn: isReturn });
+  expect(target).not.toBeNull();
+  return target;
+}
+
+async function storedWaypoints(page) {
+  const waypoints = await page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_waypoints') || '[]'));
+  expect(Array.isArray(waypoints)).toBe(true);
+  return waypoints;
+}
+
+function coordinateDistance(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
 async function startLongPressWaypointDrag(page, point) {
   await page.mouse.move(point.x, point.y);
   await page.mouse.down();
@@ -232,6 +319,75 @@ test('double-clicking an overlapped waypoint cycles visible layer order', async 
   expect(waypoint).not.toBeNull();
   await page.mouse.dblclick(waypoint.x + waypoint.width / 2, waypoint.y + waypoint.height / 2);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
+});
+
+test('waypoint marker text is not selectable during long press gestures', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const markerStyles = await page.locator('.leaflet-marker-pane .custom-waypoint-icon').first().evaluate((marker) => {
+    const nodes = [marker, ...marker.querySelectorAll('*')];
+    return nodes.map((node) => getComputedStyle(node).userSelect);
+  });
+  expect(markerStyles.every((value) => value === 'none')).toBe(true);
+});
+
+test('route planning locks map edits and defers route parameters until completion', async ({ page }) => {
+  await openLayerTestApp(page, { roundTrip: '0', routeDelayMs: 1200 });
+
+  const box = await page.locator('#map').boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.mouse.click(box.x + box.width * 0.40, box.y + box.height * 0.50);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
+  await page.mouse.click(box.x + box.width * 0.58, box.y + box.height * 0.50);
+
+  await expect(page.locator('#route-weather-busy-overlay')).toBeVisible();
+  await page.mouse.click(box.x + box.width * 0.70, box.y + box.height * 0.50);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+
+  await page.evaluate(() => {
+    const radio = document.querySelector('#nav-mode-roundtrip');
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mappingElf_roundTrip'))).toBe('0');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mappingElf_roundTrip')), { timeout: 6000 }).toBe('1');
+});
+
+test('opening a restored track shows weather loading progress', async ({ page }) => {
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    weatherDelayMs: 1200,
+    importedTrackSession: {
+      coords: [
+        [24.00, 121.00],
+        [24.01, 121.02],
+        [24.02, 121.04],
+      ],
+      elevations: [100, 120, 130],
+      waypoints: [
+        [24.00, 121.00],
+        [24.02, 121.04],
+      ],
+      waypointMeta: [
+        { waypointId: 'restored-start', label: 'Start', cumDistM: 0 },
+        { waypointId: 'restored-end', label: 'End', cumDistM: 3000 },
+      ],
+      intermediates: [],
+    },
+  });
+
+  await expect(page.locator('#route-weather-busy-overlay')).toBeVisible();
+  await expect(page.locator('#route-weather-busy-title')).toHaveText(/天氣/);
+  await expect(page.locator('#route-weather-busy-progress')).not.toHaveText('0%');
+
+  const box = await page.locator('#map').boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.click(box.x + box.width * 0.70, box.y + box.height * 0.50);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 8000 });
 });
 
 test('double-clicking an overlapped route marker cycles visible layer order', async ({ page }) => {
@@ -316,7 +472,7 @@ test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint',
   }
 });
 
-test('long-press dragging an overlapped waypoint moves it instead of cycling layers', async ({ page }) => {
+test('long-press dragging a return waypoint edits its paired outbound waypoint instead of cycling layers', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
 
@@ -325,14 +481,49 @@ test('long-press dragging an overlapped waypoint moves it instead of cycling lay
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
 
   const beforeLayer = await layerState(page);
-  const before = await topWaypointCenter(page, 1);
-  await startLongPressWaypointDrag(page, before);
-  await finishLongPressWaypointDrag(page, { x: before.x + 90, y: before.y + 35 });
+  const outboundBefore = await waypointCenter(page, 1, false);
+  const returnBefore = await waypointCenter(page, 1, true);
+  const storedBefore = await storedWaypoints(page);
+  expect(storedBefore).toHaveLength(2);
+  const releasePoint = { x: returnBefore.x + 90, y: returnBefore.y + 35 };
+  await startLongPressWaypointDrag(page, returnBefore);
+  await finishLongPressWaypointDrag(page, releasePoint);
 
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
-  const after = await topWaypointCenter(page, 1);
-  expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeGreaterThan(30);
+  const outboundAfter = await waypointCenter(page, 1, false);
+  const storedAfter = await storedWaypoints(page);
+  expect(storedAfter).toHaveLength(2);
+  expect(coordinateDistance(storedAfter[0], storedBefore[0])).toBeGreaterThan(0.0001);
+  expect(coordinateDistance(storedAfter[1], storedBefore[1])).toBeLessThan(0.000001);
+  expect(Math.hypot(outboundAfter.x - outboundBefore.x, outboundAfter.y - outboundBefore.y)).toBeGreaterThan(30);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(beforeLayer.returnAboveOutbound);
+});
+
+test('long-press dragging an outbound waypoint tolerates movement before activation', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const before = await waypointCenter(page, 2, false);
+  const storedBefore = await storedWaypoints(page);
+  expect(storedBefore).toHaveLength(2);
+  const releasePoint = { x: before.x + 95, y: before.y + 30 };
+  await page.mouse.move(before.x, before.y);
+  await page.mouse.down();
+  await page.waitForTimeout(120);
+  await page.mouse.move(before.x + 18, before.y + 7, { steps: 3 });
+  await page.waitForTimeout(LONG_PRESS_MS);
+  await expect(page.locator('.waypoint-trash-zone')).toBeVisible();
+  await page.mouse.move(releasePoint.x, releasePoint.y, { steps: 8 });
+  const whileDragging = await waypointCenter(page, 2, false);
+  expect(Math.hypot(whileDragging.x - releasePoint.x, whileDragging.y - releasePoint.y)).toBeLessThan(10);
+  await page.mouse.up();
+  await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
+
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  const storedAfter = await storedWaypoints(page);
+  expect(storedAfter).toHaveLength(2);
+  expect(coordinateDistance(storedAfter[1], storedBefore[1])).toBeGreaterThan(0.0001);
+  expect(coordinateDistance(storedAfter[0], storedBefore[0])).toBeLessThan(0.000001);
 });
 
 test('long-press dragging a waypoint into the trash zone deletes it', async ({ page }) => {

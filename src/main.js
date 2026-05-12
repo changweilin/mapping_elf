@@ -97,6 +97,177 @@ function showImportedTrackEditNotice(duration = 3200) {
   showNotification(IMPORTED_TRACK_EDIT_NOTICE, 'warning', duration);
 }
 
+const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
+  '#map',
+  '.map-action-btns',
+  '#waypoint-list',
+  '#alternatives-list',
+  '#bottom-panel',
+  '.weather-popup',
+  '#btn-clear-route',
+  '#btn-replan-route',
+  '#btn-undo',
+  '#btn-redo',
+  '.search-result-add',
+].join(',');
+
+const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
+  '#btn-clear-route',
+  '#btn-replan-route',
+  '#btn-undo',
+  '#btn-redo',
+  '#btn-fit-route',
+  '#btn-my-location',
+  '#waypoint-list button',
+  '#weather-table-container button',
+  '#weather-table-container input',
+  '#weather-table-container select',
+  '.weather-card button',
+  '.weather-card input',
+  '.weather-card select',
+  '.search-result-add',
+].join(',');
+
+let routeWeatherBusyTasks = new Map();
+let deferredBusySettings = new Map();
+let busyInteractionNoticeAt = 0;
+let deferredSettingsNoticeAt = 0;
+let busyTaskSeq = 0;
+
+function isRouteWeatherBusy() {
+  return routeWeatherBusyTasks.size > 0;
+}
+
+function showRouteWeatherBusyNotice(duration = 2200) {
+  const now = Date.now();
+  if (now - busyInteractionNoticeAt < 900) return;
+  busyInteractionNoticeAt = now;
+  showNotification('路線或天氣資料處理中，暫時鎖定編輯操作', 'warning', duration);
+}
+
+function showDeferredSettingNotice() {
+  const now = Date.now();
+  if (now - deferredSettingsNoticeAt < 1400) return;
+  deferredSettingsNoticeAt = now;
+  showNotification('目前正在處理路線/天氣，參數會在完成後套用', 'info', 2200);
+}
+
+function updateRouteWeatherBusyOverlay() {
+  const busy = isRouteWeatherBusy();
+  document.body.classList.toggle('route-weather-busy', busy);
+
+  const overlay = document.getElementById('route-weather-busy-overlay');
+  const titleEl = document.getElementById('route-weather-busy-title');
+  const detailEl = document.getElementById('route-weather-busy-detail');
+  const progressEl = document.getElementById('route-weather-busy-progress');
+  const fillEl = document.getElementById('route-weather-busy-fill');
+  const barEl = overlay?.querySelector('.loading-bar');
+
+  if (overlay) overlay.classList.toggle('hidden', !busy);
+  if (busy) {
+    const task = Array.from(routeWeatherBusyTasks.values()).at(-1);
+    const progress = Number.isFinite(task?.progress) ? Math.max(0, Math.min(100, task.progress)) : null;
+    if (titleEl) titleEl.textContent = task?.title || '處理中';
+    if (detailEl) detailEl.textContent = task?.detail || '請稍候...';
+    if (progressEl) progressEl.textContent = progress == null ? '處理中' : `${Math.round(progress)}%`;
+    if (fillEl) {
+      fillEl.classList.toggle('is-determinate', progress != null);
+      fillEl.style.setProperty('--busy-progress', `${progress ?? 0}%`);
+    }
+    if (barEl) {
+      barEl.setAttribute('aria-busy', 'true');
+      barEl.setAttribute('aria-valuenow', String(Math.round(progress ?? 0)));
+    }
+  } else if (fillEl) {
+    fillEl.classList.remove('is-determinate');
+    fillEl.style.removeProperty('--busy-progress');
+  }
+
+  document.querySelectorAll(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR).forEach((el) => {
+    if (busy) {
+      if (!el.dataset.busyWasDisabled) el.dataset.busyWasDisabled = el.disabled ? '1' : '0';
+      el.disabled = true;
+      el.classList.add(el.closest('#weather-table-container, .weather-card') ? 'weather-edit-control' : 'route-edit-control');
+    } else if (el.dataset.busyWasDisabled !== undefined) {
+      el.disabled = el.dataset.busyWasDisabled === '1';
+      delete el.dataset.busyWasDisabled;
+      el.classList.remove('route-edit-control', 'weather-edit-control');
+    }
+  });
+
+  if (typeof mapManager !== 'undefined' && mapManager) {
+    mapManager.setFrozen(!!importedTrackMode || busy);
+  }
+  if (!busy && typeof syncTrackModeUI === 'function') {
+    syncTrackModeUI();
+    if (typeof _updateHistoryButtons === 'function') _updateHistoryButtons();
+  }
+}
+
+function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null } = {}) {
+  const id = `busy_${++busyTaskSeq}`;
+  routeWeatherBusyTasks.set(id, { title, detail, progress });
+  updateRouteWeatherBusyOverlay();
+  let ended = false;
+  return {
+    set(update = {}) {
+      if (ended || !routeWeatherBusyTasks.has(id)) return;
+      routeWeatherBusyTasks.set(id, { ...routeWeatherBusyTasks.get(id), ...update });
+      updateRouteWeatherBusyOverlay();
+    },
+    end() {
+      if (ended) return;
+      ended = true;
+      routeWeatherBusyTasks.delete(id);
+      updateRouteWeatherBusyOverlay();
+      if (!isRouteWeatherBusy()) flushDeferredBusySettings();
+    },
+  };
+}
+
+function runOrDeferBusySetting(key, applyFn) {
+  if (!isRouteWeatherBusy()) {
+    applyFn();
+    return;
+  }
+  deferredBusySettings.set(key, applyFn);
+  showDeferredSettingNotice();
+}
+
+function flushDeferredBusySettings() {
+  if (deferredBusySettings.size === 0) return;
+  const pending = Array.from(deferredBusySettings.values());
+  deferredBusySettings.clear();
+  showNotification('正在套用等待中的參數設定...', 'info', 1400);
+  pending.forEach((applyFn) => applyFn());
+}
+
+function installRouteWeatherBusyGuard() {
+  const blockPointerEvent = (e) => {
+    if (!isRouteWeatherBusy()) return;
+    if (!e.target?.closest?.(ROUTE_WEATHER_BUSY_BLOCK_SELECTOR)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    showRouteWeatherBusyNotice();
+  };
+  ['click', 'dblclick', 'mousedown', 'touchstart', 'contextmenu', 'dragstart'].forEach((type) => {
+    document.addEventListener(type, blockPointerEvent, true);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!isRouteWeatherBusy()) return;
+    const target = e.target;
+    const tag = target?.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+    const editKey = e.key === 'Delete' || e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase()));
+    if (!editKey) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    showRouteWeatherBusyNotice();
+  }, true);
+}
+
+installRouteWeatherBusyGuard();
+
 let routeExportersPromise = null;
 async function ensureRouteExporters() {
   routeExportersPromise ||= Promise.all([
@@ -507,7 +678,10 @@ const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
-mapManager.onFrozenInteraction = () => showImportedTrackEditNotice();
+mapManager.onFrozenInteraction = () => {
+  if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+  else showImportedTrackEditNotice();
+};
 mapManager.onGpsFix = (lat, lng) => {
   lastGpsLatLng = [lat, lng];
 };
@@ -629,7 +803,7 @@ function historyRedo() {
 }
 
 function _updateHistoryButtons() {
-  const frozen = !!importedTrackMode;
+  const frozen = !!importedTrackMode || isRouteWeatherBusy();
   if (btnUndo) btnUndo.disabled = frozen || history.undo.length === 0;
   if (btnRedo) btnRedo.disabled = frozen || history.redo.length === 0;
 }
@@ -814,6 +988,10 @@ mapManager.onRouteHover = (lat, lng) => {
 
 // Map-cursor action menu (placed by GPS button — set as waypoint / copy / weather)
 mapManager.onMapCursorAction = (action, lat, lng) => {
+  if (isRouteWeatherBusy() && ['waypoint', 'weather', 'clear'].includes(action)) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
   if (action === 'waypoint') {
     mapManager.addWaypoint(lat, lng);
     showNotification('已設為航點', 'success', 1200);
@@ -1137,22 +1315,38 @@ function initWaypointSettings() {
   };
 
   collectiveMarkedEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('collective-marked', () => collectiveMarkedEl.dispatchEvent(new Event('change')));
+      return;
+    }
     collectiveMarked = collectiveMarkedEl.checked;
     localStorage.setItem(LS_COLLECTIVE_MARKED_KEY, collectiveMarked ? '1' : '0');
   });
 
   collectiveIntermediateEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('collective-intermediate', () => collectiveIntermediateEl.dispatchEvent(new Event('change')));
+      return;
+    }
     collectiveIntermediate = collectiveIntermediateEl.checked;
     localStorage.setItem(LS_COLLECTIVE_INTERMEDIATE_KEY, collectiveIntermediate ? '1' : '0');
   });
 
   collectiveAllEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('collective-all', () => collectiveAllEl.dispatchEvent(new Event('change')));
+      return;
+    }
     collectiveAll = collectiveAllEl.checked;
     localStorage.setItem(LS_COLLECTIVE_ALL_KEY, collectiveAll ? '1' : '0');
     syncCollectiveLock();
   });
 
   waypointCenteringEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('waypoint-centering', () => waypointCenteringEl.dispatchEvent(new Event('change')));
+      return;
+    }
     waypointCentering = waypointCenteringEl.checked;
     localStorage.setItem(LS_WAYPOINT_CENTERING_KEY, waypointCentering ? '1' : '0');
   });
@@ -1161,6 +1355,10 @@ function initWaypointSettings() {
   if (showWpIconEl) {
     showWpIconEl.checked = showWpIcon;
     showWpIconEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('show-wp-icon', () => showWpIconEl.dispatchEvent(new Event('change')));
+        return;
+      }
       showWpIcon = showWpIconEl.checked;
       localStorage.setItem(LS_SHOW_WP_ICON_KEY, showWpIcon ? '1' : '0');
       updateMapWeatherIconVisibility();
@@ -1171,6 +1369,10 @@ function initWaypointSettings() {
   if (showImIconEl) {
     showImIconEl.checked = showImIcon;
     showImIconEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('show-im-icon', () => showImIconEl.dispatchEvent(new Event('change')));
+        return;
+      }
       showImIcon = showImIconEl.checked;
       localStorage.setItem(LS_SHOW_IM_ICON_KEY, showImIcon ? '1' : '0');
       updateMapWeatherIconVisibility();
@@ -1181,6 +1383,10 @@ function initWaypointSettings() {
   if (importAutoSortEl) {
     importAutoSortEl.checked = importAutoSortMode;
     importAutoSortEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-sort', () => importAutoSortEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoSortMode = importAutoSortEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_SORT_KEY, importAutoSortMode ? '1' : '0');
     });
@@ -1190,6 +1396,10 @@ function initWaypointSettings() {
   if (importAutoNameEl) {
     importAutoNameEl.checked = importAutoNameMode;
     importAutoNameEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-name', () => importAutoNameEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoNameMode = importAutoNameEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_NAME_KEY, importAutoNameMode ? '1' : '0');
     });
@@ -1468,8 +1678,9 @@ gpxFileInput.addEventListener('change', importFile);
 
 /** Show/hide the re-plan button based on whether we are in imported-track mode. */
 function syncTrackModeUI() {
+  const busy = isRouteWeatherBusy();
   if (btnReplanRoute) {
-    btnReplanRoute.disabled = !importedTrackMode;
+    btnReplanRoute.disabled = busy || !importedTrackMode;
   }
 
   // Freeze route and pace parameter inputs when in imported track mode (except replan/clear)
@@ -1495,7 +1706,7 @@ function syncTrackModeUI() {
 
   // Sync frozen state to map manager
   if (mapManager) {
-    mapManager.setFrozen(frozen);
+    mapManager.setFrozen(frozen || busy);
   }
 
   // Visual dimming for frozen sections
@@ -1514,6 +1725,10 @@ function syncTrackModeUI() {
 }
 
 btnReplanRoute?.addEventListener('click', () => {
+  if (isRouteWeatherBusy()) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
   const toRemove = [];
   if (importedTrackMode) {
     for (let i = 0; i < mapManager.waypoints.length; i++) {
@@ -1555,6 +1770,10 @@ btnReplanRoute?.addEventListener('click', () => {
 });
 
 btnClearRoute.addEventListener('click', () => {
+  if (isRouteWeatherBusy()) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
   importedTrackMode = false;
   importedIntermediatePoints = [];
   importedWaypointMeta = [];
@@ -1920,12 +2139,14 @@ if (layerSwitcherEl) {
 
 routeModeRadios.forEach((radio) => {
   radio.addEventListener('change', (e) => {
-    routeEngine.setMode(e.target.value);
-    localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
-    bumpRouteVersion();
-    if (mapManager.waypoints.length >= 2) {
-      onWaypointsChanged(mapManager.waypoints);
-    }
+    runOrDeferBusySetting('route-mode', () => {
+      routeEngine.setMode(e.target.value);
+      localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
+      bumpRouteVersion();
+      if (mapManager.waypoints.length >= 2) {
+        onWaypointsChanged(mapManager.waypoints);
+      }
+    });
   });
 });
 
@@ -2025,14 +2246,22 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
 
   isProcessing = true;
   pendingUpdate = false;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在規劃路線',
+    detail: '準備路線與高度資料...',
+    progress: 8,
+  });
 
   try {
     showNotification('規劃最佳路徑中...', 'info', 1500);
+
+    busyTask.set({ detail: '清除舊的天氣圖示...', progress: 15 });
 
     // Clear stale weather icons while recalculating
     mapManager.clearWaypointWeather();
 
     // Get all alternative routes (with elevation already fetched)
+    busyTask.set({ detail: '取得路線與高度資料...', progress: 35 });
     const isLoop = waypoints.length >= 3 && haversineDistance(waypoints[0], waypoints[waypoints.length - 1]) < 0.1;
     const routeWaypoints = roundTripMode && waypoints.length >= 2
       ? [...waypoints, ...waypoints.slice(0, -1).reverse()]
@@ -2040,6 +2269,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
         ? [...waypoints, waypoints[0]]
         : waypoints;
     allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
+    busyTask.set({ detail: '繪製路線與高度圖...', progress: 72 });
 
     if (allAlternatives.length > 0) {
       // Draw all routes on map with continuous gradient coloring.
@@ -2067,6 +2297,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
 
       // Select the best route by default
       await selectAlternative(0);
+      busyTask.set({ detail: '更新路線統計與天氣欄位...', progress: 94 });
 
       const altMsg = allAlternatives.length > 1
         ? `找到 ${allAlternatives.length} 組建議路徑`
@@ -2081,9 +2312,13 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   }
 
   isProcessing = false;
+  busyTask.set({ detail: '完成', progress: 100 });
 
   if (pendingUpdate) {
+    busyTask.end();
     debouncedCalculateRoute(mapManager.waypoints);
+  } else {
+    busyTask.end();
   }
 }, 500);
 
@@ -2184,7 +2419,7 @@ function hideAlternatives() {
 }
 
 function updateWaypointList(waypoints) {
-  const frozen = !!importedTrackMode;
+  const frozen = !!importedTrackMode || isRouteWeatherBusy();
   if (waypoints.length === 0) {
     waypointList.innerHTML = `
       <div class="empty-state">
@@ -2278,7 +2513,8 @@ function updateWaypointList(waypoints) {
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       if (frozen) {
-        showImportedTrackEditNotice();
+        if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+        else showImportedTrackEditNotice();
         return;
       }
       if (nameEl.querySelector('input')) return;
@@ -2478,7 +2714,8 @@ function updateWaypointList(waypoints) {
         if (e.button === 0 && !e.target.closest('.wp-actions')) {
           lpTimer = setTimeout(() => {
             lpTimer = null;
-            showImportedTrackEditNotice();
+            if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+            else showImportedTrackEditNotice();
           }, 500);
           const clearFrozenTimer = () => {
             if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
@@ -2521,7 +2758,8 @@ function updateWaypointList(waypoints) {
         if (!e.target.closest('.wp-actions')) {
           lpTimer = setTimeout(() => {
             lpTimer = null;
-            showImportedTrackEditNotice();
+            if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+            else showImportedTrackEditNotice();
           }, 500);
         }
         return;
@@ -6400,6 +6638,7 @@ function renderWeatherPanel() {
   // (covers the case where user never manually changes any date/time input)
   saveWeatherSettings();
   refreshOpenWeatherCards();
+  if (isRouteWeatherBusy()) updateRouteWeatherBusyOverlay();
 }
 
 /**
@@ -6683,55 +6922,183 @@ function bindWeatherTableNamePeek(container) {
  * Debounced and checks for existing UI states to avoid conflicting fetches.
  */
 let autoFetchTimeout = 0;
+let isWeatherFetching = false;
+let initialWeatherLoadPending = false;
+
+function waitForWeatherProgressPaint() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
 function autoFetchWeather(options = {}) {
   if (autoFetchTimeout) clearTimeout(autoFetchTimeout);
+  const queuedOptions = {
+    ...options,
+    initialLoad: !!options.initialLoad || initialWeatherLoadPending,
+  };
   autoFetchTimeout = setTimeout(() => {
     // Only auto-fetch if we are not already processing a route
     // and if the "Fetch" button is not currently disabled (meaning a fetch is in progress)
     const fetchBtn = document.querySelector('[data-action="fetch"]');
-    if (!isProcessing && fetchBtn && !fetchBtn.disabled) {
-      fetchAllWeatherData(options);
+    if (!isProcessing && !isWeatherFetching && fetchBtn && !fetchBtn.disabled) {
+      fetchAllWeatherData({
+        ...queuedOptions,
+        initialLoad: queuedOptions.initialLoad || initialWeatherLoadPending,
+      });
+    } else if (queuedOptions.initialLoad || initialWeatherLoadPending) {
+      autoFetchWeather(queuedOptions);
     }
-  }, 1000); // 1s delay to let everything settle
+  }, queuedOptions.initialLoad ? 250 : 1000); // Let rendering settle before the API/cache pass.
 }
 
 async function fetchAllWeatherData(options = {}) {
   const { force = false, onlyWaypointIndex = null, onlyColIndex = null } = options;
-  if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
+  const isInitialWeatherLoad = !!options.initialLoad || initialWeatherLoadPending;
+  if (isWeatherFetching) return;
+  if (weatherPoints.length === 0) {
+    if (isInitialWeatherLoad) initialWeatherLoadPending = false;
+    showNotification('請先建立路線', 'warning');
+    return;
+  }
 
   const container = document.getElementById('weather-table-container');
   if (!container) return;
+
+  const targetIndices = weatherPoints
+    .map((pt, i) => ({ pt, i }))
+    .filter(({ pt, i }) => {
+      if (onlyWaypointIndex !== null && (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex)) return false;
+      if (onlyColIndex !== null && i !== onlyColIndex) return false;
+      return true;
+    })
+    .map(({ i }) => i);
+  const totalTargets = Math.max(1, targetIndices.length);
+  let processedTargets = 0;
+  const progressPaintEvery = Math.max(1, Math.ceil(totalTargets / 12));
+  const fetchStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const minInitialProgressMs = isInitialWeatherLoad ? 700 : 0;
+  isWeatherFetching = true;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在載入天氣資訊',
+    detail: isInitialWeatherLoad
+      ? `網頁開啟時載入天氣資訊 0/${totalTargets}`
+      : `準備天氣欄位 0/${totalTargets}`,
+    progress: 0,
+  });
+  const markWeatherProgress = () => {
+    busyTask.set({
+      detail: isInitialWeatherLoad
+        ? `網頁開啟時載入天氣資訊 ${processedTargets}/${totalTargets}`
+        : `載入天氣資訊 ${processedTargets}/${totalTargets}`,
+      progress: (processedTargets / totalTargets) * 100,
+    });
+  };
+  const maybePaintWeatherProgress = async () => {
+    if (!isInitialWeatherLoad) return;
+    if (processedTargets < totalTargets && processedTargets % progressPaintEvery !== 0) return;
+    await waitForWeatherProgressPaint();
+  };
 
   saveWeatherSettings();
   const fetchBtn = document.querySelector('[data-action="fetch"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
-  for (let i = 0; i < weatherPoints.length; i++) {
-    const pt = weatherPoints[i];
+  try {
+    for (let i = 0; i < weatherPoints.length; i++) {
+      const pt = weatherPoints[i];
 
-    // Filter by specific waypoint or column if requested
-    if (onlyWaypointIndex !== null) {
+      // Filter by specific waypoint or column if requested
+      if (onlyWaypointIndex !== null) {
         if (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex) continue;
-    }
-    if (onlyColIndex !== null && i !== onlyColIndex) continue;
+      }
+      if (onlyColIndex !== null && i !== onlyColIndex) continue;
 
-    if (fetchBtn) {
-      const labelSpan = fetchBtn.querySelector('span');
-      if (labelSpan) labelSpan.textContent = `${i + 1}/${weatherPoints.length}`;
-      else fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
-    }
+      if (fetchBtn) {
+        const labelSpan = fetchBtn.querySelector('span');
+        if (labelSpan) labelSpan.textContent = `${i + 1}/${weatherPoints.length}`;
+        else fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
+      }
 
-    const schedule = getWeatherPointSchedule(pt, i);
-    const dateStr = schedule?.date;
-    const hour = schedule?.hour ?? 8;
-    if (!dateStr) continue;
+      const schedule = getWeatherPointSchedule(pt, i);
+      const dateStr = schedule?.date;
+      const hour = schedule?.hour ?? 8;
+      if (!dateStr) {
+        processedTargets++;
+        markWeatherProgress();
+        await maybePaintWeatherProgress();
+        continue;
+      }
 
-    const cacheKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
-    let data = cachedWeatherData[cacheKey];
+      const cacheKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+      let data = cachedWeatherData[cacheKey];
 
-    // If not forced and we have cache, just apply it and skip fetching
-    if (!force) {
-      if (data) {
+      // If not forced and we have cache, just apply it and skip fetching
+      if (!force) {
+        if (data) {
+          const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
+          WEATHER_ROWS.forEach(row => {
+            const val = getCellValue(data, row.key, pt);
+            cells[row.key] = val;
+            const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+            if (cell) {
+              updateWeatherTableCell(cell, row.key, val);
+              cell.classList.remove('loading', 'error');
+            }
+          });
+          saveWeatherCells(getSemanticKey(pt), cells);
+          if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
+            mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+
+          // Update chart markers to show icon immediately
+          updateElevationMarkers();
+          updateIntermediateMarkers();
+          if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+          processedTargets++;
+          markWeatherProgress();
+          await maybePaintWeatherProgress();
+          continue;
+        }
+
+        // Also check if UI already restored this point's weather from map pack (savedWeatherCells)
+        const existingCells = getSavedWeatherCells(pt);
+        if (existingCells && existingCells.weather && existingCells.weather !== '—') {
+          const cell = container.querySelector(`[data-col="${i}"][data-key="weather"]`);
+          if (cell && cell.textContent !== '...' && cell.textContent !== '—') {
+            // Data is already populated correctly in the UI
+            if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && existingCells._icon) {
+              mapManager.setWaypointWeather(pt.wpIndex, existingCells._icon);
+            }
+            updateElevationMarkers();
+            updateIntermediateMarkers();
+            processedTargets++;
+            markWeatherProgress();
+            await maybePaintWeatherProgress();
+            continue;
+          }
+        }
+      }
+
+      WEATHER_ROWS.forEach(row => {
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) {
+          const valueEl = cell.querySelector('.wt-cell-value');
+          if (valueEl) valueEl.textContent = '...';
+          else cell.textContent = '...';
+          cell.classList.remove('error');
+          cell.classList.add('loading');
+        }
+      });
+
+      try {
+        data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
+        cachedWeatherData[cacheKey] = data;
+        // Save after each point so partial data survives a mid-fetch page close
+        localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
         const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
         WEATHER_ROWS.forEach(row => {
           const val = getCellValue(data, row.key, pt);
@@ -6743,89 +7110,51 @@ async function fetchAllWeatherData(options = {}) {
           }
         });
         saveWeatherCells(getSemanticKey(pt), cells);
+        // Update only the outbound map badge; return markers carry their own icon.
         if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
           mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
-        
-        // Update chart markers to show icon immediately
+
+        // Refresh chart markers to show icon immediately
         updateElevationMarkers();
         updateIntermediateMarkers();
-        if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
-        continue;
-      }
-      
-      // Also check if UI already restored this point's weather from map pack (savedWeatherCells)
-      const existingCells = getSavedWeatherCells(pt);
-      if (existingCells && existingCells.weather && existingCells.weather !== '—') {
-        const cell = container.querySelector(`[data-col="${i}"][data-key="weather"]`);
-        if (cell && cell.textContent !== '...' && cell.textContent !== '—') {
-          // Data is already populated correctly in the UI
-          if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && existingCells._icon) {
-            mapManager.setWaypointWeather(pt.wpIndex, existingCells._icon);
+      } catch (err) {
+        console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
+        WEATHER_ROWS.forEach(row => {
+          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+          if (cell) {
+            const valueEl = cell.querySelector('.wt-cell-value');
+            if (valueEl) valueEl.textContent = '—';
+            else cell.textContent = '—';
+            cell.classList.remove('loading');
+            cell.classList.add('error');
           }
-          updateElevationMarkers();
-          updateIntermediateMarkers();
-          continue;
-        }
+        });
       }
-    }
+      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      processedTargets++;
+      markWeatherProgress();
+      await maybePaintWeatherProgress();
 
-    WEATHER_ROWS.forEach(row => {
-      const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-      if (cell) {
-        const valueEl = cell.querySelector('.wt-cell-value');
-        if (valueEl) valueEl.textContent = '...';
-        else cell.textContent = '...';
-        cell.classList.remove('error');
-        cell.classList.add('loading');
+      if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
+    }
+  } finally {
+    if (isInitialWeatherLoad) {
+      const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - fetchStartedAt;
+      if (elapsed < minInitialProgressMs) {
+        await new Promise(r => setTimeout(r, minInitialProgressMs - elapsed));
       }
-    });
-
-    try {
-      data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
-      cachedWeatherData[cacheKey] = data;
-      // Save after each point so partial data survives a mid-fetch page close
-      localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
-      const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
-      WEATHER_ROWS.forEach(row => {
-        const val = getCellValue(data, row.key, pt);
-        cells[row.key] = val;
-        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) {
-          updateWeatherTableCell(cell, row.key, val);
-          cell.classList.remove('loading', 'error');
-        }
-      });
-      saveWeatherCells(getSemanticKey(pt), cells);
-      // Update only the outbound map badge; return markers carry their own icon.
-      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
-        mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
-
-      // Refresh chart markers to show icon immediately
-      updateElevationMarkers();
-      updateIntermediateMarkers();
-    } catch (err) {
-      console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
-      WEATHER_ROWS.forEach(row => {
-        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) {
-          const valueEl = cell.querySelector('.wt-cell-value');
-          if (valueEl) valueEl.textContent = '—';
-          else cell.textContent = '—';
-          cell.classList.remove('loading');
-          cell.classList.add('error');
-        }
-      });
+      initialWeatherLoadPending = false;
     }
-    if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
-
-    if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
+    isWeatherFetching = false;
+    busyTask.set({ detail: '完成', progress: 100 });
+    if (isInitialWeatherLoad) await waitForWeatherProgressPaint();
+    busyTask.end();
+    if (fetchBtn) {
+      fetchBtn.disabled = false;
+      fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
+    }
+    showNotification('天氣資訊已更新', 'success', 2000);
   }
-
-  if (fetchBtn) {
-    fetchBtn.disabled = false;
-    fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
-  }
-  showNotification('天氣資訊已更新', 'success', 2000);
 }
 
 // =========== Weather Card (Map Popup) ===========
@@ -7791,13 +8120,15 @@ async function init() {
     navModeEls.forEach(radio => {
       radio.addEventListener('change', () => {
         if (!radio.checked) return;
-        roundTripMode = radio.value === 'roundtrip';
-        oLoopMode = radio.value === 'oloop';
-        bumpRouteVersion();
-        localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
-        localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
-        if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
-        else historyRecord();
+        runOrDeferBusySetting('nav-mode', () => {
+          roundTripMode = radio.value === 'roundtrip';
+          oLoopMode = radio.value === 'oloop';
+          bumpRouteVersion();
+          localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+          localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
+          if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+          else historyRecord();
+        });
       });
     });
   }
@@ -7830,6 +8161,10 @@ async function init() {
     let prevActivity = speedActivity;
 
     const applyIntervalMode = () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('interval-mode', applyIntervalMode);
+        return;
+      }
       const mode = Array.from(intervalModeEls).find(r => r.checked)?.value || 'off';
       const newActivity = speedActivityEl?.value || 'hiking';
 
@@ -7934,6 +8269,10 @@ async function init() {
 
   // Read all pace inputs → paceParams (always in km/h internally) → save → recalc
   const onPaceParamChange = () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('pace-params', onPaceParamChange);
+      return;
+    }
     const rawDisplay = parseFloat(paceFlatInput?.value);
     const flatKmh = (!isNaN(rawDisplay) && paceFlatInput?.value !== '')
       ? displayToKmh(rawDisplay)
@@ -7964,6 +8303,10 @@ async function init() {
   // --- Pace unit toggle (km/h ↔ 上河速度) ---
   if (paceUnitSelect) {
     paceUnitSelect.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('pace-unit', () => paceUnitSelect.dispatchEvent(new Event('change')));
+        return;
+      }
       const prevUnit = paceUnit;
       paceUnit = paceUnitSelect.value;
       localStorage.setItem(LS_PACE_UNIT_KEY, paceUnit);
@@ -7985,6 +8328,10 @@ async function init() {
   if (perSegmentEl) {
     perSegmentEl.checked = perSegmentMode;
     perSegmentEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('per-segment', () => perSegmentEl.dispatchEvent(new Event('change')));
+        return;
+      }
       perSegmentMode = perSegmentEl.checked;
       localStorage.setItem(LS_PER_SEGMENT_KEY, perSegmentMode ? '1' : '0');
       bumpPaceVersion();
@@ -7997,6 +8344,10 @@ async function init() {
   if (strictLinearEl) {
     strictLinearEl.checked = strictLinearMode;
     strictLinearEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('strict-linear', () => strictLinearEl.dispatchEvent(new Event('change')));
+        return;
+      }
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
       if (strictLinearMode) {
@@ -8012,6 +8363,10 @@ async function init() {
   if (importAutoSortEl) {
     importAutoSortEl.checked = importAutoSortMode;
     importAutoSortEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-sort-init', () => importAutoSortEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoSortMode = importAutoSortEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_SORT_KEY, importAutoSortMode ? '1' : '0');
     });
@@ -8022,6 +8377,10 @@ async function init() {
   if (importAutoNameEl) {
     importAutoNameEl.checked = importAutoNameMode;
     importAutoNameEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-name-init', () => importAutoNameEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoNameMode = importAutoNameEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_NAME_KEY, importAutoNameMode ? '1' : '0');
     });
@@ -8031,6 +8390,10 @@ async function init() {
   syncPaceCalibrationUI();
   if (paceCalibrationEnable) {
     paceCalibrationEnable.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('pace-calibration-enable', () => paceCalibrationEnable.dispatchEvent(new Event('change')));
+        return;
+      }
       paceCalibration.enabled = paceCalibrationEnable.checked;
       savePaceCalibration();
       syncPaceCalibrationUI();
@@ -8051,6 +8414,10 @@ async function init() {
   }
   if (paceCalibrationClear) {
     paceCalibrationClear.addEventListener('click', () => {
+      if (isRouteWeatherBusy()) {
+        showRouteWeatherBusyNotice();
+        return;
+      }
       paceCalibration = { enabled: false, factor: 1, tracks: [] };
       savePaceCalibration();
       syncPaceCalibrationUI();
@@ -8079,6 +8446,10 @@ async function init() {
   if (windyLayerEl) {
     windyLayerEl.value = windyLayer;
     windyLayerEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('windy-layer', () => windyLayerEl.dispatchEvent(new Event('change')));
+        return;
+      }
       windyLayer = windyLayerEl.value;
       localStorage.setItem(LS_WINDY_LAYER_KEY, windyLayer);
       refreshWindyLinks();
@@ -8088,6 +8459,10 @@ async function init() {
   if (windyModelEl) {
     windyModelEl.value = windyModel;
     windyModelEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('windy-model', () => windyModelEl.dispatchEvent(new Event('change')));
+        return;
+      }
       windyModel = windyModelEl.value;
       localStorage.setItem(LS_WINDY_MODEL_KEY, windyModel);
       refreshWindyLinks();
@@ -8103,6 +8478,7 @@ async function init() {
     try { return localStorage.getItem(LS_PENDING_GPX_KEY); } catch { return null; }
   })();
   if (pendingGpx) {
+    initialWeatherLoadPending = true;
     try { localStorage.removeItem(LS_PENDING_GPX_KEY); } catch (_) { }
     try {
       const { GpxExporter } = await ensureRouteExporters();
@@ -8110,6 +8486,7 @@ async function init() {
       await applyImportedResult(result);
     } catch (err) {
       console.error('Pending GPX replay failed:', err);
+      initialWeatherLoadPending = false;
     }
   }
 
@@ -8120,6 +8497,10 @@ async function init() {
     catch { return null; }
   })();
   const trackRestored = pendingGpx ? true : (savedTrackSession ? await restoreImportedTrack(savedTrackSession) : false);
+  if (!pendingGpx && trackRestored) {
+    initialWeatherLoadPending = true;
+    autoFetchWeather({ force: false, initialLoad: true });
+  }
 
   // Otherwise, fall back to normal waypoint-only restore (triggers route recalc).
   const savedWaypoints = trackRestored ? null : (() => {
@@ -8127,6 +8508,7 @@ async function init() {
     catch { return null; }
   })();
   if (savedWaypoints && savedWaypoints.length > 0) {
+    initialWeatherLoadPending = true;
     skipAutoGeocode = true;
     const savedWaypointIds = getPersistedWaypointIds();
     mapManager.setWaypointsFromImport(savedWaypoints, savedWaypointIds.map(waypointId => ({ waypointId })));
