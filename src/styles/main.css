@@ -620,7 +620,7 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 }
 
 .custom-waypoint-icon.is-selected {
-  z-index: 900 !important;
+  z-index: 1900 !important;
 }
 
 .wp-weather-badge {

@@ -176,6 +176,40 @@ async function waypointPairState(page) {
   });
 }
 
+async function topWaypointCenter(page, number) {
+  const target = await page.evaluate((targetNumber) => {
+    const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .filter((el) => Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === targetNumber)
+      .map((el) => ({
+        el,
+        isReturn: el.classList.contains('return-leg'),
+        z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+      }))
+      .sort((a, b) => b.z - a.z)[0]?.el;
+    if (!marker) return null;
+    const rect = marker.getBoundingClientRect();
+    return {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+    };
+  }, number);
+  expect(target).not.toBeNull();
+  return target;
+}
+
+async function startLongPressWaypointDrag(page, point) {
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.waitForTimeout(LONG_PRESS_MS);
+  await expect(page.locator('.waypoint-trash-zone')).toBeVisible();
+}
+
+async function finishLongPressWaypointDrag(page, point) {
+  await page.mouse.move(point.x, point.y, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
+}
+
 test('double-clicking an overlapped waypoint cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
@@ -269,35 +303,41 @@ test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint',
   }
 });
 
-test('long-pressing an overlapped waypoint toggles both directions without dragging', async ({ page }) => {
+test('long-press dragging an overlapped waypoint moves it instead of cycling layers', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
 
-  const pressTopWaypoint = async () => {
-    const target = await page.evaluate(() => {
-      const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
-        .filter((el) => Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === 1)
-        .map((el) => ({ el, z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0 }))
-        .sort((a, b) => b.z - a.z)[0]?.el;
-      if (!markers) return null;
-      const rect = markers.getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-    });
-    expect(target).not.toBeNull();
-    await page.mouse.move(target.x, target.y);
-    await page.mouse.down();
-    await page.waitForTimeout(650);
-    await page.mouse.move(target.x + 3, target.y + 2);
-    await page.mouse.up();
-  };
-
-  await pressTopWaypoint();
+  let target = await topWaypointCenter(page, 1);
+  await page.mouse.dblclick(target.x, target.y);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
-  await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
 
-  await pressTopWaypoint();
-  await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(false);
-  await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
+  const beforeLayer = await layerState(page);
+  const before = await topWaypointCenter(page, 1);
+  await startLongPressWaypointDrag(page, before);
+  await finishLongPressWaypointDrag(page, { x: before.x + 90, y: before.y + 35 });
+
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  const after = await topWaypointCenter(page, 1);
+  expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeGreaterThan(30);
+  await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(beforeLayer.returnAboveOutbound);
+});
+
+test('long-press dragging a waypoint into the trash zone deletes it', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const target = await topWaypointCenter(page, 2);
+  await startLongPressWaypointDrag(page, target);
+
+  const trashBox = await page.locator('.waypoint-trash-zone').boundingBox();
+  expect(trashBox).not.toBeNull();
+  await finishLongPressWaypointDrag(page, {
+    x: trashBox.x + trashBox.width / 2,
+    y: trashBox.y + trashBox.height / 2,
+  });
+
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
+  await expect(page.locator('.waypoint-trash-zone')).not.toBeVisible();
 });
 
 test('long-pressing a route overlap with four stacked legs cycles every visible layer', async ({ page }) => {
