@@ -286,6 +286,12 @@ export class MapManager {
     this._blockMapClick(700);
   }
 
+  _clearNativeSelection() {
+    try {
+      window.getSelection?.()?.removeAllRanges?.();
+    } catch (_) { }
+  }
+
   _blockMapClick(duration = 300) {
     this.ignoreMapClick = true;
     if (this._blockMapClickTimer) clearTimeout(this._blockMapClickTimer);
@@ -990,6 +996,8 @@ export class MapManager {
       if (_dragModeActive) return;
       const touch = getTouchPoint(oe);
       if (!touch) return;
+      oe.preventDefault?.();
+      this._clearNativeSelection();
       _touchPendingClientX = touch.clientX;
       _touchPendingClientY = touch.clientY;
       this.map.dragging.disable();
@@ -1109,6 +1117,8 @@ export class MapManager {
       if (_longPressTimer) {
         const touch = getTouchPoint(oe);
         if (!touch) return;
+        oe.preventDefault?.();
+        this._clearNativeSelection();
         _touchPendingClientX = touch.clientX;
         _touchPendingClientY = touch.clientY;
       }
@@ -1171,7 +1181,7 @@ export class MapManager {
         oe._mappingElfWaypointDomHandled = true;
         oe.stopPropagation();
         startTouchLongPress(oe);
-      }, { passive: true, capture: true });
+      }, { passive: false, capture: true });
       el.addEventListener('touchmove', (oe) => {
         if (this._isMultiTouchEvent(oe)) {
           this._noteMultiTouchGesture();
@@ -1185,7 +1195,7 @@ export class MapManager {
         }
         oe._mappingElfWaypointDomHandled = true;
         moveTouchLongPress(oe);
-      }, { passive: true, capture: true });
+      }, { passive: false, capture: true });
       el.addEventListener('touchend', (oe) => {
         if (this._isWeatherCardDomTarget(oe.target)) {
           oe._mappingElfWaypointDomHandled = true;
@@ -2158,6 +2168,10 @@ export class MapManager {
         _pendingClientX = point.clientX;
         _pendingClientY = point.clientY;
         const source = oe.touches || oe.type?.startsWith('touch') ? 'touch' : 'mouse';
+        if (source === 'touch') {
+          oe.preventDefault?.();
+          this._clearNativeSelection();
+        }
         this.map.dragging.disable();
         
         _lpTimer = setTimeout(() => {
@@ -2183,6 +2197,10 @@ export class MapManager {
         }
         const point = getPointer(e.originalEvent);
         if (!point) return;
+        if (e.originalEvent?.touches) {
+          e.originalEvent.preventDefault?.();
+          this._clearNativeSelection();
+        }
         _pendingClientX = point.clientX;
         _pendingClientY = point.clientY;
       };
@@ -2246,8 +2264,8 @@ export class MapManager {
           oe._mappingElfReturnWaypointDomHandled = true;
           cancelLP();
         }, { capture: true });
-        el.addEventListener('touchstart', wrap(startLP), { passive: true, capture: true });
-        el.addEventListener('touchmove', wrap(moveLP), { passive: true, capture: true });
+        el.addEventListener('touchstart', wrap(startLP), { passive: false, capture: true });
+        el.addEventListener('touchmove', wrap(moveLP), { passive: false, capture: true });
         el.addEventListener('touchend', (oe) => {
           if (this._isWeatherCardDomTarget(oe.target)) {
             oe._mappingElfReturnWaypointDomHandled = true;
