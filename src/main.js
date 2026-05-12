@@ -7293,7 +7293,7 @@ function closeWeatherCard(colIdx) {
   const prev = _wcStates.get(colIdx);
   if (prev === 'compact' || prev === 'full') _wcLastMode = prev;
   _wcStates.delete(colIdx);
-  mapManager.closeWeatherPopup(colIdx);
+  mapManager.closeWeatherPopup(colIdx, { animate: true });
 }
 
 /** Set the card mode and re-render. */
@@ -7465,6 +7465,8 @@ function _renderWeatherCard(colIdx) {
   // Weather info
   const weatherStr = val('weather');
   const weatherParts = weatherStr.split(' ');
+  const hasWeatherPayload = !!(data || cells?.weather);
+  const displayWeatherIcon = hasWeatherPayload ? (weatherParts[0] || '?') : '?';
   const wIcon = weatherParts[0] || '❓';
   const wDesc = weatherParts.slice(1).join(' ') || '—';
   const temp = val('temp');
@@ -7481,7 +7483,7 @@ function _renderWeatherCard(colIdx) {
   // Header
   const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title" title="${pt.label || cardLabel}">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${cardLabel}</span>`;
+  html += `<span class="wc-title" title="${pt.label || cardLabel}">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-title-weather-icon')} ${cardLabel}</span>`;
   if (isFull) {
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
@@ -7511,7 +7513,7 @@ function _renderWeatherCard(colIdx) {
     html += `</div>`;
   } else {
     const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
-    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
@@ -7530,7 +7532,7 @@ function _renderWeatherCard(colIdx) {
   mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
     _bindWeatherCardEvents(colIdx, wrapper);
     if (isFull) scheduleWeatherCardCenter(colIdx, { settle: isHighlighted });
-  }, !pt.isWaypoint, pt.wpIndex);
+  }, !pt.isWaypoint, pt.wpIndex, !!pt.isReturn);
 }
 
 /**
@@ -8052,12 +8054,14 @@ function highlightPoint(colIdx, toggle = false) {
     el.classList.remove('is-highlighted');
     const popup = el.closest('.leaflet-popup');
     if (popup) popup.style.zIndex = '';
+    el.closest('.leaflet-marker-icon')?.classList.remove('has-highlighted-weather-card');
   });
   const card = document.getElementById(`wc-root-${colIdx}`);
   if (card) {
     card.classList.add('is-highlighted');
     const popup = card.closest('.leaflet-popup');
     if (popup) popup.style.zIndex = '1000';
+    card.closest('.leaflet-marker-icon')?.classList.add('has-highlighted-weather-card');
   }
 
   // 6. Map Centering — when a card is open, centre the card in the visible
@@ -8084,6 +8088,7 @@ function clearAllHighlights() {
     el.classList.remove('is-highlighted');
     const popup = el.closest('.leaflet-popup');
     if (popup) popup.style.zIndex = '';
+    el.closest('.leaflet-marker-icon')?.classList.remove('has-highlighted-weather-card');
   });
   mapManager.clearWaypointHighlight();
   mapManager.clearHoverMarker();

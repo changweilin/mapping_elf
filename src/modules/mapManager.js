@@ -148,7 +148,8 @@ export class MapManager {
     this.dragLine = null;
     this.dragLine = null;
     this._dragWpIndex = undefined;
-    this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
+    this._weatherPopups = new Map(); // Inline marker weather cards (colIdx -> { marker, badge, slot })
+    this._weatherPopupCloseTimers = new Map();
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
     this._waypointClickTimeout = null; // Delay waypoint click selection so dblclick can cancel it first
     // Map cursor — placed by GPS button (goToMyLocation). Long-press / click
@@ -1060,6 +1061,11 @@ export class MapManager {
       if (!el || el._mappingElfWaypointDomBound) return;
       el._mappingElfWaypointDomBound = true;
       el.addEventListener('mousedown', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          oe._mappingElfWaypointDomHandled = true;
+          oe.stopPropagation();
+          return;
+        }
         if (oe.button !== 0 || _dragModeActive) return;
         oe._mappingElfWaypointDomHandled = true;
         oe.stopPropagation();
@@ -1073,19 +1079,39 @@ export class MapManager {
         if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
       }, { capture: true });
       el.addEventListener('touchstart', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          oe._mappingElfWaypointDomHandled = true;
+          oe.stopPropagation();
+          return;
+        }
         oe._mappingElfWaypointDomHandled = true;
         oe.stopPropagation();
         startTouchLongPress(oe);
       }, { passive: true, capture: true });
       el.addEventListener('touchmove', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          oe._mappingElfWaypointDomHandled = true;
+          oe.stopPropagation();
+          return;
+        }
         oe._mappingElfWaypointDomHandled = true;
         moveTouchLongPress(oe);
       }, { passive: true, capture: true });
       el.addEventListener('touchend', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          oe._mappingElfWaypointDomHandled = true;
+          oe.stopPropagation();
+          return;
+        }
         oe._mappingElfWaypointDomHandled = true;
         endTouchLongPress();
       }, { passive: true, capture: true });
       el.addEventListener('touchcancel', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          oe._mappingElfWaypointDomHandled = true;
+          oe.stopPropagation();
+          return;
+        }
         oe._mappingElfWaypointDomHandled = true;
         endTouchLongPress();
       }, { passive: true, capture: true });
@@ -1100,6 +1126,10 @@ export class MapManager {
       }
       // Detect click on weather badge
       const target = e.originalEvent?.target;
+      if (this._isWeatherCardDomTarget(target)) {
+        L.DomEvent.stopPropagation(e);
+        return;
+      }
       if (target && target.closest && target.closest('.wp-weather-badge')) {
         L.DomEvent.stopPropagation(e);
         const idx = this.waypointMarkers.indexOf(marker);
@@ -1285,6 +1315,7 @@ export class MapManager {
     this.waypointWeather[index] = emoji;
     this.waypointMarkers[index].setIcon(this._createIcon(index));
     this._applyColorToMarker(this.waypointMarkers[index], index);
+    this._syncWeatherBadgeOpenStates();
   }
 
   clearWaypointWeather() {
@@ -1667,7 +1698,7 @@ export class MapManager {
         color = interpolateRouteColor(t);
       }
 
-      const weatherHtml = pt.weatherIcon ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weatherIcon)}</div>` : '';
+      const weatherHtml = this._weatherBadgeHtml(pt.weatherIcon);
       const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
 
       const icon = L.divIcon({
@@ -1691,6 +1722,10 @@ export class MapManager {
       marker.on('click', (e) => {
         // Detect click on weather badge
         const target = e.originalEvent?.target;
+        if (this._isWeatherCardDomTarget(target)) {
+          L.DomEvent.stopPropagation(e);
+          return;
+        }
         if (target && target.closest && target.closest('.wp-weather-badge')) {
           L.DomEvent.stopPropagation(e);
           if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
@@ -1709,6 +1744,10 @@ export class MapManager {
       let startX = 0, startY = 0;
       const startLP = (e) => {
         const oe = e.originalEvent;
+        if (this._isWeatherCardDomTarget(oe?.target)) {
+          L.DomEvent.stopPropagation(oe);
+          return;
+        }
         if (oe.button !== undefined && oe.button !== 0) return;
         const touch = oe.touches ? oe.touches[0] : oe;
         startX = touch.clientX;
@@ -1739,6 +1778,7 @@ export class MapManager {
       marker.on('mouseup touchend mouseleave touchcancel', endLP);
       this.intermediateMarkers.push(marker);
     });
+    this._syncWeatherBadgeOpenStates();
   }
 
   clearIntermediateMarkers() {
@@ -1817,6 +1857,7 @@ export class MapManager {
         if (_returnDragActive || _returnJustDragged) return;
         // Detect click on weather badge
         const target = e.originalEvent?.target;
+        if (this._isWeatherCardDomTarget(target)) return;
         if (target && target.closest && target.closest('.wp-weather-badge')) {
           if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
           return;
@@ -1975,6 +2016,10 @@ export class MapManager {
       
       const startLP = (e) => {
         const oe = e.originalEvent;
+        if (this._isWeatherCardDomTarget(oe?.target)) {
+          L.DomEvent.stopPropagation(oe);
+          return;
+        }
         if (oe.button !== undefined && oe.button !== 0) return;
         L.DomEvent.stopPropagation(oe);
         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
@@ -2041,6 +2086,11 @@ export class MapManager {
         el._mappingElfReturnWaypointDomBound = true;
 
         const wrap = (handler) => (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            oe._mappingElfReturnWaypointDomHandled = true;
+            oe.stopPropagation();
+            return;
+          }
           oe._mappingElfReturnWaypointDomHandled = true;
           oe.stopPropagation();
           handler({ originalEvent: oe });
@@ -2049,16 +2099,31 @@ export class MapManager {
         el.addEventListener('mousedown', wrap(startLP), { capture: true });
         el.addEventListener('mousemove', wrap(moveLP), { capture: true });
         el.addEventListener('mouseup', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            oe._mappingElfReturnWaypointDomHandled = true;
+            oe.stopPropagation();
+            return;
+          }
           oe._mappingElfReturnWaypointDomHandled = true;
           cancelLP();
         }, { capture: true });
         el.addEventListener('touchstart', wrap(startLP), { passive: true, capture: true });
         el.addEventListener('touchmove', wrap(moveLP), { passive: true, capture: true });
         el.addEventListener('touchend', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            oe._mappingElfReturnWaypointDomHandled = true;
+            oe.stopPropagation();
+            return;
+          }
           oe._mappingElfReturnWaypointDomHandled = true;
           cancelLP();
         }, { passive: true, capture: true });
         el.addEventListener('touchcancel', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            oe._mappingElfReturnWaypointDomHandled = true;
+            oe.stopPropagation();
+            return;
+          }
           oe._mappingElfReturnWaypointDomHandled = true;
           cancelLP();
         }, { passive: true, capture: true });
@@ -2069,6 +2134,7 @@ export class MapManager {
       setTimeout(bindReturnWaypointDomFallback, 0);
       this.returnWaypointMarkers.push(marker);
     });
+    this._syncWeatherBadgeOpenStates();
   }
 
   clearReturnWaypoints() {
@@ -2085,7 +2151,7 @@ export class MapManager {
     const isEndpoint = (pt.wpIndex === 0 || pt.wpIndex === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
     const num = (pt.wpIndex ?? 0) + 1;
-    const weatherHtml = pt.weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weather)}</div>` : '';
+    const weatherHtml = this._weatherBadgeHtml(pt.weather);
     const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
     const innerStyle = pt.color
       ? `style="background:${pt.color}; box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${pt.color}55;"`
@@ -2233,6 +2299,66 @@ export class MapManager {
     cb(this.waypoints);
   }
 
+  _weatherBadgeHtml(icon) {
+    const hasWeather = !!icon;
+    return `<div class="wp-weather-badge${hasWeather ? ' is-loaded' : ' is-placeholder'}">` +
+      `<span class="wp-weather-badge-face">${buildWeatherRoundIconHtml(icon || '?')}</span>` +
+      '<div class="wp-weather-card-slot"></div>' +
+      '</div>';
+  }
+
+  _findWeatherTargetMarker(colIdx, isIntermediate = false, waypointIndex = -1, isReturn = false) {
+    if (isIntermediate) {
+      return this.intermediateMarkers.find(m => m._colIdx === colIdx) || null;
+    }
+    if (isReturn) {
+      return this.returnWaypointMarkers.find(m => m._colIdx === colIdx)
+        || this.returnWaypointMarkers.find(m => m._wpIndex === waypointIndex)
+        || null;
+    }
+    if (waypointIndex >= 0) return this.waypointMarkers[waypointIndex] || null;
+    return this.waypointMarkers[colIdx] || null;
+  }
+
+  _weatherBadgeForMarker(marker) {
+    return marker?.getElement?.()?.querySelector('.wp-weather-badge') || null;
+  }
+
+  _weatherCardSlotForBadge(badge) {
+    if (!badge) return null;
+    let slot = badge.querySelector('.wp-weather-card-slot');
+    if (!slot) {
+      slot = document.createElement('div');
+      slot.className = 'wp-weather-card-slot';
+      badge.appendChild(slot);
+    }
+    return slot;
+  }
+
+  _isWeatherCardDomTarget(target) {
+    return !!target?.closest?.('.weather-card');
+  }
+
+  _setWeatherBadgeOpenState(colIdx, open, targetMarker = null) {
+    const markers = targetMarker ? [targetMarker] : [
+      ...this.intermediateMarkers.filter(m => m._colIdx === colIdx),
+      ...this.returnWaypointMarkers.filter(m => m._colIdx === colIdx),
+    ];
+
+    markers.forEach((marker) => {
+      const el = marker.getElement?.();
+      el?.classList.toggle('has-weather-card', open);
+      el?.querySelectorAll('.wp-weather-badge')
+        .forEach((badge) => badge.classList.toggle('is-card-open', open));
+    });
+  }
+
+  _syncWeatherBadgeOpenStates() {
+    this._weatherPopups.forEach((entry, colIdx) => {
+      this._setWeatherBadgeOpenState(colIdx, true, entry.marker || null);
+    });
+  }
+
   _createIcon(index) {
     const total = this.waypoints.length;
     let cls = '';
@@ -2241,7 +2367,7 @@ export class MapManager {
     if (this.stackedWaypointFlags?.[index]) cls += (cls ? ' ' : '') + 'is-stacked';
 
     const weather = this.waypointWeather[index];
-    const weatherHtml = weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(weather)}</div>` : '';
+    const weatherHtml = this._weatherBadgeHtml(weather);
 
     const isEndpoint = (index === 0 || index === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
@@ -2263,6 +2389,7 @@ export class MapManager {
       this._applyColorToMarker(marker, i);
       marker._bindWaypointDomFallback?.();
     });
+    this._syncWeatherBadgeOpenStates();
   }
 
   /** Apply the stored gradient color to a marker's DOM element. */
@@ -3056,78 +3183,95 @@ export class MapManager {
   }
 
   /**
-   * Open a weather card popup attached to a marker.
-   * Multiple popups can coexist.
+   * Expand the marker's weather badge into an inline weather card.
+   * Multiple cards can coexist because each one lives inside its own badge.
    * @param {number} colIdx - weather column index
-   * @param {string} htmlContent - full inner HTML for the popup
-   * @param {function} onReady - callback(wrapper) fired when popup is added to DOM
+   * @param {string} htmlContent - full inner HTML for the card
+   * @param {function} onReady - callback(wrapper) fired when the card is in DOM
    * @param {boolean} isIntermediate - if true, attach to intermediate markers
+   * @param {boolean} isReturn - if true, attach to return-leg waypoint markers
    */
-  openWeatherPopup(colIdx, htmlContent, onReady, isIntermediate = false, waypointIndex = -1) {
-    const marker = isIntermediate
-      ? this.intermediateMarkers.find(m => m.options.colIdx === colIdx) // We'll need to store colIdx on marker options
-      : this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx]; // fallback for legacy logic
-
-    // Better: let the caller provide the marker or latlng. 
-    // But since we want to attach to the marker, let's find it.
-    let targetMarker = null;
-    if (isIntermediate) {
-      // Find intermediate marker by some property? 
-      // I'll update setIntermediateMarkers to store colIdx on the marker.
-      targetMarker = this.intermediateMarkers.find(m => m._colIdx === colIdx);
-    } else {
-      targetMarker = this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx];
-    }
-
+  openWeatherPopup(colIdx, htmlContent, onReady, isIntermediate = false, waypointIndex = -1, isReturn = false) {
+    const targetMarker = this._findWeatherTargetMarker(colIdx, isIntermediate, waypointIndex, isReturn);
     if (!targetMarker) return;
+    const badge = this._weatherBadgeForMarker(targetMarker);
+    const slot = this._weatherCardSlotForBadge(badge);
+    if (!badge || !slot) return;
 
-    // If already open for this index, update it instead of recreating (prevents flashing)
-    let popup = this._weatherPopups.get(colIdx);
-    if (!popup) {
-      popup = L.popup({
-        className: 'weather-popup',
-        closeButton: false,
-        closeOnClick: false,
-        autoClose: false,
-        autoPan: true,
-        autoPanPaddingTopLeft: [20, 60],
-        autoPanPaddingBottomRight: [20, 20],
-        offset: isIntermediate ? [0, -12] : [0, -24],
-        maxWidth: 320,
-        minWidth: 200,
-      });
-      this._weatherPopups.set(colIdx, popup);
+    const existing = this._weatherPopups.get(colIdx);
+    if (existing && existing.badge !== badge) {
+      this._closeInlineWeatherCardNow(colIdx, existing);
     }
 
-    popup
-      .setLatLng(targetMarker.getLatLng())
-      .setContent(htmlContent)
-      .openOn(this.map);
-
-    // Prevent Leaflet from swallowing click events inside the popup
-    const wrapper = popup.getElement();
-    if (wrapper) {
-      L.DomEvent.disableClickPropagation(wrapper);
-      L.DomEvent.disableScrollPropagation(wrapper);
+    const closeTimer = this._weatherPopupCloseTimers.get(colIdx);
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      this._weatherPopupCloseTimers.delete(colIdx);
     }
+
+    badge.classList.remove('is-card-closing');
+    badge.classList.add('is-card-open');
+    targetMarker.getElement?.()?.classList.add('has-weather-card');
+    slot.innerHTML = htmlContent;
+
+    L.DomEvent.disableClickPropagation(slot);
+    L.DomEvent.disableScrollPropagation(slot);
+    const card = slot.querySelector('.weather-card');
+    if (card) {
+      L.DomEvent.disableClickPropagation(card);
+      L.DomEvent.disableScrollPropagation(card);
+    }
+
+    const entry = { marker: targetMarker, badge, slot, closeToken: null };
+    this._weatherPopups.set(colIdx, entry);
 
     // Call onReady callback so event handlers can be bound
-    if (onReady) onReady(wrapper);
+    if (onReady) onReady(slot);
   }
 
   /**
-   * Close a specific weather card popup or all of them.
-   * @param {number} colIdx - if undefined, closes ALL popups
+   * Remove an inline marker weather card without animation.
    */
-  closeWeatherPopup(colIdx) {
+  _closeInlineWeatherCardNow(colIdx, entry) {
+    const closeTimer = this._weatherPopupCloseTimers.get(colIdx);
+    if (closeTimer) clearTimeout(closeTimer);
+    this._weatherPopupCloseTimers.delete(colIdx);
+    entry.badge?.classList.remove('is-card-open', 'is-card-closing');
+    entry.marker?.getElement?.()?.classList.remove('has-weather-card');
+    if (entry.slot) entry.slot.innerHTML = '';
+    this._weatherPopups.delete(colIdx);
+  }
+
+  /**
+   * Close a specific inline weather card or all of them.
+   * @param {number} colIdx - if undefined, closes ALL cards
+   */
+  closeWeatherPopup(colIdx, options = {}) {
+    const animate = options.animate === true;
+
     if (colIdx !== undefined) {
-      const popup = this._weatherPopups.get(colIdx);
-      if (popup) {
-        this.map.closePopup(popup);
-        this._weatherPopups.delete(colIdx);
+      const entry = this._weatherPopups.get(colIdx);
+      if (entry) {
+        const card = entry.slot?.querySelector('.weather-card');
+        if (!animate || !entry.badge || !card) {
+          this._closeInlineWeatherCardNow(colIdx, entry);
+          return;
+        }
+        const token = Symbol('weather-close');
+        entry.closeToken = token;
+        entry.badge.classList.remove('is-card-open');
+        entry.badge.classList.add('is-card-closing');
+        let finished = false;
+        const finish = () => {
+          if (finished || entry.closeToken !== token) return;
+          finished = true;
+          this._closeInlineWeatherCardNow(colIdx, entry);
+        };
+        card.addEventListener('animationend', finish, { once: true });
+        this._weatherPopupCloseTimers.set(colIdx, setTimeout(finish, 260));
       }
     } else {
-      this._weatherPopups.forEach(p => this.map.closePopup(p));
+      this._weatherPopups.forEach((entry, idx) => this._closeInlineWeatherCardNow(idx, entry));
       this._weatherPopups.clear();
     }
   }
@@ -3135,7 +3279,6 @@ export class MapManager {
   /** Check if a specific weather popup is currently open. */
   isWeatherPopupOpen(colIdx) {
     if (colIdx === undefined) return this._weatherPopups.size > 0;
-    const popup = this._weatherPopups.get(colIdx);
-    return !!popup && this.map.hasLayer(popup);
+    return this._weatherPopups.has(colIdx);
   }
 }
