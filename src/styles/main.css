@@ -236,13 +236,19 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 }
 
 .app-busy-overlay {
+  --busy-overlay-edge: 12px;
+  --busy-overlay-zoom-reserve: 62px;
   position: fixed;
-  inset: 0 0 auto;
+  top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 10px);
+  left: var(--busy-overlay-zoom-reserve);
+  right: var(--busy-overlay-edge);
+  bottom: auto;
   z-index: 10020;
-  display: block;
+  display: flex;
+  justify-content: center;
   height: auto;
   min-height: 0;
-  padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 0;
+  padding: 0;
   background: transparent;
   backdrop-filter: none;
   pointer-events: none;
@@ -253,7 +259,7 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px 12px;
-  width: min(520px, calc(100vw - 24px));
+  width: min(520px, 100%);
   min-width: 0;
   margin: 0 auto;
   padding: 7px 12px 8px;
@@ -3120,6 +3126,27 @@ body.route-list-dragging {
     --toolbar-height: 50px;
   }
 
+  .app-busy-overlay {
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 8px);
+    left: 56px;
+    right: 56px;
+  }
+
+  .app-busy-overlay .loading-content {
+    width: min(300px, 100%);
+    gap: 3px 8px;
+    padding: 6px 8px 7px;
+  }
+
+  .app-busy-overlay .loading-content h2,
+  .app-busy-overlay .loading-progress-text {
+    font-size: 11px;
+  }
+
+  .app-busy-overlay .loading-content p {
+    font-size: 10px;
+  }
+
   .toolbar {
     padding: 0 10px;
   }
@@ -3234,6 +3261,16 @@ body.route-list-dragging {
   :root {
     --panel-width: 320px;
     --toolbar-height: 46px;
+  }
+
+  .app-busy-overlay {
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 6px);
+    left: 56px;
+    right: 56px;
+  }
+
+  .app-busy-overlay .loading-content {
+    width: min(320px, 100%);
   }
 
   .side-panel {
