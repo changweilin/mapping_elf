@@ -2193,9 +2193,13 @@ export class MapManager {
     let lpTriggered = false;
     let startX = 0, startY = 0;
     let startSource = 'mouse';
+    let routeInsertDragActive = false;
+    let routeInsertPreview = null;
+    let routeInsertLatLng = null;
+    let routeInsertIndex = null;
 
     const domEventPoint = (oe) => {
-      const touch = oe.touches ? oe.touches[0] : (oe.changedTouches ? oe.changedTouches[0] : oe);
+      const touch = oe.touches?.[0] || oe.changedTouches?.[0] || oe;
       return touch ? { x: touch.clientX, y: touch.clientY } : { x: 0, y: 0 };
     };
 
@@ -2220,8 +2224,12 @@ export class MapManager {
       lpTimer = setTimeout(() => {
         lpTimer = null;
         lpTriggered = true;
+        if (this.isFrozen) {
+          this._notifyFrozenInteraction('route-edit');
+          return;
+        }
         if (navigator.vibrate) navigator.vibrate(40);
-        this._cycleOverlappingLayers(polyline, latlng, { source: startSource });
+        startRouteInsertDrag(latlng, startSource);
       }, 500);
     };
 
@@ -2238,9 +2246,99 @@ export class MapManager {
     };
 
     const endLongPress = () => {
+      if (routeInsertDragActive) return;
       if (lpTimer) {
         clearTimeout(lpTimer);
         lpTimer = null;
+      }
+    };
+
+    const cleanupRouteInsertDrag = () => {
+      document.removeEventListener('mousemove', onRouteInsertMouseMove);
+      document.removeEventListener('mouseup', onRouteInsertMouseUp);
+      document.removeEventListener('touchmove', onRouteInsertTouchMove);
+      document.removeEventListener('touchend', onRouteInsertTouchEnd);
+      document.removeEventListener('touchcancel', onRouteInsertTouchCancel);
+    };
+
+    const updateRouteInsertPreview = (latlng) => {
+      routeInsertLatLng = latlng;
+      if (!routeInsertPreview) {
+        routeInsertPreview = L.circleMarker(latlng, {
+          radius: 8,
+          color: '#fbbf24',
+          weight: 3,
+          fillColor: '#f59e0b',
+          fillOpacity: 0.85,
+          opacity: 1,
+          interactive: false,
+          pane: 'markerPane',
+          className: 'route-insert-preview-marker',
+        }).addTo(this.map);
+      } else {
+        routeInsertPreview.setLatLng(latlng);
+      }
+    };
+
+    const finishRouteInsertDrag = (oe, shouldCommit = true) => {
+      if (!routeInsertDragActive) return;
+      routeInsertDragActive = false;
+      cleanupRouteInsertDrag();
+      this.map.dragging.enable();
+      this._blockMapClick();
+
+      if (oe && shouldCommit) {
+        updateRouteInsertPreview(domEventLatLng(oe));
+      }
+
+      const latlng = routeInsertLatLng;
+      const insertIndex = routeInsertIndex;
+      if (routeInsertPreview) {
+        this.map.removeLayer(routeInsertPreview);
+        routeInsertPreview = null;
+      }
+      routeInsertLatLng = null;
+      routeInsertIndex = null;
+
+      if (shouldCommit && latlng) {
+        this.addWaypoint(latlng.lat, latlng.lng, insertIndex ?? this._findInsertionIndex(latlng));
+      }
+    };
+
+    function onRouteInsertMouseMove(ev) {
+      updateRouteInsertPreview(domEventLatLng(ev));
+    }
+
+    function onRouteInsertMouseUp(ev) {
+      finishRouteInsertDrag(ev, true);
+    }
+
+    function onRouteInsertTouchMove(ev) {
+      ev.preventDefault();
+      updateRouteInsertPreview(domEventLatLng(ev));
+    }
+
+    function onRouteInsertTouchEnd(ev) {
+      finishRouteInsertDrag(ev, true);
+    }
+
+    function onRouteInsertTouchCancel(ev) {
+      finishRouteInsertDrag(ev, false);
+    }
+
+    const startRouteInsertDrag = (latlng, source) => {
+      routeInsertDragActive = true;
+      routeInsertIndex = this._findInsertionIndex(latlng);
+      updateRouteInsertPreview(latlng);
+      this.map.dragging.disable();
+
+      if (source === 'touch') {
+        document.addEventListener('touchmove', onRouteInsertTouchMove, { passive: false });
+        document.addEventListener('touchend', onRouteInsertTouchEnd);
+        document.addEventListener('touchcancel', onRouteInsertTouchCancel);
+      } else {
+        document.addEventListener('mousemove', onRouteInsertMouseMove);
+        document.addEventListener('mouseup', onRouteInsertMouseUp);
       }
     };
 
@@ -2258,7 +2356,7 @@ export class MapManager {
 
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
-      if (lpTriggered) return;
+      if (lpTriggered || routeInsertDragActive) return;
       if (this.isFrozen) {
         this._notifyFrozenInteraction('route-edit');
         return;

@@ -135,13 +135,17 @@ async function routeOverlapState(page) {
   }, VISIBLE_ROUTE_PATH_SELECTOR);
 }
 
-async function longPressRouteOverlap(page) {
+async function doubleClickRouteOverlap(page) {
   const state = await routeOverlapState(page);
   expect(state.point).not.toBeNull();
-  await page.mouse.move(state.point.x, state.point.y);
+  await page.mouse.dblclick(state.point.x, state.point.y);
+}
+
+async function longPressDragRoute(page, startPoint, endPoint) {
+  await page.mouse.move(startPoint.x, startPoint.y);
   await page.mouse.down();
   await page.waitForTimeout(LONG_PRESS_MS);
-  await page.mouse.move(state.point.x + 2, state.point.y + 1);
+  await page.mouse.move(endPoint.x, endPoint.y, { steps: 8 });
   await page.mouse.up();
 }
 
@@ -361,7 +365,25 @@ test('long-press dragging a waypoint into the cancel zone leaves it unchanged', 
   await expect(page.locator('.waypoint-trash-zone')).not.toBeVisible();
 });
 
-test('long-pressing a route overlap with four stacked legs cycles every visible layer', async ({ page }) => {
+test('long-press dragging a route inserts a waypoint at the release position', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const routeState = await routeOverlapState(page);
+  expect(routeState.point).not.toBeNull();
+  const releasePoint = {
+    x: routeState.point.x + 80,
+    y: routeState.point.y + 70,
+  };
+
+  await longPressDragRoute(page, routeState.point, releasePoint);
+
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);
+  const inserted = await topWaypointCenter(page, 2);
+  expect(Math.hypot(inserted.x - releasePoint.x, inserted.y - releasePoint.y)).toBeLessThan(45);
+});
+
+test('double-clicking a route overlap with four stacked legs cycles every visible layer', async ({ page }) => {
   await openLayerTestApp(page, { roundTrip: '0' });
   await addCoordinateSearchWaypoints(page, [
     [23.5000, 121.0000],
@@ -380,7 +402,7 @@ test('long-pressing a route overlap with four stacked legs cycles every visible 
 
   for (let i = 0; i < first.overlapCount; i++) {
     const before = await routeOverlapState(page);
-    await longPressRouteOverlap(page);
+    await doubleClickRouteOverlap(page);
     await expect.poll(async () => (await routeOverlapState(page)).topStroke).not.toBe(before.topStroke);
     cycle.push((await routeOverlapState(page)).topStroke);
     await expect(waypointCount).toHaveCount(5);
