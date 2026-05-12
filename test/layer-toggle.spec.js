@@ -10,8 +10,10 @@ async function openLayerTestApp(page, options = {}) {
     routeDelayMs = 0,
     weatherDelayMs = 0,
     importedTrackSession = null,
+    weatherCells = null,
+    weatherRequests = null,
   } = options;
-  await page.addInitScript(({ roundTrip, oLoop, importedTrackSession }) => {
+  await page.addInitScript(({ roundTrip, oLoop, importedTrackSession, weatherCells }) => {
     localStorage.clear();
     localStorage.setItem('mappingElf_routeMode', 'walking');
     localStorage.setItem('mappingElf_roundTrip', roundTrip);
@@ -21,7 +23,10 @@ async function openLayerTestApp(page, options = {}) {
     if (importedTrackSession) {
       localStorage.setItem('mappingElf_importedTrack', JSON.stringify(importedTrackSession));
     }
-  }, { roundTrip, oLoop, importedTrackSession });
+    if (weatherCells) {
+      localStorage.setItem('mappingElf_weatherCells', JSON.stringify(weatherCells));
+    }
+  }, { roundTrip, oLoop, importedTrackSession, weatherCells });
 
   await page.route('**/route/v1/**', async (route) => {
     const url = new URL(route.request().url());
@@ -75,11 +80,13 @@ async function openLayerTestApp(page, options = {}) {
   });
 
   await page.route('**/v1/forecast**', async (route) => {
+    weatherRequests?.push(route.request().url());
     if (weatherDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, weatherDelayMs));
     await route.fulfill({ json: weatherPayload() });
   });
 
   await page.route('**/v1/archive**', async (route) => {
+    weatherRequests?.push(route.request().url());
     if (weatherDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, weatherDelayMs));
     await route.fulfill({ json: weatherPayload() });
   });
@@ -388,6 +395,58 @@ test('opening a restored track shows weather loading progress', async ({ page })
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
 
   await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 8000 });
+});
+
+test('restored weather key info prevents automatic weather fetch', async ({ page }) => {
+  const weatherRequests = [];
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    weatherDelayMs: 200,
+    weatherRequests,
+    importedTrackSession: {
+      coords: [
+        [24.00, 121.00],
+        [24.01, 121.02],
+        [24.02, 121.04],
+      ],
+      elevations: [100, 120, 130],
+      waypoints: [
+        [24.00, 121.00],
+        [24.02, 121.04],
+      ],
+      waypointMeta: [
+        { waypointId: 'saved-start', label: 'Start', cumDistM: 0 },
+        { waypointId: 'saved-end', label: 'End', cumDistM: 3000 },
+      ],
+      intermediates: [],
+    },
+    weatherCells: {
+      'wp:saved-start': {
+        weather: '☀️ Clear',
+        temp: '21°C',
+        precipitation: '0 mm',
+        _icon: '☀️',
+      },
+      'wp:saved-end': {
+        _weatherLoaded: true,
+        _weatherLoadState: 'loaded',
+        weather: '—',
+        temp: '—',
+        precipitation: '—',
+      },
+      'int:24.01,121.02': {
+        _weatherLoaded: true,
+        _weatherLoadState: 'loaded',
+        weather: '—',
+        temp: '—',
+        precipitation: '—',
+      },
+    },
+  });
+
+  await page.waitForTimeout(1500);
+  expect(weatherRequests).toHaveLength(0);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden();
 });
 
 test('double-clicking an overlapped route marker cycles visible layer order', async ({ page }) => {

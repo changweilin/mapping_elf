@@ -4294,6 +4294,68 @@ function getSavedWeatherCellValue(cells, key) {
   return cells[key] || '—';
 }
 
+const WEATHER_CONTENT_KEYS = [...WEATHER_TOP_ROWS, ...WEATHER_MIDDLE_ROWS].map(row => row.key);
+
+function isMeaningfulWeatherValue(value) {
+  const text = String(value ?? '').trim();
+  return !!text && !['—', '-', '--', '...', '??', '?'].includes(text);
+}
+
+function hasSavedWeatherKeyInfo(cells) {
+  if (!cells) return false;
+  if (cells._weatherCode != null) return true;
+  if (isMeaningfulWeatherValue(cells._icon)) return true;
+  return WEATHER_CONTENT_KEYS.some(key => isMeaningfulWeatherValue(cells[key]));
+}
+
+function weatherCellsMatchSchedule(cells, dateStr, hour) {
+  if (!cells) return false;
+  const storedDate = cells._weatherDate || cells._date || null;
+  const storedHour = cells._weatherHour ?? cells._hour ?? null;
+  if (!storedDate && storedHour == null) return true;
+  if (storedDate && dateStr && storedDate !== dateStr) return false;
+  if (storedHour != null && hour != null && Number(storedHour) !== Number(hour)) return false;
+  return true;
+}
+
+function hasCompletedWeatherLoad(cells, dateStr, hour) {
+  if (!cells || !weatherCellsMatchSchedule(cells, dateStr, hour)) return false;
+  return cells._weatherLoaded === true || cells._weatherLoadState === 'loaded' || hasSavedWeatherKeyInfo(cells);
+}
+
+function markWeatherCellsLoaded(cells, dateStr, hour) {
+  return {
+    ...cells,
+    _weatherLoaded: true,
+    _weatherLoadState: 'loaded',
+    _weatherDate: dateStr || null,
+    _weatherHour: Number.isFinite(Number(hour)) ? Number(hour) : null,
+  };
+}
+
+function applySavedWeatherCellsToColumn(pt, colIdx, cells) {
+  if (!pt || !cells) return;
+  const container = document.getElementById('weather-table-container');
+  WEATHER_ROWS.forEach(row => {
+    const hasStoredValue = Object.prototype.hasOwnProperty.call(cells, row.key)
+      || (row.key === 'weather' && (cells._weatherCode != null || isMeaningfulWeatherValue(cells._icon)));
+    if (!hasStoredValue) return;
+    const cell = container?.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
+    const val = getSavedWeatherCellValue(cells, row.key);
+    if (cell && val) {
+      updateWeatherTableCell(cell, row.key, val);
+      cell.classList.remove('loading', 'error');
+    }
+  });
+  const icon = cells._icon || String(cells.weather || '').split(' ')[0] || '';
+  if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && isMeaningfulWeatherValue(icon)) {
+    mapManager.setWaypointWeather(pt.wpIndex, icon);
+  }
+  updateElevationMarkers();
+  updateIntermediateMarkers();
+  if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx)) _renderWeatherCard(colIdx);
+}
+
 function getWeatherPointShortLabel(pt, fallbackIdx = 0) {
   if (pt?.isWaypoint && Number.isInteger(pt.wpIndex)) return String(pt.wpIndex + 1);
   return String(fallbackIdx + 1);
@@ -6498,7 +6560,7 @@ function renderWeatherPanel() {
     if (!dateStr) return;
     const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
     if (cached) {
-      const cells = { _icon: cached.weatherIcon, _weatherCode: cached.weatherCode };
+      const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(cached, row.key, pt);
         cells[row.key] = val;
@@ -6513,11 +6575,7 @@ function renderWeatherPanel() {
       // Fallback: restore display values saved from a previous fetch
       const saved = getSavedWeatherCells(pt);
       if (saved) {
-        WEATHER_ROWS.forEach(row => {
-          const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
-          const val = getSavedWeatherCellValue(saved, row.key);
-          if (cell && val) updateWeatherTableCell(cell, row.key, val);
-        });
+        applySavedWeatherCellsToColumn(pt, colIdx, saved);
       }
     }
   });
@@ -6625,7 +6683,14 @@ function renderWeatherPanel() {
           }
         }
         if (Object.keys(cells).length > 0) {
-          saveWeatherCells(getSemanticKey(pt), cells);
+          const scheduleDate = importedData.date || container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value || null;
+          const scheduleHour = importedData.time
+            ? parseInt(importedData.time.split(':')[0])
+            : parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
+          const cellsToSave = hasSavedWeatherKeyInfo(cells)
+            ? markWeatherCellsLoaded(cells, scheduleDate, scheduleHour)
+            : cells;
+          saveWeatherCells(getSemanticKey(pt), cellsToSave);
         }
       }
     });
@@ -6969,15 +7034,53 @@ async function fetchAllWeatherData(options = {}) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
-  const targetIndices = weatherPoints
+  const targetStates = weatherPoints
     .map((pt, i) => ({ pt, i }))
     .filter(({ pt, i }) => {
       if (onlyWaypointIndex !== null && (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex)) return false;
       if (onlyColIndex !== null && i !== onlyColIndex) return false;
       return true;
     })
-    .map(({ i }) => i);
-  const totalTargets = Math.max(1, targetIndices.length);
+    .map(({ pt, i }) => {
+      const schedule = getWeatherPointSchedule(pt, i);
+      const dateStr = schedule?.date || null;
+      const hour = schedule?.hour ?? 8;
+      const cacheKey = dateStr ? weatherCoordKey(pt.lat, pt.lng, dateStr, hour) : null;
+      const cached = cacheKey ? cachedWeatherData[cacheKey] : null;
+      const saved = !force ? getSavedWeatherCells(pt) : null;
+      const savedLoaded = !force && hasCompletedWeatherLoad(saved, dateStr, hour);
+      return {
+        pt,
+        i,
+        dateStr,
+        hour,
+        cacheKey,
+        cached,
+        saved,
+        savedLoaded,
+        needsFetch: !!dateStr && (force || (!cached && !savedLoaded)),
+      };
+    });
+  const needsNetworkFetch = targetStates.some(state => state.needsFetch);
+  if (!needsNetworkFetch) {
+    targetStates.forEach(({ pt, i, cached, saved, savedLoaded, dateStr, hour }) => {
+      if (cached) {
+        const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
+        WEATHER_ROWS.forEach(row => {
+          const val = getCellValue(cached, row.key, pt);
+          cells[row.key] = val;
+        });
+        saveWeatherCells(getSemanticKey(pt), cells);
+        applySavedWeatherCellsToColumn(pt, i, cells);
+      } else if (savedLoaded) {
+        applySavedWeatherCellsToColumn(pt, i, saved);
+      }
+    });
+    if (isInitialWeatherLoad) initialWeatherLoadPending = false;
+    return;
+  }
+
+  const totalTargets = Math.max(1, targetStates.length);
   let processedTargets = 0;
   const progressPaintEvery = Math.max(1, Math.ceil(totalTargets / 12));
   const fetchStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -7009,24 +7112,15 @@ async function fetchAllWeatherData(options = {}) {
   if (fetchBtn) fetchBtn.disabled = true;
 
   try {
-    for (let i = 0; i < weatherPoints.length; i++) {
-      const pt = weatherPoints[i];
-
-      // Filter by specific waypoint or column if requested
-      if (onlyWaypointIndex !== null) {
-        if (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex) continue;
-      }
-      if (onlyColIndex !== null && i !== onlyColIndex) continue;
-
+    for (const state of targetStates) {
+      const { pt, i, dateStr, hour, cacheKey, saved, savedLoaded } = state;
       if (fetchBtn) {
         const labelSpan = fetchBtn.querySelector('span');
-        if (labelSpan) labelSpan.textContent = `${i + 1}/${weatherPoints.length}`;
-        else fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
+        const label = `${Math.min(processedTargets + 1, totalTargets)}/${totalTargets}`;
+        if (labelSpan) labelSpan.textContent = label;
+        else fetchBtn.textContent = label;
       }
 
-      const schedule = getWeatherPointSchedule(pt, i);
-      const dateStr = schedule?.date;
-      const hour = schedule?.hour ?? 8;
       if (!dateStr) {
         processedTargets++;
         markWeatherProgress();
@@ -7034,13 +7128,12 @@ async function fetchAllWeatherData(options = {}) {
         continue;
       }
 
-      const cacheKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
-      let data = cachedWeatherData[cacheKey];
+      let data = state.cached;
 
       // If not forced and we have cache, just apply it and skip fetching
       if (!force) {
         if (data) {
-          const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
+          const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
           WEATHER_ROWS.forEach(row => {
             const val = getCellValue(data, row.key, pt);
             cells[row.key] = val;
@@ -7065,21 +7158,12 @@ async function fetchAllWeatherData(options = {}) {
         }
 
         // Also check if UI already restored this point's weather from map pack (savedWeatherCells)
-        const existingCells = getSavedWeatherCells(pt);
-        if (existingCells && existingCells.weather && existingCells.weather !== '—') {
-          const cell = container.querySelector(`[data-col="${i}"][data-key="weather"]`);
-          if (cell && cell.textContent !== '...' && cell.textContent !== '—') {
-            // Data is already populated correctly in the UI
-            if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && existingCells._icon) {
-              mapManager.setWaypointWeather(pt.wpIndex, existingCells._icon);
-            }
-            updateElevationMarkers();
-            updateIntermediateMarkers();
-            processedTargets++;
-            markWeatherProgress();
-            await maybePaintWeatherProgress();
-            continue;
-          }
+        if (savedLoaded) {
+          applySavedWeatherCellsToColumn(pt, i, saved);
+          processedTargets++;
+          markWeatherProgress();
+          await maybePaintWeatherProgress();
+          continue;
         }
       }
 
@@ -7099,7 +7183,7 @@ async function fetchAllWeatherData(options = {}) {
         cachedWeatherData[cacheKey] = data;
         // Save after each point so partial data survives a mid-fetch page close
         localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
-        const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
+        const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
         WEATHER_ROWS.forEach(row => {
           const val = getCellValue(data, row.key, pt);
           cells[row.key] = val;
@@ -7135,7 +7219,7 @@ async function fetchAllWeatherData(options = {}) {
       markWeatherProgress();
       await maybePaintWeatherProgress();
 
-      if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
+      if (processedTargets < totalTargets) await new Promise(r => setTimeout(r, 400));
     }
   } finally {
     if (isInitialWeatherLoad) {
