@@ -341,10 +341,18 @@ export class MapManager {
     const el = document.createElement('div');
     el.className = 'waypoint-trash-zone hidden';
     el.innerHTML =
+      '<div class="waypoint-drop-target waypoint-drop-cancel" data-drop-action="cancel">' +
+      '<svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">' +
+      '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span class="waypoint-trash-label">取消</span>' +
+      '</div>' +
+      '<div class="waypoint-drop-target waypoint-drop-delete" data-drop-action="delete">' +
       '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true">' +
       '<path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/>' +
       '</svg>' +
-      '<span class="waypoint-trash-label">拖曳至此刪除</span>';
+      '<span class="waypoint-trash-label">移除</span>' +
+      '</div>';
     document.body.appendChild(el);
     this.trashZoneEl = el;
     return el;
@@ -352,7 +360,8 @@ export class MapManager {
 
   showTrashZone(type = 'map') {
     const el = this.ensureTrashZone();
-    el.classList.remove('hidden', 'is-hover', 'is-map-drag', 'is-list-drag', 'is-table-drag');
+    el.classList.remove('hidden', 'is-hover', 'is-cancel-hover', 'is-map-drag', 'is-list-drag', 'is-table-drag');
+    el.querySelectorAll('.waypoint-drop-target').forEach((target) => target.classList.remove('is-hover'));
     // Clear inline positioning from a previous 'table' show
     el.style.top = '';
     el.style.left = '';
@@ -390,26 +399,47 @@ export class MapManager {
   hideTrashZone() {
     if (!this.trashZoneEl) return;
     this.trashZoneEl.classList.add('hidden');
-    this.trashZoneEl.classList.remove('is-hover');
+    this.trashZoneEl.classList.remove('is-hover', 'is-cancel-hover');
+    this.trashZoneEl.querySelectorAll('.waypoint-drop-target').forEach((target) => target.classList.remove('is-hover'));
   }
 
-  isOverTrashZone(clientX, clientY) {
+  getTrashZoneDropAction(clientX, clientY) {
     if (clientX == null || clientY == null) return false;
     if (!this.trashZoneEl || this.trashZoneEl.classList.contains('hidden')) return false;
-    const rect = this.trashZoneEl.getBoundingClientRect();
-    // Use rectangular bounds check with a small buffer
-    return (
+    const isInRect = (rect) => (
       clientX >= rect.left - 10 &&
       clientX <= rect.right + 10 &&
       clientY >= rect.top - 10 &&
       clientY <= rect.bottom + 10
     );
+
+    const targets = Array.from(this.trashZoneEl.querySelectorAll('[data-drop-action]'));
+    for (const target of targets) {
+      const rect = target.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (isInRect(rect)) return target.dataset.dropAction || false;
+    }
+
+    const rect = this.trashZoneEl.getBoundingClientRect();
+    return isInRect(rect) ? 'delete' : false;
+  }
+
+  isOverTrashZone(clientX, clientY) {
+    return this.getTrashZoneDropAction(clientX, clientY) === 'delete';
   }
 
   updateTrashZoneHover(clientX, clientY) {
-    const isOver = this.isOverTrashZone(clientX, clientY);
-    if (this.trashZoneEl) this.trashZoneEl.classList.toggle('is-hover', isOver);
-    return isOver;
+    const action = this.getTrashZoneDropAction(clientX, clientY);
+    const isDelete = action === 'delete';
+    const isCancel = action === 'cancel';
+    if (this.trashZoneEl) {
+      this.trashZoneEl.classList.toggle('is-hover', isDelete);
+      this.trashZoneEl.classList.toggle('is-cancel-hover', isCancel);
+      this.trashZoneEl.querySelectorAll('[data-drop-action]').forEach((target) => {
+        target.classList.toggle('is-hover', target.dataset.dropAction === action);
+      });
+    }
+    return isDelete;
   }
 
   // ===== Map cursor (placed by GPS button — not a waypoint) =====
@@ -730,6 +760,7 @@ export class MapManager {
     let _dragModeActive = false;
     let _justDragged = false;
     let _isTouchActive = false;
+    let _leafletDragStartLatLng = null;
 
     const _enableDrag = () => {
       _dragModeActive = true;
@@ -796,6 +827,7 @@ export class MapManager {
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
 
+        const dragStartLatLng = marker.getLatLng();
         this._startRubberBand(marker);
 
         const onMove = (ev) => {
@@ -805,7 +837,7 @@ export class MapManager {
           this.updateTrashZoneHover(ev.clientX, ev.clientY);
         };
         const onUp = (ev) => {
-          const isOverTrash = this.isOverTrashZone(ev?.clientX, ev?.clientY);
+          const dropAction = this.getTrashZoneDropAction(ev?.clientX, ev?.clientY);
           _dragModeActive = false;
           _justDragged = true;
           this._blockMapClick();
@@ -819,9 +851,11 @@ export class MapManager {
           const idx = this.waypointMarkers.indexOf(marker);
           const pos = marker.getLatLng();
           if (idx >= 0) {
-            if (isOverTrash) {
+            if (dropAction === 'delete') {
               if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
               this.removeWaypoint(idx);
+            } else if (dropAction === 'cancel') {
+              marker.setLatLng(dragStartLatLng);
             } else {
               this.waypoints[idx] = [pos.lat, pos.lng];
               this.onWaypointChange(this.waypoints);
@@ -869,6 +903,7 @@ export class MapManager {
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
 
+        const dragStartLatLng = marker.getLatLng();
         this._startRubberBand(marker);
 
         let lastTouchClientX = null, lastTouchClientY = null;
@@ -891,7 +926,7 @@ export class MapManager {
           const ct = ev?.changedTouches?.[0];
           const cx = ct?.clientX ?? lastTouchClientX;
           const cy = ct?.clientY ?? lastTouchClientY;
-          const isOverTrash = this.isOverTrashZone(cx, cy);
+          const dropAction = this.getTrashZoneDropAction(cx, cy);
           _dragModeActive = false;
           _isTouchActive = false;
           _justDragged = true;
@@ -906,9 +941,11 @@ export class MapManager {
           const idx = this.waypointMarkers.indexOf(marker);
           const pos = marker.getLatLng();
           if (idx >= 0) {
-            if (isOverTrash) {
+            if (dropAction === 'delete') {
               if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
               this.removeWaypoint(idx);
+            } else if (dropAction === 'cancel') {
+              marker.setLatLng(dragStartLatLng);
             } else {
               this.waypoints[idx] = [pos.lat, pos.lng];
               this.onWaypointChange(this.waypoints);
@@ -1020,6 +1057,7 @@ export class MapManager {
 
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
     marker.on('dragstart', () => {
+      _leafletDragStartLatLng = marker.getLatLng();
       this._startRubberBand(marker);
     });
     marker.on('drag', (e) => {
@@ -1047,7 +1085,7 @@ export class MapManager {
         dropX = cp.x + r.left;
         dropY = cp.y + r.top;
       }
-      const isOverTrash = this.isOverTrashZone(dropX, dropY);
+      const dropAction = this.getTrashZoneDropAction(dropX, dropY);
       this._blockMapClick();
       this._stopRubberBand();
       this.hideTrashZone();
@@ -1055,14 +1093,17 @@ export class MapManager {
       const idx = this.waypointMarkers.indexOf(marker);
       _disableDrag();
       if (idx >= 0) {
-        if (isOverTrash) {
+        if (dropAction === 'delete') {
           if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
           this.removeWaypoint(idx);
+        } else if (dropAction === 'cancel') {
+          if (_leafletDragStartLatLng) marker.setLatLng(_leafletDragStartLatLng);
         } else {
           this.waypoints[idx] = [pos.lat, pos.lng];
           this.onWaypointChange(this.waypoints);
         }
       }
+      _leafletDragStartLatLng = null;
     });
 
     this.waypointMarkers.splice(idx, 0, marker);
@@ -1753,6 +1794,7 @@ export class MapManager {
         marker.getElement()?.classList.add('is-dragging');
         pairedMarker.getElement()?.classList.add('is-dragging');
         this.map.dragging.disable();
+        const dragStartLatLng = pairedMarker.getLatLng();
         this._startRubberBand(pairedMarker);
 
         let lastClientX = null;
@@ -1777,7 +1819,7 @@ export class MapManager {
         };
 
         const finishDrag = (clientX, clientY) => {
-          const isOverTrash = this.isOverTrashZone(clientX, clientY);
+          const dropAction = this.getTrashZoneDropAction(clientX, clientY);
           _returnDragActive = false;
           _returnJustDragged = true;
           this._blockMapClick();
@@ -1791,9 +1833,12 @@ export class MapManager {
 
           const idx = this.waypointMarkers.indexOf(pairedMarker);
           if (idx < 0) return;
-          if (isOverTrash) {
+          if (dropAction === 'delete') {
             if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
             this.removeWaypoint(idx);
+          } else if (dropAction === 'cancel') {
+            pairedMarker.setLatLng(dragStartLatLng);
+            marker.setLatLng(dragStartLatLng);
           } else {
             const pos = pairedMarker.getLatLng();
             this.waypoints[idx] = [pos.lat, pos.lng];

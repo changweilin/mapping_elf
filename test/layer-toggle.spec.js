@@ -210,6 +210,15 @@ async function finishLongPressWaypointDrag(page, point) {
   await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
 }
 
+async function dropZoneTargetCenter(page, action) {
+  const box = await page.locator(`.waypoint-drop-target[data-drop-action="${action}"]`).boundingBox();
+  expect(box).not.toBeNull();
+  return {
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
+  };
+}
+
 test('double-clicking an overlapped waypoint cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
@@ -329,14 +338,26 @@ test('long-press dragging a waypoint into the trash zone deletes it', async ({ p
   const target = await topWaypointCenter(page, 2);
   await startLongPressWaypointDrag(page, target);
 
-  const trashBox = await page.locator('.waypoint-trash-zone').boundingBox();
-  expect(trashBox).not.toBeNull();
-  await finishLongPressWaypointDrag(page, {
-    x: trashBox.x + trashBox.width / 2,
-    y: trashBox.y + trashBox.height / 2,
-  });
+  await finishLongPressWaypointDrag(page, await dropZoneTargetCenter(page, 'delete'));
 
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
+  await expect(page.locator('.waypoint-trash-zone')).not.toBeVisible();
+});
+
+test('long-press dragging a waypoint into the cancel zone leaves it unchanged', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const before = await topWaypointCenter(page, 1);
+  await startLongPressWaypointDrag(page, before);
+  await expect(page.locator('.waypoint-drop-cancel')).toBeVisible();
+  await expect(page.locator('.waypoint-drop-delete')).toBeVisible();
+
+  await finishLongPressWaypointDrag(page, await dropZoneTargetCenter(page, 'cancel'));
+
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  const after = await topWaypointCenter(page, 1);
+  expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(6);
   await expect(page.locator('.waypoint-trash-zone')).not.toBeVisible();
 });
 

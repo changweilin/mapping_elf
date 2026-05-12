@@ -678,11 +678,47 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   animation: trashZoneIn 0.25s ease-out;
 }
 
+.waypoint-drop-target {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.waypoint-drop-cancel {
+  display: none;
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+  border-right: 1px dashed rgba(255, 255, 255, 0.28);
+}
+
+.waypoint-drop-delete {
+  color: #f87171;
+}
+
 /* Position for map-based dragging: Top of the map area */
 .waypoint-trash-zone.is-map-drag {
   left: 0;
   right: auto;
   width: calc(100% - var(--panel-width));
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+.waypoint-trash-zone.is-map-drag .waypoint-drop-target {
+  flex: 1 1 50%;
+}
+
+.waypoint-trash-zone.is-map-drag .waypoint-drop-cancel {
+  display: flex;
 }
 
 /* If side panel is closed, map trash zone should be full width */
@@ -717,7 +753,7 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   opacity: 0.9;
 }
 
-.waypoint-trash-zone.is-hover {
+.waypoint-trash-zone.is-hover:not(.is-map-drag) {
   background: rgba(248, 113, 113, 0.7);
   border-bottom-color: #fff;
   border-bottom-style: solid;
@@ -726,9 +762,31 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   box-shadow: 0 8px 32px rgba(248, 113, 113, 0.4);
 }
 
-.waypoint-trash-zone.is-hover .waypoint-trash-label {
+.waypoint-trash-zone.is-hover:not(.is-map-drag) .waypoint-trash-label {
   opacity: 1;
   transform: scale(1.1);
+}
+
+.waypoint-trash-zone.is-map-drag.is-hover,
+.waypoint-trash-zone.is-map-drag.is-cancel-hover {
+  height: 84px;
+  border-bottom-color: #fff;
+  border-bottom-style: solid;
+}
+
+.waypoint-trash-zone.is-map-drag .waypoint-drop-target.is-hover {
+  color: #fff;
+  transform: scale(1.03);
+}
+
+.waypoint-trash-zone.is-map-drag .waypoint-drop-cancel.is-hover {
+  background: rgba(96, 165, 250, 0.72);
+  box-shadow: inset 0 -4px 0 rgba(255, 255, 255, 0.44);
+}
+
+.waypoint-trash-zone.is-map-drag .waypoint-drop-delete.is-hover {
+  background: rgba(248, 113, 113, 0.72);
+  box-shadow: inset 0 -4px 0 rgba(255, 255, 255, 0.44);
 }
 
 @keyframes trashZoneIn {
@@ -749,8 +807,18 @@ html.light-theme .waypoint-trash-zone {
   border-bottom-color: rgba(239, 68, 68, 0.4);
 }
 
-html.light-theme .waypoint-trash-zone.is-hover {
+html.light-theme .waypoint-trash-zone.is-hover:not(.is-map-drag) {
   background: rgba(239, 68, 68, 0.7);
+  color: #fff;
+}
+
+html.light-theme .waypoint-drop-cancel {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.1);
+}
+
+html.light-theme .waypoint-trash-zone.is-map-drag .waypoint-drop-cancel.is-hover {
+  background: rgba(37, 99, 235, 0.68);
   color: #fff;
 }
 
