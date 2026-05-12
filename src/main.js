@@ -7340,6 +7340,18 @@ function minimizeWeatherCardsForLoading(targetStates = []) {
   });
 }
 
+function fetchWeatherForUnloadedCard(colIdx) {
+  if (isWeatherCardInteractionLocked()) {
+    showWeatherCardBusyNotice();
+    return false;
+  }
+  if (hasLoadedWeatherCardInfo(colIdx)) return false;
+  closeWeatherCard(colIdx);
+  showNotification('開始載入此點天氣資訊...', 'info', 1600);
+  fetchAllWeatherData({ onlyColIndex: colIdx });
+  return true;
+}
+
 /**
  * Open (or toggle) the weather card popup for a point.
  * Reopens at the size the user last had open (tracked in _wcLastMode).
@@ -7384,8 +7396,7 @@ function handleWeatherIconInteraction(colIdx) {
     return;
   }
   if (!hasLoadedWeatherCardInfo(colIdx)) {
-    closeWeatherCard(colIdx);
-    showWeatherNotLoadedNotice();
+    fetchWeatherForUnloadedCard(colIdx);
     return;
   }
 
