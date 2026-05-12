@@ -236,46 +236,69 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 }
 
 .app-busy-overlay {
+  position: fixed;
+  inset: 0 0 auto;
   z-index: 10020;
-  background: rgba(15, 23, 42, 0.46);
-  backdrop-filter: blur(2px);
+  display: block;
+  height: auto;
+  min-height: 0;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 0;
+  background: transparent;
+  backdrop-filter: none;
   pointer-events: none;
 }
 
 .app-busy-overlay .loading-content {
-  min-width: min(320px, calc(100vw - 32px));
-  padding: 22px 24px 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  width: min(520px, calc(100vw - 24px));
+  min-width: 0;
+  margin: 0 auto;
+  padding: 7px 12px 8px;
   border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.86);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
-}
-
-html.light-theme .app-busy-overlay {
-  background: rgba(226, 232, 240, 0.5);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
+  text-align: left;
 }
 
 html.light-theme .app-busy-overlay .loading-content {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.94);
   border-color: rgba(100, 116, 139, 0.22);
-  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.16);
-}
-
-.app-busy-overlay .loading-icon {
-  margin-bottom: 10px;
+  box-shadow: 0 8px 26px rgba(15, 23, 42, 0.14);
 }
 
 .app-busy-overlay .loading-content h2 {
-  font-size: 22px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.2;
+  margin: 0;
+  background: none;
+  color: var(--text-primary);
+  -webkit-text-fill-color: currentColor;
 }
 
 .app-busy-overlay .loading-content p {
-  margin-bottom: 14px;
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .app-busy-overlay .loading-bar {
-  width: 240px;
-  max-width: 100%;
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 .app-busy-overlay .loading-bar-fill.is-determinate {
@@ -285,7 +308,9 @@ html.light-theme .app-busy-overlay .loading-content {
 }
 
 .loading-progress-text {
-  margin-top: 8px;
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-muted);
@@ -311,8 +336,15 @@ body.route-weather-busy .wp-weather-card-slot .weather-card {
   opacity: 0.72;
 }
 
+body.weather-card-busy .weather-popup .weather-card,
+body.weather-card-busy .wp-weather-card-slot .weather-card {
+  filter: saturate(0.75);
+  opacity: 0.72;
+}
+
 body.route-weather-busy .route-edit-control:disabled,
-body.route-weather-busy .weather-edit-control:disabled {
+body.route-weather-busy .weather-edit-control:disabled,
+body.weather-card-busy .weather-edit-control:disabled {
   cursor: wait;
 }
 

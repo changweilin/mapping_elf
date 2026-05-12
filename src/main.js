@@ -122,20 +122,33 @@ const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
   '#weather-table-container button',
   '#weather-table-container input',
   '#weather-table-container select',
+  '.search-result-add',
+].join(',');
+
+const WEATHER_CARD_BUSY_DISABLE_SELECTOR = [
   '.weather-card button',
   '.weather-card input',
   '.weather-card select',
-  '.search-result-add',
 ].join(',');
 
 let routeWeatherBusyTasks = new Map();
 let deferredBusySettings = new Map();
 let busyInteractionNoticeAt = 0;
 let deferredSettingsNoticeAt = 0;
+let weatherCardBusyNoticeAt = 0;
+let weatherNotLoadedNoticeAt = 0;
 let busyTaskSeq = 0;
 
-function isRouteWeatherBusy() {
+function hasRouteWeatherBusyTasks() {
   return routeWeatherBusyTasks.size > 0;
+}
+
+function isRouteWeatherBusy() {
+  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'weather-card');
+}
+
+function isWeatherCardInteractionLocked() {
+  return hasRouteWeatherBusyTasks();
 }
 
 function showRouteWeatherBusyNotice(duration = 2200) {
@@ -152,9 +165,41 @@ function showDeferredSettingNotice() {
   showNotification('目前正在處理路線/天氣，參數會在完成後套用', 'info', 2200);
 }
 
+function showWeatherCardBusyNotice(duration = 2200) {
+  const now = Date.now();
+  if (now - weatherCardBusyNoticeAt < 900) return;
+  weatherCardBusyNoticeAt = now;
+  showNotification('天氣資訊載入中，天氣卡暫時不可操作。', 'warning', duration);
+}
+
+function showWeatherNotLoadedNotice(duration = 2400) {
+  const now = Date.now();
+  if (now - weatherNotLoadedNoticeAt < 900) return;
+  weatherNotLoadedNoticeAt = now;
+  showNotification('尚未載入天氣資訊，取得完成後才能展開天氣卡。', 'warning', duration);
+}
+
+function syncBusyDisabledControls(selector, disabled, className) {
+  document.querySelectorAll(selector).forEach((el) => {
+    if (disabled) {
+      if (!el.dataset.busyWasDisabled) el.dataset.busyWasDisabled = el.disabled ? '1' : '0';
+      el.disabled = true;
+      el.classList.add(className);
+    } else if (el.dataset.busyWasDisabled !== undefined) {
+      el.disabled = el.dataset.busyWasDisabled === '1';
+      delete el.dataset.busyWasDisabled;
+      el.classList.remove(className);
+    }
+  });
+}
+
 function updateRouteWeatherBusyOverlay() {
-  const busy = isRouteWeatherBusy();
-  document.body.classList.toggle('route-weather-busy', busy);
+  const busy = hasRouteWeatherBusyTasks();
+  const routeLocked = isRouteWeatherBusy();
+  const weatherCardLocked = isWeatherCardInteractionLocked();
+  document.body.classList.toggle('route-weather-busy', routeLocked);
+  document.body.classList.toggle('weather-card-busy', weatherCardLocked);
+  document.body.classList.toggle('route-weather-progress-busy', busy);
 
   const overlay = document.getElementById('route-weather-busy-overlay');
   const titleEl = document.getElementById('route-weather-busy-title');
@@ -183,20 +228,11 @@ function updateRouteWeatherBusyOverlay() {
     fillEl.style.removeProperty('--busy-progress');
   }
 
-  document.querySelectorAll(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR).forEach((el) => {
-    if (busy) {
-      if (!el.dataset.busyWasDisabled) el.dataset.busyWasDisabled = el.disabled ? '1' : '0';
-      el.disabled = true;
-      el.classList.add(el.closest('#weather-table-container, .weather-card') ? 'weather-edit-control' : 'route-edit-control');
-    } else if (el.dataset.busyWasDisabled !== undefined) {
-      el.disabled = el.dataset.busyWasDisabled === '1';
-      delete el.dataset.busyWasDisabled;
-      el.classList.remove('route-edit-control', 'weather-edit-control');
-    }
-  });
+  syncBusyDisabledControls(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR, routeLocked, 'route-edit-control');
+  syncBusyDisabledControls(WEATHER_CARD_BUSY_DISABLE_SELECTOR, weatherCardLocked, 'weather-edit-control');
 
   if (typeof mapManager !== 'undefined' && mapManager) {
-    mapManager.setFrozen(!!importedTrackMode || busy);
+    mapManager.setFrozen(!!importedTrackMode || routeLocked);
   }
   if (!busy && typeof syncTrackModeUI === 'function') {
     syncTrackModeUI();
@@ -204,9 +240,9 @@ function updateRouteWeatherBusyOverlay() {
   }
 }
 
-function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null } = {}) {
+function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null, lockScope = 'route' } = {}) {
   const id = `busy_${++busyTaskSeq}`;
-  routeWeatherBusyTasks.set(id, { title, detail, progress });
+  routeWeatherBusyTasks.set(id, { title, detail, progress, lockScope });
   updateRouteWeatherBusyOverlay();
   let ended = false;
   return {
@@ -244,18 +280,30 @@ function flushDeferredBusySettings() {
 
 function installRouteWeatherBusyGuard() {
   const blockPointerEvent = (e) => {
-    if (!isRouteWeatherBusy()) return;
-    if (!e.target?.closest?.(ROUTE_WEATHER_BUSY_BLOCK_SELECTOR)) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    showRouteWeatherBusyNotice();
+    if (isWeatherCardInteractionLocked() && e.target?.closest?.('.weather-card')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showWeatherCardBusyNotice();
+      return;
+    }
+    if (isRouteWeatherBusy() && e.target?.closest?.(ROUTE_WEATHER_BUSY_BLOCK_SELECTOR)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showRouteWeatherBusyNotice();
+    }
   };
   ['click', 'dblclick', 'mousedown', 'touchstart', 'contextmenu', 'dragstart'].forEach((type) => {
     document.addEventListener(type, blockPointerEvent, true);
   });
   document.addEventListener('keydown', (e) => {
-    if (!isRouteWeatherBusy()) return;
     const target = e.target;
+    if (isWeatherCardInteractionLocked() && target?.closest?.('.weather-card')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showWeatherCardBusyNotice();
+      return;
+    }
+    if (!isRouteWeatherBusy()) return;
     const tag = target?.tagName?.toLowerCase();
     if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
     const editKey = e.key === 'Delete' || e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase()));
@@ -7062,6 +7110,7 @@ async function fetchAllWeatherData(options = {}) {
       };
     });
   const needsNetworkFetch = targetStates.some(state => state.needsFetch);
+  minimizeWeatherCardsForLoading(targetStates);
   if (!needsNetworkFetch) {
     targetStates.forEach(({ pt, i, cached, saved, savedLoaded, dateStr, hour }) => {
       if (cached) {
@@ -7092,6 +7141,7 @@ async function fetchAllWeatherData(options = {}) {
       ? `網頁開啟時載入天氣資訊 0/${totalTargets}`
       : `準備天氣欄位 0/${totalTargets}`,
     progress: 0,
+    lockScope: 'weather-card',
   });
   const markWeatherProgress = () => {
     busyTask.set({
@@ -7249,18 +7299,66 @@ let _wcStates = new Map();
 // re-uses the size the user last had open.
 let _wcLastMode = 'full';
 
+function getLoadedWeatherCardInfo(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return null;
+
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+  if (!dateStr) return null;
+
+  const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
+  if (cached) return { data: cached, pt, dateStr, hour, colIdx };
+
+  const saved = getSavedWeatherCells(pt);
+  if (hasCompletedWeatherLoad(saved, dateStr, hour)) {
+    return { cells: saved, pt, dateStr, hour, colIdx };
+  }
+
+  return null;
+}
+
+function hasLoadedWeatherCardInfo(colIdx) {
+  return !!getLoadedWeatherCardInfo(colIdx);
+}
+
+function minimizeWeatherCardsForLoading(targetStates = []) {
+  const loadingCols = new Set(
+    targetStates
+      .filter(state => state.needsFetch || !state.cached && !state.savedLoaded)
+      .map(state => state.i)
+  );
+  Array.from(_wcStates.keys()).forEach((colIdx) => {
+    if (loadingCols.has(colIdx) || !hasLoadedWeatherCardInfo(colIdx)) {
+      closeWeatherCard(colIdx);
+    }
+  });
+}
+
 /**
  * Open (or toggle) the weather card popup for a point.
  * Reopens at the size the user last had open (tracked in _wcLastMode).
  */
-function openWeatherCard(colIdx) {
+function openWeatherCard(colIdx, options = {}) {
   // If already open, close it (toggle behavior)
   if (_wcStates.has(colIdx)) {
     closeWeatherCard(colIdx);
-    return;
+    return false;
+  }
+  if (isWeatherCardInteractionLocked()) {
+    if (hasLoadedWeatherCardInfo(colIdx)) showWeatherCardBusyNotice();
+    else showWeatherNotLoadedNotice();
+    return false;
+  }
+  if (!hasLoadedWeatherCardInfo(colIdx)) {
+    closeWeatherCard(colIdx);
+    if (options.notify !== false) showWeatherNotLoadedNotice();
+    return false;
   }
   _wcStates.set(colIdx, _wcLastMode);
   _renderWeatherCard(colIdx);
+  return true;
 }
 
 /**
@@ -7269,6 +7367,16 @@ function openWeatherCard(colIdx) {
  */
 function handleWeatherIconInteraction(colIdx) {
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
+  if (isWeatherCardInteractionLocked()) {
+    if (hasLoadedWeatherCardInfo(colIdx)) showWeatherCardBusyNotice();
+    else showWeatherNotLoadedNotice();
+    return;
+  }
+  if (!hasLoadedWeatherCardInfo(colIdx)) {
+    closeWeatherCard(colIdx);
+    showWeatherNotLoadedNotice();
+    return;
+  }
 
   const collectiveCols = getCollectiveIndices(colIdx);
   if (collectiveCols.length > 1) {
@@ -7277,7 +7385,13 @@ function handleWeatherIconInteraction(colIdx) {
     if (isAlreadyOpen) {
       collectiveCols.forEach(ci => closeWeatherCard(ci));
     } else {
-      collectiveCols.forEach(ci => { if (!_wcStates.has(ci)) openWeatherCard(ci); });
+      collectiveCols.forEach(ci => {
+        if (hasLoadedWeatherCardInfo(ci)) {
+          if (!_wcStates.has(ci)) openWeatherCard(ci, { notify: false });
+        } else {
+          closeWeatherCard(ci);
+        }
+      });
       // Sync highlight so keyboard/centering targets this group
       highlightPoint(colIdx);
     }
@@ -7302,6 +7416,15 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
     closeWeatherCard(colIdx);
     return;
   }
+  if (isWeatherCardInteractionLocked()) {
+    showWeatherCardBusyNotice();
+    return;
+  }
+  if (!hasLoadedWeatherCardInfo(colIdx)) {
+    closeWeatherCard(colIdx);
+    if (options.notify) showWeatherNotLoadedNotice();
+    return;
+  }
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
   if (mode === 'full' && options.center !== false) {
@@ -7317,12 +7440,7 @@ function navigateWeatherCard(colIdx, delta) {
   weatherPoints.forEach((pt, i) => {
     // Skip points whose icon type is hidden by the toggle
     if (!isPointIconVisible(i)) return;
-
-    const schedule = getWeatherPointSchedule(pt, i);
-    const cached = schedule ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, schedule.date, schedule.hour)] : null;
-    const icon = cached?.weatherIcon || getSavedWeatherCells(pt)?.weather?.split(' ')[0] || null;
-    
-    if (icon) colsWithWeather.push(i);
+    if (hasLoadedWeatherCardInfo(i)) colsWithWeather.push(i);
   });
 
   if (colsWithWeather.length === 0) return;
@@ -7357,23 +7475,9 @@ function _getWeatherCardData(colIdx) {
   if (!pt) return null;
 
   const schedule = getWeatherPointSchedule(pt, colIdx);
-  const dateStr = schedule.date;
-  const hour = schedule.hour;
-
-  // 1) Try exact cache hit
-  const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
-  if (cached) {
-    return { data: cached, pt, dateStr, hour, colIdx };
-  }
-
-  // 2) Try savedWeatherCells (display values)
-  const saved = getSavedWeatherCells(pt);
-  if (saved) {
-    return { cells: saved, pt, dateStr, hour, colIdx };
-  }
-
-  // 3) No data
-  return { data: null, pt, dateStr, hour, colIdx };
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+  return getLoadedWeatherCardInfo(colIdx) || { data: null, pt, dateStr, hour, colIdx, isLoaded: false };
 }
 
 function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '') {
@@ -7439,8 +7543,9 @@ function _renderWeatherCard(colIdx) {
   }
 
   const info = _getWeatherCardData(colIdx);
-  if (!info) {
+  if (!info || info.isLoaded === false) {
     mapManager.closeWeatherPopup(colIdx);
+    _wcStates.delete(colIdx);
     return;
   }
 
@@ -7483,7 +7588,8 @@ function _renderWeatherCard(colIdx) {
   // Header
   const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title" title="${pt.label || cardLabel}">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-title-weather-icon')} ${cardLabel}</span>`;
+  const headerWeatherIcon = isFull ? '' : `${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-title-weather-icon')} `;
+  html += `<span class="wc-title" title="${pt.label || cardLabel}">${headerWeatherIcon}${cardLabel}</span>`;
   if (isFull) {
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
@@ -7541,6 +7647,10 @@ function _renderWeatherCard(colIdx) {
  * Toggles closed if already open.
  */
 async function openCursorWeatherCard(lat, lng) {
+  if (isWeatherCardInteractionLocked()) {
+    showWeatherCardBusyNotice();
+    return;
+  }
   if (mapManager.isCursorWeatherPopupOpen?.()) {
     mapManager.closeCursorWeatherPopup();
     return;
@@ -7598,7 +7708,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   let html = `<div class="weather-card full cursor-weather-card" data-cursor-card="1" style="${cardStyle}">`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${title}</span>`;
+  html += `<span class="wc-title">${title}</span>`;
   html += `<button class="wc-btn q-close" title="關閉">`;
   html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
   html += `</div>`;
