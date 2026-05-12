@@ -197,6 +197,7 @@ function updateRouteWeatherBusyOverlay() {
   const busy = hasRouteWeatherBusyTasks();
   const routeLocked = isRouteWeatherBusy();
   const weatherCardLocked = isWeatherCardInteractionLocked();
+  const wasRouteLocked = document.body.classList.contains('route-weather-busy');
   document.body.classList.toggle('route-weather-busy', routeLocked);
   document.body.classList.toggle('weather-card-busy', weatherCardLocked);
   document.body.classList.toggle('route-weather-progress-busy', busy);
@@ -236,6 +237,9 @@ function updateRouteWeatherBusyOverlay() {
   }
   if (!busy && typeof syncTrackModeUI === 'function') {
     syncTrackModeUI();
+    if (wasRouteLocked && !routeLocked && typeof updateWaypointList === 'function' && typeof mapManager !== 'undefined' && mapManager) {
+      updateWaypointList(mapManager.waypoints);
+    }
     if (typeof _updateHistoryButtons === 'function') _updateHistoryButtons();
   }
 }
@@ -2650,11 +2654,17 @@ function updateWaypointList(waypoints) {
     lastDragClientY = cy;
     updateGhostPos(cx, cy);
 
-    // Removal detection: use the central trash zone logic from mapManager
-    const overTrash = mapManager.updateTrashZoneHover(cx, cy);
-    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
+    // Drop-zone detection: mirrors map waypoint dragging (cancel / remove).
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const overTrash = dropAction === 'delete';
+    const overCancel = dropAction === 'cancel';
+    mapManager.updateTrashZoneHover(cx, cy);
+    if (ghost) {
+      ghost.classList.toggle('drag-to-remove', overTrash);
+      ghost.classList.toggle('drag-to-cancel', overCancel);
+    }
 
-    if (overTrash) return;
+    if (dropAction) return;
 
     // Sorting logic (only if not over trash)
     const rect = sidePanel.getBoundingClientRect();
@@ -2692,10 +2702,14 @@ function updateWaypointList(waypoints) {
     const cx = changedTouch?.clientX ?? e.clientX ?? lastDragClientX;
     const cy = changedTouch?.clientY ?? e.clientY ?? lastDragClientY;
     
-    const isOverTrash = mapManager.isOverTrashZone(cx, cy);
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const isCancelDrop = dropAction === 'cancel';
+    const isOverTrash = dropAction === 'delete';
     mapManager.hideTrashZone();
 
-    if (isOverTrash) {
+    if (isCancelDrop) {
+      updateWaypointList(mapManager.waypoints);
+    } else if (isOverTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
       mapManager.removeWaypoint(dragIndex);
     } else {
@@ -6809,9 +6823,15 @@ function bindWeatherTableColumnDrag(container) {
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
     updateGhost(cx, cy);
 
-    const overTrash = mapManager.updateTrashZoneHover(cx, cy);
-    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
-    if (overTrash) { clearTargetHighlight(); return; }
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const overTrash = dropAction === 'delete';
+    const overCancel = dropAction === 'cancel';
+    mapManager.updateTrashZoneHover(cx, cy);
+    if (ghost) {
+      ghost.classList.toggle('drag-to-remove', overTrash);
+      ghost.classList.toggle('drag-to-cancel', overCancel);
+    }
+    if (dropAction) { clearTargetHighlight(); return; }
 
     const found = findDropTarget(cx);
     if (found.th !== targetTh) {
@@ -6840,11 +6860,15 @@ function bindWeatherTableColumnDrag(container) {
     document.removeEventListener('mouseup', onEnd);
     document.removeEventListener('touchmove', onMove);
     document.removeEventListener('touchend', onEnd);
+    document.removeEventListener('touchcancel', onEnd);
 
-    const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
-    const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    const changedTouch = e.changedTouches?.[0];
+    const cx = changedTouch?.clientX ?? e.clientX;
+    const cy = changedTouch?.clientY ?? e.clientY;
 
-    const overTrash = mapManager.isOverTrashZone(cx, cy);
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const isCancelDrop = dropAction === 'cancel';
+    const overTrash = dropAction === 'delete';
     mapManager.hideTrashZone();
 
     const _draggedWpIdx = dragWpIdx;
@@ -6860,6 +6884,10 @@ function bindWeatherTableColumnDrag(container) {
 
     // Suppress the click that would otherwise toggle the highlight
     suppressNextClick(_originEl);
+
+    if (isCancelDrop) {
+      return;
+    }
 
     if (overTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -6938,6 +6966,7 @@ function bindWeatherTableColumnDrag(container) {
     document.addEventListener('mouseup', onEnd);
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchcancel', onEnd);
 
     mapManager.showTrashZone('table');
   };
