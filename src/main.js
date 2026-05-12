@@ -1891,7 +1891,7 @@ window.addEventListener('keydown', (e) => {
       const curMode = _wcStates.get(activeColIdx) || 'compact';
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+      targets.forEach(idx => setWeatherCardMode(idx, nextMode));
       highlightPoint(activeColIdx);
       return;
     }
@@ -7299,6 +7299,10 @@ let _wcStates = new Map();
 // re-uses the size the user last had open.
 let _wcLastMode = 'full';
 
+function isMobileWeatherCardCenterMode() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
 function getLoadedWeatherCardInfo(colIdx) {
   const pt = weatherPoints[colIdx];
   if (!pt) return null;
@@ -7358,6 +7362,13 @@ function openWeatherCard(colIdx, options = {}) {
   }
   _wcStates.set(colIdx, _wcLastMode);
   _renderWeatherCard(colIdx);
+  if (
+    options.centerOnMobileExpand === true &&
+    _wcLastMode === 'full' &&
+    isMobileWeatherCardCenterMode()
+  ) {
+    scheduleWeatherCardCenter(colIdx, { settle: true });
+  }
   return true;
 }
 
@@ -7387,7 +7398,7 @@ function handleWeatherIconInteraction(colIdx) {
     } else {
       collectiveCols.forEach(ci => {
         if (hasLoadedWeatherCardInfo(ci)) {
-          if (!_wcStates.has(ci)) openWeatherCard(ci, { notify: false });
+          if (!_wcStates.has(ci)) openWeatherCard(ci, { notify: false, centerOnMobileExpand: ci === colIdx });
         } else {
           closeWeatherCard(ci);
         }
@@ -7397,7 +7408,7 @@ function handleWeatherIconInteraction(colIdx) {
     }
   } else {
     // Single toggle
-    openWeatherCard(colIdx);
+    openWeatherCard(colIdx, { centerOnMobileExpand: true });
     highlightPoint(colIdx);
   }
 }
@@ -7425,9 +7436,15 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
     if (options.notify) showWeatherNotLoadedNotice();
     return;
   }
+  const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
-  if (mode === 'full' && options.center !== false) {
+  if (
+    options.centerOnMobileExpand === true &&
+    prevMode !== 'full' &&
+    mode === 'full' &&
+    isMobileWeatherCardCenterMode()
+  ) {
     scheduleWeatherCardCenter(colIdx, { settle: true });
   }
 }
@@ -7637,7 +7654,6 @@ function _renderWeatherCard(colIdx) {
 
   mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
     _bindWeatherCardEvents(colIdx, wrapper);
-    if (isFull) scheduleWeatherCardCenter(colIdx, { settle: isHighlighted });
   }, !pt.isWaypoint, pt.wpIndex, !!pt.isReturn);
 }
 
@@ -7775,7 +7791,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     const curMode = _wcStates.get(colIdx) || 'compact';
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
     const targets = getCollectiveIndices(colIdx);
-    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
     highlightPoint(colIdx);
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
@@ -7885,7 +7901,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         const curMode = _wcStates.get(colIdx) || 'compact';
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
         const targets = getCollectiveIndices(colIdx);
-        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
+        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
         highlightPoint(colIdx);
       } else {
         // Swipe down: close
@@ -8174,15 +8190,10 @@ function highlightPoint(colIdx, toggle = false) {
     card.closest('.leaflet-marker-icon')?.classList.add('has-highlighted-weather-card');
   }
 
-  // 6. Map Centering — when a card is open, centre the card in the visible
-  // safe area (so its top buttons stay clear of the toolbar and it sits
-  // above the bottom-panel divider). Otherwise just centre the marker.
-  const mode = _wcStates.get(colIdx);
-  if (mode === 'full') {
-    scheduleWeatherCardCenter(colIdx, { settle: true });
-  } else if (mode === 'compact') {
-    panMapToCenterFullCard(colIdx);
-  } else if (waypointCentering) {
+  // 6. Map Centering — card centering is only triggered by explicitly
+  // expanding a full weather card on mobile. Highlighting an already-open
+  // card should not move the map.
+  if (!_wcStates.has(colIdx) && waypointCentering) {
     panMapToVisibleCenter([pt.lat, pt.lng]);
   }
 }
