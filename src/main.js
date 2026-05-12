@@ -2600,10 +2600,12 @@ function updateWaypointList(waypoints) {
   let placeholder = null;
   let lastDragClientX = null;
   let lastDragClientY = null;
+  let dragCancelledByMultiTouch = false;
 
   const startDrag = (item, idx, clientX, clientY) => {
     dragItem = item;
     dragIndex = idx;
+    dragCancelledByMultiTouch = false;
     lastDragClientX = clientX;
     lastDragClientY = clientY;
     item.classList.add('is-dragging');
@@ -2647,6 +2649,12 @@ function updateWaypointList(waypoints) {
   };
 
   const onMove = (e) => {
+    if (e.touches && e.touches.length !== 1) {
+      dragCancelledByMultiTouch = true;
+      if (e.cancelable) e.preventDefault();
+      onEnd(e);
+      return;
+    }
     if (e.cancelable) e.preventDefault();
     const cx = e.touches ? e.touches[0].clientX : e.clientX;
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
@@ -2697,6 +2705,8 @@ function updateWaypointList(waypoints) {
     document.removeEventListener('touchend', onEnd);
     document.removeEventListener('touchcancel', onEnd);
     document.body.classList.remove('route-list-dragging');
+    const cancelledByMultiTouch = dragCancelledByMultiTouch || e.type === 'touchcancel';
+    dragCancelledByMultiTouch = false;
 
     const changedTouch = e.changedTouches?.[0];
     const cx = changedTouch?.clientX ?? e.clientX ?? lastDragClientX;
@@ -2707,7 +2717,7 @@ function updateWaypointList(waypoints) {
     const isOverTrash = dropAction === 'delete';
     mapManager.hideTrashZone();
 
-    if (isCancelDrop) {
+    if (cancelledByMultiTouch || isCancelDrop) {
       updateWaypointList(mapManager.waypoints);
     } else if (isOverTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -2816,6 +2826,10 @@ function updateWaypointList(waypoints) {
     });
 
     item.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       if (frozen) {
         if (!e.target.closest('.wp-actions')) {
           lpTimer = setTimeout(() => {
@@ -2832,11 +2846,16 @@ function updateWaypointList(waypoints) {
     }, { passive: true });
     
     item.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       const t = e.touches[0];
       checkMove(t.clientX, t.clientY);
     }, { passive: true });
 
     item.addEventListener('touchend', cancelLP, { passive: true });
+    item.addEventListener('touchcancel', cancelLP, { passive: true });
   });
 }
 
@@ -6785,6 +6804,7 @@ function bindWeatherTableColumnDrag(container) {
   let ghost = null;
   let targetTh = null;
   let targetAfter = false;
+  let dragCancelledByMultiTouch = false;
 
   const updateGhost = (x, y) => {
     if (!ghost) return;
@@ -6818,6 +6838,13 @@ function bindWeatherTableColumnDrag(container) {
   };
 
   const onMove = (e) => {
+    if (e.touches && e.touches.length !== 1) {
+      dragCancelledByMultiTouch = true;
+      if (e.cancelable) e.preventDefault();
+      clearTargetHighlight();
+      onEnd(e);
+      return;
+    }
     if (e.cancelable) e.preventDefault();
     const cx = e.touches ? e.touches[0].clientX : e.clientX;
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
@@ -6875,6 +6902,8 @@ function bindWeatherTableColumnDrag(container) {
     const _targetTh = targetTh;
     const _targetAfter = targetAfter;
     const _originEl = dragOriginTh;
+    const cancelledByMultiTouch = dragCancelledByMultiTouch || e.type === 'touchcancel';
+    dragCancelledByMultiTouch = false;
 
     clearTargetHighlight();
     if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
@@ -6885,7 +6914,7 @@ function bindWeatherTableColumnDrag(container) {
     // Suppress the click that would otherwise toggle the highlight
     suppressNextClick(_originEl);
 
-    if (isCancelDrop) {
+    if (cancelledByMultiTouch || isCancelDrop) {
       return;
     }
 
@@ -6932,6 +6961,7 @@ function bindWeatherTableColumnDrag(container) {
 
   const startDrag = (el, clientX, clientY) => {
     dragOriginTh = el;
+    dragCancelledByMultiTouch = false;
     const colIdx = parseInt(el.dataset.idx || el.dataset.col);
     const pt = weatherPoints[colIdx];
     if (!pt?.isWaypoint || pt.isReturn || pt.wpIndex == null) {
@@ -7021,15 +7051,24 @@ function bindWeatherTableColumnDrag(container) {
     });
 
     el.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
       const t = e.touches[0];
       triggerLP(t.clientX, t.clientY);
     }, { passive: true });
     el.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       const t = e.touches[0];
       checkMove(t.clientX, t.clientY);
     }, { passive: true });
     el.addEventListener('touchend', cancelLP, { passive: true });
+    el.addEventListener('touchcancel', cancelLP, { passive: true });
   });
 }
 

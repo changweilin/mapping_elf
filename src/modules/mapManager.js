@@ -148,6 +148,8 @@ export class MapManager {
     this.dragLine = null;
     this.dragLine = null;
     this._dragWpIndex = undefined;
+    this._lastMultiTouchAt = 0;
+    this._blockMapClickTimer = null;
     this._weatherPopups = new Map(); // Inline marker weather cards (colIdx -> { marker, badge, slot })
     this._weatherPopupCloseTimers = new Map();
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
@@ -170,6 +172,7 @@ export class MapManager {
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       zoomControl: true,
+      touchZoom: 'center',
       wheelDebounceTime: 24,
     });
 
@@ -182,6 +185,12 @@ export class MapManager {
       });
     }
     this.tileLayers.topo.addTo(this.map);
+
+    const noteContainerMultiTouch = (event) => {
+      if (this._isMultiTouchEvent(event)) this._noteMultiTouchGesture();
+    };
+    this.map.getContainer().addEventListener('touchstart', noteContainerMultiTouch, { passive: true });
+    this.map.getContainer().addEventListener('touchmove', noteContainerMultiTouch, { passive: true });
 
     this.map.on('zoomstart', () => {
       this._setMapZooming(true);
@@ -199,6 +208,7 @@ export class MapManager {
         this._notifyFrozenInteraction('map-click');
         return;
       }
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
       if (this.ignoreMapClick) return;
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
@@ -228,8 +238,19 @@ export class MapManager {
 
     // Prevent waypoint creation on long-press ( > 500ms )
     let mapPressStartTime = 0;
-    const handlePressStart = () => { mapPressStartTime = Date.now(); };
-    const handlePressEnd = () => {
+    const handlePressStart = (e) => {
+      if (this._isMultiTouchEvent(e?.originalEvent || e)) {
+        mapPressStartTime = 0;
+        this._noteMultiTouchGesture();
+        return;
+      }
+      mapPressStartTime = Date.now();
+    };
+    const handlePressEnd = (e) => {
+      if (this._isMultiTouchEvent(e?.originalEvent || e)) {
+        this._noteMultiTouchGesture();
+        return;
+      }
       if (Date.now() - mapPressStartTime > 500) {
         this._blockMapClick();
       }
@@ -252,9 +273,26 @@ export class MapManager {
     el.classList.toggle('is-map-zooming', isZooming);
   }
 
-  _blockMapClick() {
+  _isMultiTouchEvent(event) {
+    return !!(
+      event?.touches?.length > 1 ||
+      event?.targetTouches?.length > 1 ||
+      event?.changedTouches?.length > 1
+    );
+  }
+
+  _noteMultiTouchGesture() {
+    this._lastMultiTouchAt = Date.now();
+    this._blockMapClick(700);
+  }
+
+  _blockMapClick(duration = 300) {
     this.ignoreMapClick = true;
-    setTimeout(() => { this.ignoreMapClick = false; }, 300);
+    if (this._blockMapClickTimer) clearTimeout(this._blockMapClickTimer);
+    this._blockMapClickTimer = setTimeout(() => {
+      this.ignoreMapClick = false;
+      this._blockMapClickTimer = null;
+    }, duration);
   }
 
   _notifyFrozenInteraction(reason) {
@@ -541,6 +579,7 @@ export class MapManager {
 
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
       this._openMapCursorMenu();
     });
 
@@ -570,7 +609,13 @@ export class MapManager {
     });
 
     marker.on('touchstart', (e) => {
+      if (this._isMultiTouchEvent(e.originalEvent)) {
+        this._noteMultiTouchGesture();
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+        return;
+      }
       const t = e.originalEvent.touches[0];
+      if (!t) return;
       touchStartX = t.clientX;
       touchStartY = t.clientY;
       lpTimer = setTimeout(() => {
@@ -581,13 +626,27 @@ export class MapManager {
     });
     marker.on('touchmove', (e) => {
       if (!lpTimer) return;
+      if (this._isMultiTouchEvent(e.originalEvent)) {
+        this._noteMultiTouchGesture();
+        clearTimeout(lpTimer);
+        lpTimer = null;
+        return;
+      }
       const t = e.originalEvent.touches[0];
+      if (!t) return;
       const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
       if (dx * dx + dy * dy > 64) {
         clearTimeout(lpTimer); lpTimer = null;
       }
     });
-    marker.on('touchend', () => {
+    marker.on('touchend', (e) => {
+      if (this._isMultiTouchEvent(e.originalEvent) || Date.now() - this._lastMultiTouchAt < 700) {
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+        return;
+      }
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    });
+    marker.on('touchcancel', () => {
       if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
     });
     marker.on('contextmenu', (e) => {
@@ -921,6 +980,12 @@ export class MapManager {
     let _touchPendingClientX = 0, _touchPendingClientY = 0;
     const getTouchPoint = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
     const startTouchLongPress = (oe) => {
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        _isTouchActive = false;
+        restoreMapDragging();
+        return;
+      }
       _isTouchActive = true;
       if (_dragModeActive) return;
       const touch = getTouchPoint(oe);
@@ -963,6 +1028,11 @@ export class MapManager {
         moveTo(_touchPendingClientX, _touchPendingClientY);
 
         const onTouchMove = (ev) => {
+          if (this._isMultiTouchEvent(ev)) {
+            this._noteMultiTouchGesture();
+            onTouchCancel();
+            return;
+          }
           ev.preventDefault();
           const t = ev.touches[0];
           if (!t) return;
@@ -970,6 +1040,10 @@ export class MapManager {
           // 在手機版加入 Y 軸負偏移(-40px)，讓圖標浮在手指上方避免被遮擋
         };
         const onTouchEnd = (ev) => {
+          if (this._isMultiTouchEvent(ev) || Date.now() - this._lastMultiTouchAt < 700) {
+            onTouchCancel();
+            return;
+          }
           const ct = ev?.changedTouches?.[0];
           const cx = ct?.clientX ?? lastTouchClientX;
           const cy = ct?.clientY ?? lastTouchClientY;
@@ -1027,6 +1101,11 @@ export class MapManager {
       }, 500);
     };
     const moveTouchLongPress = (oe) => {
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        endTouchLongPress();
+        return;
+      }
       if (_longPressTimer) {
         const touch = getTouchPoint(oe);
         if (!touch) return;
@@ -1079,6 +1158,11 @@ export class MapManager {
         if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
       }, { capture: true });
       el.addEventListener('touchstart', (oe) => {
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          endTouchLongPress();
+          return;
+        }
         if (this._isWeatherCardDomTarget(oe.target)) {
           oe._mappingElfWaypointDomHandled = true;
           oe.stopPropagation();
@@ -1089,6 +1173,11 @@ export class MapManager {
         startTouchLongPress(oe);
       }, { passive: true, capture: true });
       el.addEventListener('touchmove', (oe) => {
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          endTouchLongPress();
+          return;
+        }
         if (this._isWeatherCardDomTarget(oe.target)) {
           oe._mappingElfWaypointDomHandled = true;
           oe.stopPropagation();
@@ -1119,6 +1208,10 @@ export class MapManager {
 
     // Click/tap: cancel drag mode; on normal click → notify selection or weather badge
     marker.on('click', (e) => {
+      if (Date.now() - this._lastMultiTouchAt < 700) {
+        L.DomEvent.stopPropagation(e);
+        return;
+      }
       if (_dragModeActive || _justDragged) {
         L.DomEvent.stopPropagation(e);
         if (_dragModeActive) _disableDrag();
@@ -1150,6 +1243,7 @@ export class MapManager {
     // Double-click on marker: highlight and center
     marker.on('dblclick', (e) => {
       L.DomEvent.stopPropagation(e);
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
       this._clearWaypointClickTimeout();
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
@@ -1720,6 +1814,10 @@ export class MapManager {
       marker._legId = this._legIdAtCumDist(pt.cumDistM);
 
       marker.on('click', (e) => {
+        if (Date.now() - this._lastMultiTouchAt < 700) {
+          L.DomEvent.stopPropagation(e);
+          return;
+        }
         // Detect click on weather badge
         const target = e.originalEvent?.target;
         if (this._isWeatherCardDomTarget(target)) {
@@ -1737,6 +1835,7 @@ export class MapManager {
 
       marker.on('dblclick', (e) => {
         L.DomEvent.stop(e);
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
         this._cycleOverlappingLayers(null, marker.getLatLng());
       });
 
@@ -1746,6 +1845,10 @@ export class MapManager {
         const oe = e.originalEvent;
         if (this._isWeatherCardDomTarget(oe?.target)) {
           L.DomEvent.stopPropagation(oe);
+          return;
+        }
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
           return;
         }
         if (oe.button !== undefined && oe.button !== 0) return;
@@ -1761,6 +1864,11 @@ export class MapManager {
       const moveLP = (e) => {
         if (!lpTimer) return;
         const oe = e.originalEvent;
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          endLP();
+          return;
+        }
         const touch = oe.touches ? oe.touches[0] : oe;
         if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > 10) {
           clearTimeout(lpTimer);
@@ -1854,6 +1962,7 @@ export class MapManager {
 
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
         if (_returnDragActive || _returnJustDragged) return;
         // Detect click on weather badge
         const target = e.originalEvent?.target;
@@ -1867,6 +1976,7 @@ export class MapManager {
 
       marker.on('dblclick', (e) => {
         L.DomEvent.stopPropagation(e);
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
         this._clearWaypointClickTimeout();
         this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
         this._deferTopWaypointLayerHighlight(marker._wpIndex);
@@ -1942,11 +2052,11 @@ export class MapManager {
           document.removeEventListener('mouseup', onPointerUp, true);
           document.removeEventListener('touchmove', onTouchMove);
           document.removeEventListener('touchend', onPointerUp);
-          document.removeEventListener('touchcancel', onPointerUp);
+          document.removeEventListener('touchcancel', onTouchCancel);
         };
 
-        const finishDrag = (clientX, clientY) => {
-          const dropAction = this.getTrashZoneDropAction(clientX, clientY);
+        const finishDrag = (clientX, clientY, forcedDropAction = null) => {
+          const dropAction = forcedDropAction || this.getTrashZoneDropAction(clientX, clientY);
           _returnDragActive = false;
           _returnJustDragged = true;
           this._blockMapClick();
@@ -1985,29 +2095,44 @@ export class MapManager {
           moveTo(ev.clientX, ev.clientY);
         }
 
-        function onTouchMove(ev) {
+        const onTouchMove = (ev) => {
+          if (this._isMultiTouchEvent(ev)) {
+            this._noteMultiTouchGesture();
+            finishDrag(lastClientX, lastClientY, 'cancel');
+            return;
+          }
           ev.preventDefault();
           const t = ev.touches[0];
           if (!t) return;
           moveTo(t.clientX, t.clientY);
-        }
+        };
 
-        function onPointerUp(ev) {
+        const onPointerUp = (ev) => {
           ev.stopPropagation?.();
           ev.preventDefault?.();
+          if (source === 'touch' && (this._isMultiTouchEvent(ev) || Date.now() - this._lastMultiTouchAt < 700)) {
+            finishDrag(lastClientX, lastClientY, 'cancel');
+            return;
+          }
           const point = getPointer(ev);
           finishDrag(
             point?.clientX ?? lastClientX,
             point?.clientY ?? lastClientY
           );
-        }
+        };
+
+        const onTouchCancel = (ev) => {
+          ev.stopPropagation?.();
+          ev.preventDefault?.();
+          finishDrag(lastClientX, lastClientY, 'cancel');
+        };
 
         moveTo(initialClientX, initialClientY);
 
         if (source === 'touch') {
           document.addEventListener('touchmove', onTouchMove, { passive: false });
           document.addEventListener('touchend', onPointerUp);
-          document.addEventListener('touchcancel', onPointerUp);
+          document.addEventListener('touchcancel', onTouchCancel);
         } else {
           document.addEventListener('mousemove', onMouseMove, true);
           document.addEventListener('mouseup', onPointerUp, true);
@@ -2018,6 +2143,10 @@ export class MapManager {
         const oe = e.originalEvent;
         if (this._isWeatherCardDomTarget(oe?.target)) {
           L.DomEvent.stopPropagation(oe);
+          return;
+        }
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
           return;
         }
         if (oe.button !== undefined && oe.button !== 0) return;
@@ -2047,6 +2176,11 @@ export class MapManager {
       
       const moveLP = (e) => {
         if (!_lpTimer) return;
+        if (this._isMultiTouchEvent(e.originalEvent)) {
+          this._noteMultiTouchGesture();
+          cancelLP();
+          return;
+        }
         const point = getPointer(e.originalEvent);
         if (!point) return;
         _pendingClientX = point.clientX;
@@ -2086,6 +2220,11 @@ export class MapManager {
         el._mappingElfReturnWaypointDomBound = true;
 
         const wrap = (handler) => (oe) => {
+          if (this._isMultiTouchEvent(oe)) {
+            this._noteMultiTouchGesture();
+            cancelLP();
+            return;
+          }
           if (this._isWeatherCardDomTarget(oe.target)) {
             oe._mappingElfReturnWaypointDomHandled = true;
             oe.stopPropagation();
@@ -2441,6 +2580,10 @@ export class MapManager {
     };
 
     const startLongPress = (oe, latlng) => {
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        return;
+      }
       if (oe.button !== undefined && oe.button !== 0) return;
       lpTriggered = false;
       const point = domEventPoint(oe);
@@ -2462,6 +2605,12 @@ export class MapManager {
 
     const moveLongPress = (oe) => {
       if (!lpTimer) return;
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        clearTimeout(lpTimer);
+        lpTimer = null;
+        return;
+      }
       const point = domEventPoint(oe);
       const source = domEventSource(oe);
       const tolerance = ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX[source] ?? ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX.mouse;
@@ -2540,14 +2689,24 @@ export class MapManager {
       finishRouteInsertDrag(ev, true);
     }
 
-    function onRouteInsertTouchMove(ev) {
+    const onRouteInsertTouchMove = (ev) => {
+      if (this._isMultiTouchEvent(ev)) {
+        this._noteMultiTouchGesture();
+        finishRouteInsertDrag(ev, false);
+        return;
+      }
       ev.preventDefault();
       updateRouteInsertPreview(domEventLatLng(ev));
-    }
+    };
 
-    function onRouteInsertTouchEnd(ev) {
+    const onRouteInsertTouchEnd = (ev) => {
+      if (this._isMultiTouchEvent(ev) || Date.now() - this._lastMultiTouchAt < 700) {
+        this._noteMultiTouchGesture();
+        finishRouteInsertDrag(ev, false);
+        return;
+      }
       finishRouteInsertDrag(ev, true);
-    }
+    };
 
     function onRouteInsertTouchCancel(ev) {
       finishRouteInsertDrag(ev, false);
@@ -2583,6 +2742,7 @@ export class MapManager {
 
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
       if (lpTriggered || routeInsertDragActive) return;
       if (this.isFrozen) {
         this._notifyFrozenInteraction('route-edit');
