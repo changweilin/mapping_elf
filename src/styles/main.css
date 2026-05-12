@@ -322,20 +322,6 @@ html.light-theme .app-busy-overlay .loading-content {
   color: var(--text-muted);
 }
 
-body.route-weather-busy #map,
-body.route-weather-busy .map-action-btns,
-body.route-weather-busy #waypoint-list,
-body.route-weather-busy #alternatives-list,
-body.route-weather-busy #bottom-panel,
-body.route-weather-busy .weather-popup,
-body.route-weather-busy .wp-weather-badge {
-  pointer-events: none !important;
-}
-
-body.route-weather-busy #map,
-body.route-weather-busy #waypoint-list,
-body.route-weather-busy #alternatives-list,
-body.route-weather-busy #bottom-panel,
 body.route-weather-busy .weather-popup .weather-card,
 body.route-weather-busy .wp-weather-card-slot .weather-card {
   filter: saturate(0.75);

@@ -98,12 +98,6 @@ function showImportedTrackEditNotice(duration = 3200) {
 }
 
 const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
-  '#map',
-  '.map-action-btns',
-  '#waypoint-list',
-  '#alternatives-list',
-  '#bottom-panel',
-  '.weather-popup',
   '#btn-clear-route',
   '#btn-replan-route',
   '#btn-undo',
@@ -284,13 +278,15 @@ function flushDeferredBusySettings() {
 
 function installRouteWeatherBusyGuard() {
   const blockPointerEvent = (e) => {
-    if (isWeatherCardInteractionLocked() && e.target?.closest?.('.weather-card')) {
+    const target = e.target;
+    const isWeatherBadgeClick = e.type === 'click' && target?.closest?.('.wp-weather-badge');
+    if (isWeatherCardInteractionLocked() && (target?.closest?.('.weather-card') || isWeatherBadgeClick)) {
       e.preventDefault();
       e.stopImmediatePropagation();
       showWeatherCardBusyNotice();
       return;
     }
-    if (isRouteWeatherBusy() && e.target?.closest?.(ROUTE_WEATHER_BUSY_BLOCK_SELECTOR)) {
+    if (isRouteWeatherBusy() && target?.closest?.(ROUTE_WEATHER_BUSY_BLOCK_SELECTOR)) {
       e.preventDefault();
       e.stopImmediatePropagation();
       showRouteWeatherBusyNotice();
