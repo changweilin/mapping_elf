@@ -8561,18 +8561,32 @@ function panMapToCenterFullCard(colIdx) {
   const map = mapManager.map;
 
   const cardEl = document.getElementById(`wc-root-${colIdx}`);
+  const { rect, safeLeft, safeRight, safeTop, safeBottom } = _getMapSafeArea();
+  const safeCenterX = (safeLeft + safeRight) / 2;
+  const safeCenterY = (safeTop + safeBottom) / 2;
+
+  // Inline map cards inherit different marker anchors for waypoints versus
+  // interval points. Measure the rendered card itself so switching between
+  // those marker types lands on the same visual centre.
+  if (cardEl && !cardEl.closest('.mobile-weather-card-layer')) {
+    const cardRect = cardEl.getBoundingClientRect();
+    const cardCenterX = cardRect.left - rect.left + cardRect.width / 2;
+    const cardCenterY = cardRect.top - rect.top + cardRect.height / 2;
+    const dx = cardCenterX - safeCenterX;
+    const dy = cardCenterY - safeCenterY;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    map.panBy([dx, dy], { animate: true, duration: 0.25 });
+    return;
+  }
+
   const cardW = cardEl?.offsetWidth || 280;
   const cardH = cardEl?.offsetHeight || 260;
   const popupOffsetY = pt.isWaypoint ? 24 : 12;
-
-  const { safeLeft, safeRight, safeTop, safeBottom } = _getMapSafeArea();
 
   // The popup wrapper sits with its bottom at marker_y - popupOffsetY (the
   // tip is hidden via CSS, so no extra gap is needed). Prefer centering the
   // card between the toolbar and bottom-panel divider, but clamp its top edge
   // into the safe area so the header buttons remain reachable on small phones.
-  const safeCenterX = (safeLeft + safeRight) / 2;
-  const safeCenterY = (safeTop + safeBottom) / 2;
   const targetX = safeCenterX;
   const desiredCardTop = safeCenterY - cardH / 2;
   const cardTop = Math.max(safeTop, desiredCardTop);

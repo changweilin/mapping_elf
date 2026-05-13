@@ -659,10 +659,11 @@ test('full weather card highlight centers the card and closing it centers the wa
   await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
   await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
 
-  const card = page.locator('#wc-root-0.weather-card.full');
+  const card = page.locator('.wp-weather-card-slot .weather-card.full.is-highlighted');
   await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute('data-col-idx', '0');
   await expect(card).toHaveClass(/is-highlighted/);
-  await page.waitForTimeout(350);
+  await page.waitForTimeout(650);
 
   const cardOffset = await card.evaluate((el) => {
     const map = document.querySelector('#map');
@@ -690,8 +691,8 @@ test('full weather card highlight centers the card and closing it centers the wa
     };
   });
   expect(cardOffset).not.toBeNull();
-  expect(Math.abs(cardOffset.dx)).toBeLessThan(45);
-  expect(Math.abs(cardOffset.dy)).toBeLessThan(60);
+  expect(Math.abs(cardOffset.dx)).toBeLessThan(20);
+  expect(Math.abs(cardOffset.dy)).toBeLessThan(24);
 
   await card.locator('.q-close').click();
   await page.waitForTimeout(350);
@@ -724,6 +725,96 @@ test('full weather card highlight centers the card and closing it centers the wa
   expect(waypointOffset).not.toBeNull();
   expect(Math.abs(waypointOffset.dx)).toBeLessThan(45);
   expect(Math.abs(waypointOffset.dy)).toBeLessThan(60);
+});
+
+test('full-card navigation keeps waypoint and intermediate cards centered', async ({ page }) => {
+  const loadedCells = (weather, temp) => ({
+    _weatherLoaded: true,
+    _weatherLoadState: 'loaded',
+    weather,
+    _icon: weather.split(' ')[0],
+    temp,
+    precipitation: '0 mm',
+    precipProb: '10%',
+    windSpeed: '10 km/h',
+  });
+
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    importedTrackSession: {
+      coords: [
+        [24.00, 121.00],
+        [24.40, 121.40],
+        [24.80, 121.80],
+      ],
+      elevations: [100, 120, 140],
+      waypoints: [
+        [24.00, 121.00],
+        [24.80, 121.80],
+      ],
+      waypointMeta: [
+        { waypointId: 'desktop-card-nav-start', label: 'Start', cumDistM: 0 },
+        { waypointId: 'desktop-card-nav-end', label: 'End', cumDistM: 120000 },
+      ],
+      intermediates: [
+        { lat: 24.40, lng: 121.40, label: 'Mid', cumDistM: 60000, ele: 120 },
+      ],
+    },
+    weatherCells: {
+      'wp:desktop-card-nav-start': loadedCells('sunny Clear', '21 C'),
+      'int:60000': loadedCells('cloudy Cloudy', '22 C'),
+      'wp:desktop-card-nav-end': loadedCells('cloudy Cloudy', '22 C'),
+    },
+  });
+
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded')).toHaveCount(2);
+  await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+  await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
+
+  const card = page.locator('.wp-weather-card-slot .weather-card.full.is-highlighted');
+  await expect(card).toBeVisible();
+
+  const midColIdx = await page.locator('#weather-table-container .wt-col-head').evaluateAll((heads) => {
+    const mid = heads.find((head) => (head.textContent || '').includes('Mid'));
+    return mid?.dataset.idx || '';
+  });
+  expect(midColIdx).not.toBe('');
+
+  for (let i = 0; i < 3; i++) {
+    if ((await card.getAttribute('data-col-idx')) === midColIdx) break;
+    await card.locator('.q-next').click();
+    await expect(card).toBeVisible();
+  }
+  await expect(card).toHaveAttribute('data-col-idx', midColIdx);
+  await page.waitForTimeout(650);
+
+  const cardOffset = await card.evaluate((el) => {
+    const map = document.querySelector('#map');
+    const sidePanel = document.querySelector('#side-panel');
+    const bottomPanel = document.querySelector('#bottom-panel');
+    if (!map) return null;
+    const mapRect = map.getBoundingClientRect();
+    const panelRect = sidePanel?.classList.contains('open') ? sidePanel.getBoundingClientRect() : null;
+    const bottomRect = bottomPanel?.getBoundingClientRect();
+    const panelOverlap = panelRect ? Math.max(0, mapRect.right - panelRect.left) : 0;
+    const bottomOverlap = bottomRect ? Math.max(0, mapRect.bottom - bottomRect.top) : 0;
+    const safeLeft = 16;
+    const safeRight = mapRect.width - panelOverlap - 16;
+    const safeTop = 16;
+    const safeBottom = mapRect.height - bottomOverlap - 12;
+    const center = {
+      x: mapRect.left + (safeLeft + safeRight) / 2,
+      y: mapRect.top + (safeTop + safeBottom) / 2,
+    };
+    const rect = el.getBoundingClientRect();
+    return {
+      dx: rect.left + rect.width / 2 - center.x,
+      dy: rect.top + rect.height / 2 - center.y,
+    };
+  });
+  expect(cardOffset).not.toBeNull();
+  expect(Math.abs(cardOffset.dx)).toBeLessThan(20);
+  expect(Math.abs(cardOffset.dy)).toBeLessThan(24);
 });
 
 test.describe('mobile weather cards', () => {
