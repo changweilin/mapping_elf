@@ -869,6 +869,10 @@ body.weather-card-busy .weather-edit-control:disabled {
   z-index: 10;
 }
 
+.custom-waypoint-icon .wp-weather-badge {
+  top: -13px;
+}
+
 .wp-weather-badge:hover:not(.is-card-open):not(.is-card-closing) {
   transform: translateX(-50%) scale(1.25);
   filter: drop-shadow(0 2px 6px rgba(255, 255, 255, 0.5));

@@ -1405,7 +1405,12 @@ export class MapManager {
 
     marker._bindWaypointDomFallback = () => {
       const el = marker.getElement?.();
-      if (!el || el._mappingElfWaypointDomBound) return;
+      if (!el) return;
+      this._bindWeatherBadgeDomShortcut(marker, () => {
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this.onWeatherBadgeClick?.(idx, false);
+      }, '_mappingElfWaypointDomHandled');
+      if (el._mappingElfWaypointDomBound) return;
       el._mappingElfWaypointDomBound = true;
       el.addEventListener('mousedown', (oe) => {
         if (this._isWeatherCardDomTarget(oe.target)) {
@@ -1490,6 +1495,7 @@ export class MapManager {
 
     // Click/tap: cancel drag mode; on normal click → notify selection or weather badge
     marker.on('click', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
       if (Date.now() - this._lastMultiTouchAt < 700) {
         L.DomEvent.stopPropagation(e);
         return;
@@ -2110,8 +2116,16 @@ export class MapManager {
       marker._cumDistM = pt.cumDistM;
       marker._isReturn = pt.isReturn;
       marker._legId = this._legIdAtCumDist(pt.cumDistM);
+      const bindIntermediateWeatherBadgeShortcut = () => {
+        this._bindWeatherBadgeDomShortcut(marker, () => {
+          if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+        }, '_mappingElfIntermediateDomHandled');
+      };
+      bindIntermediateWeatherBadgeShortcut();
+      setTimeout(bindIntermediateWeatherBadgeShortcut, 0);
 
       marker.on('click', (e) => {
+        if (e.originalEvent?._mappingElfIntermediateDomHandled) return;
         if (Date.now() - this._lastMultiTouchAt < 700) {
           L.DomEvent.stopPropagation(e);
           return;
@@ -2141,6 +2155,7 @@ export class MapManager {
       let startX = 0, startY = 0;
       const startLP = (e) => {
         const oe = e.originalEvent;
+        if (oe?._mappingElfIntermediateDomHandled) return;
         if (this._isWeatherCardDomTarget(oe?.target)) {
           L.DomEvent.stopPropagation(oe);
           return;
@@ -2260,6 +2275,7 @@ export class MapManager {
 
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
+        if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
         if (Date.now() - this._lastMultiTouchAt < 700) return;
         if (_returnDragActive || _returnJustDragged) return;
         // Detect click on weather badge
@@ -2622,7 +2638,11 @@ export class MapManager {
 
       const bindReturnWaypointDomFallback = () => {
         const el = marker.getElement?.();
-        if (!el || el._mappingElfReturnWaypointDomBound) return;
+        if (!el) return;
+        this._bindWeatherBadgeDomShortcut(marker, () => {
+          if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+        }, '_mappingElfReturnWaypointDomHandled');
+        if (el._mappingElfReturnWaypointDomBound) return;
         el._mappingElfReturnWaypointDomBound = true;
 
         const wrap = (handler) => (oe) => {
@@ -2894,6 +2914,45 @@ export class MapManager {
 
   _isWeatherCardDomTarget(target) {
     return !!target?.closest?.('.weather-card');
+  }
+
+  _isWeatherBadgeDomTarget(target) {
+    return !!target?.closest?.('.wp-weather-badge') && !this._isWeatherCardDomTarget(target);
+  }
+
+  _bindWeatherBadgeDomShortcut(marker, notify, handledFlag = '_mappingElfWeatherBadgeDomHandled') {
+    const el = marker?.getElement?.();
+    if (!el || el._mappingElfWeatherBadgeDomBound) return;
+    el._mappingElfWeatherBadgeDomBound = true;
+
+    const stopBadgePointer = (oe) => {
+      if (!this._isWeatherBadgeDomTarget(oe.target)) return false;
+      oe[handledFlag] = true;
+      oe.stopPropagation?.();
+      oe.stopImmediatePropagation?.();
+      return true;
+    };
+
+    ['mousedown', 'touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach((type) => {
+      el.addEventListener(type, stopBadgePointer, { capture: true });
+    });
+
+    el.addEventListener('click', (oe) => {
+      if (!this._isWeatherBadgeDomTarget(oe.target)) return;
+      oe[handledFlag] = true;
+      oe.preventDefault?.();
+      oe.stopPropagation?.();
+      oe.stopImmediatePropagation?.();
+      notify?.();
+    }, { capture: true });
+
+    el.addEventListener('dblclick', (oe) => {
+      if (!this._isWeatherBadgeDomTarget(oe.target)) return;
+      oe[handledFlag] = true;
+      oe.preventDefault?.();
+      oe.stopPropagation?.();
+      oe.stopImmediatePropagation?.();
+    }, { capture: true });
   }
 
   _setWeatherBadgeOpenState(colIdx, open, targetMarker = null) {
