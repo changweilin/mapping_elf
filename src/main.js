@@ -202,11 +202,18 @@ function updateRouteWeatherBusyOverlay() {
   const progressEl = document.getElementById('route-weather-busy-progress');
   const fillEl = document.getElementById('route-weather-busy-fill');
   const barEl = overlay?.querySelector('.loading-bar');
+  const brandEl = document.getElementById('route-weather-busy-brand');
 
   if (overlay) overlay.classList.toggle('hidden', !busy);
   if (busy) {
     const task = Array.from(routeWeatherBusyTasks.values()).at(-1);
+    const showCenterBrand = !!task?.centerBrand;
     const progress = Number.isFinite(task?.progress) ? Math.max(0, Math.min(100, task.progress)) : null;
+    if (overlay) overlay.classList.toggle('has-center-brand', showCenterBrand);
+    if (brandEl) {
+      brandEl.classList.toggle('hidden', !showCenterBrand);
+      brandEl.setAttribute('aria-hidden', showCenterBrand ? 'false' : 'true');
+    }
     if (titleEl) titleEl.textContent = task?.title || '處理中';
     if (detailEl) detailEl.textContent = task?.detail || '請稍候...';
     if (progressEl) progressEl.textContent = progress == null ? '處理中' : `${Math.round(progress)}%`;
@@ -219,6 +226,11 @@ function updateRouteWeatherBusyOverlay() {
       barEl.setAttribute('aria-valuenow', String(Math.round(progress ?? 0)));
     }
   } else if (fillEl) {
+    if (overlay) overlay.classList.remove('has-center-brand');
+    if (brandEl) {
+      brandEl.classList.add('hidden');
+      brandEl.setAttribute('aria-hidden', 'true');
+    }
     fillEl.classList.remove('is-determinate');
     fillEl.style.removeProperty('--busy-progress');
   }
@@ -238,9 +250,9 @@ function updateRouteWeatherBusyOverlay() {
   }
 }
 
-function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null, lockScope = 'route' } = {}) {
+function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null, lockScope = 'route', centerBrand = false } = {}) {
   const id = `busy_${++busyTaskSeq}`;
-  routeWeatherBusyTasks.set(id, { title, detail, progress, lockScope });
+  routeWeatherBusyTasks.set(id, { title, detail, progress, lockScope, centerBrand });
   updateRouteWeatherBusyOverlay();
   let ended = false;
   return {
@@ -2313,6 +2325,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     title: '正在規劃路線',
     detail: '準備路線與高度資料...',
     progress: 8,
+    centerBrand: true,
   });
 
   try {

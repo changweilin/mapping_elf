@@ -59,6 +59,16 @@
   </div>
 
   <div id="route-weather-busy-overlay" class="loading-screen app-busy-overlay hidden" aria-live="polite">
+    <div id="route-weather-busy-brand" class="route-busy-center-brand hidden" aria-hidden="true">
+      <div class="route-busy-brand-logo loading-icon">
+        <img src="./mapping_owl_cursor.svg" alt="" class="owl-logo-mapping" width="256" height="256" />
+      </div>
+      <h2 class="route-busy-brand-text" data-i18n="路線規劃中">路線規劃中</h2>
+      <div class="route-busy-brand-reserve" aria-hidden="true">
+        <p>載入地圖中...</p>
+        <div class="loading-bar"></div>
+      </div>
+    </div>
     <div class="loading-content">
       <h2 id="route-weather-busy-title">處理中</h2>
       <p id="route-weather-busy-detail">請稍候...</p>

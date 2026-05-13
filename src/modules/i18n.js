@@ -80,6 +80,7 @@ const PHRASES = {
   '打開我的最愛清單': { en: 'Open favorites', ja: 'お気に入りを開く', ko: '즐겨찾기 열기', fr: 'Ouvrir les favoris', de: 'Favoriten öffnen', es: 'Abrir favoritos', it: 'Apri preferiti' },
   '清除路線': { en: 'Clear route', ja: 'ルートを消去', ko: '루트 지우기', fr: 'Effacer l’itinéraire', de: 'Route löschen', es: 'Borrar ruta', it: 'Cancella percorso' },
   '路線規劃': { en: 'Route planning', ja: 'ルート計画', ko: '루트 계획', fr: 'Planification d’itinéraire', de: 'Routenplanung', es: 'Planificación de ruta', it: 'Pianificazione percorso' },
+  '路線規劃中': { en: 'Planning route', ja: 'ルート計画中', ko: '경로 계획 중', fr: 'Planification de l’itinéraire', de: 'Route wird geplant', es: 'Planificando ruta', it: 'Pianificazione percorso' },
   '在地圖上點擊以新增航點': { en: 'Click the map to add waypoints', ja: '地図をクリックしてウェイポイントを追加', ko: '지도에서 클릭해 웨이포인트 추가', fr: 'Cliquez sur la carte pour ajouter des waypoints', de: 'Klicken Sie auf die Karte, um Wegpunkte hinzuzufügen', es: 'Haz clic en el mapa para añadir waypoints', it: 'Fai clic sulla mappa per aggiungere waypoint' },
   '點擊地圖任意位置開始規劃路線': { en: 'Click anywhere on the map to start planning', ja: '地図上をクリックして計画を開始', ko: '지도 아무 곳이나 클릭해 계획 시작', fr: 'Cliquez sur la carte pour commencer', de: 'Klicken Sie auf die Karte, um zu planen', es: 'Haz clic en el mapa para empezar', it: 'Fai clic sulla mappa per iniziare' },
   '單程': { en: 'One-way', ja: '片道', ko: '편도', fr: 'Aller simple', de: 'Einfach', es: 'Solo ida', it: 'Solo andata' },
