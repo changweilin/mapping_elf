@@ -317,6 +317,79 @@ async function dropZoneTargetCenter(page, action) {
   };
 }
 
+async function dispatchTouch(page, type, point) {
+  await page.evaluate(({ type, point }) => {
+    const domType = {
+      touchStart: 'touchstart',
+      touchMove: 'touchmove',
+      touchEnd: 'touchend',
+      touchCancel: 'touchcancel',
+    }[type];
+    if (!domType) throw new Error(`Unsupported touch event: ${type}`);
+
+    const existingTarget = window.__mappingElfTestTouchTarget;
+    const target = (existingTarget?.isConnected ? existingTarget : null)
+      || document.elementFromPoint(point.x, point.y)
+      || document;
+    if (!target) throw new Error(`No touch target at ${point.x}, ${point.y}`);
+    if (type === 'touchStart') window.__mappingElfTestTouchTarget = target;
+
+    const touch = new Touch({
+      identifier: 1,
+      target,
+      clientX: point.x,
+      clientY: point.y,
+      pageX: point.x + window.scrollX,
+      pageY: point.y + window.scrollY,
+      screenX: point.x,
+      screenY: point.y,
+      radiusX: 8,
+      radiusY: 8,
+      force: 1,
+    });
+    const activeTouches = type === 'touchEnd' || type === 'touchCancel' ? [] : [touch];
+    target.dispatchEvent(new TouchEvent(domType, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      touches: activeTouches,
+      targetTouches: activeTouches,
+      changedTouches: [touch],
+    }));
+
+    if (type === 'touchEnd' || type === 'touchCancel') {
+      window.__mappingElfTestTouchTarget = null;
+    }
+  }, { type, point });
+}
+
+async function touchTap(page, point) {
+  await dispatchTouch(page, 'touchStart', point);
+  await page.waitForTimeout(45);
+  await dispatchTouch(page, 'touchEnd', point);
+  await page.waitForTimeout(70);
+}
+
+async function touchDoubleTap(page, point) {
+  await touchTap(page, point);
+  await touchTap(page, point);
+}
+
+async function touchLongPressDrag(page, startPoint, endPoint) {
+  await dispatchTouch(page, 'touchStart', startPoint);
+  await page.waitForTimeout(LONG_PRESS_MS);
+  await expect(page.locator('.waypoint-trash-zone')).toBeVisible();
+  await dispatchTouch(page, 'touchMove', {
+    x: (startPoint.x + endPoint.x) / 2,
+    y: (startPoint.y + endPoint.y) / 2,
+  });
+  await page.waitForTimeout(40);
+  await dispatchTouch(page, 'touchMove', endPoint);
+  await page.waitForTimeout(40);
+  await dispatchTouch(page, 'touchEnd', endPoint);
+  await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
+}
+
 test('double-clicking an overlapped waypoint cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
@@ -613,6 +686,51 @@ test('long-press dragging a waypoint into the cancel zone leaves it unchanged', 
   const after = await topWaypointCenter(page, 1);
   expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(6);
   await expect(page.locator('.waypoint-trash-zone')).not.toBeVisible();
+});
+
+test.describe('touch waypoint gestures', () => {
+  test.use({ hasTouch: true });
+
+  test('touch double-tapping an overlapped waypoint cycles visible layer order', async ({ page }) => {
+    await openLayerTestApp(page);
+    await addRoundTripWaypoints(page);
+
+    const before = await layerState(page);
+    const target = await topWaypointCenter(page, 1);
+    await touchDoubleTap(page, target);
+
+    await expect.poll(async () => (await layerState(page)).returnAboveOutbound)
+      .toBe(!before.returnAboveOutbound);
+    await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
+    await expect(page.locator('.waypoint-trash-zone')).not.toBeVisible();
+  });
+
+  test('touch long-press dragging a return waypoint does not cycle its layer', async ({ page }) => {
+    await openLayerTestApp(page);
+    await addRoundTripWaypoints(page);
+
+    const target = await topWaypointCenter(page, 1);
+    await touchDoubleTap(page, target);
+    await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
+
+    const beforeLayer = await layerState(page);
+    const returnBefore = await waypointCenter(page, 1, true);
+    const storedBefore = await storedWaypoints(page);
+    expect(storedBefore).toHaveLength(2);
+
+    await touchLongPressDrag(page, returnBefore, {
+      x: returnBefore.x + 90,
+      y: returnBefore.y + 35,
+    });
+
+    await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+    const storedAfter = await storedWaypoints(page);
+    expect(storedAfter).toHaveLength(2);
+    expect(coordinateDistance(storedAfter[0], storedBefore[0])).toBeGreaterThan(0.0001);
+    expect(coordinateDistance(storedAfter[1], storedBefore[1])).toBeLessThan(0.000001);
+    await expect.poll(async () => (await layerState(page)).returnAboveOutbound)
+      .toBe(beforeLayer.returnAboveOutbound);
+  });
 });
 
 test('long-press dragging a route inserts a waypoint at the release position', async ({ page }) => {

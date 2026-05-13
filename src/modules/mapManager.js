@@ -111,6 +111,9 @@ const ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX = {
 };
 const ROUTE_LAYER_DEBUG_KEY = 'mappingElfDebugRouteLayerCycle';
 const WAYPOINT_DOUBLE_TAP_DELAY_MS = 360;
+// Single-tap selection must wait longer than the double-tap window so layer
+// cycling can cancel it before highlight/z-index state changes.
+const WAYPOINT_SINGLE_TAP_DELAY_MS = WAYPOINT_DOUBLE_TAP_DELAY_MS + 40;
 const WAYPOINT_DOUBLE_TAP_DISTANCE_PX = 30;
 const WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
 const WAYPOINT_Z_BASE = 1300;
@@ -1047,6 +1050,8 @@ export class MapManager {
     let _touchPendingClientX = 0, _touchPendingClientY = 0;
     let _touchStartClientX = 0, _touchStartClientY = 0;
     let _touchPendingHasMoved = false;
+    let _touchPressActive = false;
+    let _touchTapHandledForPress = false;
     let _lastWaypointTouchTapAt = 0;
     let _lastWaypointTouchTapX = 0;
     let _lastWaypointTouchTapY = 0;
@@ -1092,6 +1097,7 @@ export class MapManager {
       if (this._isMultiTouchEvent(oe)) {
         this._noteMultiTouchGesture();
         _isTouchActive = false;
+        cleanupPendingTouchListeners();
         restoreMapDragging();
         return;
       }
@@ -1099,6 +1105,7 @@ export class MapManager {
       if (_dragModeActive) return;
       const touch = getTouchPoint(oe);
       if (!touch) return;
+      cleanupPendingTouchListeners();
       oe.preventDefault?.();
       this._clearNativeSelection();
       _touchPendingClientX = touch.clientX;
@@ -1106,10 +1113,14 @@ export class MapManager {
       _touchStartClientX = touch.clientX;
       _touchStartClientY = touch.clientY;
       _touchPendingHasMoved = false;
+      _touchPressActive = true;
+      _touchTapHandledForPress = false;
       this.map.dragging.disable();
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
+        cleanupPendingTouchListeners();
+        _touchPressActive = false;
 
         if (this.isFrozen) {
           this._notifyFrozenInteraction('waypoint-drag');
@@ -1174,9 +1185,9 @@ export class MapManager {
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           restoreMapDragging();
-          document.removeEventListener('touchmove', onTouchMove);
-          document.removeEventListener('touchend', onTouchEnd);
-          document.removeEventListener('touchcancel', onTouchCancel);
+          document.removeEventListener('touchmove', onTouchMove, true);
+          document.removeEventListener('touchend', onTouchEnd, true);
+          document.removeEventListener('touchcancel', onTouchCancel, true);
           const idx = this.waypointMarkers.indexOf(marker);
           try {
             if (idx >= 0) {
@@ -1211,21 +1222,26 @@ export class MapManager {
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
           restoreMapDragging();
-          document.removeEventListener('touchmove', onTouchMove);
-          document.removeEventListener('touchend', onTouchEnd);
-          document.removeEventListener('touchcancel', onTouchCancel);
+          document.removeEventListener('touchmove', onTouchMove, true);
+          document.removeEventListener('touchend', onTouchEnd, true);
+          document.removeEventListener('touchcancel', onTouchCancel, true);
           marker.setLatLng(dragStartLatLng);
           this._endWaypointDrag();
         };
-        document.addEventListener('touchmove', onTouchMove, { passive: false });
-        document.addEventListener('touchend', onTouchEnd);
-        document.addEventListener('touchcancel', onTouchCancel);
+        // Capture active drag events before marker DOM fallbacks can stop them.
+        document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+        document.addEventListener('touchend', onTouchEnd, true);
+        document.addEventListener('touchcancel', onTouchCancel, true);
       }, 500);
+
+      document.addEventListener('touchmove', onPendingTouchMove, { passive: false });
+      document.addEventListener('touchend', onPendingTouchEnd);
+      document.addEventListener('touchcancel', onPendingTouchCancel);
     };
     const moveTouchLongPress = (oe) => {
       if (this._isMultiTouchEvent(oe)) {
         this._noteMultiTouchGesture();
-        endTouchLongPress();
+        finishTouchLongPress(oe, { processTap: false });
         return;
       }
       if (_longPressTimer) {
@@ -1240,8 +1256,35 @@ export class MapManager {
         if (dx * dx + dy * dy > 16) _touchPendingHasMoved = true;
       }
     };
+    function cleanupPendingTouchListeners() {
+      document.removeEventListener('touchmove', onPendingTouchMove);
+      document.removeEventListener('touchend', onPendingTouchEnd);
+      document.removeEventListener('touchcancel', onPendingTouchCancel);
+    }
+    const finishTouchLongPress = (oe, { processTap = true } = {}) => {
+      const hadActivePress = _touchPressActive || _longPressTimer !== null || _dragModeActive;
+      if (!hadActivePress) return;
+      if (processTap && !_touchTapHandledForPress && !_dragModeActive) {
+        _touchTapHandledForPress = true;
+        handleWaypointTouchTap(oe);
+      }
+      endTouchLongPress();
+    };
+    function onPendingTouchMove(ev) {
+      if (!_touchPressActive || !_longPressTimer) return;
+      moveTouchLongPress(ev);
+    }
+    function onPendingTouchEnd(ev) {
+      finishTouchLongPress(ev);
+    }
+    function onPendingTouchCancel(ev) {
+      finishTouchLongPress(ev, { processTap: false });
+    }
     const endTouchLongPress = () => {
       _isTouchActive = false;
+      _touchPressActive = false;
+      _touchTapHandledForPress = false;
+      cleanupPendingTouchListeners();
       if (_longPressTimer) {
         clearTimeout(_longPressTimer);
         _longPressTimer = null;
@@ -1258,10 +1301,9 @@ export class MapManager {
     });
     marker.on('touchend', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
-      handleWaypointTouchTap(e.originalEvent);
-      endTouchLongPress();
+      finishTouchLongPress(e.originalEvent);
     });
-    marker.on('touchcancel', endTouchLongPress);
+    marker.on('touchcancel', (e) => finishTouchLongPress(e.originalEvent, { processTap: false }));
 
     marker._bindWaypointDomFallback = () => {
       const el = marker.getElement?.();
@@ -1334,8 +1376,7 @@ export class MapManager {
         oe._mappingElfWaypointDomHandled = true;
         oe.stopPropagation();
         oe.preventDefault?.();
-        handleWaypointTouchTap(oe);
-        endTouchLongPress();
+        finishTouchLongPress(oe);
       }, { passive: false, capture: true });
       el.addEventListener('touchcancel', (oe) => {
         if (this._isWeatherCardDomTarget(oe.target)) {
@@ -1345,7 +1386,7 @@ export class MapManager {
         }
         oe._mappingElfWaypointDomHandled = true;
         oe.stopPropagation();
-        endTouchLongPress();
+        finishTouchLongPress(oe, { processTap: false });
       }, { passive: true, capture: true });
     };
 
@@ -2257,9 +2298,9 @@ export class MapManager {
         const cleanupDragListeners = () => {
           document.removeEventListener('mousemove', onMouseMove, true);
           document.removeEventListener('mouseup', onPointerUp, true);
-          document.removeEventListener('touchmove', onTouchMove);
-          document.removeEventListener('touchend', onPointerUp);
-          document.removeEventListener('touchcancel', onTouchCancel);
+          document.removeEventListener('touchmove', onTouchMove, true);
+          document.removeEventListener('touchend', onPointerUp, true);
+          document.removeEventListener('touchcancel', onTouchCancel, true);
         };
 
         const finishDrag = (clientX, clientY, forcedDropAction = null) => {
@@ -2341,9 +2382,10 @@ export class MapManager {
         moveTo(initialClientX, initialClientY);
 
         if (source === 'touch') {
-          document.addEventListener('touchmove', onTouchMove, { passive: false });
-          document.addEventListener('touchend', onPointerUp);
-          document.addEventListener('touchcancel', onTouchCancel);
+          // Capture active drag events before marker DOM fallbacks can stop them.
+          document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+          document.addEventListener('touchend', onPointerUp, true);
+          document.addEventListener('touchcancel', onTouchCancel, true);
         } else {
           document.addEventListener('mousemove', onMouseMove, true);
           document.addEventListener('mouseup', onPointerUp, true);
@@ -3494,7 +3536,7 @@ export class MapManager {
     this._waypointClickTimeout = setTimeout(() => {
       this._waypointClickTimeout = null;
       this.onWaypointSelect?.(wpIndex, isReturn, shouldToggle);
-    }, 250);
+    }, WAYPOINT_SINGLE_TAP_DELAY_MS);
   }
 
   _deferWaypointSelect(wpIndex, isReturn = false, shouldToggle = false) {
