@@ -110,6 +110,9 @@ const ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX = {
   touch: 18,
 };
 const ROUTE_LAYER_DEBUG_KEY = 'mappingElfDebugRouteLayerCycle';
+const WAYPOINT_DOUBLE_TAP_DELAY_MS = 360;
+const WAYPOINT_DOUBLE_TAP_DISTANCE_PX = 30;
+const WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
 const WAYPOINT_Z_BASE = 1300;
 const WAYPOINT_Z_PAIR_STEP = 120;
 const WAYPOINT_Z_SELECTED = 1800;
@@ -124,6 +127,7 @@ export class MapManager {
     this.onWaypointSelect = null; // callback(wpIndex)
     this.onFrozenInteraction = null; // callback(reason)
     this.onWeatherBadgeClick = null; // callback(wpIndex)
+    this.onWaypointDragEnd = null; // callback()
     this.isRoundTrip = false;
     this.turnaroundLatLng = null; // [lat,lng] of last forward waypoint for return-leg gradient split
     this.waypoints = [];
@@ -150,6 +154,9 @@ export class MapManager {
     this._dragWpIndex = undefined;
     this._lastMultiTouchAt = 0;
     this._blockMapClickTimer = null;
+    this._activeWaypointDragDepth = 0;
+    this._pendingWaypointIconUpdates = new Set();
+    this._pendingAllWaypointIconUpdate = false;
     this._weatherPopups = new Map(); // Inline marker weather cards (colIdx -> { marker, badge, slot })
     this._weatherPopupCloseTimers = new Map();
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
@@ -299,6 +306,55 @@ export class MapManager {
       this.ignoreMapClick = false;
       this._blockMapClickTimer = null;
     }, duration);
+  }
+
+  isWaypointDragging() {
+    return this._activeWaypointDragDepth > 0;
+  }
+
+  _beginWaypointDrag() {
+    this._activeWaypointDragDepth++;
+  }
+
+  _endWaypointDrag() {
+    if (this._activeWaypointDragDepth <= 0) return;
+    this._activeWaypointDragDepth--;
+    if (this._activeWaypointDragDepth === 0) {
+      this._flushDeferredWaypointIconUpdates();
+      this.onWaypointDragEnd?.();
+    }
+  }
+
+  _deferWaypointIconUpdate(index = null) {
+    if (Number.isInteger(index)) {
+      this._pendingWaypointIconUpdates.add(index);
+    } else {
+      this._pendingAllWaypointIconUpdate = true;
+    }
+  }
+
+  _refreshWaypointIcon(index) {
+    const marker = this.waypointMarkers[index];
+    if (!marker) return;
+    marker._wpIndex = index;
+    marker.setIcon(this._createIcon(index));
+    this._applyColorToMarker(marker, index);
+    marker._bindWaypointDomFallback?.();
+  }
+
+  _flushDeferredWaypointIconUpdates() {
+    if (this.isWaypointDragging()) return;
+    if (this._pendingAllWaypointIconUpdate) {
+      this._pendingAllWaypointIconUpdate = false;
+      this._pendingWaypointIconUpdates.clear();
+      this._updateMarkerIcons(true);
+      return;
+    }
+    if (this._pendingWaypointIconUpdates.size === 0) return;
+    const updates = [...this._pendingWaypointIconUpdates];
+    this._pendingWaypointIconUpdates.clear();
+    updates.forEach((index) => this._refreshWaypointIcon(index));
+    this._syncWeatherBadgeOpenStates();
   }
 
   _notifyFrozenInteraction(reason) {
@@ -911,6 +967,7 @@ export class MapManager {
         marker.getElement()?.classList.add('is-dragging');
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
+        this._beginWaypointDrag();
 
         const dragStartLatLng = marker.getLatLng();
         this._startRubberBand(marker);
@@ -945,23 +1002,27 @@ export class MapManager {
           document.removeEventListener('mousemove', onMove, true);
           document.removeEventListener('mouseup', onUp, true);
           const idx = this.waypointMarkers.indexOf(marker);
-          if (idx >= 0) {
-            if (dropAction === 'delete') {
-              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-              this.removeWaypoint(idx);
-            } else if (dropAction === 'cancel') {
-              marker.setLatLng(dragStartLatLng);
-            } else {
-              const hasReleasePoint = Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY);
-              const pos = hasReleasePoint
-                ? clientPointToLatLng(ev.clientX, ev.clientY)
-                : marker.getLatLng();
-              marker.setLatLng(pos);
-              this.waypoints[idx] = [pos.lat, pos.lng];
-              this.onWaypointChange(this.waypoints);
-              // Post-drag highlight (on release)
-              this.onWaypointSelect?.(idx, false);
+          try {
+            if (idx >= 0) {
+              if (dropAction === 'delete') {
+                if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+                this.removeWaypoint(idx);
+              } else if (dropAction === 'cancel') {
+                marker.setLatLng(dragStartLatLng);
+              } else {
+                const hasReleasePoint = Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY);
+                const pos = hasReleasePoint
+                  ? clientPointToLatLng(ev.clientX, ev.clientY)
+                  : marker.getLatLng();
+                marker.setLatLng(pos);
+                this.waypoints[idx] = [pos.lat, pos.lng];
+                this.onWaypointChange(this.waypoints);
+                // Post-drag highlight (on release)
+                this.onWaypointSelect?.(idx, false);
+              }
             }
+          } finally {
+            this._endWaypointDrag();
           }
         };
         document.addEventListener('mousemove', onMove, true);
@@ -984,7 +1045,49 @@ export class MapManager {
     // causing the marker to jump off-screen on the first touchmove.
     let _longPressTimer = null;
     let _touchPendingClientX = 0, _touchPendingClientY = 0;
+    let _touchStartClientX = 0, _touchStartClientY = 0;
+    let _touchPendingHasMoved = false;
+    let _lastWaypointTouchTapAt = 0;
+    let _lastWaypointTouchTapX = 0;
+    let _lastWaypointTouchTapY = 0;
     const getTouchPoint = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
+    const touchMovedBeyondTapTolerance = (touch) => {
+      if (!touch) return true;
+      const dx = touch.clientX - _touchStartClientX;
+      const dy = touch.clientY - _touchStartClientY;
+      return dx * dx + dy * dy > WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX ** 2;
+    };
+    const handleWaypointTouchTap = (oe) => {
+      const touch = oe?.changedTouches?.[0] || getTouchPoint(oe);
+      if (
+        !touch ||
+        _dragModeActive ||
+        touchMovedBeyondTapTolerance(touch) ||
+        Date.now() - this._lastMultiTouchAt < 700
+      ) {
+        _lastWaypointTouchTapAt = 0;
+        return false;
+      }
+
+      const now = Date.now();
+      const dx = touch.clientX - _lastWaypointTouchTapX;
+      const dy = touch.clientY - _lastWaypointTouchTapY;
+      const isDoubleTap =
+        _lastWaypointTouchTapAt > 0 &&
+        now - _lastWaypointTouchTapAt <= WAYPOINT_DOUBLE_TAP_DELAY_MS &&
+        dx * dx + dy * dy <= WAYPOINT_DOUBLE_TAP_DISTANCE_PX ** 2;
+
+      if (!isDoubleTap) {
+        _lastWaypointTouchTapAt = now;
+        _lastWaypointTouchTapX = touch.clientX;
+        _lastWaypointTouchTapY = touch.clientY;
+        return false;
+      }
+
+      _lastWaypointTouchTapAt = 0;
+      handleWaypointDoubleClick({ originalEvent: oe });
+      return true;
+    };
     const startTouchLongPress = (oe) => {
       if (this._isMultiTouchEvent(oe)) {
         this._noteMultiTouchGesture();
@@ -1000,6 +1103,9 @@ export class MapManager {
       this._clearNativeSelection();
       _touchPendingClientX = touch.clientX;
       _touchPendingClientY = touch.clientY;
+      _touchStartClientX = touch.clientX;
+      _touchStartClientY = touch.clientY;
+      _touchPendingHasMoved = false;
       this.map.dragging.disable();
 
       _longPressTimer = setTimeout(() => {
@@ -1017,23 +1123,26 @@ export class MapManager {
         marker.getElement()?.classList.add('is-dragging');
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
+        this._beginWaypointDrag();
 
         const dragStartLatLng = marker.getLatLng();
         this._startRubberBand(marker);
+        let didTouchDragMove = _touchPendingHasMoved;
 
         let lastTouchClientX = null, lastTouchClientY = null;
 
-        const moveTo = (clientX, clientY) => {
+        const moveTo = (clientX, clientY, countAsMove = true) => {
           if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
           lastTouchClientX = clientX;
           lastTouchClientY = clientY;
+          if (countAsMove) didTouchDragMove = true;
           const latlng = clientPointToLatLng(clientX, clientY, 'touch');
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
           this.updateTrashZoneHover(clientX, clientY);
         };
 
-        moveTo(_touchPendingClientX, _touchPendingClientY);
+        moveTo(_touchPendingClientX, _touchPendingClientY, false);
 
         const onTouchMove = (ev) => {
           if (this._isMultiTouchEvent(ev)) {
@@ -1069,23 +1178,27 @@ export class MapManager {
           document.removeEventListener('touchend', onTouchEnd);
           document.removeEventListener('touchcancel', onTouchCancel);
           const idx = this.waypointMarkers.indexOf(marker);
-          if (idx >= 0) {
-            if (dropAction === 'delete') {
-              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-              this.removeWaypoint(idx);
-            } else if (dropAction === 'cancel') {
-              marker.setLatLng(dragStartLatLng);
-            } else {
-              const hasReleasePoint = Number.isFinite(cx) && Number.isFinite(cy);
-              const pos = hasReleasePoint
-                ? clientPointToLatLng(cx, cy, 'touch')
-                : marker.getLatLng();
-              marker.setLatLng(pos);
-              this.waypoints[idx] = [pos.lat, pos.lng];
-              this.onWaypointChange(this.waypoints);
-              // Post-drag highlight (on release)
-              this.onWaypointSelect?.(idx, false);
+          try {
+            if (idx >= 0) {
+              if (dropAction === 'delete') {
+                if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+                this.removeWaypoint(idx);
+              } else if (dropAction === 'cancel' || !didTouchDragMove) {
+                marker.setLatLng(dragStartLatLng);
+              } else {
+                const hasReleasePoint = Number.isFinite(cx) && Number.isFinite(cy);
+                const pos = hasReleasePoint
+                  ? clientPointToLatLng(cx, cy, 'touch')
+                  : marker.getLatLng();
+                marker.setLatLng(pos);
+                this.waypoints[idx] = [pos.lat, pos.lng];
+                this.onWaypointChange(this.waypoints);
+                // Post-drag highlight (on release)
+                this.onWaypointSelect?.(idx, false);
+              }
             }
+          } finally {
+            this._endWaypointDrag();
           }
         };
         const onTouchCancel = () => {
@@ -1102,6 +1215,7 @@ export class MapManager {
           document.removeEventListener('touchend', onTouchEnd);
           document.removeEventListener('touchcancel', onTouchCancel);
           marker.setLatLng(dragStartLatLng);
+          this._endWaypointDrag();
         };
         document.addEventListener('touchmove', onTouchMove, { passive: false });
         document.addEventListener('touchend', onTouchEnd);
@@ -1121,6 +1235,9 @@ export class MapManager {
         this._clearNativeSelection();
         _touchPendingClientX = touch.clientX;
         _touchPendingClientY = touch.clientY;
+        const dx = touch.clientX - _touchStartClientX;
+        const dy = touch.clientY - _touchStartClientY;
+        if (dx * dx + dy * dy > 16) _touchPendingHasMoved = true;
       }
     };
     const endTouchLongPress = () => {
@@ -1141,6 +1258,7 @@ export class MapManager {
     });
     marker.on('touchend', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      handleWaypointTouchTap(e.originalEvent);
       endTouchLongPress();
     });
     marker.on('touchcancel', endTouchLongPress);
@@ -1166,6 +1284,16 @@ export class MapManager {
       }, { capture: true });
       el.addEventListener('mouseleave', () => {
         if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
+      }, { capture: true });
+      el.addEventListener('dblclick', (oe) => {
+        oe._mappingElfWaypointDomHandled = true;
+        if (_mouseLPTimer) {
+          clearTimeout(_mouseLPTimer);
+          _mouseLPTimer = null;
+        }
+        endTouchLongPress();
+        restoreMapDragging();
+        handleWaypointDoubleClick({ originalEvent: oe });
       }, { capture: true });
       el.addEventListener('touchstart', (oe) => {
         if (this._isMultiTouchEvent(oe)) {
@@ -1203,8 +1331,9 @@ export class MapManager {
           return;
         }
         oe._mappingElfWaypointDomHandled = true;
+        handleWaypointTouchTap(oe);
         endTouchLongPress();
-      }, { passive: true, capture: true });
+      }, { passive: false, capture: true });
       el.addEventListener('touchcancel', (oe) => {
         if (this._isWeatherCardDomTarget(oe.target)) {
           oe._mappingElfWaypointDomHandled = true;
@@ -1250,9 +1379,12 @@ export class MapManager {
       }
     });
 
-    // Double-click on marker: highlight and center
-    marker.on('dblclick', (e) => {
-      L.DomEvent.stopPropagation(e);
+    const handleWaypointDoubleClick = (e) => {
+      const oe = e?.originalEvent || e;
+      oe?.preventDefault?.();
+      oe?.stopPropagation?.();
+      oe?.stopImmediatePropagation?.();
+      L.DomEvent.stopPropagation(e?.originalEvent ? e : oe);
       if (Date.now() - this._lastMultiTouchAt < 700) return;
       this._clearWaypointClickTimeout();
       const idx = this.waypointMarkers.indexOf(marker);
@@ -1264,12 +1396,16 @@ export class MapManager {
           this._deferWaypointSelect(idx, false, true);
         }
       }
-    });
+    };
+
+    // Double-click on marker: switch visible layer order for stacked waypoint pairs.
+    marker.on('dblclick', handleWaypointDoubleClick);
 
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
     marker.on('dragstart', () => {
       _leafletDragStartLatLng = marker.getLatLng();
       this._startRubberBand(marker);
+      this._beginWaypointDrag();
     });
     marker.on('drag', (e) => {
       this._updateRubberBand(e.target.getLatLng());
@@ -1303,16 +1439,20 @@ export class MapManager {
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
       _disableDrag();
-      if (idx >= 0) {
-        if (dropAction === 'delete') {
-          if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-          this.removeWaypoint(idx);
-        } else if (dropAction === 'cancel') {
-          if (_leafletDragStartLatLng) marker.setLatLng(_leafletDragStartLatLng);
-        } else {
-          this.waypoints[idx] = [pos.lat, pos.lng];
-          this.onWaypointChange(this.waypoints);
+      try {
+        if (idx >= 0) {
+          if (dropAction === 'delete') {
+            if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+            this.removeWaypoint(idx);
+          } else if (dropAction === 'cancel') {
+            if (_leafletDragStartLatLng) marker.setLatLng(_leafletDragStartLatLng);
+          } else {
+            this.waypoints[idx] = [pos.lat, pos.lng];
+            this.onWaypointChange(this.waypoints);
+          }
         }
+      } finally {
+        this._endWaypointDrag();
       }
       _leafletDragStartLatLng = null;
     });
@@ -1417,8 +1557,11 @@ export class MapManager {
   setWaypointWeather(index, emoji) {
     if (index < 0 || index >= this.waypointMarkers.length) return;
     this.waypointWeather[index] = emoji;
-    this.waypointMarkers[index].setIcon(this._createIcon(index));
-    this._applyColorToMarker(this.waypointMarkers[index], index);
+    if (this.isWaypointDragging()) {
+      this._deferWaypointIconUpdate(index);
+      return;
+    }
+    this._refreshWaypointIcon(index);
     this._syncWeatherBadgeOpenStates();
   }
 
@@ -1984,20 +2127,69 @@ export class MapManager {
         if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true);
       });
 
-      marker.on('dblclick', (e) => {
-        L.DomEvent.stopPropagation(e);
+      const handleReturnWaypointDoubleClick = (e) => {
+        const oe = e?.originalEvent || e;
+        oe?.preventDefault?.();
+        oe?.stopPropagation?.();
+        oe?.stopImmediatePropagation?.();
+        L.DomEvent.stopPropagation(e?.originalEvent ? e : oe);
         if (Date.now() - this._lastMultiTouchAt < 700) return;
         this._clearWaypointClickTimeout();
         this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
         this._deferTopWaypointLayerHighlight(marker._wpIndex);
-      });
+      };
+
+      marker.on('dblclick', handleReturnWaypointDoubleClick);
 
       // Long-press drags the paired editable waypoint; dblclick handles layer cycling.
       let _lpTimer = null;
       let _pendingClientX = 0, _pendingClientY = 0;
+      let _returnTouchStartClientX = 0, _returnTouchStartClientY = 0;
+      let _returnTouchTapMoved = false;
+      let _lastReturnTouchTapAt = 0;
+      let _lastReturnTouchTapX = 0;
+      let _lastReturnTouchTapY = 0;
       const getPointer = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
       const restoreMapDragging = () => {
         setTimeout(() => this.map.dragging.enable(), 0);
+      };
+      const returnTouchMovedBeyondTapTolerance = (touch) => {
+        if (!touch) return true;
+        const dx = touch.clientX - _returnTouchStartClientX;
+        const dy = touch.clientY - _returnTouchStartClientY;
+        return dx * dx + dy * dy > WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX ** 2;
+      };
+      const handleReturnWaypointTouchTap = (oe) => {
+        const touch = oe?.changedTouches?.[0] || getPointer(oe);
+        if (
+          !touch ||
+          _returnDragActive ||
+          _returnTouchTapMoved ||
+          returnTouchMovedBeyondTapTolerance(touch) ||
+          Date.now() - this._lastMultiTouchAt < 700
+        ) {
+          _lastReturnTouchTapAt = 0;
+          return false;
+        }
+
+        const now = Date.now();
+        const dx = touch.clientX - _lastReturnTouchTapX;
+        const dy = touch.clientY - _lastReturnTouchTapY;
+        const isDoubleTap =
+          _lastReturnTouchTapAt > 0 &&
+          now - _lastReturnTouchTapAt <= WAYPOINT_DOUBLE_TAP_DELAY_MS &&
+          dx * dx + dy * dy <= WAYPOINT_DOUBLE_TAP_DISTANCE_PX ** 2;
+
+        if (!isDoubleTap) {
+          _lastReturnTouchTapAt = now;
+          _lastReturnTouchTapX = touch.clientX;
+          _lastReturnTouchTapY = touch.clientY;
+          return false;
+        }
+
+        _lastReturnTouchTapAt = 0;
+        handleReturnWaypointDoubleClick({ originalEvent: oe });
+        return true;
       };
 
       const cleanupLPListeners = () => {
@@ -2040,6 +2232,7 @@ export class MapManager {
         marker.getElement()?.classList.add('is-dragging');
         pairedMarker.getElement()?.classList.add('is-dragging');
         this.map.dragging.disable();
+        this._beginWaypointDrag();
         const dragStartLatLng = pairedMarker.getLatLng();
         this._startRubberBand(pairedMarker);
 
@@ -2079,23 +2272,27 @@ export class MapManager {
           cleanupDragListeners();
 
           const idx = this.waypointMarkers.indexOf(pairedMarker);
-          if (idx < 0) return;
-          if (dropAction === 'delete') {
-            if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-            this.removeWaypoint(idx);
-          } else if (dropAction === 'cancel') {
-            pairedMarker.setLatLng(dragStartLatLng);
-            marker.setLatLng(dragStartLatLng);
-          } else {
-            const hasReleasePoint = Number.isFinite(clientX) && Number.isFinite(clientY);
-            const pos = hasReleasePoint
-              ? clientPointToLatLng(clientX, clientY, source)
-              : pairedMarker.getLatLng();
-            pairedMarker.setLatLng(pos);
-            marker.setLatLng(pos);
-            this.waypoints[idx] = [pos.lat, pos.lng];
-            this.onWaypointChange(this.waypoints);
-            this.onWaypointSelect?.(idx, (this.waypointLayerSwapped[idx] ?? true) === false);
+          try {
+            if (idx < 0) return;
+            if (dropAction === 'delete') {
+              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+              this.removeWaypoint(idx);
+            } else if (dropAction === 'cancel') {
+              pairedMarker.setLatLng(dragStartLatLng);
+              marker.setLatLng(dragStartLatLng);
+            } else {
+              const hasReleasePoint = Number.isFinite(clientX) && Number.isFinite(clientY);
+              const pos = hasReleasePoint
+                ? clientPointToLatLng(clientX, clientY, source)
+                : pairedMarker.getLatLng();
+              pairedMarker.setLatLng(pos);
+              marker.setLatLng(pos);
+              this.waypoints[idx] = [pos.lat, pos.lng];
+              this.onWaypointChange(this.waypoints);
+              this.onWaypointSelect?.(idx, (this.waypointLayerSwapped[idx] ?? true) === false);
+            }
+          } finally {
+            this._endWaypointDrag();
           }
         };
 
@@ -2167,6 +2364,9 @@ export class MapManager {
         if (!point) return;
         _pendingClientX = point.clientX;
         _pendingClientY = point.clientY;
+        _returnTouchStartClientX = point.clientX;
+        _returnTouchStartClientY = point.clientY;
+        _returnTouchTapMoved = false;
         const source = oe.touches || oe.type?.startsWith('touch') ? 'touch' : 'mouse';
         if (source === 'touch') {
           oe.preventDefault?.();
@@ -2200,6 +2400,11 @@ export class MapManager {
         if (e.originalEvent?.touches) {
           e.originalEvent.preventDefault?.();
           this._clearNativeSelection();
+          const dx = point.clientX - _returnTouchStartClientX;
+          const dy = point.clientY - _returnTouchStartClientY;
+          if (dx * dx + dy * dy > WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX ** 2) {
+            _returnTouchTapMoved = true;
+          }
         }
         _pendingClientX = point.clientX;
         _pendingClientY = point.clientY;
@@ -2223,6 +2428,9 @@ export class MapManager {
       });
       marker.on('mouseup touchend', (e) => {
         if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
+        if (e.originalEvent?.type?.startsWith('touch')) {
+          handleReturnWaypointTouchTap(e.originalEvent);
+        }
         cancelLP();
       });
       marker.on('touchcancel', cancelLP);
@@ -2255,6 +2463,12 @@ export class MapManager {
 
         el.addEventListener('mousedown', wrap(startLP), { capture: true });
         el.addEventListener('mousemove', wrap(moveLP), { capture: true });
+        el.addEventListener('dblclick', (oe) => {
+          oe._mappingElfReturnWaypointDomHandled = true;
+          cancelLP();
+          restoreMapDragging();
+          handleReturnWaypointDoubleClick({ originalEvent: oe });
+        }, { capture: true });
         el.addEventListener('mouseup', (oe) => {
           if (this._isWeatherCardDomTarget(oe.target)) {
             oe._mappingElfReturnWaypointDomHandled = true;
@@ -2273,8 +2487,9 @@ export class MapManager {
             return;
           }
           oe._mappingElfReturnWaypointDomHandled = true;
+          handleReturnWaypointTouchTap(oe);
           cancelLP();
-        }, { passive: true, capture: true });
+        }, { passive: false, capture: true });
         el.addEventListener('touchcancel', (oe) => {
           if (this._isWeatherCardDomTarget(oe.target)) {
             oe._mappingElfReturnWaypointDomHandled = true;
@@ -2539,13 +2754,12 @@ export class MapManager {
     });
   }
 
-  _updateMarkerIcons() {
-    this.waypointMarkers.forEach((marker, i) => {
-      marker._wpIndex = i;
-      marker.setIcon(this._createIcon(i));
-      this._applyColorToMarker(marker, i);
-      marker._bindWaypointDomFallback?.();
-    });
+  _updateMarkerIcons(force = false) {
+    if (!force && this.isWaypointDragging()) {
+      this._deferWaypointIconUpdate();
+      return;
+    }
+    this.waypointMarkers.forEach((marker, i) => this._refreshWaypointIcon(i));
     this._syncWeatherBadgeOpenStates();
   }
 

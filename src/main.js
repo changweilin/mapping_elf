@@ -733,6 +733,21 @@ mapManager.onFrozenInteraction = () => {
 mapManager.onGpsFix = (lat, lng) => {
   lastGpsLatLng = [lat, lng];
 };
+let pendingWeatherMarkerRefreshAfterDrag = false;
+function refreshWeatherMarkersAfterWeatherUpdate() {
+  if (mapManager.isWaypointDragging?.()) {
+    pendingWeatherMarkerRefreshAfterDrag = true;
+    return;
+  }
+  updateElevationMarkers();
+  updateIntermediateMarkers();
+}
+mapManager.onWaypointDragEnd = () => {
+  if (!pendingWeatherMarkerRefreshAfterDrag) return;
+  pendingWeatherMarkerRefreshAfterDrag = false;
+  updateElevationMarkers();
+  updateIntermediateMarkers();
+};
 
 // =========== Undo/Redo History ===========
 // Snapshot-based history for all route-planning actions:
@@ -7261,9 +7276,8 @@ async function fetchAllWeatherData(options = {}) {
           if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
             mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
 
-          // Update chart markers to show icon immediately
-          updateElevationMarkers();
-          updateIntermediateMarkers();
+          // Update chart/map weather markers when it will not interrupt an active waypoint drag.
+          refreshWeatherMarkersAfterWeatherUpdate();
           if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
           processedTargets++;
           markWeatherProgress();
@@ -7312,9 +7326,8 @@ async function fetchAllWeatherData(options = {}) {
         if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
           mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
 
-        // Refresh chart markers to show icon immediately
-        updateElevationMarkers();
-        updateIntermediateMarkers();
+        // Refresh chart/map weather markers when it will not interrupt an active waypoint drag.
+        refreshWeatherMarkersAfterWeatherUpdate();
       } catch (err) {
         console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
         WEATHER_ROWS.forEach(row => {
