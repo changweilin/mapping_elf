@@ -731,6 +731,26 @@ test.describe('touch waypoint gestures', () => {
     await expect.poll(async () => (await layerState(page)).returnAboveOutbound)
       .toBe(beforeLayer.returnAboveOutbound);
   });
+
+  test('touch long-press dragging survives weather marker updates while loading', async ({ page }) => {
+    await openLayerTestApp(page, { weatherDelayMs: 600 });
+    await addRoundTripWaypoints(page);
+
+    const before = await waypointCenter(page, 1, false);
+    const storedBefore = await storedWaypoints(page);
+    expect(storedBefore).toHaveLength(2);
+
+    await expect(page.locator('[data-action="fetch"]').first()).toBeDisabled({ timeout: 4000 });
+    await touchLongPressDrag(page, before, {
+      x: before.x + 85,
+      y: before.y + 30,
+    });
+
+    const storedAfter = await storedWaypoints(page);
+    expect(storedAfter).toHaveLength(2);
+    expect(coordinateDistance(storedAfter[0], storedBefore[0])).toBeGreaterThan(0.0001);
+    expect(coordinateDistance(storedAfter[1], storedBefore[1])).toBeLessThan(0.000001);
+  });
 });
 
 test('long-press dragging a route inserts a waypoint at the release position', async ({ page }) => {

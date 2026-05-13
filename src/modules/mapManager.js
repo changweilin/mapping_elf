@@ -157,6 +157,7 @@ export class MapManager {
     this._dragWpIndex = undefined;
     this._lastMultiTouchAt = 0;
     this._blockMapClickTimer = null;
+    this._activeWaypointGestureDepth = 0;
     this._activeWaypointDragDepth = 0;
     this._pendingWaypointIconUpdates = new Set();
     this._pendingAllWaypointIconUpdate = false;
@@ -315,6 +316,20 @@ export class MapManager {
     return this._activeWaypointDragDepth > 0;
   }
 
+  isWaypointInteracting() {
+    return this._activeWaypointGestureDepth > 0 || this.isWaypointDragging();
+  }
+
+  _beginWaypointGesture() {
+    this._activeWaypointGestureDepth++;
+  }
+
+  _endWaypointGesture() {
+    if (this._activeWaypointGestureDepth <= 0) return;
+    this._activeWaypointGestureDepth--;
+    this._flushWaypointInteractionUpdates();
+  }
+
   _beginWaypointDrag() {
     this._activeWaypointDragDepth++;
   }
@@ -322,7 +337,11 @@ export class MapManager {
   _endWaypointDrag() {
     if (this._activeWaypointDragDepth <= 0) return;
     this._activeWaypointDragDepth--;
-    if (this._activeWaypointDragDepth === 0) {
+    this._flushWaypointInteractionUpdates();
+  }
+
+  _flushWaypointInteractionUpdates() {
+    if (!this.isWaypointInteracting()) {
       this._flushDeferredWaypointIconUpdates();
       this.onWaypointDragEnd?.();
     }
@@ -932,9 +951,14 @@ export class MapManager {
     // Desktop: left-button long-press (500ms) → manual drag
     let _mouseLPTimer = null;
     let _mousePendingClientX = 0, _mousePendingClientY = 0;
+    let _mouseGestureStarted = false;
     const startMouseLongPress = (oe) => {
       if (oe.button !== 0 || _dragModeActive) return;
       L.DomEvent.stop(oe);
+      if (!_mouseGestureStarted) {
+        _mouseGestureStarted = true;
+        this._beginWaypointGesture();
+      }
 
       _mousePendingClientX = oe.clientX;
       _mousePendingClientY = oe.clientY;
@@ -946,6 +970,10 @@ export class MapManager {
         document.removeEventListener('mousemove', onPendingMove, true);
         document.removeEventListener('mouseup', cancelLP, true);
         if (!_dragModeActive) restoreMapDragging();
+        if (!_dragModeActive && _mouseGestureStarted) {
+          _mouseGestureStarted = false;
+          this._endWaypointGesture();
+        }
       };
       const onPendingMove = (ev) => {
         ev.stopPropagation();
@@ -962,6 +990,10 @@ export class MapManager {
         if (this.isFrozen) {
           this._notifyFrozenInteraction('waypoint-drag');
           restoreMapDragging();
+          if (_mouseGestureStarted) {
+            _mouseGestureStarted = false;
+            this._endWaypointGesture();
+          }
           return;
         }
 
@@ -1026,6 +1058,10 @@ export class MapManager {
             }
           } finally {
             this._endWaypointDrag();
+            if (_mouseGestureStarted) {
+              _mouseGestureStarted = false;
+              this._endWaypointGesture();
+            }
           }
         };
         document.addEventListener('mousemove', onMove, true);
@@ -1052,6 +1088,7 @@ export class MapManager {
     let _touchPendingHasMoved = false;
     let _touchPressActive = false;
     let _touchTapHandledForPress = false;
+    let _touchGestureStarted = false;
     let _lastWaypointTouchTapAt = 0;
     let _lastWaypointTouchTapX = 0;
     let _lastWaypointTouchTapY = 0;
@@ -1108,6 +1145,10 @@ export class MapManager {
       cleanupPendingTouchListeners();
       oe.preventDefault?.();
       this._clearNativeSelection();
+      if (!_touchGestureStarted) {
+        _touchGestureStarted = true;
+        this._beginWaypointGesture();
+      }
       _touchPendingClientX = touch.clientX;
       _touchPendingClientY = touch.clientY;
       _touchStartClientX = touch.clientX;
@@ -1126,6 +1167,10 @@ export class MapManager {
           this._notifyFrozenInteraction('waypoint-drag');
           _isTouchActive = false;
           restoreMapDragging();
+          if (_touchGestureStarted) {
+            _touchGestureStarted = false;
+            this._endWaypointGesture();
+          }
           return;
         }
 
@@ -1210,6 +1255,10 @@ export class MapManager {
             }
           } finally {
             this._endWaypointDrag();
+            if (_touchGestureStarted) {
+              _touchGestureStarted = false;
+              this._endWaypointGesture();
+            }
           }
         };
         const onTouchCancel = () => {
@@ -1227,6 +1276,10 @@ export class MapManager {
           document.removeEventListener('touchcancel', onTouchCancel, true);
           marker.setLatLng(dragStartLatLng);
           this._endWaypointDrag();
+          if (_touchGestureStarted) {
+            _touchGestureStarted = false;
+            this._endWaypointGesture();
+          }
         };
         // Capture active drag events before marker DOM fallbacks can stop them.
         document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
@@ -1290,6 +1343,10 @@ export class MapManager {
         _longPressTimer = null;
       }
       if (!_dragModeActive) restoreMapDragging();
+      if (!_dragModeActive && _touchGestureStarted) {
+        _touchGestureStarted = false;
+        this._endWaypointGesture();
+      }
     };
     marker.on('touchstart', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
@@ -1450,6 +1507,7 @@ export class MapManager {
     marker.on('dragstart', () => {
       _leafletDragStartLatLng = marker.getLatLng();
       this._startRubberBand(marker);
+      this._beginWaypointGesture();
       this._beginWaypointDrag();
     });
     marker.on('drag', (e) => {
@@ -1498,6 +1556,7 @@ export class MapManager {
         }
       } finally {
         this._endWaypointDrag();
+        this._endWaypointGesture();
       }
       _leafletDragStartLatLng = null;
     });
@@ -1602,7 +1661,7 @@ export class MapManager {
   setWaypointWeather(index, emoji) {
     if (index < 0 || index >= this.waypointMarkers.length) return;
     this.waypointWeather[index] = emoji;
-    if (this.isWaypointDragging()) {
+    if (this.isWaypointInteracting()) {
       this._deferWaypointIconUpdate(index);
       return;
     }
@@ -2194,9 +2253,20 @@ export class MapManager {
       let _lastReturnTouchTapAt = 0;
       let _lastReturnTouchTapX = 0;
       let _lastReturnTouchTapY = 0;
+      let _returnGestureStarted = false;
       const getPointer = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
       const restoreMapDragging = () => {
         setTimeout(() => this.map.dragging.enable(), 0);
+      };
+      const beginReturnGesture = () => {
+        if (_returnGestureStarted) return;
+        _returnGestureStarted = true;
+        this._beginWaypointGesture();
+      };
+      const endReturnGesture = () => {
+        if (!_returnGestureStarted) return;
+        _returnGestureStarted = false;
+        this._endWaypointGesture();
       };
       const returnTouchMovedBeyondTapTolerance = (touch) => {
         if (!touch) return true;
@@ -2249,6 +2319,7 @@ export class MapManager {
         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
         cleanupLPListeners();
         if (!_returnDragActive) restoreMapDragging();
+        if (!_returnDragActive) endReturnGesture();
       };
 
       const clientPointToLatLng = (clientX, clientY, source) => {
@@ -2264,11 +2335,13 @@ export class MapManager {
         const pairedMarker = this.waypointMarkers[marker._wpIndex];
         if (!pairedMarker) {
           restoreMapDragging();
+          endReturnGesture();
           return;
         }
         if (this.isFrozen) {
           this._notifyFrozenInteraction('waypoint-drag');
           restoreMapDragging();
+          endReturnGesture();
           return;
         }
 
@@ -2338,6 +2411,7 @@ export class MapManager {
             }
           } finally {
             this._endWaypointDrag();
+            endReturnGesture();
           }
         };
 
@@ -2408,6 +2482,7 @@ export class MapManager {
         cleanupLPListeners();
         const point = getPointer(oe);
         if (!point) return;
+        beginReturnGesture();
         _pendingClientX = point.clientX;
         _pendingClientY = point.clientY;
         _returnTouchStartClientX = point.clientX;

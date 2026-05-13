@@ -747,7 +747,7 @@ mapManager.onGpsFix = (lat, lng) => {
 };
 let pendingWeatherMarkerRefreshAfterDrag = false;
 function refreshWeatherMarkersAfterWeatherUpdate() {
-  if (mapManager.isWaypointDragging?.()) {
+  if (mapManager.isWaypointInteracting?.() || mapManager.isWaypointDragging?.()) {
     pendingWeatherMarkerRefreshAfterDrag = true;
     return;
   }
