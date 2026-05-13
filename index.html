@@ -820,6 +820,37 @@
               (免費版約 <span style="color: var(--accent-primary);">6-10 天</span>，付費版可達 <span
                 style="color: var(--accent-primary);">15 天</span>)。</small></p>
         </div>
+        <div class="weather-cache-settings">
+          <div class="settings-group-label">天氣快取</div>
+          <div class="weather-cache-settings-grid">
+            <label class="pace-check-opt weather-cache-toggle" title="優先套用附近已更新的天氣資料，減少重複 API 請求">
+              <input type="checkbox" id="weather-cache-enable" checked>
+              <span>啟用天氣快取</span>
+            </label>
+            <label class="weather-cache-field" title="資料最後更新超過設定天數會自動清除">
+              <span class="weather-cache-field-label">最後更新超過</span>
+              <span class="weather-cache-input-wrap">
+                <input type="number" id="weather-cache-max-age-days" min="0.1" max="365" step="0.1" value="1.0">
+                <span>天</span>
+              </span>
+            </label>
+            <label class="weather-cache-field" title="新航點可套用此距離內的既有天氣資料">
+              <span class="weather-cache-field-label">距離相近</span>
+              <span class="weather-cache-input-wrap">
+                <input type="number" id="weather-cache-distance" min="1" max="50000" step="50" value="500">
+                <span>m</span>
+              </span>
+            </label>
+            <label class="weather-cache-field" title="新航點可套用此高度差內的既有天氣資料">
+              <span class="weather-cache-field-label">高度相近</span>
+              <span class="weather-cache-input-wrap">
+                <input type="number" id="weather-cache-elevation" min="1" max="5000" step="10" value="100">
+                <span>m</span>
+              </span>
+            </label>
+          </div>
+          <div class="weather-cache-note">點擊「更新天氣」會清除臨時庫；清理條件依資料最後更新時間判斷。</div>
+        </div>
       </div>
     </section>
 

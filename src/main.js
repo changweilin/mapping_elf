@@ -475,6 +475,10 @@ const LS_ROUTE_MODE_KEY = 'mappingElf_routeMode';
 const LS_MAP_LAYER_KEY = 'mappingElf_mapLayer';
 const LS_MAP_VIEW_KEY = 'mappingElf_mapView';
 const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
+const LS_WEATHER_CACHE_ENABLED_KEY = 'mappingElf_weatherCacheEnabled';
+const LS_WEATHER_CACHE_DISTANCE_M_KEY = 'mappingElf_weatherCacheDistanceM';
+const LS_WEATHER_CACHE_ELEVATION_M_KEY = 'mappingElf_weatherCacheElevationM';
+const LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY = 'mappingElf_weatherCacheMaxAgeDays';
 const LS_SPEED_MODE_KEY = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY = 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY = 'mappingElf_paceParams';
@@ -493,6 +497,22 @@ const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
 const LS_PANEL_WIDTH_KEY = 'mappingElf_panelWidth';
+
+const WEATHER_CACHE_SCHEMA_VERSION = 2;
+const WEATHER_CACHE_DISTANCE_DEFAULT_M = 500;
+const WEATHER_CACHE_ELEVATION_DEFAULT_M = 100;
+const WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS = 1;
+const WEATHER_CACHE_MAX_DISTANCE_M = 50000;
+const WEATHER_CACHE_MAX_ELEVATION_M = 5000;
+const WEATHER_CACHE_MAX_AGE_DAYS = 365;
+
+function readStoredNumberSetting(key, fallback, min = -Infinity, max = Infinity) {
+  const raw = localStorage.getItem(key);
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
 
 const COUNTRY_SEARCH_LANGUAGES = {
   tw: ['zh-TW'],
@@ -584,6 +604,25 @@ let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY
 let collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1'; // default false
 let waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0'; // default true
 let weatherTableCollapsed = localStorage.getItem(LS_WEATHER_TABLE_COLLAPSED_KEY) === '1';
+let weatherCacheEnabled = localStorage.getItem(LS_WEATHER_CACHE_ENABLED_KEY) !== '0';
+let weatherCacheDistanceM = readStoredNumberSetting(
+  LS_WEATHER_CACHE_DISTANCE_M_KEY,
+  WEATHER_CACHE_DISTANCE_DEFAULT_M,
+  1,
+  WEATHER_CACHE_MAX_DISTANCE_M
+);
+let weatherCacheElevationM = readStoredNumberSetting(
+  LS_WEATHER_CACHE_ELEVATION_M_KEY,
+  WEATHER_CACHE_ELEVATION_DEFAULT_M,
+  1,
+  WEATHER_CACHE_MAX_ELEVATION_M
+);
+let weatherCacheMaxAgeDays = readStoredNumberSetting(
+  LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY,
+  WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS,
+  0.1,
+  WEATHER_CACHE_MAX_AGE_DAYS
+);
 
 const LS_SHOW_WP_ICON_KEY = 'mappingElf_showWpIcon';
 const LS_SHOW_IM_ICON_KEY = 'mappingElf_showImIcon';
@@ -911,6 +950,16 @@ function applySettingsFromStorage() {
     windyLayer = (saved && REMAINING_WINDY_LAYERS.has(saved)) ? saved : 'meteogram';
   }
   windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
+  weatherCacheEnabled = localStorage.getItem(LS_WEATHER_CACHE_ENABLED_KEY) !== '0';
+  weatherCacheDistanceM = readStoredNumberSetting(LS_WEATHER_CACHE_DISTANCE_M_KEY, WEATHER_CACHE_DISTANCE_DEFAULT_M, 1, WEATHER_CACHE_MAX_DISTANCE_M);
+  weatherCacheElevationM = readStoredNumberSetting(LS_WEATHER_CACHE_ELEVATION_M_KEY, WEATHER_CACHE_ELEVATION_DEFAULT_M, 1, WEATHER_CACHE_MAX_ELEVATION_M);
+  weatherCacheMaxAgeDays = readStoredNumberSetting(LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY, WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS, 0.1, WEATHER_CACHE_MAX_AGE_DAYS);
+  try {
+    cachedWeatherData = normalizeWeatherCacheStore(JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}'));
+    pruneWeatherCache({ persist: true });
+  } catch {
+    cachedWeatherData = {};
+  }
   collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0';
   collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
   collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1';
@@ -982,6 +1031,7 @@ function applySettingsFromStorage() {
   if (showWpIconEl) showWpIconEl.checked = showWpIcon;
   const showImIconEl = document.getElementById('show-intermediate-weather-icon');
   if (showImIconEl) showImIconEl.checked = showImIcon;
+  syncWeatherCacheSettingsUI();
 
   // Refresh UI
   syncTrackModeUI();
@@ -1862,8 +1912,6 @@ btnClearRoute.addEventListener('click', () => {
   elevationProfile.clear();
   resetStats();
   weatherPoints = [];
-  cachedWeatherData = {};
-  localStorage.removeItem(LS_WEATHER_CACHE_KEY);
   setCurrentRouteData([], []);
   lastWaypoints = [];
   pendingNewWaypointIndex = null;
@@ -3849,7 +3897,7 @@ function collectExportData() {
     const h = container?.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value;
     const hour = h != null ? parseInt(h) : 0;
     const time = h != null ? `${String(hour).padStart(2, '0')}:00` : '';
-    const cached = date ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, date, hour)] : null;
+    const cached = date ? getWeatherCacheData(pt, date, hour) : null;
     const weather = {};
     if (cached) {
       WEATHER_ROWS.forEach(row => {
@@ -5044,14 +5092,234 @@ function startLabelEdit(labelEl, pt) {
   });
 }
 
-// Persist fetched weather data across route edits and page refreshes
-let cachedWeatherData = (() => {
-  try { return JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}'); }
-  catch { return {}; }
-})();
 /** Cache key includes date+hour so going/return at the same location can differ. */
 const weatherCoordKey = (lat, lng, date, hour) =>
   `${lat.toFixed(4)},${lng.toFixed(4)},${date},${hour}`;
+
+// Temporary weather database. Entries survive route edits/deleted waypoints and
+// are removed by manual weather refresh or the update-time cleanup rule.
+let cachedWeatherData = (() => {
+  try { return normalizeWeatherCacheStore(JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}')); }
+  catch { return {}; }
+})();
+pruneWeatherCache({ persist: true });
+
+function normalizeWeatherCacheStore(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const now = Date.now();
+  const normalized = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    const parsedKey = parseWeatherCacheKey(key);
+    const isEntry = value
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && value.data
+      && typeof value.data === 'object';
+    const data = isEntry ? value.data : value;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+
+    const lat = finiteOrNull(isEntry ? value.lat : parsedKey?.lat);
+    const lng = finiteOrNull(isEntry ? value.lng : parsedKey?.lng);
+    const date = String((isEntry ? value.date : parsedKey?.date) || '');
+    const hour = finiteOrNull(isEntry ? value.hour : parsedKey?.hour);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !date || !Number.isFinite(hour)) return;
+
+    normalized[key] = {
+      schema: WEATHER_CACHE_SCHEMA_VERSION,
+      lat,
+      lng,
+      ele: finiteOrNull(isEntry ? value.ele : pointElevationForWeatherCache(null, data)),
+      date,
+      hour,
+      updatedAt: finiteOrNull(isEntry ? value.updatedAt : null) || now,
+      data,
+    };
+  });
+  return normalized;
+}
+
+function parseWeatherCacheKey(key) {
+  const parts = String(key || '').split(',');
+  if (parts.length < 4) return null;
+  const lat = Number(parts[0]);
+  const lng = Number(parts[1]);
+  const date = parts[2];
+  const hour = Number(parts[3]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !date || !Number.isFinite(hour)) return null;
+  return { lat, lng, date, hour };
+}
+
+function finiteOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pointElevationForWeatherCache(pt, data = null) {
+  const direct = finiteOrNull(pt?._ele ?? pt?.ele);
+  if (Number.isFinite(direct)) return direct;
+  const dataElevation = data?.elevation;
+  if (typeof dataElevation === 'number') return finiteOrNull(dataElevation);
+  if (typeof dataElevation === 'string') {
+    const parsed = Number(dataElevation.replace(/[^\d.-]/g, ''));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function makeWeatherCacheEntry(pt, dateStr, hour, data, updatedAt = Date.now()) {
+  return {
+    schema: WEATHER_CACHE_SCHEMA_VERSION,
+    lat: Number(pt.lat),
+    lng: Number(pt.lng),
+    ele: pointElevationForWeatherCache(pt, data),
+    date: dateStr,
+    hour: Number(hour),
+    updatedAt,
+    data,
+  };
+}
+
+function persistWeatherCache() {
+  try { localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData)); } catch (_) { }
+}
+
+function clearWeatherTempCache() {
+  cachedWeatherData = {};
+  try { localStorage.removeItem(LS_WEATHER_CACHE_KEY); } catch (_) { }
+}
+
+function pruneWeatherCache({ persist = false } = {}) {
+  const maxAgeMs = Math.max(0.1, Number(weatherCacheMaxAgeDays) || WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS) * 86400000;
+  const cutoff = Date.now() - maxAgeMs;
+  let changed = false;
+  Object.entries(cachedWeatherData || {}).forEach(([key, entry]) => {
+    const updatedAt = finiteOrNull(entry?.updatedAt);
+    if (!updatedAt || updatedAt < cutoff || !entry?.data) {
+      delete cachedWeatherData[key];
+      changed = true;
+    }
+  });
+  if (changed && persist) persistWeatherCache();
+  return changed;
+}
+
+function setWeatherCacheData(pt, dateStr, hour, data, options = {}) {
+  if (!weatherCacheEnabled || !pt || !dateStr || !data) return null;
+  const cacheKey = options.cacheKey || weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+  const updatedAt = finiteOrNull(options.updatedAt) || Date.now();
+  cachedWeatherData[cacheKey] = makeWeatherCacheEntry(pt, dateStr, hour, data, updatedAt);
+  persistWeatherCache();
+  return cachedWeatherData[cacheKey];
+}
+
+function rememberWeatherCacheHitForPoint(hit, pt, dateStr, hour) {
+  if (!hit?.entry || !pt || !dateStr) return;
+  const currentKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+  if (hit.key === currentKey) return;
+  setWeatherCacheData(pt, dateStr, hour, hit.entry.data, {
+    cacheKey: currentKey,
+    updatedAt: hit.entry.updatedAt,
+  });
+}
+
+function getWeatherCacheHit(pt, dateStr, hour) {
+  if (!weatherCacheEnabled || !pt || !dateStr) return null;
+  pruneWeatherCache({ persist: true });
+
+  const exactKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+  const exactEntry = cachedWeatherData[exactKey];
+  if (isWeatherCacheEntryUsable(exactEntry, pt, dateStr, hour)) {
+    return { key: exactKey, entry: exactEntry, data: exactEntry.data, distanceM: 0 };
+  }
+
+  const targetEle = pointElevationForWeatherCache(pt);
+  let best = null;
+  Object.entries(cachedWeatherData).forEach(([key, entry]) => {
+    if (!isWeatherCacheEntryUsable(entry, pt, dateStr, hour, { skipSpatial: true })) return;
+    const distanceM = haversineDistance([pt.lat, pt.lng], [entry.lat, entry.lng]);
+    if (!Number.isFinite(distanceM) || distanceM > weatherCacheDistanceM) return;
+
+    const entryEle = finiteOrNull(entry.ele);
+    const elevationDeltaM = Number.isFinite(targetEle) && Number.isFinite(entryEle)
+      ? Math.abs(targetEle - entryEle)
+      : 0;
+    if (Number.isFinite(targetEle) && Number.isFinite(entryEle) && elevationDeltaM > weatherCacheElevationM) return;
+
+    const score = (distanceM / Math.max(1, weatherCacheDistanceM))
+      + (elevationDeltaM / Math.max(1, weatherCacheElevationM));
+    if (!best || score < best.score) {
+      best = { key, entry, data: entry.data, distanceM, elevationDeltaM, score };
+    }
+  });
+  return best;
+}
+
+function getWeatherCacheData(pt, dateStr, hour) {
+  return getWeatherCacheHit(pt, dateStr, hour)?.data || null;
+}
+
+function isWeatherCacheEntryUsable(entry, pt, dateStr, hour, options = {}) {
+  if (!entry?.data) return false;
+  if (entry.date !== dateStr || Number(entry.hour) !== Number(hour)) return false;
+  if (!Number.isFinite(Number(entry.lat)) || !Number.isFinite(Number(entry.lng))) return false;
+  if (!options.skipSpatial) {
+    const distanceM = haversineDistance([pt.lat, pt.lng], [entry.lat, entry.lng]);
+    if (!Number.isFinite(distanceM) || distanceM > weatherCacheDistanceM) return false;
+    const targetEle = pointElevationForWeatherCache(pt);
+    const entryEle = finiteOrNull(entry.ele);
+    if (Number.isFinite(targetEle) && Number.isFinite(entryEle)
+      && Math.abs(targetEle - entryEle) > weatherCacheElevationM) return false;
+  }
+  return hasWeatherDataDetailInfo(entry.data, pt);
+}
+
+function syncWeatherCacheSettingsUI() {
+  const enabledEl = document.getElementById('weather-cache-enable');
+  const distanceEl = document.getElementById('weather-cache-distance');
+  const elevationEl = document.getElementById('weather-cache-elevation');
+  const maxAgeEl = document.getElementById('weather-cache-max-age-days');
+  if (enabledEl) enabledEl.checked = weatherCacheEnabled;
+  if (distanceEl) distanceEl.value = String(weatherCacheDistanceM);
+  if (elevationEl) elevationEl.value = String(weatherCacheElevationM);
+  if (maxAgeEl) maxAgeEl.value = formatWeatherCacheMaxAgeDays(weatherCacheMaxAgeDays);
+  [distanceEl, elevationEl, maxAgeEl].forEach(el => {
+    if (el) el.disabled = !weatherCacheEnabled;
+  });
+}
+
+function formatWeatherCacheMaxAgeDays(value) {
+  const n = Number(value);
+  return (Number.isFinite(n) ? n : WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS).toFixed(1);
+}
+
+function initWeatherCacheSettingsControls() {
+  const enabledEl = document.getElementById('weather-cache-enable');
+  const distanceEl = document.getElementById('weather-cache-distance');
+  const elevationEl = document.getElementById('weather-cache-elevation');
+  const maxAgeEl = document.getElementById('weather-cache-max-age-days');
+  syncWeatherCacheSettingsUI();
+
+  enabledEl?.addEventListener('change', () => {
+    weatherCacheEnabled = enabledEl.checked;
+    localStorage.setItem(LS_WEATHER_CACHE_ENABLED_KEY, weatherCacheEnabled ? '1' : '0');
+    syncWeatherCacheSettingsUI();
+  });
+
+  const bindNumber = (el, key, fallback, min, max, onChange) => {
+    el?.addEventListener('change', () => {
+      const value = Math.min(max, Math.max(min, Number(el.value) || fallback));
+      onChange(value);
+      el.value = key === LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY
+        ? formatWeatherCacheMaxAgeDays(value)
+        : String(value);
+      localStorage.setItem(key, el.value);
+      pruneWeatherCache({ persist: true });
+    });
+  };
+  bindNumber(distanceEl, LS_WEATHER_CACHE_DISTANCE_M_KEY, WEATHER_CACHE_DISTANCE_DEFAULT_M, 1, WEATHER_CACHE_MAX_DISTANCE_M, value => { weatherCacheDistanceM = value; });
+  bindNumber(elevationEl, LS_WEATHER_CACHE_ELEVATION_M_KEY, WEATHER_CACHE_ELEVATION_DEFAULT_M, 1, WEATHER_CACHE_MAX_ELEVATION_M, value => { weatherCacheElevationM = value; });
+  bindNumber(maxAgeEl, LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY, WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS, 0.1, WEATHER_CACHE_MAX_AGE_DAYS, value => { weatherCacheMaxAgeDays = value; });
+}
 
 function getWeatherIconMeta(icon) {
   const normalized = String(icon || '').replace(/\ufe0f/g, '');
@@ -5729,7 +5997,7 @@ function updateIntermediateMarkers() {
     .map(x => {
       // Look up weather icon for intermediate point
       const schedule = getWeatherPointSchedule(x.pt, x.i);
-      const cached = schedule ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, schedule.date, schedule.hour)] : null;
+      const cached = schedule ? getWeatherCacheData(x.pt, schedule.date, schedule.hour) : null;
       const weatherIcon = cached?.weatherIcon || getSavedWeatherCells(x.pt)?.weather?.split(' ')[0] || null;
 
       return {
@@ -5770,7 +6038,7 @@ function updateReturnWaypointMarkers() {
     .filter((x) => x.pt.isWaypoint && x.pt.isReturn)
     .map((x) => {
       const schedule = getWeatherPointSchedule(x.pt, x.i);
-      const cached = schedule ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, schedule.date, schedule.hour)] : null;
+      const cached = schedule ? getWeatherCacheData(x.pt, schedule.date, schedule.hour) : null;
       const weatherIcon = cached?.weatherIcon || getSavedWeatherCells(x.pt)?.weather?.split(' ')[0] || null;
       return {
         lat: x.pt.lat,
@@ -6689,8 +6957,10 @@ function renderWeatherPanel() {
     const dateStr = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
     const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
     if (!dateStr) return;
-    const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
+    const cacheHit = getWeatherCacheHit(pt, dateStr, hour);
+    const cached = cacheHit?.data || null;
     if (cached && hasWeatherDataDetailInfo(cached, pt)) {
+      rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
       const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(cached, row.key, pt);
@@ -7236,6 +7506,12 @@ async function fetchAllWeatherData(options = {}) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
+  if (force && onlyWaypointIndex === null && onlyColIndex === null) {
+    clearWeatherTempCache();
+  } else {
+    pruneWeatherCache({ persist: true });
+  }
+
   const targetStates = weatherPoints
     .map((pt, i) => ({ pt, i }))
     .filter(({ pt, i }) => {
@@ -7248,8 +7524,8 @@ async function fetchAllWeatherData(options = {}) {
       const dateStr = schedule?.date || null;
       const hour = schedule?.hour ?? 8;
       const cacheKey = dateStr ? weatherCoordKey(pt.lat, pt.lng, dateStr, hour) : null;
-      const rawCached = cacheKey ? cachedWeatherData[cacheKey] : null;
-      const cached = hasWeatherDataDetailInfo(rawCached, pt) ? rawCached : null;
+      const cacheHit = dateStr ? getWeatherCacheHit(pt, dateStr, hour) : null;
+      const cached = hasWeatherDataDetailInfo(cacheHit?.data, pt) ? cacheHit.data : null;
       const saved = !force ? getSavedWeatherCells(pt) : null;
       const tableLoaded = !force && hasWeatherTableDetailInfo(i);
       const savedLoaded = !force && (hasCompletedWeatherLoad(saved, dateStr, hour) || tableLoaded);
@@ -7259,6 +7535,7 @@ async function fetchAllWeatherData(options = {}) {
         dateStr,
         hour,
         cacheKey,
+        cacheHit,
         cached,
         saved,
         savedLoaded,
@@ -7268,8 +7545,9 @@ async function fetchAllWeatherData(options = {}) {
   const needsNetworkFetch = targetStates.some(state => state.needsFetch);
   minimizeWeatherCardsForLoading(targetStates);
   if (!needsNetworkFetch) {
-    targetStates.forEach(({ pt, i, cached, saved, savedLoaded, dateStr, hour }) => {
+    targetStates.forEach(({ pt, i, cached, cacheHit, saved, savedLoaded, dateStr, hour }) => {
       if (cached) {
+        rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
         const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
         WEATHER_ROWS.forEach(row => {
           const val = getCellValue(cached, row.key, pt);
@@ -7328,7 +7606,7 @@ async function fetchAllWeatherData(options = {}) {
   try {
     for (const state of targetStates) {
       if (isWeatherFetchRunCancelled(fetchRun)) break;
-      const { pt, i, dateStr, hour, cacheKey, saved, savedLoaded } = state;
+      let { pt, i, dateStr, hour, cacheKey, cacheHit, saved, savedLoaded } = state;
       if (fetchBtn) {
         const labelSpan = fetchBtn.querySelector('span');
         const label = `${Math.min(processedTargets + 1, totalTargets)}/${totalTargets}`;
@@ -7347,7 +7625,12 @@ async function fetchAllWeatherData(options = {}) {
 
       // If not forced and we have cache, just apply it and skip fetching
       if (!force) {
+        if (!data) {
+          cacheHit = getWeatherCacheHit(pt, dateStr, hour);
+          data = hasWeatherDataDetailInfo(cacheHit?.data, pt) ? cacheHit.data : null;
+        }
         if (data) {
+          rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
           const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
           WEATHER_ROWS.forEach(row => {
             const val = getCellValue(data, row.key, pt);
@@ -7395,9 +7678,7 @@ async function fetchAllWeatherData(options = {}) {
       try {
         data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
         if (isWeatherFetchRunCancelled(fetchRun)) break;
-        cachedWeatherData[cacheKey] = data;
-        // Save after each point so partial data survives a mid-fetch page close
-        localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
+        setWeatherCacheData(pt, dateStr, hour, data, { cacheKey });
         const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
         WEATHER_ROWS.forEach(row => {
           const val = getCellValue(data, row.key, pt);
@@ -7498,7 +7779,9 @@ function getLoadedWeatherCardInfo(colIdx) {
   const hour = schedule?.hour ?? 8;
   if (!dateStr) return null;
 
-  const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
+  const cacheHit = getWeatherCacheHit(pt, dateStr, hour);
+  const cached = cacheHit?.data || null;
+  rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
   if (cached && hasWeatherDataDetailInfo(cached, pt)) return { data: cached, pt, dateStr, hour, colIdx };
 
   const saved = getSavedWeatherCells(pt);
@@ -7892,8 +8175,10 @@ async function openCursorWeatherCard(lat, lng) {
     });
   };
 
-  let data = cachedWeatherData[cacheKey] || null;
+  const cacheHit = getWeatherCacheHit({ lat, lng }, dateStr, hour);
+  let data = cacheHit?.data || null;
   if (data) {
+    rememberWeatherCacheHitForPoint(cacheHit, { lat, lng }, dateStr, hour);
     renderCard(data, 'ok');
     return;
   }
@@ -7902,8 +8187,7 @@ async function openCursorWeatherCard(lat, lng) {
   renderCard(null, 'loading');
   try {
     data = await weatherService.getWeatherAtPoint(lat, lng, dateStr, hour);
-    cachedWeatherData[cacheKey] = data;
-    try { localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData)); } catch {}
+    setWeatherCacheData({ lat, lng }, dateStr, hour, data, { cacheKey });
     if (mapManager.isCursorWeatherPopupOpen?.()) renderCard(data, 'ok');
   } catch (err) {
     console.warn('Cursor weather fetch failed:', err.message);
@@ -8450,7 +8734,7 @@ function updateElevationMarkers() {
 
       // Try to find weather icon for this point
       const schedule = getWeatherPointSchedule(pt, colIdx);
-      const cached = schedule ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, schedule.date, schedule.hour)] : null;
+      const cached = schedule ? getWeatherCacheData(pt, schedule.date, schedule.hour) : null;
       let weatherIcon = cached?.weatherIcon || getSavedWeatherCells(pt)?.weather?.split(' ')[0] || null;
 
       // Filter weather icons based on visibility settings
@@ -8886,6 +9170,7 @@ async function init() {
       refreshWindyLinks();
     });
   }
+  initWeatherCacheSettingsControls();
 
   updateFlatPlaceholder();
 
@@ -9296,6 +9581,11 @@ function resetToDefaults() {
     LS_PACE_UNIT_KEY,
     LS_WINDY_LAYER_KEY,
     LS_WINDY_MODEL_KEY,
+    LS_WEATHER_CACHE_KEY,
+    LS_WEATHER_CACHE_ENABLED_KEY,
+    LS_WEATHER_CACHE_DISTANCE_M_KEY,
+    LS_WEATHER_CACHE_ELEVATION_M_KEY,
+    LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY,
     LS_PANEL_WIDTH_KEY,
     LS_MAP_VIEW_KEY
   ];
