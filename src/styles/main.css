@@ -735,48 +735,106 @@ body.weather-card-busy .weather-edit-control:disabled {
   -webkit-user-drag: none;
 }
 
-.wp-icon-inner {
+.wp-pin-shell {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  border-radius: 50%;
-  background: var(--accent-gradient);
-  border: 3px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), var(--shadow-glow);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  transform-origin: 50% 100%;
+}
+
+.wp-pin-shell::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 9px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.55);
+  box-shadow: 0 0 9px rgba(251, 191, 36, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 50%) scale(0.75);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.wp-icon-inner {
+  --wp-pin-fill: #ef4444;
+  --wp-pin-outline: rgba(255, 255, 255, 0.9);
+  --wp-pin-glow-color: rgba(110, 231, 183, 0.65);
+  position: absolute;
+  left: 15%;
+  bottom: 0;
+  width: 70%;
+  height: 60%;
+  filter:
+    drop-shadow(0 2px 5px rgba(0, 0, 0, 0.42))
+    drop-shadow(0 0 5px var(--wp-pin-glow-color));
   color: #0f172a;
   /* Always dark text for high contrast on bright gradient */
   box-sizing: border-box !important;
+  transform-origin: 50% 100%;
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+
+.wp-pin-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.wp-pin-body {
+  fill: var(--wp-pin-fill);
+  stroke: var(--wp-pin-outline);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+}
+
+.wp-pin-dot {
+  fill: rgba(255, 255, 255, 0.94);
+  stroke: rgba(15, 23, 42, 0.16);
+  stroke-width: 1;
 }
 
 .custom-waypoint-icon.is-selected .wp-icon-inner {
-  border-color: #fbbf24;
-  box-shadow: 0 0 0 5px rgba(251, 191, 36, 0.35), var(--shadow-glow);
+  --wp-pin-outline: #fbbf24;
+  --wp-pin-glow-color: rgba(251, 191, 36, 0.95);
   transform: scale(1.1);
 }
 
 .custom-waypoint-icon.is-dragging .wp-icon-inner {
-  border-color: #fbbf24;
-  animation: pulseRotate 0.8s infinite alternate;
+  --wp-pin-outline: #fbbf24;
+  --wp-pin-glow-color: rgba(251, 191, 36, 0.95);
+  animation: waypointPinLift 0.8s ease-in-out infinite alternate;
+}
+
+.custom-waypoint-icon.is-dragging .wp-pin-shell::after {
+  opacity: 1;
+  transform: translate(-50%, 50%) scale(1);
 }
 
 .custom-waypoint-icon.start .wp-icon-inner {
-  background: #34d399;
+  --wp-pin-fill: #34d399;
 }
 
 .custom-waypoint-icon.end .wp-icon-inner {
-  background: #f87171;
+  --wp-pin-fill: #f87171;
 }
 
 .custom-waypoint-icon span {
-  position: relative;
+  position: absolute;
+  top: 34.5%;
+  left: 50%;
+  z-index: 1;
+  font-size: 9px;
   line-height: 1;
   pointer-events: none;
   user-select: none;
+  transform: translate(-50%, -50%);
 }
 
 .custom-waypoint-icon:hover .wp-icon-inner {
@@ -876,15 +934,19 @@ body.weather-card-busy .weather-edit-control:disabled {
   -ms-user-select: none;
 }
 
-@keyframes pulseRotate {
+@keyframes waypointPinLift {
   from {
-    transform: scale(1.1);
-    box-shadow: 0 0 15px #fbbf24;
+    transform: translateY(0) scale(1.08);
+    filter:
+      drop-shadow(0 2px 5px rgba(0, 0, 0, 0.42))
+      drop-shadow(0 0 8px rgba(251, 191, 36, 0.88));
   }
 
   to {
-    transform: scale(1.3);
-    box-shadow: 0 0 25px #fbbf24;
+    transform: translateY(-10px) scale(1.12);
+    filter:
+      drop-shadow(0 10px 8px rgba(0, 0, 0, 0.28))
+      drop-shadow(0 0 14px rgba(251, 191, 36, 0.95));
   }
 }
 
@@ -1264,8 +1326,11 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
    so it shows by default; either rises to +1000 when its weather column is
    highlighted via highlightWaypoint / highlightReturnWaypoint). */
 .custom-waypoint-icon.return-leg .wp-icon-inner {
-  border-style: dashed;
-  border-color: rgba(255, 255, 255, 0.92);
+  --wp-pin-outline: rgba(255, 255, 255, 0.94);
+}
+
+.custom-waypoint-icon.return-leg .wp-pin-body {
+  stroke-dasharray: 4 3;
 }
 
 .custom-waypoint-icon.return-leg:hover .wp-icon-inner {
@@ -1341,6 +1406,10 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   text-shadow: none;
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
+}
+
+.marker-external-label[data-label]::before {
+  content: attr(data-label);
 }
 
 /* ======== Side Panel ======== */

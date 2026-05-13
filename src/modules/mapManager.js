@@ -119,7 +119,24 @@ const WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
 const WAYPOINT_Z_BASE = 1300;
 const WAYPOINT_Z_PAIR_STEP = 120;
 const WAYPOINT_Z_SELECTED = 1800;
+const WAYPOINT_PIN_HEIGHT_RATIO = 1.44;
 const INTERMEDIATE_Z_OFFSET = -300;
+
+function waypointPinMetrics(size) {
+  const height = Math.round(size * WAYPOINT_PIN_HEIGHT_RATIO);
+  return {
+    width: size,
+    height,
+    anchor: [size / 2, height],
+  };
+}
+
+function waypointPinSvgHtml() {
+  return '<svg class="wp-pin-svg" viewBox="0 0 36 52" aria-hidden="true" focusable="false">' +
+    '<path class="wp-pin-body" d="M18 1.7C9.05 1.7 1.8 8.95 1.8 17.9c0 12.35 16.2 32.4 16.2 32.4s16.2-20.05 16.2-32.4C34.2 8.95 26.95 1.7 18 1.7Z"/>' +
+    '<circle class="wp-pin-dot" cx="18" cy="17.9" r="8.1"/>' +
+    '</svg>';
+}
 
 export class MapManager {
   constructor(containerId, onWaypointChange) {
@@ -381,6 +398,18 @@ export class MapManager {
 
   _notifyFrozenInteraction(reason) {
     this.onFrozenInteraction?.(reason);
+  }
+
+  _emitWaypointChange() {
+    const cb = this.onWaypointChange;
+    if (!cb) return;
+    const snapshot = this.waypoints.map((wp) => [wp[0], wp[1]]);
+    const notify = () => cb(snapshot);
+    if (this.isWaypointInteracting()) {
+      (window.queueMicrotask || ((fn) => Promise.resolve().then(fn)))(notify);
+      return;
+    }
+    notify();
   }
 
   _scheduleFrozenInteractionNotice(e, reason, delay = 500) {
@@ -919,13 +948,22 @@ export class MapManager {
       marker.getElement()?.classList.remove('is-dragging');
     };
 
-    const clientPointToLatLng = (clientX, clientY, source = 'mouse') => {
+    const clientPointToLatLng = (clientX, clientY, source = 'mouse', anchorOffset = null) => {
       const rect = this.map.getContainer().getBoundingClientRect();
-      const yOffset = source === 'touch' ? 40 : 0;
+      const yOffset = anchorOffset ? 0 : (source === 'touch' ? 40 : 0);
       return this.map.containerPointToLatLng([
-        clientX - rect.left,
-        clientY - rect.top - yOffset,
+        clientX - rect.left + (anchorOffset?.x ?? 0),
+        clientY - rect.top - yOffset + (anchorOffset?.y ?? 0),
       ]);
+    };
+
+    const markerAnchorOffsetFromClient = (latlng, clientX, clientY) => {
+      const rect = this.map.getContainer().getBoundingClientRect();
+      const anchorPoint = this.map.latLngToContainerPoint(latlng);
+      return {
+        x: anchorPoint.x - (clientX - rect.left),
+        y: anchorPoint.y - (clientY - rect.top),
+      };
     };
 
     const restoreMapDragging = () => {
@@ -951,6 +989,7 @@ export class MapManager {
     // Desktop: left-button long-press (500ms) → manual drag
     let _mouseLPTimer = null;
     let _mousePendingClientX = 0, _mousePendingClientY = 0;
+    let _mouseStartClientX = 0, _mouseStartClientY = 0;
     let _mouseGestureStarted = false;
     const startMouseLongPress = (oe) => {
       if (oe.button !== 0 || _dragModeActive) return;
@@ -962,6 +1001,8 @@ export class MapManager {
 
       _mousePendingClientX = oe.clientX;
       _mousePendingClientY = oe.clientY;
+      _mouseStartClientX = oe.clientX;
+      _mouseStartClientY = oe.clientY;
       this.map.dragging.disable();
 
       const cancelLP = () => {
@@ -1005,17 +1046,20 @@ export class MapManager {
         this._beginWaypointDrag();
 
         const dragStartLatLng = marker.getLatLng();
+        const dragAnchorOffset = markerAnchorOffsetFromClient(
+          dragStartLatLng,
+          _mouseStartClientX,
+          _mouseStartClientY
+        );
         this._startRubberBand(marker);
 
         const moveTo = (clientX, clientY) => {
           if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
-          const latlng = clientPointToLatLng(clientX, clientY);
+          const latlng = clientPointToLatLng(clientX, clientY, 'mouse', dragAnchorOffset);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
           this.updateTrashZoneHover(clientX, clientY);
         };
-
-        moveTo(_mousePendingClientX, _mousePendingClientY);
 
         const onMove = (ev) => {
           ev.stopPropagation();
@@ -1047,11 +1091,11 @@ export class MapManager {
               } else {
                 const hasReleasePoint = Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY);
                 const pos = hasReleasePoint
-                  ? clientPointToLatLng(ev.clientX, ev.clientY)
+                  ? clientPointToLatLng(ev.clientX, ev.clientY, 'mouse', dragAnchorOffset)
                   : marker.getLatLng();
                 marker.setLatLng(pos);
                 this.waypoints[idx] = [pos.lat, pos.lng];
-                this.onWaypointChange(this.waypoints);
+                this._emitWaypointChange();
                 // Post-drag highlight (on release)
                 this.onWaypointSelect?.(idx, false);
               }
@@ -1085,7 +1129,6 @@ export class MapManager {
     let _longPressTimer = null;
     let _touchPendingClientX = 0, _touchPendingClientY = 0;
     let _touchStartClientX = 0, _touchStartClientY = 0;
-    let _touchPendingHasMoved = false;
     let _touchPressActive = false;
     let _touchTapHandledForPress = false;
     let _touchGestureStarted = false;
@@ -1153,7 +1196,6 @@ export class MapManager {
       _touchPendingClientY = touch.clientY;
       _touchStartClientX = touch.clientX;
       _touchStartClientY = touch.clientY;
-      _touchPendingHasMoved = false;
       _touchPressActive = true;
       _touchTapHandledForPress = false;
       this.map.dragging.disable();
@@ -1182,8 +1224,13 @@ export class MapManager {
         this._beginWaypointDrag();
 
         const dragStartLatLng = marker.getLatLng();
+        const dragAnchorOffset = markerAnchorOffsetFromClient(
+          dragStartLatLng,
+          _touchStartClientX,
+          _touchStartClientY
+        );
         this._startRubberBand(marker);
-        let didTouchDragMove = _touchPendingHasMoved;
+        let didTouchDragMove = false;
 
         let lastTouchClientX = null, lastTouchClientY = null;
 
@@ -1192,13 +1239,11 @@ export class MapManager {
           lastTouchClientX = clientX;
           lastTouchClientY = clientY;
           if (countAsMove) didTouchDragMove = true;
-          const latlng = clientPointToLatLng(clientX, clientY, 'touch');
+          const latlng = clientPointToLatLng(clientX, clientY, 'touch', dragAnchorOffset);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
           this.updateTrashZoneHover(clientX, clientY);
         };
-
-        moveTo(_touchPendingClientX, _touchPendingClientY, false);
 
         const onTouchMove = (ev) => {
           if (this._isMultiTouchEvent(ev)) {
@@ -1210,7 +1255,6 @@ export class MapManager {
           const t = ev.touches[0];
           if (!t) return;
           moveTo(t.clientX, t.clientY);
-          // 在手機版加入 Y 軸負偏移(-40px)，讓圖標浮在手指上方避免被遮擋
         };
         const onTouchEnd = (ev) => {
           if (this._isMultiTouchEvent(ev) || Date.now() - this._lastMultiTouchAt < 700) {
@@ -1244,11 +1288,11 @@ export class MapManager {
               } else {
                 const hasReleasePoint = Number.isFinite(cx) && Number.isFinite(cy);
                 const pos = hasReleasePoint
-                  ? clientPointToLatLng(cx, cy, 'touch')
+                  ? clientPointToLatLng(cx, cy, 'touch', dragAnchorOffset)
                   : marker.getLatLng();
                 marker.setLatLng(pos);
                 this.waypoints[idx] = [pos.lat, pos.lng];
-                this.onWaypointChange(this.waypoints);
+                this._emitWaypointChange();
                 // Post-drag highlight (on release)
                 this.onWaypointSelect?.(idx, false);
               }
@@ -1304,9 +1348,6 @@ export class MapManager {
         this._clearNativeSelection();
         _touchPendingClientX = touch.clientX;
         _touchPendingClientY = touch.clientY;
-        const dx = touch.clientX - _touchStartClientX;
-        const dy = touch.clientY - _touchStartClientY;
-        if (dx * dx + dy * dy > 16) _touchPendingHasMoved = true;
       }
     };
     function cleanupPendingTouchListeners() {
@@ -1551,7 +1592,7 @@ export class MapManager {
             if (_leafletDragStartLatLng) marker.setLatLng(_leafletDragStartLatLng);
           } else {
             this.waypoints[idx] = [pos.lat, pos.lng];
-            this.onWaypointChange(this.waypoints);
+            this._emitWaypointChange();
           }
         }
       } finally {
@@ -1564,7 +1605,7 @@ export class MapManager {
     this.waypointMarkers.splice(idx, 0, marker);
     this._updateMarkerIcons();
     marker._bindWaypointDomFallback?.();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   removeWaypoint(index) {
@@ -1577,7 +1618,7 @@ export class MapManager {
     this.waypointLabels.splice(index, 1);
     this.waypointMetadata.splice(index, 1);
     this._updateMarkerIcons();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   removeLastWaypoint() {
@@ -1619,7 +1660,7 @@ export class MapManager {
     this.waypointLayerSwapped[newIndex] = tempSwapped;
 
     this._updateMarkerIcons();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   moveWaypointTo(fromIndex, toIndex) {
@@ -1643,7 +1684,7 @@ export class MapManager {
     moveInArray(this.waypointLayerSwapped);
 
     this._updateMarkerIcons();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   clearWaypoints() {
@@ -1655,7 +1696,7 @@ export class MapManager {
     this.waypointLabels = [];
     this.waypointMetadata = [];
     this.clearAllRoutes();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   setWaypointWeather(index, emoji) {
@@ -2322,16 +2363,25 @@ export class MapManager {
         if (!_returnDragActive) endReturnGesture();
       };
 
-      const clientPointToLatLng = (clientX, clientY, source) => {
+      const clientPointToLatLng = (clientX, clientY, source, anchorOffset = null) => {
         const rect = this.map.getContainer().getBoundingClientRect();
-        const yOffset = source === 'touch' ? 40 : 0;
+        const yOffset = anchorOffset ? 0 : (source === 'touch' ? 40 : 0);
         return this.map.containerPointToLatLng([
-          clientX - rect.left,
-          clientY - rect.top - yOffset,
+          clientX - rect.left + (anchorOffset?.x ?? 0),
+          clientY - rect.top - yOffset + (anchorOffset?.y ?? 0),
         ]);
       };
 
-      const startManualReturnDrag = (source, initialClientX, initialClientY) => {
+      const markerAnchorOffsetFromClient = (latlng, clientX, clientY) => {
+        const rect = this.map.getContainer().getBoundingClientRect();
+        const anchorPoint = this.map.latLngToContainerPoint(latlng);
+        return {
+          x: anchorPoint.x - (clientX - rect.left),
+          y: anchorPoint.y - (clientY - rect.top),
+        };
+      };
+
+      const startManualReturnDrag = (source, initialClientX, initialClientY, anchorClientX = initialClientX, anchorClientY = initialClientY) => {
         const pairedMarker = this.waypointMarkers[marker._wpIndex];
         if (!pairedMarker) {
           restoreMapDragging();
@@ -2352,6 +2402,11 @@ export class MapManager {
         this.map.dragging.disable();
         this._beginWaypointDrag();
         const dragStartLatLng = pairedMarker.getLatLng();
+        const dragAnchorOffset = markerAnchorOffsetFromClient(
+          dragStartLatLng,
+          anchorClientX,
+          anchorClientY
+        );
         this._startRubberBand(pairedMarker);
 
         let lastClientX = null;
@@ -2361,7 +2416,7 @@ export class MapManager {
           if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
           lastClientX = clientX;
           lastClientY = clientY;
-          const latlng = clientPointToLatLng(clientX, clientY, source);
+          const latlng = clientPointToLatLng(clientX, clientY, source, dragAnchorOffset);
           pairedMarker.setLatLng(latlng);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
@@ -2401,12 +2456,12 @@ export class MapManager {
             } else {
               const hasReleasePoint = Number.isFinite(clientX) && Number.isFinite(clientY);
               const pos = hasReleasePoint
-                ? clientPointToLatLng(clientX, clientY, source)
+                ? clientPointToLatLng(clientX, clientY, source, dragAnchorOffset)
                 : pairedMarker.getLatLng();
               pairedMarker.setLatLng(pos);
               marker.setLatLng(pos);
               this.waypoints[idx] = [pos.lat, pos.lng];
-              this.onWaypointChange(this.waypoints);
+              this._emitWaypointChange();
               this.onWaypointSelect?.(idx, (this.waypointLayerSwapped[idx] ?? true) === false);
             }
           } finally {
@@ -2453,8 +2508,6 @@ export class MapManager {
           finishDrag(lastClientX, lastClientY, 'cancel');
         };
 
-        moveTo(initialClientX, initialClientY);
-
         if (source === 'touch') {
           // Capture active drag events before marker DOM fallbacks can stop them.
           document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
@@ -2499,7 +2552,13 @@ export class MapManager {
           _lpTimer = null;
           cleanupLPListeners();
           if (navigator.vibrate) navigator.vibrate(40);
-          startManualReturnDrag(source, _pendingClientX, _pendingClientY);
+          startManualReturnDrag(
+            source,
+            _pendingClientX,
+            _pendingClientY,
+            _returnTouchStartClientX,
+            _returnTouchStartClientY
+          );
         }, 500);
 
         document.addEventListener('mouseup', cancelLP, true);
@@ -2650,16 +2709,18 @@ export class MapManager {
     const weatherHtml = this._weatherBadgeHtml(pt.weather);
     const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
     const innerStyle = pt.color
-      ? `style="background:${pt.color}; box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${pt.color}55;"`
+      ? `style="--wp-pin-fill:${pt.color}; --wp-pin-glow-color:${pt.color};"`
       : '';
     const cls = `custom-waypoint-icon return-leg${isStacked ? ' is-stacked' : ''}`;
+    const metrics = waypointPinMetrics(size);
     return L.divIcon({
       className: cls,
       html:
-        `<div class="wp-icon-inner" ${innerStyle}>${weatherHtml}` +
-        `<span>${num}</span></div>${labelHtml}`,
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
+        `<div class="wp-pin-shell">${weatherHtml}` +
+        `<div class="wp-icon-inner" ${innerStyle}>` +
+        `${waypointPinSvgHtml()}<span>${num}</span></div></div>${labelHtml}`,
+      iconSize: [metrics.width, metrics.height],
+      iconAnchor: metrics.anchor,
     });
   }
 
@@ -2868,13 +2929,20 @@ export class MapManager {
     const isEndpoint = (index === 0 || index === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
     const labelText = this.waypointLabels[index];
-    const externalLabel = labelText ? `<div class="marker-external-label">${labelText}</div>` : '';
+    const externalLabelText = labelText ? `${index + 1}. ${labelText}` : '';
+    const externalLabel = externalLabelText
+      ? `<div class="marker-external-label" data-label="${escapeHtml(externalLabelText)}" aria-label="${escapeHtml(externalLabelText)}"></div>`
+      : '';
+    const metrics = waypointPinMetrics(size);
 
     return L.divIcon({
       className: `custom-waypoint-icon ${cls}`,
-      html: `<div class="wp-icon-inner">${weatherHtml}<span>${index + 1}</span></div>${externalLabel}`,
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
+      html:
+        `<div class="wp-pin-shell">${weatherHtml}` +
+        `<div class="wp-icon-inner">${waypointPinSvgHtml()}<span>${index + 1}</span></div>` +
+        `</div>${externalLabel}`,
+      iconSize: [metrics.width, metrics.height],
+      iconAnchor: metrics.anchor,
     });
   }
 
@@ -2895,8 +2963,8 @@ export class MapManager {
     if (el) {
       const inner = el.querySelector('.wp-icon-inner');
       if (inner) {
-        inner.style.background = color;
-        inner.style.setProperty('box-shadow', `0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${color}55`);
+        inner.style.setProperty('--wp-pin-fill', color);
+        inner.style.setProperty('--wp-pin-glow-color', color);
       }
     }
   }
