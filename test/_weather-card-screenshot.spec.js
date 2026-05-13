@@ -36,7 +36,7 @@ function weatherPayload() {
   };
 }
 
-test('capture opened map waypoint weather card', async ({ page }) => {
+test('opened map waypoint weather card keeps weather values visible', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
     localStorage.setItem('mappingElf_routeMode', 'walking');
@@ -80,6 +80,8 @@ test('capture opened map waypoint weather card', async ({ page }) => {
   await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first()).toBeVisible();
   await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
   await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
-  await expect(page.locator('.custom-waypoint-icon .wp-weather-card-slot .weather-card').first()).toContainText('21°C');
-  await page.screenshot({ path: 'C:/tmp/mapping-elf-weather-card.png', fullPage: false });
+  const card = page.locator('.custom-waypoint-icon .wp-weather-card-slot .weather-card').first();
+  await expect(card).toContainText(/21.C/);
+  await expect(card.locator('.wc-weather-desc')).toHaveCSS('position', 'static');
+  await expect(card.locator('.wc-info-value').first()).toHaveCSS('position', 'static');
 });

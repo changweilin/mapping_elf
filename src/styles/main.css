@@ -825,7 +825,7 @@ body.weather-card-busy .weather-edit-control:disabled {
   --wp-pin-fill: #f87171;
 }
 
-.custom-waypoint-icon span {
+.custom-waypoint-icon .wp-icon-inner > span {
   position: absolute;
   top: 34.5%;
   left: 50%;
