@@ -1966,14 +1966,14 @@ window.addEventListener('keydown', (e) => {
       const curMode = _wcStates.get(activeColIdx) || 'compact';
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode));
-      highlightPoint(activeColIdx);
+      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === activeColIdx }));
+      highlightPoint(activeColIdx, false, { centerMap: nextMode === 'compact' });
       return;
     }
     if (k === 'arrowdown') {
       e.preventDefault();
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => closeWeatherCard(idx));
+      targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === activeColIdx }));
       return;
     }
   }
@@ -7831,7 +7831,7 @@ function fetchWeatherForUnloadedCard(colIdx) {
 function openWeatherCard(colIdx, options = {}) {
   // If already open, close it (toggle behavior)
   if (_wcStates.has(colIdx)) {
-    closeWeatherCard(colIdx);
+    closeWeatherCard(colIdx, { centerAfterClose: true });
     return false;
   }
   if (isWeatherCardInteractionLocked()) {
@@ -7849,8 +7849,7 @@ function openWeatherCard(colIdx, options = {}) {
   _renderWeatherCard(colIdx);
   if (
     options.centerOnMobileExpand === true &&
-    _wcLastMode === 'full' &&
-    isMobileWeatherCardCenterMode()
+    _wcLastMode === 'full'
   ) {
     scheduleWeatherCardCenter(colIdx, { settle: true });
   }
@@ -7878,7 +7877,7 @@ function handleWeatherIconInteraction(colIdx) {
     // Collective toggle based on the state of the target point
     const isAlreadyOpen = _wcStates.has(colIdx);
     if (isAlreadyOpen) {
-      collectiveCols.forEach(ci => closeWeatherCard(ci));
+      collectiveCols.forEach(ci => closeWeatherCard(ci, { centerAfterClose: ci === colIdx }));
     } else {
       collectiveCols.forEach(ci => {
         if (hasLoadedWeatherCardInfo(ci)) {
@@ -7898,11 +7897,15 @@ function handleWeatherIconInteraction(colIdx) {
 }
 
 /** Close a specific weather card. */
-function closeWeatherCard(colIdx) {
+function closeWeatherCard(colIdx, options = {}) {
   const prev = _wcStates.get(colIdx);
   if (prev === 'compact' || prev === 'full') _wcLastMode = prev;
   _wcStates.delete(colIdx);
   mapManager.closeWeatherPopup(colIdx, { animate: true });
+  if (options.centerAfterClose === true && prev === 'full') {
+    highlightPoint(colIdx, false, { centerMap: true, centerFullCard: false });
+  }
+  return prev;
 }
 
 /** Set the card mode and re-render. */
@@ -7927,8 +7930,7 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
   if (
     options.centerOnMobileExpand === true &&
     prevMode !== 'full' &&
-    mode === 'full' &&
-    isMobileWeatherCardCenterMode()
+    mode === 'full'
   ) {
     scheduleWeatherCardCenter(colIdx, { settle: true });
   }
@@ -7963,9 +7965,10 @@ function navigateWeatherCard(colIdx, delta) {
   // than stacking new popups on top of the old one.
   const mode = _wcStates.get(colIdx) || 'compact';
   closeWeatherCard(colIdx);
-  setWeatherCardMode(nextColIdx, mode);
-  // highlightPoint handles mode-aware pan/centering
-  highlightPoint(nextColIdx);
+  setWeatherCardMode(nextColIdx, mode, { centerOnMobileExpand: mode === 'full' });
+  // Full-card centering is scheduled by setWeatherCardMode; compact cards
+  // need the marker itself centred because the card no longer reserves room.
+  highlightPoint(nextColIdx, false, { centerMap: mode !== 'full' });
 }
 
 /**
@@ -8269,14 +8272,14 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     // Requirement: Don't highlight when clicking inputs/selects in the card
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.target.closest('.clickable-coords')) return;
-    highlightPoint(colIdx);
+    highlightPoint(colIdx, false, { centerFullCard: true });
   });
 
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const targets = getWeatherCardInteractionIndices(colIdx);
-    targets.forEach(idx => closeWeatherCard(idx));
+    targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
   });
   root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -8284,7 +8287,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
     const targets = getWeatherCardInteractionIndices(colIdx);
     targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
-    highlightPoint(colIdx);
+    highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -8394,11 +8397,11 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
         const targets = getWeatherCardInteractionIndices(colIdx);
         targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
-        highlightPoint(colIdx);
+        highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
       } else {
         // Swipe down: close
         const targets = getWeatherCardInteractionIndices(colIdx);
-        targets.forEach(idx => closeWeatherCard(idx));
+        targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
       }
     }
   }, { passive: false });
@@ -8615,7 +8618,11 @@ function panMapToVisibleCenter(latlng) {
  * and side-panel waypoint item for the given weather-column index.
  * All columns that share the same coordinate are highlighted together.
  */
-function highlightPoint(colIdx, toggle = false) {
+function highlightPoint(colIdx, toggle = false, options = {}) {
+  if (toggle && typeof toggle === 'object') {
+    options = toggle;
+    toggle = !!options.toggle;
+  }
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
   const pt = weatherPoints[colIdx];
 
@@ -8682,10 +8689,16 @@ function highlightPoint(colIdx, toggle = false) {
     card.closest('.leaflet-marker-icon')?.classList.add('has-highlighted-weather-card');
   }
 
-  // 6. Map Centering — card centering is only triggered by explicitly
-  // expanding a full weather card on mobile. Highlighting an already-open
-  // card should not move the map.
-  if (!_wcStates.has(colIdx) && waypointCentering) {
+  // 6. Map Centering: default highlight taps only pan when there is no open
+  // card. Card navigation/collapse can opt in so the newly highlighted marker
+  // remains visible after the popup size or target changes.
+  const cardMode = _wcStates.get(colIdx);
+  if (waypointCentering && cardMode === 'full' && options.centerFullCard !== false) {
+    scheduleWeatherCardCenter(colIdx, { settle: true });
+    return;
+  }
+  const shouldCenterMap = options.centerMap === true || (options.centerMap !== false && !cardMode);
+  if (waypointCentering && shouldCenterMap) {
     panMapToVisibleCenter([pt.lat, pt.lng]);
   }
 }

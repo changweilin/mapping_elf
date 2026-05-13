@@ -620,6 +620,112 @@ test('icon-only restored waypoint weather refetches before opening map card', as
   await expect(card).toContainText(/21/);
 });
 
+test('full weather card highlight centers the card and closing it centers the waypoint', async ({ page }) => {
+  const loadedCells = (weather, temp) => ({
+    _weatherLoaded: true,
+    _weatherLoadState: 'loaded',
+    weather,
+    _icon: weather.split(' ')[0],
+    temp,
+    precipitation: '0 mm',
+    precipProb: '10%',
+    windSpeed: '10 km/h',
+  });
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    importedTrackSession: {
+      coords: [
+        [24.00, 121.00],
+        [24.80, 121.80],
+      ],
+      elevations: [100, 140],
+      waypoints: [
+        [24.00, 121.00],
+        [24.80, 121.80],
+      ],
+      waypointMeta: [
+        { waypointId: 'desktop-card-start', label: 'Start', cumDistM: 0 },
+        { waypointId: 'desktop-card-end', label: 'End', cumDistM: 120000 },
+      ],
+      intermediates: [],
+    },
+    weatherCells: {
+      'wp:desktop-card-start': loadedCells('sunny Clear', '21 C'),
+      'wp:desktop-card-end': loadedCells('cloudy Cloudy', '22 C'),
+    },
+  });
+
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded')).toHaveCount(2);
+  await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+  await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
+
+  const card = page.locator('#wc-root-0.weather-card.full');
+  await expect(card).toBeVisible();
+  await expect(card).toHaveClass(/is-highlighted/);
+  await page.waitForTimeout(350);
+
+  const cardOffset = await card.evaluate((el) => {
+    const map = document.querySelector('#map');
+    const sidePanel = document.querySelector('#side-panel');
+    const bottomPanel = document.querySelector('#bottom-panel');
+    if (!map) return null;
+    const mapRect = map.getBoundingClientRect();
+    const panelRect = sidePanel?.classList.contains('open') ? sidePanel.getBoundingClientRect() : null;
+    const bottomRect = bottomPanel?.getBoundingClientRect();
+    const panelOverlap = panelRect ? Math.max(0, mapRect.right - panelRect.left) : 0;
+    const bottomOverlap = bottomRect ? Math.max(0, mapRect.bottom - bottomRect.top) : 0;
+    const safeLeft = 16;
+    const safeRight = mapRect.width - panelOverlap - 16;
+    const safeTop = 16;
+    const safeBottom = mapRect.height - bottomOverlap - 12;
+    const center = {
+      x: mapRect.left + (safeLeft + safeRight) / 2,
+      y: mapRect.top + (safeTop + safeBottom) / 2,
+    };
+    if (!center) return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      dx: rect.left + rect.width / 2 - center.x,
+      dy: rect.top + rect.height / 2 - center.y,
+    };
+  });
+  expect(cardOffset).not.toBeNull();
+  expect(Math.abs(cardOffset.dx)).toBeLessThan(45);
+  expect(Math.abs(cardOffset.dy)).toBeLessThan(60);
+
+  await card.locator('.q-close').click();
+  await page.waitForTimeout(350);
+
+  const waypointOffset = await page.evaluate(() => {
+    const marker = document.querySelector('.custom-waypoint-icon.is-selected');
+    const map = document.querySelector('#map');
+    const sidePanel = document.querySelector('#side-panel');
+    const bottomPanel = document.querySelector('#bottom-panel');
+    if (!marker || !map) return null;
+    const mapRect = map.getBoundingClientRect();
+    const panelRect = sidePanel?.classList.contains('open') ? sidePanel.getBoundingClientRect() : null;
+    const bottomRect = bottomPanel?.getBoundingClientRect();
+    const panelOverlap = panelRect ? Math.max(0, mapRect.right - panelRect.left) : 0;
+    const bottomOverlap = bottomRect ? Math.max(0, mapRect.bottom - bottomRect.top) : 0;
+    const safeLeft = 16;
+    const safeRight = mapRect.width - panelOverlap - 16;
+    const safeTop = 16;
+    const safeBottom = mapRect.height - bottomOverlap - 12;
+    const center = {
+      x: mapRect.left + (safeLeft + safeRight) / 2,
+      y: mapRect.top + (safeTop + safeBottom) / 2,
+    };
+    const rect = marker.getBoundingClientRect();
+    return {
+      dx: rect.left + rect.width / 2 - center.x,
+      dy: rect.bottom - center.y,
+    };
+  });
+  expect(waypointOffset).not.toBeNull();
+  expect(Math.abs(waypointOffset.dx)).toBeLessThan(45);
+  expect(Math.abs(waypointOffset.dy)).toBeLessThan(60);
+});
+
 test.describe('mobile weather cards', () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 
@@ -730,6 +836,97 @@ test.describe('mobile weather cards', () => {
     });
     expect(hitTest.bottom).toBeLessThanOrEqual(hitTest.viewportHeight);
     expect(hitTest.samples.every(Boolean)).toBe(true);
+  });
+
+  test('full-card navigation selects the new waypoint and compacting recenters it', async ({ page }) => {
+    const loadedCells = (weather, temp) => ({
+      _weatherLoaded: true,
+      _weatherLoadState: 'loaded',
+      weather,
+      _icon: weather.split(' ')[0],
+      temp,
+      precipitation: '0 mm',
+      precipProb: '10%',
+      windSpeed: '10 km/h',
+    });
+    const selectedAnchorState = () => page.evaluate(() => {
+      const marker = document.querySelector('.custom-waypoint-icon.is-selected');
+      const map = document.querySelector('#map');
+      const bottomPanel = document.querySelector('#bottom-panel');
+      if (!marker || !map) return null;
+      const mapRect = map.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const bottomRect = bottomPanel?.getBoundingClientRect();
+      const bottomOverlap = bottomRect ? Math.max(0, mapRect.bottom - bottomRect.top) : 0;
+      const safeLeft = 12;
+      const safeRight = mapRect.width - 12;
+      const safeTop = 20;
+      const safeBottom = mapRect.height - bottomOverlap - 8;
+      const targetX = mapRect.left + (safeLeft + safeRight) / 2;
+      const targetY = mapRect.top + (safeTop + safeBottom) / 2;
+      const anchorX = markerRect.left + markerRect.width / 2;
+      const anchorY = markerRect.bottom;
+      return {
+        dx: anchorX - targetX,
+        dy: anchorY - targetY,
+        inSafe: anchorX >= mapRect.left + safeLeft
+          && anchorX <= mapRect.left + safeRight
+          && anchorY >= mapRect.top + safeTop
+          && anchorY <= mapRect.top + safeBottom,
+      };
+    });
+
+    await openLayerTestApp(page, {
+      roundTrip: '0',
+      importedTrackSession: {
+        coords: [
+          [24.00, 121.00],
+          [24.80, 121.80],
+        ],
+        elevations: [100, 140],
+        waypoints: [
+          [24.00, 121.00],
+          [24.80, 121.80],
+        ],
+        waypointMeta: [
+          { waypointId: 'mobile-nav-start', label: 'Start', cumDistM: 0 },
+          { waypointId: 'mobile-nav-end', label: 'End', cumDistM: 120000 },
+        ],
+        intermediates: [],
+      },
+      weatherCells: {
+        'wp:mobile-nav-start': loadedCells('sunny Clear', '21 C'),
+        'wp:mobile-nav-end': loadedCells('cloudy Cloudy', '22 C'),
+      },
+    });
+
+    await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded')).toHaveCount(2);
+    await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+
+    const fullCard = page.locator('#mobile-weather-card-layer .weather-card.full');
+    await expect(fullCard).toBeVisible();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '0');
+
+    await fullCard.locator('.q-next').tap();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '2');
+    await expect(fullCard).toHaveClass(/is-highlighted/);
+    await expect(page.locator('.custom-waypoint-icon.is-selected .wp-icon-inner span')).toHaveText('2');
+    await page.waitForTimeout(350);
+
+    const fullOffset = await selectedAnchorState();
+    expect(fullOffset).not.toBeNull();
+    expect(fullOffset.inSafe).toBe(true);
+
+    await fullCard.locator('.q-toggle').tap();
+    await expect(page.locator('.custom-waypoint-icon.is-selected .wp-weather-card-slot .weather-card:not(.full)')).toBeVisible();
+    await page.waitForTimeout(350);
+
+    const offset = await selectedAnchorState();
+
+    expect(offset).not.toBeNull();
+    expect(Math.abs(offset.dx)).toBeLessThan(35);
+    expect(Math.abs(offset.dy)).toBeLessThan(55);
   });
 });
 
