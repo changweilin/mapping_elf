@@ -923,6 +923,10 @@ body.weather-card-busy .weather-edit-control:disabled {
   pointer-events: auto;
 }
 
+.mobile-weather-card-layer {
+  display: none;
+}
+
 .wp-weather-card-slot .weather-card,
 .wp-weather-card-slot .weather-card * {
   user-select: text;
@@ -5130,6 +5134,28 @@ body.modal-open {
   .weather-popup .weather-card.full,
   .wp-weather-card-slot .weather-card.full {
     width: min(280px, calc(100vw - 48px));
+    max-height: clamp(220px, calc(100vh - var(--toolbar-height) - var(--bottom-panel-height) - 24px), 68vh);
+    overscroll-behavior: contain;
+  }
+
+  .mobile-weather-card-layer {
+    display: block;
+    position: fixed;
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 10px);
+    left: 50%;
+    bottom: auto;
+    transform: translateX(-50%);
+    width: auto;
+    z-index: 1000;
+    pointer-events: none;
+  }
+
+  .mobile-weather-card-layer .weather-card.full {
+    width: min(300px, calc(100vw - 24px));
+    max-height: calc(100vh - var(--toolbar-height) - env(safe-area-inset-top, 0px) - 24px);
+    background: var(--bg-glass-hover);
+    animation: weatherCardIn 0.18s ease both;
+    transform-origin: top center;
   }
 }
 

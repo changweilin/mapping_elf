@@ -7478,6 +7478,17 @@ function isMobileWeatherCardCenterMode() {
   return window.matchMedia('(max-width: 768px)').matches;
 }
 
+function getWeatherCardInteractionIndices(colIdx) {
+  return isMobileWeatherCardCenterMode() ? [colIdx] : getCollectiveIndices(colIdx);
+}
+
+function closeOtherOpenWeatherCardsOnMobile(colIdx) {
+  if (!isMobileWeatherCardCenterMode()) return;
+  Array.from(_wcStates.keys()).forEach((openIdx) => {
+    if (openIdx !== colIdx) closeWeatherCard(openIdx);
+  });
+}
+
 function getLoadedWeatherCardInfo(colIdx) {
   const pt = weatherPoints[colIdx];
   if (!pt) return null;
@@ -7550,6 +7561,7 @@ function openWeatherCard(colIdx, options = {}) {
     if (options.notify !== false) showWeatherNotLoadedNotice();
     return false;
   }
+  closeOtherOpenWeatherCardsOnMobile(colIdx);
   _wcStates.set(colIdx, _wcLastMode);
   _renderWeatherCard(colIdx);
   if (
@@ -7578,7 +7590,7 @@ function handleWeatherIconInteraction(colIdx) {
     return;
   }
 
-  const collectiveCols = getCollectiveIndices(colIdx);
+  const collectiveCols = getWeatherCardInteractionIndices(colIdx);
   if (collectiveCols.length > 1) {
     // Collective toggle based on the state of the target point
     const isAlreadyOpen = _wcStates.has(colIdx);
@@ -7625,6 +7637,7 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
     if (options.notify) showWeatherNotLoadedNotice();
     return;
   }
+  closeOtherOpenWeatherCardsOnMobile(colIdx);
   const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
@@ -7978,14 +7991,14 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const targets = getCollectiveIndices(colIdx);
+    const targets = getWeatherCardInteractionIndices(colIdx);
     targets.forEach(idx => closeWeatherCard(idx));
   });
   root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curMode = _wcStates.get(colIdx) || 'compact';
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
-    const targets = getCollectiveIndices(colIdx);
+    const targets = getWeatherCardInteractionIndices(colIdx);
     targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
     highlightPoint(colIdx);
   });
@@ -8095,12 +8108,12 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         // Swipe up: toggle between compact and full
         const curMode = _wcStates.get(colIdx) || 'compact';
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
-        const targets = getCollectiveIndices(colIdx);
+        const targets = getWeatherCardInteractionIndices(colIdx);
         targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
         highlightPoint(colIdx);
       } else {
         // Swipe down: close
-        const targets = getCollectiveIndices(colIdx);
+        const targets = getWeatherCardInteractionIndices(colIdx);
         targets.forEach(idx => closeWeatherCard(idx));
       }
     }

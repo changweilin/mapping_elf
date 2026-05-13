@@ -2937,6 +2937,22 @@ export class MapManager {
     return slot;
   }
 
+  _mobileWeatherCardLayer() {
+    let layer = document.getElementById('mobile-weather-card-layer');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.id = 'mobile-weather-card-layer';
+      layer.className = 'wp-weather-card-slot mobile-weather-card-layer';
+      document.body.appendChild(layer);
+    }
+    return layer;
+  }
+
+  _shouldUseMobileWeatherCardLayer(htmlContent = '') {
+    return window.matchMedia?.('(max-width: 768px)').matches
+      && /\bweather-card\b[^>]*\bfull\b/.test(htmlContent);
+  }
+
   _isWeatherCardDomTarget(target) {
     return !!target?.closest?.('.weather-card');
   }
@@ -2971,13 +2987,15 @@ export class MapManager {
     if (!targetMarker) return false;
 
     const badge = this._weatherBadgeForMarker(targetMarker);
-    const slot = this._weatherCardSlotForBadge(badge);
+    const useMobileLayer = this._shouldUseMobileWeatherCardLayer(entry.htmlContent);
+    const slot = useMobileLayer ? this._mobileWeatherCardLayer() : this._weatherCardSlotForBadge(badge);
     if (!badge || !slot) return false;
 
     const needsRender = !slot.querySelector('.weather-card');
     if (needsRender && !entry.htmlContent) return false;
     entry.marker = targetMarker;
     entry.badge = badge;
+    if (entry.slot && entry.slot !== slot) entry.slot.innerHTML = '';
     entry.slot = slot;
 
     badge.classList.remove('is-card-closing');
@@ -3879,11 +3897,12 @@ export class MapManager {
     const targetMarker = this._findWeatherTargetMarker(colIdx, isIntermediate, waypointIndex, isReturn);
     if (!targetMarker) return;
     const badge = this._weatherBadgeForMarker(targetMarker);
-    const slot = this._weatherCardSlotForBadge(badge);
+    const useMobileLayer = this._shouldUseMobileWeatherCardLayer(htmlContent);
+    const slot = useMobileLayer ? this._mobileWeatherCardLayer() : this._weatherCardSlotForBadge(badge);
     if (!badge || !slot) return;
 
     const existing = this._weatherPopups.get(colIdx);
-    if (existing && existing.badge !== badge) {
+    if (existing && (existing.badge !== badge || existing.slot !== slot)) {
       this._closeInlineWeatherCardNow(colIdx, existing);
     }
 
@@ -3954,7 +3973,8 @@ export class MapManager {
       const entry = this._weatherPopups.get(colIdx);
       if (entry) {
         const card = entry.slot?.querySelector('.weather-card');
-        if (!animate || !entry.badge || !card) {
+        const isMobileLayerCard = entry.slot?.classList.contains('mobile-weather-card-layer');
+        if (!animate || isMobileLayerCard || !entry.badge || !card) {
           this._closeInlineWeatherCardNow(colIdx, entry);
           return;
         }

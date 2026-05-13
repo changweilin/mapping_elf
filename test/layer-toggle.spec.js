@@ -620,6 +620,119 @@ test('icon-only restored waypoint weather refetches before opening map card', as
   await expect(card).toContainText(/21/);
 });
 
+test.describe('mobile weather cards', () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test('map waypoint weather card reads values shown in the weather table', async ({ page }) => {
+    await openLayerTestApp(page, {
+      roundTrip: '0',
+      importedTrackSession: {
+        coords: [
+          [24.00, 121.00],
+          [24.01, 121.02],
+          [24.02, 121.04],
+        ],
+        elevations: [100, 120, 130],
+        waypoints: [
+          [24.00, 121.00],
+          [24.02, 121.04],
+        ],
+        waypointMeta: [
+          { waypointId: 'mobile-start', label: 'Start', cumDistM: 0 },
+          { waypointId: 'mobile-end', label: 'End', cumDistM: 3000 },
+        ],
+        intermediates: [],
+      },
+      weatherCells: {
+        'wp:mobile-start': {
+          _weatherLoaded: true,
+          _weatherLoadState: 'loaded',
+          weather: 'sunny Clear',
+          _icon: 'sunny',
+        },
+      },
+    });
+
+    await page.evaluate(() => {
+      const setCell = (key, value) => {
+        const cell = document.querySelector(`[data-col="0"][data-key="${key}"] .wt-cell-value`);
+        if (cell) cell.textContent = value;
+      };
+      setCell('weather', 'sunny Clear');
+      setCell('temp', '21 C');
+      setCell('precipitation', '0 mm');
+      setCell('precipProb', '10%');
+      setCell('windSpeed', '10 km/h');
+    });
+
+    await expect(page.locator('[data-col="0"][data-key="temp"] .wt-cell-value')).toHaveText('21 C');
+    await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+
+    const card = page.locator('#mobile-weather-card-layer .weather-card').first();
+    await expect(card).toBeVisible();
+    await expect(card).toContainText(/21/);
+    await expect(card).toContainText('0 mm');
+    await expect(card).toContainText('10%');
+  });
+
+  test('full map weather card keeps readable height when bottom weather panel is tall', async ({ page }) => {
+    await openLayerTestApp(page, {
+      roundTrip: '0',
+      importedTrackSession: {
+        coords: [
+          [24.00, 121.00],
+          [24.01, 121.02],
+          [24.02, 121.04],
+        ],
+        elevations: [100, 120, 130],
+        waypoints: [
+          [24.00, 121.00],
+          [24.02, 121.04],
+        ],
+        waypointMeta: [
+          { waypointId: 'mobile-tall-start', label: 'Start', cumDistM: 0 },
+          { waypointId: 'mobile-tall-end', label: 'End', cumDistM: 3000 },
+        ],
+        intermediates: [],
+      },
+    });
+
+    await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first()).toBeVisible();
+    await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+    await page.evaluate(() => {
+      const panel = document.querySelector('#bottom-panel');
+      if (panel) panel.style.height = '760px';
+      document.documentElement.style.setProperty('--bottom-panel-height', '760px');
+    });
+
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+    const card = page.locator('#mobile-weather-card-layer .weather-card.full').first();
+    await expect(page.locator('#mobile-weather-card-layer .weather-card.full')).toHaveCount(1);
+    await expect(card).toBeVisible();
+    await expect(card).toContainText(/21/);
+    await page.waitForTimeout(350);
+
+    const maxHeight = await card.evaluate((el) => parseFloat(getComputedStyle(el).maxHeight));
+    expect(maxHeight).toBeGreaterThanOrEqual(220);
+    const hitTest = await card.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const samples = [0.2, 0.45, 0.7].map((ratio) => {
+        const x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+        const y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height * ratio));
+        return !!document.elementFromPoint(x, y)?.closest?.('.weather-card');
+      });
+      return {
+        bottom: rect.bottom,
+        samples,
+        viewportHeight: window.innerHeight,
+      };
+    });
+    expect(hitTest.bottom).toBeLessThanOrEqual(hitTest.viewportHeight);
+    expect(hitTest.samples.every(Boolean)).toBe(true);
+  });
+});
+
 test('double-clicking an overlapped route marker cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
