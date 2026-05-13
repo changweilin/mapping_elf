@@ -1322,6 +1322,7 @@ export class MapManager {
           return;
         }
         oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
         moveTouchLongPress(oe);
       }, { passive: false, capture: true });
       el.addEventListener('touchend', (oe) => {
@@ -1331,6 +1332,8 @@ export class MapManager {
           return;
         }
         oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
+        oe.preventDefault?.();
         handleWaypointTouchTap(oe);
         endTouchLongPress();
       }, { passive: false, capture: true });
@@ -1341,6 +1344,7 @@ export class MapManager {
           return;
         }
         oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
         endTouchLongPress();
       }, { passive: true, capture: true });
     };
@@ -2487,6 +2491,8 @@ export class MapManager {
             return;
           }
           oe._mappingElfReturnWaypointDomHandled = true;
+          oe.stopPropagation();
+          oe.preventDefault?.();
           handleReturnWaypointTouchTap(oe);
           cancelLP();
         }, { passive: false, capture: true });
@@ -2497,6 +2503,7 @@ export class MapManager {
             return;
           }
           oe._mappingElfReturnWaypointDomHandled = true;
+          oe.stopPropagation();
           cancelLP();
         }, { passive: true, capture: true });
       };
