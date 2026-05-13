@@ -2229,6 +2229,7 @@ routeModeRadios.forEach((radio) => {
 // =========== Core Logic ===========
 
 async function onWaypointsChanged(waypoints) {
+  cancelWeatherFetchForRouteReplan();
   ensureWaypointIds();
   bumpWaypointVersion();
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
@@ -2319,6 +2320,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     return;
   }
 
+  cancelWeatherFetchForRouteReplan();
   isProcessing = true;
   pendingUpdate = false;
   const busyTask = beginRouteWeatherBusyTask({
@@ -7129,6 +7131,8 @@ function bindWeatherTableNamePeek(container) {
 let autoFetchTimeout = 0;
 let isWeatherFetching = false;
 let initialWeatherLoadPending = false;
+let activeWeatherFetchRun = null;
+let weatherFetchRunSeq = 0;
 
 function waitForWeatherProgressPaint() {
   return new Promise((resolve) => {
@@ -7138,6 +7142,40 @@ function waitForWeatherProgressPaint() {
       setTimeout(resolve, 0);
     }
   });
+}
+
+function isAbortError(err) {
+  return err?.name === 'AbortError'
+    || (typeof DOMException !== 'undefined' && err?.code === DOMException.ABORT_ERR);
+}
+
+function waitForWeatherFetchDelay(ms, signal) {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener?.('abort', onAbort);
+      resolve(true);
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      resolve(false);
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+  });
+}
+
+function isWeatherFetchRunCancelled(run) {
+  return !run || run.cancelled || run.signal?.aborted || activeWeatherFetchRun !== run;
+}
+
+function cancelWeatherFetchForRouteReplan() {
+  if (autoFetchTimeout) {
+    clearTimeout(autoFetchTimeout);
+    autoFetchTimeout = 0;
+  }
+  if (!activeWeatherFetchRun || activeWeatherFetchRun.cancelled) return;
+  activeWeatherFetchRun.cancelled = true;
+  activeWeatherFetchRun.controller?.abort();
 }
 
 function autoFetchWeather(options = {}) {
@@ -7226,6 +7264,14 @@ async function fetchAllWeatherData(options = {}) {
   const progressPaintEvery = Math.max(1, Math.ceil(totalTargets / 12));
   const fetchStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const minInitialProgressMs = isInitialWeatherLoad ? 700 : 0;
+  const controller = new AbortController();
+  const fetchRun = {
+    id: ++weatherFetchRunSeq,
+    controller,
+    signal: controller.signal,
+    cancelled: false,
+  };
+  activeWeatherFetchRun = fetchRun;
   isWeatherFetching = true;
   const busyTask = beginRouteWeatherBusyTask({
     title: '正在載入天氣資訊',
@@ -7255,6 +7301,7 @@ async function fetchAllWeatherData(options = {}) {
 
   try {
     for (const state of targetStates) {
+      if (isWeatherFetchRunCancelled(fetchRun)) break;
       const { pt, i, dateStr, hour, cacheKey, saved, savedLoaded } = state;
       if (fetchBtn) {
         const labelSpan = fetchBtn.querySelector('span');
@@ -7320,7 +7367,8 @@ async function fetchAllWeatherData(options = {}) {
       });
 
       try {
-        data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
+        data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
+        if (isWeatherFetchRunCancelled(fetchRun)) break;
         cachedWeatherData[cacheKey] = data;
         // Save after each point so partial data survives a mid-fetch page close
         localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
@@ -7342,6 +7390,7 @@ async function fetchAllWeatherData(options = {}) {
         // Refresh chart/map weather markers when it will not interrupt an active waypoint drag.
         refreshWeatherMarkersAfterWeatherUpdate();
       } catch (err) {
+        if (isWeatherFetchRunCancelled(fetchRun) || isAbortError(err)) break;
         console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
         WEATHER_ROWS.forEach(row => {
           const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
@@ -7359,24 +7408,34 @@ async function fetchAllWeatherData(options = {}) {
       markWeatherProgress();
       await maybePaintWeatherProgress();
 
-      if (processedTargets < totalTargets) await new Promise(r => setTimeout(r, 400));
+      if (processedTargets < totalTargets) {
+        const shouldContinue = await waitForWeatherFetchDelay(400, fetchRun.signal);
+        if (!shouldContinue || isWeatherFetchRunCancelled(fetchRun)) break;
+      }
     }
   } finally {
-    if (isInitialWeatherLoad) {
+    const wasCancelled = isWeatherFetchRunCancelled(fetchRun);
+    if (isInitialWeatherLoad && !wasCancelled) {
       const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - fetchStartedAt;
       if (elapsed < minInitialProgressMs) {
         await new Promise(r => setTimeout(r, minInitialProgressMs - elapsed));
       }
       initialWeatherLoadPending = false;
     }
-    isWeatherFetching = false;
-    busyTask.set({ detail: '完成', progress: 100 });
-    if (isInitialWeatherLoad) await waitForWeatherProgressPaint();
+    if (activeWeatherFetchRun === fetchRun) {
+      activeWeatherFetchRun = null;
+      isWeatherFetching = false;
+    }
+    if (!wasCancelled) {
+      busyTask.set({ detail: '完成', progress: 100 });
+      if (isInitialWeatherLoad) await waitForWeatherProgressPaint();
+    }
     busyTask.end();
     if (fetchBtn) {
       fetchBtn.disabled = false;
       fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
     }
+    if (wasCancelled) return;
     showNotification('天氣資訊已更新', 'success', 2000);
   }
 }

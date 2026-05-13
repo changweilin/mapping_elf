@@ -183,7 +183,7 @@ export class MapManager {
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       zoomControl: true,
-      touchZoom: 'center',
+      touchZoom: true,
       wheelDebounceTime: 24,
     });
 

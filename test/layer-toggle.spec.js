@@ -12,6 +12,7 @@ async function openLayerTestApp(page, options = {}) {
     importedTrackSession = null,
     weatherCells = null,
     weatherRequests = null,
+    routeEvents = null,
   } = options;
   await page.addInitScript(({ roundTrip, oLoop, importedTrackSession, weatherCells }) => {
     localStorage.clear();
@@ -30,9 +31,11 @@ async function openLayerTestApp(page, options = {}) {
 
   await page.route('**/route/v1/**', async (route) => {
     const url = new URL(route.request().url());
+    routeEvents?.push({ type: 'start', url: route.request().url() });
     const coordPart = url.pathname.split('/').pop();
     const coords = coordPart.split(';').map((coord) => coord.split(',').map(Number));
     if (routeDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, routeDelayMs));
+    routeEvents?.push({ type: 'finish', url: route.request().url() });
     await route.fulfill({
       json: {
         code: 'Ok',
@@ -433,6 +436,49 @@ test('route planning locks map edits and defers route parameters until completio
   });
   await expect.poll(() => page.evaluate(() => localStorage.getItem('mappingElf_roundTrip'))).toBe('0');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('mappingElf_roundTrip')), { timeout: 6000 }).toBe('1');
+});
+
+test('route replanning cancels in-flight weather fetch and restarts after route completes', async ({ page }) => {
+  const weatherRequests = [];
+  const routeEvents = [];
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    routeDelayMs: 1000,
+    weatherDelayMs: 2000,
+    weatherRequests,
+    routeEvents,
+  });
+
+  await addWaypointsAtFractions(page, [
+    [0.40, 0.50],
+    [0.58, 0.50],
+  ]);
+  await expect(page.locator(VISIBLE_ROUTE_PATH_SELECTOR)).toHaveCount(1);
+  await expect.poll(() => weatherRequests.length, { timeout: 5000 }).toBeGreaterThan(0);
+
+  const box = await page.locator('#map').boundingBox();
+  expect(box).not.toBeNull();
+  const routeStartsBefore = routeEvents.filter((event) => event.type === 'start').length;
+  const routeFinishesBefore = routeEvents.filter((event) => event.type === 'finish').length;
+
+  await page.mouse.click(box.x + box.width * 0.70, box.y + box.height * 0.50);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);
+  await expect.poll(
+    () => routeEvents.filter((event) => event.type === 'start').length,
+    { timeout: 3000 },
+  ).toBe(routeStartsBefore + 1);
+
+  const weatherRequestsDuringReplan = weatherRequests.length;
+  await page.waitForTimeout(500);
+  expect(routeEvents.filter((event) => event.type === 'finish').length).toBe(routeFinishesBefore);
+  expect(weatherRequests.length).toBe(weatherRequestsDuringReplan);
+
+  await expect.poll(
+    () => routeEvents.filter((event) => event.type === 'finish').length,
+    { timeout: 4000 },
+  ).toBe(routeFinishesBefore + 1);
+  await expect.poll(() => weatherRequests.length, { timeout: 6000 })
+    .toBeGreaterThan(weatherRequestsDuringReplan);
 });
 
 test('opening a restored track shows weather loading progress', async ({ page }) => {
