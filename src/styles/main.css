@@ -845,9 +845,12 @@ body.weather-card-busy .weather-edit-control:disabled {
   z-index: 1900 !important;
 }
 
-.leaflet-marker-icon.has-weather-card,
-.leaflet-marker-icon.has-highlighted-weather-card {
+.leaflet-marker-icon.has-weather-card {
   z-index: 2100 !important;
+}
+
+.leaflet-marker-icon.has-highlighted-weather-card {
+  z-index: 2300 !important;
 }
 
 .custom-waypoint-icon.has-weather-card:hover .wp-icon-inner {

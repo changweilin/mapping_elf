@@ -516,7 +516,7 @@ test('opening a restored track shows weather loading progress', async ({ page })
   await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 8000 });
 });
 
-test('restored weather key info prevents automatic weather fetch', async ({ page }) => {
+test('restored weather detail info prevents automatic weather fetch', async ({ page }) => {
   const weatherRequests = [];
   await openLayerTestApp(page, {
     roundTrip: '0',
@@ -541,24 +541,26 @@ test('restored weather key info prevents automatic weather fetch', async ({ page
     },
     weatherCells: {
       'wp:saved-start': {
-        weather: '☀️ Clear',
-        temp: '21°C',
+        weather: 'sunny Clear',
+        temp: '21 C',
         precipitation: '0 mm',
-        _icon: '☀️',
+        _icon: 'sunny',
       },
       'wp:saved-end': {
         _weatherLoaded: true,
         _weatherLoadState: 'loaded',
-        weather: '—',
-        temp: '—',
-        precipitation: '—',
+        weather: 'cloudy Cloudy',
+        temp: '22 C',
+        precipitation: '0 mm',
+        _icon: 'cloudy',
       },
       'int:24.01,121.02': {
         _weatherLoaded: true,
         _weatherLoadState: 'loaded',
-        weather: '—',
-        temp: '—',
-        precipitation: '—',
+        weather: 'cloudy Cloudy',
+        temp: '22 C',
+        precipitation: '0 mm',
+        _icon: 'cloudy',
       },
     },
   });
@@ -566,6 +568,56 @@ test('restored weather key info prevents automatic weather fetch', async ({ page
   await page.waitForTimeout(1500);
   expect(weatherRequests).toHaveLength(0);
   await expect(page.locator('#route-weather-busy-overlay')).toBeHidden();
+});
+
+test('icon-only restored waypoint weather refetches before opening map card', async ({ page }) => {
+  const weatherRequests = [];
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    weatherDelayMs: 100,
+    weatherRequests,
+    importedTrackSession: {
+      coords: [
+        [24.00, 121.00],
+        [24.01, 121.02],
+        [24.02, 121.04],
+      ],
+      elevations: [100, 120, 130],
+      waypoints: [
+        [24.00, 121.00],
+        [24.02, 121.04],
+      ],
+      waypointMeta: [
+        { waypointId: 'icon-start', label: 'Start', cumDistM: 0 },
+        { waypointId: 'icon-end', label: 'End', cumDistM: 3000 },
+      ],
+      intermediates: [],
+    },
+    weatherCells: {
+      'wp:icon-start': {
+        _weatherLoaded: true,
+        _weatherLoadState: 'loaded',
+        weather: 'sunny Clear',
+        _icon: 'sunny',
+      },
+      'wp:icon-end': {
+        _weatherLoaded: true,
+        _weatherLoadState: 'loaded',
+        _weatherCode: 1,
+        _icon: 'sunny',
+      },
+    },
+  });
+
+  await expect.poll(() => weatherRequests.length, { timeout: 5000 }).toBeGreaterThan(0);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 8000 });
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first()).toBeVisible();
+  await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+  await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
+
+  const card = page.locator('.custom-waypoint-icon .wp-weather-card-slot .weather-card').first();
+  await expect(card).toBeVisible();
+  await expect(card).toContainText(/21/);
 });
 
 test('double-clicking an overlapped route marker cycles visible layer order', async ({ page }) => {

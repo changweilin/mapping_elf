@@ -4398,21 +4398,46 @@ function getSavedWeatherCellValue(cells, key) {
     if (cells._weatherCode != null) return `${icon} ${tWmo(cells._weatherCode)}`.trim();
     return translateWeatherText(cells.weather || '—');
   }
-  return cells[key] || '—';
+  if (!Object.prototype.hasOwnProperty.call(cells, key)) return '—';
+  const value = cells[key];
+  return value != null && String(value).trim() !== '' ? value : '—';
 }
 
 const WEATHER_CONTENT_KEYS = [...WEATHER_TOP_ROWS, ...WEATHER_MIDDLE_ROWS].map(row => row.key);
+const WEATHER_DETAIL_KEYS = WEATHER_CONTENT_KEYS.filter(key => key !== 'weather');
 
 function isMeaningfulWeatherValue(value) {
   const text = String(value ?? '').trim();
   return !!text && !['—', '-', '--', '...', '??', '?'].includes(text);
 }
 
-function hasSavedWeatherKeyInfo(cells) {
+function hasSavedWeatherCellField(cells, key) {
   if (!cells) return false;
-  if (cells._weatherCode != null) return true;
-  if (isMeaningfulWeatherValue(cells._icon)) return true;
-  return WEATHER_CONTENT_KEYS.some(key => isMeaningfulWeatherValue(cells[key]));
+  return Object.prototype.hasOwnProperty.call(cells, key)
+    || (key === 'weather' && (cells._weatherCode != null || isMeaningfulWeatherValue(cells._icon)));
+}
+
+function hasSavedWeatherDetailInfo(cells) {
+  if (!cells) return false;
+  return WEATHER_DETAIL_KEYS.some(key =>
+    hasSavedWeatherCellField(cells, key) && isMeaningfulWeatherValue(getSavedWeatherCellValue(cells, key))
+  );
+}
+
+function hasWeatherDataDetailInfo(data, pt = null) {
+  if (!data) return false;
+  return WEATHER_DETAIL_KEYS.some(key => isMeaningfulWeatherValue(getCellValue(data, key, pt)));
+}
+
+function getWeatherTableCellDisplayValue(colIdx, key) {
+  const container = document.getElementById('weather-table-container');
+  const valueEl = container?.querySelector(`[data-col="${colIdx}"][data-key="${key}"] .wt-cell-value`);
+  const text = valueEl?.textContent?.trim() || '';
+  return isMeaningfulWeatherValue(text) ? text : null;
+}
+
+function hasWeatherTableDetailInfo(colIdx) {
+  return WEATHER_DETAIL_KEYS.some(key => getWeatherTableCellDisplayValue(colIdx, key) !== null);
 }
 
 function weatherCellsMatchSchedule(cells, dateStr, hour) {
@@ -4427,7 +4452,7 @@ function weatherCellsMatchSchedule(cells, dateStr, hour) {
 
 function hasCompletedWeatherLoad(cells, dateStr, hour) {
   if (!cells || !weatherCellsMatchSchedule(cells, dateStr, hour)) return false;
-  return cells._weatherLoaded === true || cells._weatherLoadState === 'loaded' || hasSavedWeatherKeyInfo(cells);
+  return hasSavedWeatherDetailInfo(cells);
 }
 
 function markWeatherCellsLoaded(cells, dateStr, hour) {
@@ -4444,8 +4469,7 @@ function applySavedWeatherCellsToColumn(pt, colIdx, cells) {
   if (!pt || !cells) return;
   const container = document.getElementById('weather-table-container');
   WEATHER_ROWS.forEach(row => {
-    const hasStoredValue = Object.prototype.hasOwnProperty.call(cells, row.key)
-      || (row.key === 'weather' && (cells._weatherCode != null || isMeaningfulWeatherValue(cells._icon)));
+    const hasStoredValue = hasSavedWeatherCellField(cells, row.key);
     if (!hasStoredValue) return;
     const cell = container?.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
     const val = getSavedWeatherCellValue(cells, row.key);
@@ -6666,7 +6690,7 @@ function renderWeatherPanel() {
     const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
     if (!dateStr) return;
     const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
-    if (cached) {
+    if (cached && hasWeatherDataDetailInfo(cached, pt)) {
       const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(cached, row.key, pt);
@@ -6794,7 +6818,7 @@ function renderWeatherPanel() {
           const scheduleHour = importedData.time
             ? parseInt(importedData.time.split(':')[0])
             : parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
-          const cellsToSave = hasSavedWeatherKeyInfo(cells)
+          const cellsToSave = hasSavedWeatherDetailInfo(cells)
             ? markWeatherCellsLoaded(cells, scheduleDate, scheduleHour)
             : cells;
           saveWeatherCells(getSemanticKey(pt), cellsToSave);
@@ -7224,9 +7248,11 @@ async function fetchAllWeatherData(options = {}) {
       const dateStr = schedule?.date || null;
       const hour = schedule?.hour ?? 8;
       const cacheKey = dateStr ? weatherCoordKey(pt.lat, pt.lng, dateStr, hour) : null;
-      const cached = cacheKey ? cachedWeatherData[cacheKey] : null;
+      const rawCached = cacheKey ? cachedWeatherData[cacheKey] : null;
+      const cached = hasWeatherDataDetailInfo(rawCached, pt) ? rawCached : null;
       const saved = !force ? getSavedWeatherCells(pt) : null;
-      const savedLoaded = !force && hasCompletedWeatherLoad(saved, dateStr, hour);
+      const tableLoaded = !force && hasWeatherTableDetailInfo(i);
+      const savedLoaded = !force && (hasCompletedWeatherLoad(saved, dateStr, hour) || tableLoaded);
       return {
         pt,
         i,
@@ -7462,11 +7488,14 @@ function getLoadedWeatherCardInfo(colIdx) {
   if (!dateStr) return null;
 
   const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
-  if (cached) return { data: cached, pt, dateStr, hour, colIdx };
+  if (cached && hasWeatherDataDetailInfo(cached, pt)) return { data: cached, pt, dateStr, hour, colIdx };
 
   const saved = getSavedWeatherCells(pt);
   if (hasCompletedWeatherLoad(saved, dateStr, hour)) {
     return { cells: saved, pt, dateStr, hour, colIdx };
+  }
+  if (hasWeatherTableDetailInfo(colIdx)) {
+    return { cells: saved || {}, pt, dateStr, hour, colIdx };
   }
 
   return null;
@@ -7740,14 +7769,20 @@ function _renderWeatherCard(colIdx) {
     if (key === 'elevation') return formatElevation(pt._ele);
     if (key === 'coords') return formatCoords(pt.lat, pt.lng);
     if (data) return getCellValue(data, key, pt);
-    if (cells && cells[key]) return getSavedWeatherCellValue(cells, key);
+    if (hasSavedWeatherCellField(cells, key)) return getSavedWeatherCellValue(cells, key);
+    const tableValue = getWeatherTableCellDisplayValue(colIdx, key);
+    if (tableValue !== null) return tableValue;
     return '—';
   };
 
   // Weather info
   const weatherStr = val('weather');
   const weatherParts = weatherStr.split(' ');
-  const hasWeatherPayload = !!(data || cells?.weather);
+  const hasWeatherPayload = !!(
+    data
+    || hasSavedWeatherCellField(cells, 'weather')
+    || getWeatherTableCellDisplayValue(colIdx, 'weather') !== null
+  );
   const displayWeatherIcon = hasWeatherPayload ? (weatherParts[0] || '?') : '?';
   const wIcon = weatherParts[0] || '❓';
   const wDesc = weatherParts.slice(1).join(' ') || '—';
