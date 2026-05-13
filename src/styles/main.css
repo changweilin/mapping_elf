@@ -859,7 +859,7 @@ body.weather-card-busy .weather-edit-control:disabled {
 
 .wp-weather-badge {
   position: absolute;
-  top: -27px;
+  top: -22px;
   left: 50%;
   width: 30px;
   height: 30px;
@@ -873,7 +873,7 @@ body.weather-card-busy .weather-edit-control:disabled {
 }
 
 .custom-waypoint-icon .wp-weather-badge {
-  top: -13px;
+  top: -10px;
 }
 
 .wp-weather-badge:hover:not(.is-card-open):not(.is-card-closing) {
@@ -1350,7 +1350,7 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 
 
 
-/* Intermediate (km-interval) markers — non-interactive, smaller */
+/* Intermediate (km-interval) markers — compact route points */
 .map-container.hide-wp-weather .custom-waypoint-icon .wp-weather-badge {
   display: none !important;
 }
@@ -1381,22 +1381,22 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.65);
+  border: 1.5px solid rgba(255, 255, 255, 0.65);
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35);
   box-sizing: border-box !important;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
   color: #111827;
   /* Dark text for contrast on markers */
 }
 
 .elevation-hover-marker {
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #fbbf24;
-  border: 2px solid white;
-  box-shadow: 0 0 12px rgba(251, 191, 36, 0.5);
+  border: 1.5px solid white;
+  box-shadow: 0 0 9px rgba(251, 191, 36, 0.5);
 }
 
 .marker-external-label {

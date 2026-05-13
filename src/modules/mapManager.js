@@ -121,6 +121,8 @@ const WAYPOINT_Z_PAIR_STEP = 120;
 const WAYPOINT_Z_SELECTED = 1800;
 const WAYPOINT_PIN_HEIGHT_RATIO = 1.44;
 const INTERMEDIATE_Z_OFFSET = -300;
+const INTERMEDIATE_MARKER_SIZE = 18;
+const HOVER_MARKER_SIZE = 10;
 
 function waypointPinMetrics(size) {
   const height = Math.round(size * WAYPOINT_PIN_HEIGHT_RATIO);
@@ -2089,7 +2091,7 @@ export class MapManager {
   }
 
   /**
-   * Set km-interval intermediate markers (non-interactive, small icons)
+   * Set km-interval intermediate markers (compact icons with matching hitboxes)
    * @param {Array<{lat,lng,cumDistM}>} points
    */
   setIntermediateMarkers(points, totalDistM = 0, turnaroundDistM = null) {
@@ -2116,8 +2118,8 @@ export class MapManager {
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
         html: `<div class="intermediate-point-inner" style="background: ${color};">${weatherHtml}</div>${labelHtml}`,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
+        iconSize: [INTERMEDIATE_MARKER_SIZE, INTERMEDIATE_MARKER_SIZE],
+        iconAnchor: [INTERMEDIATE_MARKER_SIZE / 2, INTERMEDIATE_MARKER_SIZE / 2],
       });
 
       const marker = L.marker([pt.lat, pt.lng], {
@@ -2785,14 +2787,14 @@ export class MapManager {
   }
 
   showHoverMarker(lat, lng, color = null) {
-    const styleStr = color ? `background-color: ${color}; box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 8px ${color};` : '';
+    const styleStr = color ? `background-color: ${color}; box-shadow: 0 0 0 1.5px rgba(255,255,255,0.9), 0 0 7px ${color};` : '';
     const html = color ? `<div style="width:100%; height:100%; border-radius:50%; ${styleStr}"></div>` : '';
     if (!this.hoverMarker) {
       const icon = L.divIcon({
         className: color ? '' : 'elevation-hover-marker',
         html: html,
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
+        iconSize: [HOVER_MARKER_SIZE, HOVER_MARKER_SIZE],
+        iconAnchor: [HOVER_MARKER_SIZE / 2, HOVER_MARKER_SIZE / 2],
       });
       this.hoverMarker = L.marker([lat, lng], { icon, interactive: false }).addTo(this.map);
     } else {
@@ -2801,8 +2803,8 @@ export class MapManager {
         this.hoverMarker.setIcon(L.divIcon({
           className: '',
           html: html,
-          iconSize: [14, 14],
-          iconAnchor: [7, 7],
+          iconSize: [HOVER_MARKER_SIZE, HOVER_MARKER_SIZE],
+          iconAnchor: [HOVER_MARKER_SIZE / 2, HOVER_MARKER_SIZE / 2],
         }));
       }
     }
