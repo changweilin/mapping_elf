@@ -5256,66 +5256,161 @@ body.modal-open {
   transform: scale(1.02);
 }
 
-.weather-card:not(.full) {
-  width: auto;
-  min-width: 100px;
-  max-width: 180px;
-  /* Limit width of compact card */
+.weather-card.compact {
+  width: clamp(126px, 22vw, 188px);
+  min-width: 126px;
+  max-width: min(188px, calc(100vw - 32px));
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, var(--wc-accent-soft, rgba(255, 255, 255, 0.1)), var(--wc-accent-wash, rgba(255, 255, 255, 0.04))),
+    var(--bg-glass);
+  border-color: var(--wc-accent, var(--border-hover));
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.36),
+    0 0 0 1px var(--wc-accent-soft, rgba(255, 255, 255, 0.12));
 }
 
-.weather-card:not(.full) .wc-title {
-  display: block;
-  font-size: 11px;
-  margin-right: 4px;
+.weather-popup .weather-card.compact::before,
+.wp-weather-card-slot .weather-card.compact::before {
+  display: none;
 }
 
-.weather-card:not(.full) .wc-header {
-  gap: 2px;
-  padding: 3px 4px 2px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(0, 0, 0, 0.1);
+.weather-popup .weather-card.compact:hover,
+.wp-weather-card-slot .weather-card.compact:hover {
+  transform: translateY(-1px);
+  border-color: var(--wc-accent, rgba(255, 255, 255, 0.55));
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.42),
+    0 0 0 1px var(--wc-accent-soft, rgba(255, 255, 255, 0.22));
 }
 
-.weather-card:not(.full) .wc-btn {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+.weather-card.compact .wc-body {
+  padding: 3px;
 }
 
-.weather-card:not(.full) .wc-btn svg {
-  width: 11px;
-  height: 11px;
-}
-
-.weather-card:not(.full) .wc-body {
-  padding: 3px 4px 4px;
-}
-
-/* Compact 2x2 grid: values only, no labels */
 .wc-compact {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
 }
 
-.wc-c-row {
+.wc-compact-icon,
+.wc-compact-data {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+  padding: 0;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.wc-compact-icon {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.wc-compact-icon:hover,
+.wc-compact-icon:focus-visible {
+  transform: scale(1.06);
+}
+
+.wc-compact-weather-icon {
+  width: 30px;
+  height: 30px;
+  font-size: 17px;
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 2px var(--wc-accent, var(--weather-icon-ring)),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.48);
+}
+
+.wc-compact-data {
+  flex: 1 1 auto;
+  height: 30px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  border-radius: 999px;
+  padding: 0 8px 0 1px;
+  text-align: left;
+  overflow: hidden;
+}
+
+.wc-compact-data:hover,
+.wc-compact-data:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+  outline: none;
+}
+
+.wc-compact-data-viewport {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, black 0, black calc(100% - 8px), transparent 100%);
+  mask-image: linear-gradient(to right, black 0, black calc(100% - 8px), transparent 100%);
+}
+
+.wc-compact-marquee {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: max-content;
   white-space: nowrap;
-  line-height: 1;
+  transform: translateX(0);
 }
 
-.wc-c-icon {
-  font-size: 15px;
-  line-height: 1;
+.wc-compact-value-set {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.wc-c-val {
+.wc-compact-value-set[aria-hidden="true"] {
+  display: none;
+}
+
+.weather-card.has-compact-marquee .wc-compact-value-set[aria-hidden="true"] {
+  display: flex;
+}
+
+.weather-card.has-compact-marquee .wc-compact-marquee {
+  animation: weatherCardCompactMarquee var(--wc-marquee-duration, 10s) linear infinite;
+  animation-delay: 1.2s;
+}
+
+.weather-card.has-compact-marquee .wc-compact-data:hover .wc-compact-marquee,
+.weather-card.has-compact-marquee .wc-compact-data:focus-visible .wc-compact-marquee {
+  animation-play-state: paused;
+}
+
+.wc-compact-value {
+  flex: 0 0 auto;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
+  line-height: 1;
   color: var(--text-primary);
+}
+
+.wc-compact-value + .wc-compact-value {
+  padding-left: 8px;
+  border-left: 1px solid var(--wc-accent-soft, var(--border));
+}
+
+@keyframes weatherCardCompactMarquee {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(calc(-1 * var(--wc-marquee-distance, 80px)));
+  }
 }
 
 @keyframes weatherCardIn {
@@ -5382,6 +5477,11 @@ body.modal-open {
   .wp-weather-card-slot .weather-card,
   .wp-weather-badge.is-card-closing .weather-card {
     animation-duration: 0.01ms;
+  }
+
+  .weather-card.has-compact-marquee .wc-compact-marquee {
+    animation: none;
+    transform: translateX(0);
   }
 }
 

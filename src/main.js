@@ -8039,6 +8039,59 @@ function buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour) {
   </div>`;
 }
 
+function colorWithAlpha(color, alpha) {
+  const text = String(color || '').trim();
+  const rgb = text.match(/^rgb\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
+  const rgba = text.match(/^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*[\d.]+\s*\)$/i);
+  if (rgba) return `rgba(${rgba[1]}, ${rgba[2]}, ${rgba[3]}, ${alpha})`;
+  const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const raw = hex[1].length === 3
+      ? hex[1].split('').map(ch => ch + ch).join('')
+      : hex[1];
+    const int = parseInt(raw, 16);
+    return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+  }
+  return text;
+}
+
+function buildCompactWeatherValuesHtml(values) {
+  const safeValues = values
+    .map(value => String(value ?? '').trim())
+    .filter(value => value && value !== '??');
+  const itemHtml = (safeValues.length ? safeValues : ['??'])
+    .map(value => `<span class="wc-compact-value">${_escapeHtml(value)}</span>`)
+    .join('');
+  return `<span class="wc-compact-data-viewport">
+    <span class="wc-compact-marquee">
+      <span class="wc-compact-value-set">${itemHtml}</span>
+      <span class="wc-compact-value-set" aria-hidden="true">${itemHtml}</span>
+    </span>
+  </span>`;
+}
+
+function updateCompactWeatherMarquee(root) {
+  if (!root?.classList?.contains('compact')) return;
+  const viewport = root.querySelector('.wc-compact-data-viewport');
+  const firstSet = root.querySelector('.wc-compact-value-set:not([aria-hidden="true"])');
+  if (!viewport || !firstSet) return;
+
+  requestAnimationFrame(() => {
+    const overflow = firstSet.scrollWidth > viewport.clientWidth + 1;
+    root.classList.toggle('has-compact-marquee', overflow);
+    if (!overflow) {
+      root.style.removeProperty('--wc-marquee-distance');
+      root.style.removeProperty('--wc-marquee-duration');
+      return;
+    }
+    const distance = Math.ceil(firstSet.scrollWidth + 18);
+    const duration = Math.min(18, Math.max(7, distance / 18));
+    root.style.setProperty('--wc-marquee-distance', `${distance}px`);
+    root.style.setProperty('--wc-marquee-duration', `${duration.toFixed(1)}s`);
+  });
+}
+
 /** Render a specific weather card. */
 function _renderWeatherCard(colIdx) {
   const state = _wcStates.get(colIdx);
@@ -8083,50 +8136,43 @@ function _renderWeatherCard(colIdx) {
     || getWeatherTableCellDisplayValue(colIdx, 'weather') !== null
   );
   const displayWeatherIcon = hasWeatherPayload ? (weatherParts[0] || '?') : '?';
-  const wIcon = weatherParts[0] || '❓';
   const wDesc = weatherParts.slice(1).join(' ') || '—';
   const temp = val('temp');
   const precipitation = val('precipitation');
   const precipProb = val('precipProb');
+  const windSpeed = val('windSpeed');
   const cardLabel = isCompact ? getWeatherPointShortLabel(pt, colIdx) : (pt.label || getWeatherPointShortLabel(pt, colIdx));
-  const label = pt.label || (pt.isWaypoint ? `航點 ${pt.wpIndex + 1}` : '中繼點');
 
   // Build HTML with unique ID per column card. Use gradient color for card accent.
   const gradColor = _weatherPointGradColor(pt);
-  const cardStyle = `--wc-accent: ${gradColor};`;
-  let html = `<div class="weather-card${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}" style="${cardStyle}">`;
+  const cardStyle = `--wc-accent: ${gradColor}; --wc-accent-soft: ${colorWithAlpha(gradColor, 0.18)}; --wc-accent-wash: ${colorWithAlpha(gradColor, 0.08)};`;
+  let html = `<div class="weather-card${isCompact ? ' compact' : ''}${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}" style="${cardStyle}">`;
 
   // Header
-  const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
-  html += `<div class="wc-header" style="${headerStyle}">`;
-  const headerWeatherIcon = isFull ? '' : `${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-title-weather-icon')} `;
-  html += `<span class="wc-title" title="${pt.label || cardLabel}">${headerWeatherIcon}${cardLabel}</span>`;
   if (isFull) {
+    const headerStyle = `background: ${colorWithAlpha(gradColor, 0.1)};`;
+    html += `<div class="wc-header" style="${headerStyle}">`;
+    html += `<span class="wc-title" title="${pt.label || cardLabel}">${cardLabel}</span>`;
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
     html += `<button class="wc-btn q-next" title="下一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg></button>`;
+    html += `<button class="wc-btn q-toggle" title="收縮">`;
+    html += `<svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" fill="currentColor"/></svg></button>`;
+    html += `<button class="wc-btn q-close" title="關閉">`;
+    html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
+    html += `</div>`;
   }
-  html += `<button class="wc-btn q-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
-  html += `<svg viewBox="0 0 24 24"><path d="${isCompact
-    ? 'M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z'
-    : 'M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z'
-  }" fill="currentColor"/></svg></button>`;
-  html += `<button class="wc-btn q-close" title="關閉">`;
-  html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
-  html += `</div>`;
 
   // Body
   html += `<div class="wc-body">`;
 
   if (isCompact) {
-    // Compact: Single row grid for values
     html += `<div class="wc-compact">`;
-    html += `<div class="wc-c-row">`;
-    html += `<span class="wc-c-val">${temp}</span>`;
-    html += `<span class="wc-c-val">${precipitation}</span>`;
-    html += `<span class="wc-c-val">${precipProb}</span>`;
-    html += `</div>`;
+    html += `<button class="wc-compact-icon q-close" type="button" title="Close weather card" aria-label="Close weather card">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-compact-weather-icon')}</button>`;
+    html += `<button class="wc-compact-data q-toggle" type="button" title="Expand weather details" aria-label="Expand weather details">`;
+    html += buildCompactWeatherValuesHtml([temp, precipitation, precipProb, windSpeed]);
+    html += `</button>`;
     html += `</div>`;
   } else {
     const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
@@ -8266,6 +8312,7 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
 function _bindWeatherCardEvents(colIdx, wrapper) {
   const root = wrapper?.querySelector(`.weather-card`) || document.getElementById(`wc-root-${colIdx}`);
   if (!root) return;
+  updateCompactWeatherMarquee(root);
 
   // Clicking the card highlights the point
   root.addEventListener('click', (e) => {
