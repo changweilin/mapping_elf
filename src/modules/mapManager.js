@@ -3519,6 +3519,27 @@ export class MapManager {
     return ids;
   }
 
+  _markerLegIds(marker) {
+    if (!marker) return [];
+    const ids = [];
+    if (marker._legId !== undefined) ids.push(marker._legId);
+    if (Array.isArray(marker._legIds)) {
+      marker._legIds.forEach((id) => {
+        if (id !== undefined && !ids.includes(id)) ids.push(id);
+      });
+    }
+    return ids;
+  }
+
+  _routeLegIsReturn(legId) {
+    const chunks = this.gradientPolylines.filter((pl) => this._polylineLegIds(pl).includes(legId));
+    if (!chunks.length) return null;
+    const returnCount = chunks.filter((pl) => pl._isReturn === true).length;
+    const outboundCount = chunks.filter((pl) => pl._isReturn === false).length;
+    if (returnCount === outboundCount) return null;
+    return returnCount > outboundCount;
+  }
+
   _debugRouteLayerCycle(reason, details = {}) {
     try {
       if (localStorage.getItem(ROUTE_LAYER_DEBUG_KEY) !== '1') return;
@@ -3549,12 +3570,7 @@ export class MapManager {
       ...this.returnWaypointMarkers,
     ];
 
-    const markerLegs = (m) => {
-      const ids = new Set();
-      if (m._legId !== undefined) ids.add(m._legId);
-      if (Array.isArray(m._legIds)) m._legIds.forEach((id) => ids.add(id));
-      return Array.from(ids);
-    };
+    const markerLegs = (m) => this._markerLegIds(m);
     const matchesAny = (m) => markerLegs(m).some((id) => legSet.has(id));
     const matchesTop = (m) => markerLegs(m).includes(topLeg);
     const switchablePairKey = (m) => {
@@ -3586,7 +3602,7 @@ export class MapManager {
         candidates.push(...group.filter(nearClick));
       }
     });
-    this._syncStackedWaypointLayerForTopLeg(topLeg);
+    this._syncStackedWaypointLayerForTopLeg(topLeg, legs);
     if (candidates.length < 2) return;
 
     const isWaypointMarker = (m) => this.waypointMarkers.includes(m) || this.returnWaypointMarkers.includes(m);
@@ -3601,22 +3617,50 @@ export class MapManager {
     candidates
       .filter(matchesTop)
       .forEach((m) => m.setZIndexOffset(isWaypointMarker(m) ? WAYPOINT_Z_SELECTED : 900));
-    this._syncStackedWaypointLayerForTopLeg(topLeg);
+    this._syncStackedWaypointLayerForTopLeg(topLeg, legs);
   }
 
-  _syncStackedWaypointLayerForTopLeg(topLeg) {
+  _syncStackedWaypointLayerForTopLeg(topLeg, legs = null) {
+    const legSet = Array.isArray(legs) ? new Set(legs) : null;
+    const topIsReturn = this._routeLegIsReturn(topLeg);
+    let highlightedPairNeedsRefresh = false;
+
     this.waypointMarkers.forEach((outbound, idx) => {
       const ret = this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
       if (!outbound || !ret) return;
-      const outboundIds = new Set([outbound._legId, ...(outbound._legIds || [])]);
-      const returnIds = new Set([ret._legId, ...(ret._legIds || [])]);
-      const outboundMatches = outboundIds.has(topLeg);
-      const returnMatches = returnIds.has(topLeg);
-      if (outboundMatches === returnMatches) return;
-      this.waypointLayerSwapped[idx] = outboundMatches;
-      outbound.setZIndexOffset(WAYPOINT_Z_BASE + (outboundMatches ? WAYPOINT_Z_PAIR_STEP : 0));
-      ret.setZIndexOffset(WAYPOINT_Z_BASE + (returnMatches ? WAYPOINT_Z_PAIR_STEP : 0));
+
+      const outboundIds = this._markerLegIds(outbound);
+      const returnIds = this._markerLegIds(ret);
+      const pairMatchesGroup = !legSet || [...outboundIds, ...returnIds].some((id) => legSet.has(id));
+      if (!pairMatchesGroup) return;
+
+      const outboundMatchesTop = outboundIds.includes(topLeg);
+      const returnMatchesTop = returnIds.includes(topLeg);
+      let outboundOnTop = null;
+
+      if (topIsReturn === true && (returnMatchesTop || !legSet || returnIds.some((id) => legSet.has(id)))) {
+        outboundOnTop = false;
+      } else if (topIsReturn === false && (outboundMatchesTop || !legSet || outboundIds.some((id) => legSet.has(id)))) {
+        outboundOnTop = true;
+      } else if (outboundMatchesTop !== returnMatchesTop) {
+        outboundOnTop = outboundMatchesTop;
+      }
+
+      if (outboundOnTop === null) return;
+
+      this.waypointLayerSwapped[idx] = outboundOnTop;
+      outbound.setZIndexOffset(WAYPOINT_Z_BASE + (outboundOnTop ? WAYPOINT_Z_PAIR_STEP : 0));
+      ret.setZIndexOffset(WAYPOINT_Z_BASE + (outboundOnTop ? 0 : WAYPOINT_Z_PAIR_STEP));
+
+      const topIsReturnMarker = !outboundOnTop;
+      if (this.highlightedWpIndex === idx && this.highlightedIsReturn !== topIsReturnMarker) {
+        highlightedPairNeedsRefresh = true;
+      }
     });
+
+    if (highlightedPairNeedsRefresh) {
+      this._highlightTopWaypointLayer(this.highlightedWpIndex);
+    }
   }
 
   /**
@@ -3800,14 +3844,40 @@ export class MapManager {
   _cycleWaypointOverlapLayers(idx, latlng, { select = true } = {}) {
     if (idx === undefined || idx < 0 || !this._hasReturnWaypointPair(idx)) return false;
 
-    const wasOutboundOnTop = this.waypointLayerSwapped[idx] ?? true;
-    const switchedRoute = this._cycleOverlappingLayers(null, latlng);
-    if (!switchedRoute) {
-      this._toggleWaypointLayer(idx, { select: false });
-    } else if ((this.waypointLayerSwapped[idx] ?? true) === wasOutboundOnTop) {
-      this._toggleWaypointLayer(idx, { select: false });
+    const desiredOutboundOnTop = !(this.waypointLayerSwapped[idx] ?? true);
+    const switchedRoute = this._bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng);
+    if (!switchedRoute || (this.waypointLayerSwapped[idx] ?? true) !== desiredOutboundOnTop) {
+      this.waypointLayerSwapped[idx] = desiredOutboundOnTop;
+      this._resetWaypointMarkerZ();
     }
     if (select) this._highlightTopWaypointLayer(idx);
+    return true;
+  }
+
+  _bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng) {
+    if (!this.gradientPolylines.length) return false;
+
+    this._syncAllMarkerLegIds();
+
+    const source = 'mouse';
+    const proximityPx = ROUTE_OVERLAP_PROXIMITY_PX[source] ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
+    const nearby = this._findOverlappingRouteChunks(latlng, null, { proximityPx });
+    const legs = this._uniqueNearbyLegs(nearby);
+    if (legs.length < 2) return false;
+
+    const targetMarker = desiredOutboundOnTop
+      ? this.waypointMarkers[idx]
+      : this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
+    const desiredIsReturn = !desiredOutboundOnTop;
+    const targetLegs = this._markerLegIds(targetMarker).filter((leg) => legs.includes(leg));
+    const targetLeg = targetLegs.find((leg) => this._routeLegIsReturn(leg) === desiredIsReturn)
+      ?? targetLegs[0];
+    if (targetLeg === undefined) return false;
+
+    this._overlapCycleState.set(this._overlapStackKey(legs), targetLeg);
+    this._bringOverlapLegToFront(legs, targetLeg);
+    this._syncOverlapMarkerStack(legs, targetLeg, latlng);
+    this._debugRouteLayerCycle('waypoint-sync', { legs, targetLeg, desiredOutboundOnTop });
     return true;
   }
 

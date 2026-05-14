@@ -415,12 +415,24 @@ async function touchLongPressDrag(page, startPoint, endPoint) {
 test('double-clicking an overlapped waypoint cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
+  await expect.poll(async () =>
+    (await waypointPairState(page)).find((pair) => pair.number === 1)?.hasReturn ?? false
+  ).toBe(true);
 
   const before = await layerState(page);
   const waypoint = await page.locator('.leaflet-marker-pane .custom-waypoint-icon').first().boundingBox();
   expect(waypoint).not.toBeNull();
   await page.mouse.dblclick(waypoint.x + waypoint.width / 2, waypoint.y + waypoint.height / 2);
-  await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
+  await expect.poll(async () => {
+    const state = await layerState(page);
+    return {
+      routeChanged: state.topStroke !== before.topStroke,
+      returnAboveOutbound: state.returnAboveOutbound,
+    };
+  }).toMatchObject({
+    routeChanged: true,
+    returnAboveOutbound: true,
+  });
 });
 
 test('clicking a highlighted overlapped waypoint cycles visible layer and keeps highlight', async ({ page }) => {
@@ -1126,6 +1138,9 @@ test.describe('mobile weather cards', () => {
 test('double-clicking an overlapped route marker cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
+  await expect.poll(async () =>
+    (await waypointPairState(page)).find((pair) => pair.number === 1)?.hasReturn ?? false
+  ).toBe(true);
 
   const before = await layerState(page);
   const routePoint = await page.evaluate(() => {
@@ -1137,7 +1152,58 @@ test('double-clicking an overlapped route marker cycles visible layer order', as
   expect(routePoint).not.toBeNull();
 
   await page.mouse.dblclick(routePoint.x, routePoint.y);
-  await expect.poll(async () => (await layerState(page)).topStroke).not.toBe(before.topStroke);
+  await expect.poll(async () => {
+    const state = await layerState(page);
+    return {
+      routeChanged: state.topStroke !== before.topStroke,
+      returnAboveOutbound: state.returnAboveOutbound,
+    };
+  }).toMatchObject({
+    routeChanged: true,
+    returnAboveOutbound: !before.returnAboveOutbound,
+  });
+});
+
+test('route layer cycling moves an already highlighted waypoint to the switched-up leg', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+  await expect.poll(async () =>
+    (await waypointPairState(page)).find((pair) => pair.number === 1)?.hasReturn ?? false
+  ).toBe(true);
+
+  const waypoint = await topWaypointCenter(page, 1);
+  await page.mouse.dblclick(waypoint.x, waypoint.y);
+  await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
+    selectedCount: 1,
+    selectedIsReturn: true,
+    topIsReturn: true,
+  });
+
+  const before = await layerState(page);
+  const routePoint = await page.evaluate(() => {
+    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
+    if (!path) return null;
+    const rect = path.getBoundingClientRect();
+    return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
+  });
+  expect(routePoint).not.toBeNull();
+
+  await page.mouse.dblclick(routePoint.x, routePoint.y);
+  await expect.poll(async () => {
+    const state = await layerState(page);
+    const selected = await selectedWaypointState(page, 1);
+    return {
+      routeChanged: state.topStroke !== before.topStroke,
+      returnAboveOutbound: state.returnAboveOutbound,
+      selectedIsReturn: selected.selectedIsReturn,
+      topIsReturn: selected.topIsReturn,
+    };
+  }).toMatchObject({
+    routeChanged: true,
+    returnAboveOutbound: false,
+    selectedIsReturn: false,
+    topIsReturn: false,
+  });
 });
 
 test('clicking the selected route hit layer still inserts a waypoint', async ({ page }) => {
