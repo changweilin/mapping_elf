@@ -381,6 +381,7 @@ export class MapManager {
     marker.setIcon(this._createIcon(index));
     this._applyColorToMarker(marker, index);
     marker._bindWaypointDomFallback?.();
+    this._restoreWaypointHighlightDom();
   }
 
   _flushDeferredWaypointIconUpdates() {
@@ -1120,6 +1121,7 @@ export class MapManager {
 
     marker.on('mousedown', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
       if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
       startMouseLongPress(e.originalEvent);
     });
@@ -1169,6 +1171,8 @@ export class MapManager {
         _lastWaypointTouchTapAt = now;
         _lastWaypointTouchTapX = touch.clientX;
         _lastWaypointTouchTapY = touch.clientY;
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this._scheduleWaypointSelect(idx, false, marker.getLatLng());
         return false;
       }
 
@@ -1394,16 +1398,19 @@ export class MapManager {
     };
     marker.on('touchstart', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
       if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
       startTouchLongPress(e.originalEvent);
     });
     marker.on('touchmove', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
       if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
       moveTouchLongPress(e.originalEvent);
     });
     marker.on('touchend', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
       if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
       finishTouchLongPress(e.originalEvent);
     });
@@ -1420,8 +1427,6 @@ export class MapManager {
       el._mappingElfWaypointDomBound = true;
       el.addEventListener('mousedown', (oe) => {
         if (this._isWeatherCardDomTarget(oe.target)) {
-          oe._mappingElfWaypointDomHandled = true;
-          oe.stopPropagation();
           return;
         }
         if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -1431,13 +1436,40 @@ export class MapManager {
         oe.preventDefault();
         startMouseLongPress(oe);
       }, { capture: true });
-      el.addEventListener('mouseup', () => {
+      el.addEventListener('mouseup', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
         if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
+        if (oe.button !== 0 || Date.now() - this._lastMultiTouchAt < 700) return;
+        if (_dragModeActive || _justDragged) return;
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this._scheduleWaypointSelect(idx, false, marker.getLatLng());
       }, { capture: true });
       el.addEventListener('mouseleave', () => {
         if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
       }, { capture: true });
+      el.addEventListener('click', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
+        oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
+        oe.preventDefault();
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
+        if (_dragModeActive || _justDragged) {
+          if (_dragModeActive) _disableDrag();
+          return;
+        }
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this._scheduleWaypointSelect(idx, false, marker.getLatLng());
+      }, { capture: true });
       el.addEventListener('dblclick', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
         if (this._isWeatherBadgeDomTarget(oe.target)) {
           oe.preventDefault?.();
           oe.stopPropagation?.();
@@ -1459,8 +1491,6 @@ export class MapManager {
           return;
         }
         if (this._isWeatherCardDomTarget(oe.target)) {
-          oe._mappingElfWaypointDomHandled = true;
-          oe.stopPropagation();
           return;
         }
         if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -1475,8 +1505,6 @@ export class MapManager {
           return;
         }
         if (this._isWeatherCardDomTarget(oe.target)) {
-          oe._mappingElfWaypointDomHandled = true;
-          oe.stopPropagation();
           return;
         }
         if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -1486,8 +1514,6 @@ export class MapManager {
       }, { passive: false, capture: true });
       el.addEventListener('touchend', (oe) => {
         if (this._isWeatherCardDomTarget(oe.target)) {
-          oe._mappingElfWaypointDomHandled = true;
-          oe.stopPropagation();
           return;
         }
         if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -1498,8 +1524,6 @@ export class MapManager {
       }, { passive: false, capture: true });
       el.addEventListener('touchcancel', (oe) => {
         if (this._isWeatherCardDomTarget(oe.target)) {
-          oe._mappingElfWaypointDomHandled = true;
-          oe.stopPropagation();
           return;
         }
         if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -1539,8 +1563,7 @@ export class MapManager {
       }
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
-        // Requirement 1: Toggle highlight on single click
-        this._scheduleWaypointSelect(idx, false, true);
+        this._scheduleWaypointSelect(idx, false, marker.getLatLng());
       }
     });
 
@@ -1554,12 +1577,7 @@ export class MapManager {
       this._clearWaypointClickTimeout();
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
-        if (this._hasReturnWaypointPair(idx)) {
-          this._cycleWaypointOverlapLayers(idx, marker.getLatLng(), { select: false });
-          this._deferTopWaypointLayerHighlight(idx);
-        } else {
-          this._deferWaypointSelect(idx, false, true);
-        }
+        this._cycleWaypointLayerThenSelect(idx, false, marker.getLatLng());
       }
     };
 
@@ -2302,7 +2320,7 @@ export class MapManager {
           if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
           return;
         }
-        if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true);
+        if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
       });
 
       const handleReturnWaypointDoubleClick = (e) => {
@@ -2313,8 +2331,7 @@ export class MapManager {
         L.DomEvent.stopPropagation(e?.originalEvent ? e : oe);
         if (Date.now() - this._lastMultiTouchAt < 700) return;
         this._clearWaypointClickTimeout();
-        this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
-        this._deferTopWaypointLayerHighlight(marker._wpIndex);
+        this._cycleWaypointLayerThenSelect(marker._wpIndex, true, marker.getLatLng());
       };
 
       marker.on('dblclick', handleReturnWaypointDoubleClick);
@@ -2373,6 +2390,7 @@ export class MapManager {
           _lastReturnTouchTapAt = now;
           _lastReturnTouchTapX = touch.clientX;
           _lastReturnTouchTapY = touch.clientY;
+          if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
           return false;
         }
 
@@ -2638,10 +2656,12 @@ export class MapManager {
       });
       marker.on('mousemove touchmove', (e) => {
         if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
+        if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
         moveLP(e);
       });
       marker.on('mouseup touchend', (e) => {
         if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
+        if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
         if (e.originalEvent?.type?.startsWith('touch')) {
           handleReturnWaypointTouchTap(e.originalEvent);
         }
@@ -2670,8 +2690,6 @@ export class MapManager {
             return;
           }
           if (this._isWeatherCardDomTarget(oe.target)) {
-            oe._mappingElfReturnWaypointDomHandled = true;
-            oe.stopPropagation();
             return;
           }
           if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -2682,7 +2700,24 @@ export class MapManager {
 
         el.addEventListener('mousedown', wrap(startLP), { capture: true });
         el.addEventListener('mousemove', wrap(moveLP), { capture: true });
+        el.addEventListener('click', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
+          if (this._isWeatherBadgeDomTarget(oe.target)) return;
+          oe._mappingElfReturnWaypointDomHandled = true;
+          oe.stopPropagation();
+          oe.preventDefault();
+          if (Date.now() - this._lastMultiTouchAt < 700) return;
+          if (_returnDragActive || _returnJustDragged) return;
+          if (pt.wpIndex !== undefined) {
+            this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
+          }
+        }, { capture: true });
         el.addEventListener('dblclick', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
           if (this._isWeatherBadgeDomTarget(oe.target)) {
             oe.preventDefault?.();
             oe.stopPropagation?.();
@@ -2695,20 +2730,21 @@ export class MapManager {
         }, { capture: true });
         el.addEventListener('mouseup', (oe) => {
           if (this._isWeatherCardDomTarget(oe.target)) {
-            oe._mappingElfReturnWaypointDomHandled = true;
-            oe.stopPropagation();
             return;
           }
           if (this._isWeatherBadgeDomTarget(oe.target)) return;
           oe._mappingElfReturnWaypointDomHandled = true;
           cancelLP();
+          if (oe.button !== 0 || Date.now() - this._lastMultiTouchAt < 700) return;
+          if (_returnDragActive || _returnJustDragged) return;
+          if (pt.wpIndex !== undefined) {
+            this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
+          }
         }, { capture: true });
         el.addEventListener('touchstart', wrap(startLP), { passive: false, capture: true });
         el.addEventListener('touchmove', wrap(moveLP), { passive: false, capture: true });
         el.addEventListener('touchend', (oe) => {
           if (this._isWeatherCardDomTarget(oe.target)) {
-            oe._mappingElfReturnWaypointDomHandled = true;
-            oe.stopPropagation();
             return;
           }
           if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -2720,8 +2756,6 @@ export class MapManager {
         }, { passive: false, capture: true });
         el.addEventListener('touchcancel', (oe) => {
           if (this._isWeatherCardDomTarget(oe.target)) {
-            oe._mappingElfReturnWaypointDomHandled = true;
-            oe.stopPropagation();
             return;
           }
           if (this._isWeatherBadgeDomTarget(oe.target)) return;
@@ -2736,6 +2770,7 @@ export class MapManager {
       setTimeout(bindReturnWaypointDomFallback, 0);
       this.returnWaypointMarkers.push(marker);
     });
+    this._restoreWaypointHighlightDom();
     this._syncWeatherBadgeOpenStates();
   }
 
@@ -3783,17 +3818,59 @@ export class MapManager {
     }
   }
 
-  _scheduleWaypointSelect(wpIndex, isReturn = false, shouldToggle = false) {
+  _waypointSelectionLatLng(wpIndex, isReturn = false) {
+    const marker = isReturn
+      ? this.returnWaypointMarkers.find((m) => m._wpIndex === wpIndex)
+      : this.waypointMarkers[wpIndex];
+    if (marker?.getLatLng) return marker.getLatLng();
+
+    const wp = this.waypoints[wpIndex];
+    return wp ? L.latLng(wp[0], wp[1]) : null;
+  }
+
+  _isWaypointHighlighted(wpIndex, isReturn = false) {
+    return this.highlightedWpIndex === wpIndex && this.highlightedIsReturn === isReturn;
+  }
+
+  _selectWaypointFromMap(wpIndex, isReturn = false, latlng = null) {
+    if (this._isWaypointHighlighted(wpIndex, isReturn) && this._hasReturnWaypointPair(wpIndex)) {
+      this._cycleWaypointOverlapLayers(
+        wpIndex,
+        latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
+        { select: false }
+      );
+      this._highlightTopWaypointLayer(wpIndex);
+      return;
+    }
+
+    this.onWaypointSelect?.(wpIndex, isReturn, false);
+  }
+
+  _scheduleWaypointSelect(wpIndex, isReturn = false, latlng = null) {
     this._clearWaypointClickTimeout();
     this._waypointClickTimeout = setTimeout(() => {
       this._waypointClickTimeout = null;
-      this.onWaypointSelect?.(wpIndex, isReturn, shouldToggle);
+      this._selectWaypointFromMap(wpIndex, isReturn, latlng);
     }, WAYPOINT_SINGLE_TAP_DELAY_MS);
   }
 
   _deferWaypointSelect(wpIndex, isReturn = false, shouldToggle = false) {
     this._clearWaypointClickTimeout();
     setTimeout(() => this.onWaypointSelect?.(wpIndex, isReturn, shouldToggle), 0);
+  }
+
+  _cycleWaypointLayerThenSelect(wpIndex, isReturn = false, latlng = null) {
+    if (this._hasReturnWaypointPair(wpIndex)) {
+      this._cycleWaypointOverlapLayers(
+        wpIndex,
+        latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
+        { select: false }
+      );
+      this._deferTopWaypointLayerHighlight(wpIndex);
+      return;
+    }
+
+    this._deferWaypointSelect(wpIndex, isReturn, false);
   }
 
   _deferTopWaypointLayerHighlight(idx) {
@@ -3843,6 +3920,21 @@ export class MapManager {
     return idx >= 0
       && idx < this.waypointMarkers.length
       && this.returnWaypointMarkers.some((m) => m._wpIndex === idx);
+  }
+
+  _restoreWaypointHighlightDom() {
+    if (this.highlightedWpIndex < 0) return;
+    const m = this.highlightedIsReturn
+      ? this.returnWaypointMarkers.find((x) => x._wpIndex === this.highlightedWpIndex)
+      : this.waypointMarkers[this.highlightedWpIndex];
+    if (!m) return;
+
+    const el = m.getElement();
+    el?.classList.add('is-selected');
+    if (el?.classList.contains('has-weather-card')) {
+      el.classList.add('has-highlighted-weather-card');
+    }
+    m.setZIndexOffset(WAYPOINT_Z_SELECTED);
   }
 
   /** Highlight an outbound waypoint marker by index. Bumps the marker's

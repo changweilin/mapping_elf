@@ -244,6 +244,25 @@ async function waypointPairState(page) {
   });
 }
 
+async function selectedWaypointState(page, number) {
+  return page.evaluate((targetNumber) => {
+    const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .filter((el) => Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === targetNumber)
+      .map((el) => ({
+        isReturn: el.classList.contains('return-leg'),
+        isSelected: el.classList.contains('is-selected'),
+        z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+      }));
+    const selected = markers.filter((marker) => marker.isSelected);
+    const top = markers.slice().sort((a, b) => b.z - a.z)[0] || null;
+    return {
+      selectedCount: selected.length,
+      selectedIsReturn: selected[0]?.isReturn ?? null,
+      topIsReturn: top?.isReturn ?? null,
+    };
+  }, number);
+}
+
 async function topWaypointCenter(page, number) {
   const target = await page.evaluate((targetNumber) => {
     const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
@@ -402,6 +421,29 @@ test('double-clicking an overlapped waypoint cycles visible layer order', async 
   expect(waypoint).not.toBeNull();
   await page.mouse.dblclick(waypoint.x + waypoint.width / 2, waypoint.y + waypoint.height / 2);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
+});
+
+test('clicking a highlighted overlapped waypoint cycles visible layer and keeps highlight', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  await page.locator('.leaflet-marker-pane .custom-waypoint-icon:not(.return-leg)')
+    .filter({ has: page.locator('.wp-icon-inner > span', { hasText: '1' }) })
+    .first()
+    .locator('.wp-icon-inner')
+    .click();
+  await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
+    selectedCount: 1,
+    selectedIsReturn: false,
+    topIsReturn: false,
+  });
+
+  await page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-selected .wp-icon-inner').click();
+  await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
+    selectedCount: 1,
+    selectedIsReturn: true,
+    topIsReturn: true,
+  });
 });
 
 test('waypoint marker text is not selectable during long press gestures', async ({ page }) => {
@@ -725,6 +767,66 @@ test('full weather card highlight centers the card and closing it centers the wa
   expect(waypointOffset).not.toBeNull();
   expect(Math.abs(waypointOffset.dx)).toBeLessThan(45);
   expect(Math.abs(waypointOffset.dy)).toBeLessThan(60);
+});
+
+test('desktop waypoint weather card controls stay clickable inside the marker', async ({ page }) => {
+  const loadedCells = (weather, temp) => ({
+    _weatherLoaded: true,
+    _weatherLoadState: 'loaded',
+    weather,
+    _icon: weather.split(' ')[0],
+    temp,
+    precipitation: '0 mm',
+    precipProb: '10%',
+    windSpeed: '10 km/h',
+  });
+
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    importedTrackSession: {
+      coords: [
+        [24.00, 121.00],
+        [24.80, 121.80],
+      ],
+      elevations: [100, 140],
+      waypoints: [
+        [24.00, 121.00],
+        [24.80, 121.80],
+      ],
+      waypointMeta: [
+        { waypointId: 'desktop-card-control-start', label: 'Start', cumDistM: 0 },
+        { waypointId: 'desktop-card-control-end', label: 'End', cumDistM: 120000 },
+      ],
+      intermediates: [],
+    },
+    weatherCells: {
+      'wp:desktop-card-control-start': loadedCells('sunny Clear', '21 C'),
+      'wp:desktop-card-control-end': loadedCells('cloudy Cloudy', '22 C'),
+    },
+  });
+
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded')).toHaveCount(2);
+  await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+  await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
+
+  const card = page.locator('.weather-card.is-highlighted').first();
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute('data-col-idx', '0');
+  await expect(card).toHaveClass(/full/);
+
+  await card.locator('.q-next').click();
+  await expect(card).not.toHaveAttribute('data-col-idx', '0');
+  const nextColIdx = await card.getAttribute('data-col-idx');
+  expect(nextColIdx).toBeTruthy();
+
+  await card.locator('.q-prev').click();
+  await expect(card).toHaveAttribute('data-col-idx', '0');
+
+  await card.locator('.q-toggle').click();
+  await expect(card).not.toHaveClass(/full/);
+
+  await card.locator('.q-close').click();
+  await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
 });
 
 test('full-card navigation keeps waypoint and intermediate cards centered', async ({ page }) => {
