@@ -4,6 +4,16 @@ Version: 0.0.0
 
 Mapping Elf 是一個強大且互動式的地圖應用程式，專為戶外愛好者設計，提供即時地圖瀏覽、路線規劃、高度剖面圖、距離統計與詳細的沿途天氣預報等功能。
 
+## 🖼️ 玉山步道路線天氣卡畫面 (Screenshots)
+
+### 電腦版
+
+![電腦版：在地圖上查看玉山步道路線的小格天氣卡](assets/readme/yushan-weather-card-desktop.png)
+
+### 手機版
+
+![手機版：在地圖上查看玉山步道路線的小格天氣卡](assets/readme/yushan-weather-card-mobile.png)
+
 ## 🌟 主要功能 (Features)
 
 *   **多模式路線規劃：** 支援步行、健行、越野跑、自行車、駕車等多種運動模式。可規劃單程、來回或是 O 型環狀路線。
