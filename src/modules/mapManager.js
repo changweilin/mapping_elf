@@ -110,6 +110,35 @@ const ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX = {
   touch: 18,
 };
 const ROUTE_LAYER_DEBUG_KEY = 'mappingElfDebugRouteLayerCycle';
+const WAYPOINT_DOUBLE_TAP_DELAY_MS = 360;
+// Single-tap selection must wait longer than the double-tap window so layer
+// cycling can cancel it before highlight/z-index state changes.
+const WAYPOINT_SINGLE_TAP_DELAY_MS = WAYPOINT_DOUBLE_TAP_DELAY_MS + 40;
+const WAYPOINT_DOUBLE_TAP_DISTANCE_PX = 30;
+const WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
+const WAYPOINT_Z_BASE = 1300;
+const WAYPOINT_Z_PAIR_STEP = 120;
+const WAYPOINT_Z_SELECTED = 1800;
+const WAYPOINT_PIN_HEIGHT_RATIO = 1.44;
+const INTERMEDIATE_Z_OFFSET = -300;
+const INTERMEDIATE_MARKER_SIZE = 18;
+const HOVER_MARKER_SIZE = 10;
+
+function waypointPinMetrics(size) {
+  const height = Math.round(size * WAYPOINT_PIN_HEIGHT_RATIO);
+  return {
+    width: size,
+    height,
+    anchor: [size / 2, height],
+  };
+}
+
+function waypointPinSvgHtml() {
+  return '<svg class="wp-pin-svg" viewBox="0 0 36 52" aria-hidden="true" focusable="false">' +
+    '<path class="wp-pin-body" d="M18 1.7C9.05 1.7 1.8 8.95 1.8 17.9c0 12.35 16.2 32.4 16.2 32.4s16.2-20.05 16.2-32.4C34.2 8.95 26.95 1.7 18 1.7Z"/>' +
+    '<circle class="wp-pin-dot" cx="18" cy="17.9" r="8.1"/>' +
+    '</svg>';
+}
 
 export class MapManager {
   constructor(containerId, onWaypointChange) {
@@ -120,6 +149,7 @@ export class MapManager {
     this.onWaypointSelect = null; // callback(wpIndex)
     this.onFrozenInteraction = null; // callback(reason)
     this.onWeatherBadgeClick = null; // callback(wpIndex)
+    this.onWaypointDragEnd = null; // callback()
     this.isRoundTrip = false;
     this.turnaroundLatLng = null; // [lat,lng] of last forward waypoint for return-leg gradient split
     this.waypoints = [];
@@ -144,7 +174,14 @@ export class MapManager {
     this.dragLine = null;
     this.dragLine = null;
     this._dragWpIndex = undefined;
-    this._weatherPopups = new Map(); // Leaflet popups for weather cards (colIdx -> popup)
+    this._lastMultiTouchAt = 0;
+    this._blockMapClickTimer = null;
+    this._activeWaypointGestureDepth = 0;
+    this._activeWaypointDragDepth = 0;
+    this._pendingWaypointIconUpdates = new Set();
+    this._pendingAllWaypointIconUpdate = false;
+    this._weatherPopups = new Map(); // Inline marker weather cards (colIdx -> { marker, badge, slot })
+    this._weatherPopupCloseTimers = new Map();
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
     this._waypointClickTimeout = null; // Delay waypoint click selection so dblclick can cancel it first
     // Map cursor — placed by GPS button (goToMyLocation). Long-press / click
@@ -165,6 +202,7 @@ export class MapManager {
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       zoomControl: true,
+      touchZoom: true,
       wheelDebounceTime: 24,
     });
 
@@ -177,6 +215,12 @@ export class MapManager {
       });
     }
     this.tileLayers.topo.addTo(this.map);
+
+    const noteContainerMultiTouch = (event) => {
+      if (this._isMultiTouchEvent(event)) this._noteMultiTouchGesture();
+    };
+    this.map.getContainer().addEventListener('touchstart', noteContainerMultiTouch, { passive: true });
+    this.map.getContainer().addEventListener('touchmove', noteContainerMultiTouch, { passive: true });
 
     this.map.on('zoomstart', () => {
       this._setMapZooming(true);
@@ -194,6 +238,7 @@ export class MapManager {
         this._notifyFrozenInteraction('map-click');
         return;
       }
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
       if (this.ignoreMapClick) return;
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
@@ -223,8 +268,19 @@ export class MapManager {
 
     // Prevent waypoint creation on long-press ( > 500ms )
     let mapPressStartTime = 0;
-    const handlePressStart = () => { mapPressStartTime = Date.now(); };
-    const handlePressEnd = () => {
+    const handlePressStart = (e) => {
+      if (this._isMultiTouchEvent(e?.originalEvent || e)) {
+        mapPressStartTime = 0;
+        this._noteMultiTouchGesture();
+        return;
+      }
+      mapPressStartTime = Date.now();
+    };
+    const handlePressEnd = (e) => {
+      if (this._isMultiTouchEvent(e?.originalEvent || e)) {
+        this._noteMultiTouchGesture();
+        return;
+      }
       if (Date.now() - mapPressStartTime > 500) {
         this._blockMapClick();
       }
@@ -247,13 +303,116 @@ export class MapManager {
     el.classList.toggle('is-map-zooming', isZooming);
   }
 
-  _blockMapClick() {
+  _isMultiTouchEvent(event) {
+    return !!(
+      event?.touches?.length > 1 ||
+      event?.targetTouches?.length > 1 ||
+      event?.changedTouches?.length > 1
+    );
+  }
+
+  _noteMultiTouchGesture() {
+    this._lastMultiTouchAt = Date.now();
+    this._blockMapClick(700);
+  }
+
+  _clearNativeSelection() {
+    try {
+      window.getSelection?.()?.removeAllRanges?.();
+    } catch (_) { }
+  }
+
+  _blockMapClick(duration = 300) {
     this.ignoreMapClick = true;
-    setTimeout(() => { this.ignoreMapClick = false; }, 300);
+    if (this._blockMapClickTimer) clearTimeout(this._blockMapClickTimer);
+    this._blockMapClickTimer = setTimeout(() => {
+      this.ignoreMapClick = false;
+      this._blockMapClickTimer = null;
+    }, duration);
+  }
+
+  isWaypointDragging() {
+    return this._activeWaypointDragDepth > 0;
+  }
+
+  isWaypointInteracting() {
+    return this._activeWaypointGestureDepth > 0 || this.isWaypointDragging();
+  }
+
+  _beginWaypointGesture() {
+    this._activeWaypointGestureDepth++;
+  }
+
+  _endWaypointGesture() {
+    if (this._activeWaypointGestureDepth <= 0) return;
+    this._activeWaypointGestureDepth--;
+    this._flushWaypointInteractionUpdates();
+  }
+
+  _beginWaypointDrag() {
+    this._activeWaypointDragDepth++;
+  }
+
+  _endWaypointDrag() {
+    if (this._activeWaypointDragDepth <= 0) return;
+    this._activeWaypointDragDepth--;
+    this._flushWaypointInteractionUpdates();
+  }
+
+  _flushWaypointInteractionUpdates() {
+    if (!this.isWaypointInteracting()) {
+      this._flushDeferredWaypointIconUpdates();
+      this.onWaypointDragEnd?.();
+    }
+  }
+
+  _deferWaypointIconUpdate(index = null) {
+    if (Number.isInteger(index)) {
+      this._pendingWaypointIconUpdates.add(index);
+    } else {
+      this._pendingAllWaypointIconUpdate = true;
+    }
+  }
+
+  _refreshWaypointIcon(index) {
+    const marker = this.waypointMarkers[index];
+    if (!marker) return;
+    marker._wpIndex = index;
+    marker.setIcon(this._createIcon(index));
+    this._applyColorToMarker(marker, index);
+    marker._bindWaypointDomFallback?.();
+    this._restoreWaypointHighlightDom();
+  }
+
+  _flushDeferredWaypointIconUpdates() {
+    if (this.isWaypointDragging()) return;
+    if (this._pendingAllWaypointIconUpdate) {
+      this._pendingAllWaypointIconUpdate = false;
+      this._pendingWaypointIconUpdates.clear();
+      this._updateMarkerIcons(true);
+      return;
+    }
+    if (this._pendingWaypointIconUpdates.size === 0) return;
+    const updates = [...this._pendingWaypointIconUpdates];
+    this._pendingWaypointIconUpdates.clear();
+    updates.forEach((index) => this._refreshWaypointIcon(index));
+    this._syncWeatherBadgeOpenStates();
   }
 
   _notifyFrozenInteraction(reason) {
     this.onFrozenInteraction?.(reason);
+  }
+
+  _emitWaypointChange() {
+    const cb = this.onWaypointChange;
+    if (!cb) return;
+    const snapshot = this.waypoints.map((wp) => [wp[0], wp[1]]);
+    const notify = () => cb(snapshot);
+    if (this.isWaypointInteracting()) {
+      (window.queueMicrotask || ((fn) => Promise.resolve().then(fn)))(notify);
+      return;
+    }
+    notify();
   }
 
   _scheduleFrozenInteractionNotice(e, reason, delay = 500) {
@@ -337,10 +496,18 @@ export class MapManager {
     const el = document.createElement('div');
     el.className = 'waypoint-trash-zone hidden';
     el.innerHTML =
+      '<div class="waypoint-drop-target waypoint-drop-cancel" data-drop-action="cancel">' +
+      '<svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">' +
+      '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>' +
+      '</svg>' +
+      '<span class="waypoint-trash-label">取消</span>' +
+      '</div>' +
+      '<div class="waypoint-drop-target waypoint-drop-delete" data-drop-action="delete">' +
       '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true">' +
       '<path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/>' +
       '</svg>' +
-      '<span class="waypoint-trash-label">拖曳至此刪除</span>';
+      '<span class="waypoint-trash-label">移除</span>' +
+      '</div>';
     document.body.appendChild(el);
     this.trashZoneEl = el;
     return el;
@@ -348,7 +515,8 @@ export class MapManager {
 
   showTrashZone(type = 'map') {
     const el = this.ensureTrashZone();
-    el.classList.remove('hidden', 'is-hover', 'is-map-drag', 'is-list-drag', 'is-table-drag');
+    el.classList.remove('hidden', 'is-hover', 'is-cancel-hover', 'is-map-drag', 'is-list-drag', 'is-table-drag');
+    el.querySelectorAll('.waypoint-drop-target').forEach((target) => target.classList.remove('is-hover'));
     // Clear inline positioning from a previous 'table' show
     el.style.top = '';
     el.style.left = '';
@@ -386,26 +554,47 @@ export class MapManager {
   hideTrashZone() {
     if (!this.trashZoneEl) return;
     this.trashZoneEl.classList.add('hidden');
-    this.trashZoneEl.classList.remove('is-hover');
+    this.trashZoneEl.classList.remove('is-hover', 'is-cancel-hover');
+    this.trashZoneEl.querySelectorAll('.waypoint-drop-target').forEach((target) => target.classList.remove('is-hover'));
   }
 
-  isOverTrashZone(clientX, clientY) {
+  getTrashZoneDropAction(clientX, clientY) {
     if (clientX == null || clientY == null) return false;
     if (!this.trashZoneEl || this.trashZoneEl.classList.contains('hidden')) return false;
-    const rect = this.trashZoneEl.getBoundingClientRect();
-    // Use rectangular bounds check with a small buffer
-    return (
+    const isInRect = (rect) => (
       clientX >= rect.left - 10 &&
       clientX <= rect.right + 10 &&
       clientY >= rect.top - 10 &&
       clientY <= rect.bottom + 10
     );
+
+    const targets = Array.from(this.trashZoneEl.querySelectorAll('[data-drop-action]'));
+    for (const target of targets) {
+      const rect = target.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (isInRect(rect)) return target.dataset.dropAction || false;
+    }
+
+    const rect = this.trashZoneEl.getBoundingClientRect();
+    return isInRect(rect) ? 'delete' : false;
+  }
+
+  isOverTrashZone(clientX, clientY) {
+    return this.getTrashZoneDropAction(clientX, clientY) === 'delete';
   }
 
   updateTrashZoneHover(clientX, clientY) {
-    const isOver = this.isOverTrashZone(clientX, clientY);
-    if (this.trashZoneEl) this.trashZoneEl.classList.toggle('is-hover', isOver);
-    return isOver;
+    const action = this.getTrashZoneDropAction(clientX, clientY);
+    const isDelete = action === 'delete';
+    const isCancel = action === 'cancel';
+    if (this.trashZoneEl) {
+      this.trashZoneEl.classList.toggle('is-hover', isDelete);
+      this.trashZoneEl.classList.toggle('is-cancel-hover', isCancel);
+      this.trashZoneEl.querySelectorAll('[data-drop-action]').forEach((target) => {
+        target.classList.toggle('is-hover', target.dataset.dropAction === action);
+      });
+    }
+    return isDelete;
   }
 
   // ===== Map cursor (placed by GPS button — not a waypoint) =====
@@ -506,6 +695,7 @@ export class MapManager {
 
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
       this._openMapCursorMenu();
     });
 
@@ -535,7 +725,13 @@ export class MapManager {
     });
 
     marker.on('touchstart', (e) => {
+      if (this._isMultiTouchEvent(e.originalEvent)) {
+        this._noteMultiTouchGesture();
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+        return;
+      }
       const t = e.originalEvent.touches[0];
+      if (!t) return;
       touchStartX = t.clientX;
       touchStartY = t.clientY;
       lpTimer = setTimeout(() => {
@@ -546,13 +742,27 @@ export class MapManager {
     });
     marker.on('touchmove', (e) => {
       if (!lpTimer) return;
+      if (this._isMultiTouchEvent(e.originalEvent)) {
+        this._noteMultiTouchGesture();
+        clearTimeout(lpTimer);
+        lpTimer = null;
+        return;
+      }
       const t = e.originalEvent.touches[0];
+      if (!t) return;
       const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
       if (dx * dx + dy * dy > 64) {
         clearTimeout(lpTimer); lpTimer = null;
       }
     });
-    marker.on('touchend', () => {
+    marker.on('touchend', (e) => {
+      if (this._isMultiTouchEvent(e.originalEvent) || Date.now() - this._lastMultiTouchAt < 700) {
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+        return;
+      }
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    });
+    marker.on('touchcancel', () => {
       if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
     });
     marker.on('contextmenu', (e) => {
@@ -719,12 +929,14 @@ export class MapManager {
     const marker = L.marker([lat, lng], {
       icon,
       draggable: false,
+      zIndexOffset: WAYPOINT_Z_BASE,
     }).addTo(this.map);
     marker._wpIndex = idx;
 
     let _dragModeActive = false;
     let _justDragged = false;
     let _isTouchActive = false;
+    let _leafletDragStartLatLng = null;
 
     const _enableDrag = () => {
       _dragModeActive = true;
@@ -737,6 +949,28 @@ export class MapManager {
       _dragModeActive = false;
       marker.dragging.disable();
       marker.getElement()?.classList.remove('is-dragging');
+    };
+
+    const clientPointToLatLng = (clientX, clientY, source = 'mouse', anchorOffset = null) => {
+      const rect = this.map.getContainer().getBoundingClientRect();
+      const yOffset = anchorOffset ? 0 : (source === 'touch' ? 40 : 0);
+      return this.map.containerPointToLatLng([
+        clientX - rect.left + (anchorOffset?.x ?? 0),
+        clientY - rect.top - yOffset + (anchorOffset?.y ?? 0),
+      ]);
+    };
+
+    const markerAnchorOffsetFromClient = (latlng, clientX, clientY) => {
+      const rect = this.map.getContainer().getBoundingClientRect();
+      const anchorPoint = this.map.latLngToContainerPoint(latlng);
+      return {
+        x: anchorPoint.x - (clientX - rect.left),
+        y: anchorPoint.y - (clientY - rect.top),
+      };
+    };
+
+    const restoreMapDragging = () => {
+      setTimeout(() => this.map.dragging.enable(), 0);
     };
 
     // Desktop: right-click / context menu → Leaflet built-in drag.
@@ -757,54 +991,53 @@ export class MapManager {
 
     // Desktop: left-button long-press (500ms) → manual drag
     let _mouseLPTimer = null;
-    let _mouseStartX = 0, _mouseStartY = 0;
-    marker.on('mousedown', (e) => {
-      if (e.originalEvent.button !== 0 || _dragModeActive) return;
+    let _mousePendingClientX = 0, _mousePendingClientY = 0;
+    let _mouseStartClientX = 0, _mouseStartClientY = 0;
+    let _mouseGestureStarted = false;
+    const startMouseLongPress = (oe) => {
+      if (oe.button !== 0 || _dragModeActive) return;
+      L.DomEvent.stop(oe);
+      if (!_mouseGestureStarted) {
+        _mouseGestureStarted = true;
+        this._beginWaypointGesture();
+      }
 
-      _mouseStartX = e.originalEvent.clientX;
-      _mouseStartY = e.originalEvent.clientY;
+      _mousePendingClientX = oe.clientX;
+      _mousePendingClientY = oe.clientY;
+      _mouseStartClientX = oe.clientX;
+      _mouseStartClientY = oe.clientY;
+      this.map.dragging.disable();
 
       const cancelLP = () => {
         clearTimeout(_mouseLPTimer);
         _mouseLPTimer = null;
-        document.removeEventListener('mousemove', onMoveGuard);
-        document.removeEventListener('mouseup', cancelLP);
+        document.removeEventListener('mousemove', onPendingMove, true);
+        document.removeEventListener('mouseup', cancelLP, true);
+        if (!_dragModeActive) restoreMapDragging();
+        if (!_dragModeActive && _mouseGestureStarted) {
+          _mouseGestureStarted = false;
+          this._endWaypointGesture();
+        }
       };
-      const onMoveGuard = (ev) => {
-        const dx = ev.clientX - _mouseStartX, dy = ev.clientY - _mouseStartY;
-        if (dx * dx + dy * dy > 64) cancelLP();
+      const onPendingMove = (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        _mousePendingClientX = ev.clientX;
+        _mousePendingClientY = ev.clientY;
       };
 
       _mouseLPTimer = setTimeout(() => {
-        document.removeEventListener('mousemove', onMoveGuard);
-        document.removeEventListener('mouseup', cancelLP);
+        document.removeEventListener('mousemove', onPendingMove, true);
+        document.removeEventListener('mouseup', cancelLP, true);
         _mouseLPTimer = null;
-        let layerToggledByLongPress = false;
-        let manualDragMoved = false;
-
-        // Long-press on overlapping waypoint cycles the route/waypoint stack.
-        // Selection is applied on release so the highlight does not appear while
-        // the pointer/finger is still held down.
-        const wpIdx = this.waypointMarkers.indexOf(marker);
-        if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
-          this._cycleWaypointOverlapLayers(wpIdx, marker.getLatLng(), { select: false });
-          layerToggledByLongPress = true;
-        }
 
         if (this.isFrozen) {
-          if (layerToggledByLongPress) {
-            this._blockMapClick();
-            this._deferTopWaypointLayerHighlight(wpIdx);
-          } else {
-            this._notifyFrozenInteraction('waypoint-drag');
+          this._notifyFrozenInteraction('waypoint-drag');
+          restoreMapDragging();
+          if (_mouseGestureStarted) {
+            _mouseGestureStarted = false;
+            this._endWaypointGesture();
           }
-          return;
-        }
-
-        if (layerToggledByLongPress) {
-          this._blockMapClick();
-          const idx = this.waypointMarkers.indexOf(marker);
-          this._deferTopWaypointLayerHighlight(idx);
           return;
         }
 
@@ -813,18 +1046,33 @@ export class MapManager {
         marker.getElement()?.classList.add('is-dragging');
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
+        this._beginWaypointDrag();
 
+        const dragStartLatLng = marker.getLatLng();
+        const dragAnchorOffset = markerAnchorOffsetFromClient(
+          dragStartLatLng,
+          _mouseStartClientX,
+          _mouseStartClientY
+        );
         this._startRubberBand(marker);
 
-        const onMove = (ev) => {
-          manualDragMoved = true;
-          const latlng = this.map.mouseEventToLatLng(ev);
+        const moveTo = (clientX, clientY) => {
+          if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+          const latlng = clientPointToLatLng(clientX, clientY, 'mouse', dragAnchorOffset);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
-          this.updateTrashZoneHover(ev.clientX, ev.clientY);
+          this.updateTrashZoneHover(clientX, clientY);
+        };
+
+        const onMove = (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          moveTo(ev.clientX, ev.clientY);
         };
         const onUp = (ev) => {
-          const isOverTrash = this.isOverTrashZone(ev?.clientX, ev?.clientY);
+          ev.stopPropagation();
+          ev.preventDefault();
+          const dropAction = this.getTrashZoneDropAction(ev?.clientX, ev?.clientY);
           _dragModeActive = false;
           _justDragged = true;
           this._blockMapClick();
@@ -832,33 +1080,50 @@ export class MapManager {
           this.hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
-          this.map.dragging.enable();
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
+          restoreMapDragging();
+          document.removeEventListener('mousemove', onMove, true);
+          document.removeEventListener('mouseup', onUp, true);
           const idx = this.waypointMarkers.indexOf(marker);
-          if (layerToggledByLongPress && !manualDragMoved) {
-            this._deferTopWaypointLayerHighlight(idx);
-            return;
-          }
-          const pos = marker.getLatLng();
-          if (idx >= 0) {
-            if (isOverTrash) {
-              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-              this.removeWaypoint(idx);
-            } else {
-              this.waypoints[idx] = [pos.lat, pos.lng];
-              this.onWaypointChange(this.waypoints);
-              // Post-drag highlight (on release)
-              this.onWaypointSelect?.(idx, false);
+          try {
+            if (idx >= 0) {
+              if (dropAction === 'delete') {
+                if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+                this.removeWaypoint(idx);
+              } else if (dropAction === 'cancel') {
+                marker.setLatLng(dragStartLatLng);
+              } else {
+                const hasReleasePoint = Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY);
+                const pos = hasReleasePoint
+                  ? clientPointToLatLng(ev.clientX, ev.clientY, 'mouse', dragAnchorOffset)
+                  : marker.getLatLng();
+                marker.setLatLng(pos);
+                this.waypoints[idx] = [pos.lat, pos.lng];
+                this._emitWaypointChange();
+                // Post-drag highlight (on release)
+                this.onWaypointSelect?.(idx, false);
+              }
+            }
+          } finally {
+            this._endWaypointDrag();
+            if (_mouseGestureStarted) {
+              _mouseGestureStarted = false;
+              this._endWaypointGesture();
             }
           }
         };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
       }, 500);
 
-      document.addEventListener('mousemove', onMoveGuard);
-      document.addEventListener('mouseup', cancelLP);
+      document.addEventListener('mousemove', onPendingMove, true);
+      document.addEventListener('mouseup', cancelLP, true);
+    };
+
+    marker.on('mousedown', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
+      if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
+      startMouseLongPress(e.originalEvent);
     });
 
     // Touch: long-press (500ms) → manual drag (mirrors desktop handler).
@@ -867,46 +1132,94 @@ export class MapManager {
     // (500ms after the original touchstart) leaves the start position undefined,
     // causing the marker to jump off-screen on the first touchmove.
     let _longPressTimer = null;
-    let _touchStartX = 0, _touchStartY = 0;
+    let _touchPendingClientX = 0, _touchPendingClientY = 0;
+    let _touchStartClientX = 0, _touchStartClientY = 0;
+    let _touchPressActive = false;
+    let _touchTapHandledForPress = false;
+    let _touchGestureStarted = false;
+    let _lastWaypointTouchTapAt = 0;
+    let _lastWaypointTouchTapX = 0;
+    let _lastWaypointTouchTapY = 0;
     const getTouchPoint = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
+    const touchMovedBeyondTapTolerance = (touch) => {
+      if (!touch) return true;
+      const dx = touch.clientX - _touchStartClientX;
+      const dy = touch.clientY - _touchStartClientY;
+      return dx * dx + dy * dy > WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX ** 2;
+    };
+    const handleWaypointTouchTap = (oe) => {
+      const touch = oe?.changedTouches?.[0] || getTouchPoint(oe);
+      if (
+        !touch ||
+        _dragModeActive ||
+        touchMovedBeyondTapTolerance(touch) ||
+        Date.now() - this._lastMultiTouchAt < 700
+      ) {
+        _lastWaypointTouchTapAt = 0;
+        return false;
+      }
+
+      const now = Date.now();
+      const dx = touch.clientX - _lastWaypointTouchTapX;
+      const dy = touch.clientY - _lastWaypointTouchTapY;
+      const isDoubleTap =
+        _lastWaypointTouchTapAt > 0 &&
+        now - _lastWaypointTouchTapAt <= WAYPOINT_DOUBLE_TAP_DELAY_MS &&
+        dx * dx + dy * dy <= WAYPOINT_DOUBLE_TAP_DISTANCE_PX ** 2;
+
+      if (!isDoubleTap) {
+        _lastWaypointTouchTapAt = now;
+        _lastWaypointTouchTapX = touch.clientX;
+        _lastWaypointTouchTapY = touch.clientY;
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this._scheduleWaypointSelect(idx, false, marker.getLatLng());
+        return false;
+      }
+
+      _lastWaypointTouchTapAt = 0;
+      handleWaypointDoubleClick({ originalEvent: oe });
+      return true;
+    };
     const startTouchLongPress = (oe) => {
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        _isTouchActive = false;
+        cleanupPendingTouchListeners();
+        restoreMapDragging();
+        return;
+      }
       _isTouchActive = true;
       if (_dragModeActive) return;
       const touch = getTouchPoint(oe);
       if (!touch) return;
-      _touchStartX = touch.clientX;
-      _touchStartY = touch.clientY;
+      cleanupPendingTouchListeners();
+      oe.preventDefault?.();
+      this._clearNativeSelection();
+      if (!_touchGestureStarted) {
+        _touchGestureStarted = true;
+        this._beginWaypointGesture();
+      }
+      _touchPendingClientX = touch.clientX;
+      _touchPendingClientY = touch.clientY;
+      _touchStartClientX = touch.clientX;
+      _touchStartClientY = touch.clientY;
+      _touchPressActive = true;
+      _touchTapHandledForPress = false;
+      this.map.dragging.disable();
 
       _longPressTimer = setTimeout(() => {
         _longPressTimer = null;
-        let layerToggledByLongPress = false;
-        let manualDragMoved = false;
-
-        // Long-press on overlapping waypoint cycles the route/waypoint stack.
-        // Selection is applied on release so the highlight does not appear while
-        // the pointer/finger is still held down.
-        const wpIdx = this.waypointMarkers.indexOf(marker);
-        if (wpIdx >= 0 && this._hasReturnWaypointPair(wpIdx)) {
-          this._cycleWaypointOverlapLayers(wpIdx, marker.getLatLng(), { select: false });
-          layerToggledByLongPress = true;
-        }
+        cleanupPendingTouchListeners();
+        _touchPressActive = false;
 
         if (this.isFrozen) {
-          if (layerToggledByLongPress) {
-            this._blockMapClick();
-            this._deferTopWaypointLayerHighlight(wpIdx);
-          } else {
-            this._notifyFrozenInteraction('waypoint-drag');
+          this._notifyFrozenInteraction('waypoint-drag');
+          _isTouchActive = false;
+          restoreMapDragging();
+          if (_touchGestureStarted) {
+            _touchGestureStarted = false;
+            this._endWaypointGesture();
           }
-          _isTouchActive = false;
-          return;
-        }
-
-        if (layerToggledByLongPress) {
-          this._blockMapClick();
-          const idx = this.waypointMarkers.indexOf(marker);
-          this._deferTopWaypointLayerHighlight(idx);
-          _isTouchActive = false;
           return;
         }
 
@@ -915,31 +1228,50 @@ export class MapManager {
         marker.getElement()?.classList.add('is-dragging');
         if (navigator.vibrate) navigator.vibrate(40);
         this.map.dragging.disable();
+        this._beginWaypointDrag();
 
+        const dragStartLatLng = marker.getLatLng();
+        const dragAnchorOffset = markerAnchorOffsetFromClient(
+          dragStartLatLng,
+          _touchStartClientX,
+          _touchStartClientY
+        );
         this._startRubberBand(marker);
+        let didTouchDragMove = false;
 
         let lastTouchClientX = null, lastTouchClientY = null;
 
-        const onTouchMove = (ev) => {
-          ev.preventDefault();
-          manualDragMoved = true;
-          const t = ev.touches[0];
-          lastTouchClientX = t.clientX;
-          lastTouchClientY = t.clientY;
-          // 在手機版加入 Y 軸負偏移(-40px)，讓圖標浮在手指上方避免被遮擋
-          const rect = this.map.getContainer().getBoundingClientRect();
-          const x = t.clientX - rect.left;
-          const y = t.clientY - rect.top - 40;
-          const latlng = this.map.containerPointToLatLng([x, y]);
+        const moveTo = (clientX, clientY, countAsMove = true) => {
+          if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+          lastTouchClientX = clientX;
+          lastTouchClientY = clientY;
+          if (countAsMove) didTouchDragMove = true;
+          const latlng = clientPointToLatLng(clientX, clientY, 'touch', dragAnchorOffset);
           marker.setLatLng(latlng);
           this._updateRubberBand(latlng);
-          this.updateTrashZoneHover(t.clientX, t.clientY);
+          this.updateTrashZoneHover(clientX, clientY);
+        };
+
+        const onTouchMove = (ev) => {
+          if (this._isMultiTouchEvent(ev)) {
+            this._noteMultiTouchGesture();
+            onTouchCancel();
+            return;
+          }
+          ev.preventDefault();
+          const t = ev.touches[0];
+          if (!t) return;
+          moveTo(t.clientX, t.clientY);
         };
         const onTouchEnd = (ev) => {
+          if (this._isMultiTouchEvent(ev) || Date.now() - this._lastMultiTouchAt < 700) {
+            onTouchCancel();
+            return;
+          }
           const ct = ev?.changedTouches?.[0];
           const cx = ct?.clientX ?? lastTouchClientX;
           const cy = ct?.clientY ?? lastTouchClientY;
-          const isOverTrash = this.isOverTrashZone(cx, cy);
+          const dropAction = this.getTrashZoneDropAction(cx, cy);
           _dragModeActive = false;
           _isTouchActive = false;
           _justDragged = true;
@@ -948,89 +1280,266 @@ export class MapManager {
           this.hideTrashZone();
           setTimeout(() => { _justDragged = false; }, 150);
           marker.getElement()?.classList.remove('is-dragging');
-          this.map.dragging.enable();
-          document.removeEventListener('touchmove', onTouchMove);
-          document.removeEventListener('touchend', onTouchEnd);
+          restoreMapDragging();
+          document.removeEventListener('touchmove', onTouchMove, true);
+          document.removeEventListener('touchend', onTouchEnd, true);
+          document.removeEventListener('touchcancel', onTouchCancel, true);
           const idx = this.waypointMarkers.indexOf(marker);
-          if (layerToggledByLongPress && !manualDragMoved) {
-            this._deferTopWaypointLayerHighlight(idx);
-            return;
-          }
-          const pos = marker.getLatLng();
-          if (idx >= 0) {
-            if (isOverTrash) {
-              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-              this.removeWaypoint(idx);
-            } else {
-              this.waypoints[idx] = [pos.lat, pos.lng];
-              this.onWaypointChange(this.waypoints);
-              // Post-drag highlight (on release)
-              this.onWaypointSelect?.(idx, false);
+          try {
+            if (idx >= 0) {
+              if (dropAction === 'delete') {
+                if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+                this.removeWaypoint(idx);
+              } else if (dropAction === 'cancel' || !didTouchDragMove) {
+                marker.setLatLng(dragStartLatLng);
+              } else {
+                const hasReleasePoint = Number.isFinite(cx) && Number.isFinite(cy);
+                const pos = hasReleasePoint
+                  ? clientPointToLatLng(cx, cy, 'touch', dragAnchorOffset)
+                  : marker.getLatLng();
+                marker.setLatLng(pos);
+                this.waypoints[idx] = [pos.lat, pos.lng];
+                this._emitWaypointChange();
+                // Post-drag highlight (on release)
+                this.onWaypointSelect?.(idx, false);
+              }
+            }
+          } finally {
+            this._endWaypointDrag();
+            if (_touchGestureStarted) {
+              _touchGestureStarted = false;
+              this._endWaypointGesture();
             }
           }
         };
-        document.addEventListener('touchmove', onTouchMove, { passive: false });
-        document.addEventListener('touchend', onTouchEnd);
+        const onTouchCancel = () => {
+          _dragModeActive = false;
+          _isTouchActive = false;
+          _justDragged = true;
+          this._blockMapClick();
+          this._stopRubberBand();
+          this.hideTrashZone();
+          setTimeout(() => { _justDragged = false; }, 150);
+          marker.getElement()?.classList.remove('is-dragging');
+          restoreMapDragging();
+          document.removeEventListener('touchmove', onTouchMove, true);
+          document.removeEventListener('touchend', onTouchEnd, true);
+          document.removeEventListener('touchcancel', onTouchCancel, true);
+          marker.setLatLng(dragStartLatLng);
+          this._endWaypointDrag();
+          if (_touchGestureStarted) {
+            _touchGestureStarted = false;
+            this._endWaypointGesture();
+          }
+        };
+        // Capture active drag events before marker DOM fallbacks can stop them.
+        document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+        document.addEventListener('touchend', onTouchEnd, true);
+        document.addEventListener('touchcancel', onTouchCancel, true);
       }, 500);
+
+      document.addEventListener('touchmove', onPendingTouchMove, { passive: false });
+      document.addEventListener('touchend', onPendingTouchEnd);
+      document.addEventListener('touchcancel', onPendingTouchCancel);
     };
     const moveTouchLongPress = (oe) => {
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        finishTouchLongPress(oe, { processTap: false });
+        return;
+      }
       if (_longPressTimer) {
         const touch = getTouchPoint(oe);
         if (!touch) return;
-        const dx = touch.clientX - _touchStartX;
-        const dy = touch.clientY - _touchStartY;
-        if (dx * dx + dy * dy > 64) {
-          clearTimeout(_longPressTimer);
-          _longPressTimer = null;
-        }
+        oe.preventDefault?.();
+        this._clearNativeSelection();
+        _touchPendingClientX = touch.clientX;
+        _touchPendingClientY = touch.clientY;
       }
     };
+    function cleanupPendingTouchListeners() {
+      document.removeEventListener('touchmove', onPendingTouchMove);
+      document.removeEventListener('touchend', onPendingTouchEnd);
+      document.removeEventListener('touchcancel', onPendingTouchCancel);
+    }
+    const finishTouchLongPress = (oe, { processTap = true } = {}) => {
+      const hadActivePress = _touchPressActive || _longPressTimer !== null || _dragModeActive;
+      if (!hadActivePress) return;
+      if (processTap && !_touchTapHandledForPress && !_dragModeActive) {
+        _touchTapHandledForPress = true;
+        handleWaypointTouchTap(oe);
+      }
+      endTouchLongPress();
+    };
+    function onPendingTouchMove(ev) {
+      if (!_touchPressActive || !_longPressTimer) return;
+      moveTouchLongPress(ev);
+    }
+    function onPendingTouchEnd(ev) {
+      finishTouchLongPress(ev);
+    }
+    function onPendingTouchCancel(ev) {
+      finishTouchLongPress(ev, { processTap: false });
+    }
     const endTouchLongPress = () => {
       _isTouchActive = false;
+      _touchPressActive = false;
+      _touchTapHandledForPress = false;
+      cleanupPendingTouchListeners();
       if (_longPressTimer) {
         clearTimeout(_longPressTimer);
         _longPressTimer = null;
       }
+      if (!_dragModeActive) restoreMapDragging();
+      if (!_dragModeActive && _touchGestureStarted) {
+        _touchGestureStarted = false;
+        this._endWaypointGesture();
+      }
     };
     marker.on('touchstart', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
+      if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
       startTouchLongPress(e.originalEvent);
     });
     marker.on('touchmove', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
+      if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
       moveTouchLongPress(e.originalEvent);
     });
     marker.on('touchend', (e) => {
       if (e.originalEvent?._mappingElfWaypointDomHandled) return;
-      endTouchLongPress();
+      if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
+      if (this._isWeatherBadgeDomTarget(e.originalEvent?.target)) return;
+      finishTouchLongPress(e.originalEvent);
     });
-    marker.on('touchcancel', endTouchLongPress);
+    marker.on('touchcancel', (e) => finishTouchLongPress(e.originalEvent, { processTap: false }));
 
     marker._bindWaypointDomFallback = () => {
       const el = marker.getElement?.();
-      if (!el || el._mappingElfWaypointDomBound) return;
+      if (!el) return;
+      this._bindWeatherBadgeClick(marker, () => {
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this.onWeatherBadgeClick?.(idx, false);
+      }, '_mappingElfWaypointDomHandled');
+      if (el._mappingElfWaypointDomBound) return;
       el._mappingElfWaypointDomBound = true;
+      el.addEventListener('mousedown', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
+        if (oe.button !== 0 || _dragModeActive) return;
+        oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
+        oe.preventDefault();
+        startMouseLongPress(oe);
+      }, { capture: true });
+      el.addEventListener('mouseup', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
+        if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
+        if (oe.button !== 0 || Date.now() - this._lastMultiTouchAt < 700) return;
+        if (_dragModeActive || _justDragged) return;
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this._scheduleWaypointSelect(idx, false, marker.getLatLng());
+      }, { capture: true });
+      el.addEventListener('mouseleave', () => {
+        if (!_dragModeActive && !_mouseLPTimer) restoreMapDragging();
+      }, { capture: true });
+      el.addEventListener('click', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
+        oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
+        oe.preventDefault();
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
+        if (_dragModeActive || _justDragged) {
+          if (_dragModeActive) _disableDrag();
+          return;
+        }
+        const idx = this.waypointMarkers.indexOf(marker);
+        if (idx >= 0) this._scheduleWaypointSelect(idx, false, marker.getLatLng());
+      }, { capture: true });
+      el.addEventListener('dblclick', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) {
+          oe.preventDefault?.();
+          oe.stopPropagation?.();
+          return;
+        }
+        oe._mappingElfWaypointDomHandled = true;
+        if (_mouseLPTimer) {
+          clearTimeout(_mouseLPTimer);
+          _mouseLPTimer = null;
+        }
+        endTouchLongPress();
+        restoreMapDragging();
+        handleWaypointDoubleClick({ originalEvent: oe });
+      }, { capture: true });
       el.addEventListener('touchstart', (oe) => {
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          endTouchLongPress();
+          return;
+        }
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
         oe._mappingElfWaypointDomHandled = true;
         oe.stopPropagation();
         startTouchLongPress(oe);
-      }, { passive: true, capture: true });
+      }, { passive: false, capture: true });
       el.addEventListener('touchmove', (oe) => {
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          endTouchLongPress();
+          return;
+        }
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
         oe._mappingElfWaypointDomHandled = true;
+        oe.stopPropagation();
         moveTouchLongPress(oe);
-      }, { passive: true, capture: true });
+      }, { passive: false, capture: true });
       el.addEventListener('touchend', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
         oe._mappingElfWaypointDomHandled = true;
-        endTouchLongPress();
-      }, { passive: true, capture: true });
+        oe.stopPropagation();
+        oe.preventDefault?.();
+        finishTouchLongPress(oe);
+      }, { passive: false, capture: true });
       el.addEventListener('touchcancel', (oe) => {
+        if (this._isWeatherCardDomTarget(oe.target)) {
+          return;
+        }
+        if (this._isWeatherBadgeDomTarget(oe.target)) return;
         oe._mappingElfWaypointDomHandled = true;
-        endTouchLongPress();
+        oe.stopPropagation();
+        finishTouchLongPress(oe, { processTap: false });
       }, { passive: true, capture: true });
     };
 
     // Click/tap: cancel drag mode; on normal click → notify selection or weather badge
     marker.on('click', (e) => {
+      if (e.originalEvent?._mappingElfWaypointDomHandled) return;
+      if (Date.now() - this._lastMultiTouchAt < 700) {
+        L.DomEvent.stopPropagation(e);
+        return;
+      }
       if (_dragModeActive || _justDragged) {
         L.DomEvent.stopPropagation(e);
         if (_dragModeActive) _disableDrag();
@@ -1038,6 +1547,10 @@ export class MapManager {
       }
       // Detect click on weather badge
       const target = e.originalEvent?.target;
+      if (this._isWeatherCardDomTarget(target)) {
+        L.DomEvent.stopPropagation(e);
+        return;
+      }
       if (target && target.closest && target.closest('.wp-weather-badge')) {
         L.DomEvent.stopPropagation(e);
         const idx = this.waypointMarkers.indexOf(marker);
@@ -1050,29 +1563,33 @@ export class MapManager {
       }
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
-        // Requirement 1: Toggle highlight on single click
-        this._scheduleWaypointSelect(idx, false, true);
+        this._scheduleWaypointSelect(idx, false, marker.getLatLng());
       }
     });
 
-    // Double-click on marker: highlight and center
-    marker.on('dblclick', (e) => {
-      L.DomEvent.stopPropagation(e);
+    const handleWaypointDoubleClick = (e) => {
+      const oe = e?.originalEvent || e;
+      oe?.preventDefault?.();
+      oe?.stopPropagation?.();
+      oe?.stopImmediatePropagation?.();
+      L.DomEvent.stopPropagation(e?.originalEvent ? e : oe);
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
       this._clearWaypointClickTimeout();
       const idx = this.waypointMarkers.indexOf(marker);
       if (idx >= 0) {
-        if (this._hasReturnWaypointPair(idx)) {
-          this._cycleWaypointOverlapLayers(idx, marker.getLatLng(), { select: false });
-          this._deferTopWaypointLayerHighlight(idx);
-        } else {
-          this._deferWaypointSelect(idx, false, true);
-        }
+        this._cycleWaypointLayerThenSelect(idx, false, marker.getLatLng());
       }
-    });
+    };
+
+    // Double-click on marker: switch visible layer order for stacked waypoint pairs.
+    marker.on('dblclick', handleWaypointDoubleClick);
 
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
     marker.on('dragstart', () => {
+      _leafletDragStartLatLng = marker.getLatLng();
       this._startRubberBand(marker);
+      this._beginWaypointGesture();
+      this._beginWaypointDrag();
     });
     marker.on('drag', (e) => {
       this._updateRubberBand(e.target.getLatLng());
@@ -1099,28 +1616,36 @@ export class MapManager {
         dropX = cp.x + r.left;
         dropY = cp.y + r.top;
       }
-      const isOverTrash = this.isOverTrashZone(dropX, dropY);
+      const dropAction = this.getTrashZoneDropAction(dropX, dropY);
       this._blockMapClick();
       this._stopRubberBand();
       this.hideTrashZone();
       const pos = e.target.getLatLng();
       const idx = this.waypointMarkers.indexOf(marker);
       _disableDrag();
-      if (idx >= 0) {
-        if (isOverTrash) {
-          if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
-          this.removeWaypoint(idx);
-        } else {
-          this.waypoints[idx] = [pos.lat, pos.lng];
-          this.onWaypointChange(this.waypoints);
+      try {
+        if (idx >= 0) {
+          if (dropAction === 'delete') {
+            if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+            this.removeWaypoint(idx);
+          } else if (dropAction === 'cancel') {
+            if (_leafletDragStartLatLng) marker.setLatLng(_leafletDragStartLatLng);
+          } else {
+            this.waypoints[idx] = [pos.lat, pos.lng];
+            this._emitWaypointChange();
+          }
         }
+      } finally {
+        this._endWaypointDrag();
+        this._endWaypointGesture();
       }
+      _leafletDragStartLatLng = null;
     });
 
     this.waypointMarkers.splice(idx, 0, marker);
     this._updateMarkerIcons();
     marker._bindWaypointDomFallback?.();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   removeWaypoint(index) {
@@ -1133,7 +1658,7 @@ export class MapManager {
     this.waypointLabels.splice(index, 1);
     this.waypointMetadata.splice(index, 1);
     this._updateMarkerIcons();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   removeLastWaypoint() {
@@ -1175,7 +1700,7 @@ export class MapManager {
     this.waypointLayerSwapped[newIndex] = tempSwapped;
 
     this._updateMarkerIcons();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   moveWaypointTo(fromIndex, toIndex) {
@@ -1199,7 +1724,7 @@ export class MapManager {
     moveInArray(this.waypointLayerSwapped);
 
     this._updateMarkerIcons();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   clearWaypoints() {
@@ -1211,14 +1736,18 @@ export class MapManager {
     this.waypointLabels = [];
     this.waypointMetadata = [];
     this.clearAllRoutes();
-    this.onWaypointChange(this.waypoints);
+    this._emitWaypointChange();
   }
 
   setWaypointWeather(index, emoji) {
     if (index < 0 || index >= this.waypointMarkers.length) return;
     this.waypointWeather[index] = emoji;
-    this.waypointMarkers[index].setIcon(this._createIcon(index));
-    this._applyColorToMarker(this.waypointMarkers[index], index);
+    if (this.isWaypointInteracting()) {
+      this._deferWaypointIconUpdate(index);
+      return;
+    }
+    this._refreshWaypointIcon(index);
+    this._syncWeatherBadgeOpenStates();
   }
 
   clearWaypointWeather() {
@@ -1580,7 +2109,7 @@ export class MapManager {
   }
 
   /**
-   * Set km-interval intermediate markers (non-interactive, small icons)
+   * Set km-interval intermediate markers (compact icons with matching hitboxes)
    * @param {Array<{lat,lng,cumDistM}>} points
    */
   setIntermediateMarkers(points, totalDistM = 0, turnaroundDistM = null) {
@@ -1601,26 +2130,46 @@ export class MapManager {
         color = interpolateRouteColor(t);
       }
 
-      const weatherHtml = pt.weatherIcon ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weatherIcon)}</div>` : '';
+      const weatherHtml = this._weatherBadgeHtml(pt.weatherIcon);
       const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
 
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
         html: `<div class="intermediate-point-inner" style="background: ${color};">${weatherHtml}</div>${labelHtml}`,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
+        iconSize: [INTERMEDIATE_MARKER_SIZE, INTERMEDIATE_MARKER_SIZE],
+        iconAnchor: [INTERMEDIATE_MARKER_SIZE / 2, INTERMEDIATE_MARKER_SIZE / 2],
       });
 
-      const marker = L.marker([pt.lat, pt.lng], { icon, interactive: true }).addTo(this.map);
+      const marker = L.marker([pt.lat, pt.lng], {
+        icon,
+        interactive: true,
+        zIndexOffset: INTERMEDIATE_Z_OFFSET,
+      }).addTo(this.map);
       marker._colIdx = pt.colIdx;
       marker._addOrder = this.intermediateMarkers.length;
       marker._cumDistM = pt.cumDistM;
       marker._isReturn = pt.isReturn;
       marker._legId = this._legIdAtCumDist(pt.cumDistM);
+      const bindIntermediateWeatherBadgeClick = () => {
+        this._bindWeatherBadgeClick(marker, () => {
+          if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+        }, '_mappingElfIntermediateDomHandled');
+      };
+      bindIntermediateWeatherBadgeClick();
+      setTimeout(bindIntermediateWeatherBadgeClick, 0);
 
       marker.on('click', (e) => {
+        if (e.originalEvent?._mappingElfIntermediateDomHandled) return;
+        if (Date.now() - this._lastMultiTouchAt < 700) {
+          L.DomEvent.stopPropagation(e);
+          return;
+        }
         // Detect click on weather badge
         const target = e.originalEvent?.target;
+        if (this._isWeatherCardDomTarget(target)) {
+          L.DomEvent.stopPropagation(e);
+          return;
+        }
         if (target && target.closest && target.closest('.wp-weather-badge')) {
           L.DomEvent.stopPropagation(e);
           if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
@@ -1632,6 +2181,7 @@ export class MapManager {
 
       marker.on('dblclick', (e) => {
         L.DomEvent.stop(e);
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
         this._cycleOverlappingLayers(null, marker.getLatLng());
       });
 
@@ -1639,6 +2189,16 @@ export class MapManager {
       let startX = 0, startY = 0;
       const startLP = (e) => {
         const oe = e.originalEvent;
+        if (oe?._mappingElfIntermediateDomHandled) return;
+        if (this._isWeatherBadgeDomTarget(oe?.target)) return;
+        if (this._isWeatherCardDomTarget(oe?.target)) {
+          L.DomEvent.stopPropagation(oe);
+          return;
+        }
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          return;
+        }
         if (oe.button !== undefined && oe.button !== 0) return;
         const touch = oe.touches ? oe.touches[0] : oe;
         startX = touch.clientX;
@@ -1652,6 +2212,11 @@ export class MapManager {
       const moveLP = (e) => {
         if (!lpTimer) return;
         const oe = e.originalEvent;
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          endLP();
+          return;
+        }
         const touch = oe.touches ? oe.touches[0] : oe;
         if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > 10) {
           clearTimeout(lpTimer);
@@ -1669,6 +2234,7 @@ export class MapManager {
       marker.on('mouseup touchend mouseleave touchcancel', endLP);
       this.intermediateMarkers.push(marker);
     });
+    this._syncWeatherBadgeOpenStates();
   }
 
   clearIntermediateMarkers() {
@@ -1734,94 +2300,478 @@ export class MapManager {
       if (legId !== undefined) marker._legId = legId;
 
       const outboundOnTop = this.waypointLayerSwapped[pt.wpIndex] ?? true;
-      marker.setZIndexOffset(outboundOnTop ? 0 : 100);
+      this.waypointMarkers[pt.wpIndex]?.setZIndexOffset(
+        WAYPOINT_Z_BASE + (outboundOnTop ? WAYPOINT_Z_PAIR_STEP : 0)
+      );
+      marker.setZIndexOffset(WAYPOINT_Z_BASE + (outboundOnTop ? 0 : WAYPOINT_Z_PAIR_STEP));
+
+      let _returnDragActive = false;
+      let _returnJustDragged = false;
 
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
+        if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
+        if (_returnDragActive || _returnJustDragged) return;
         // Detect click on weather badge
         const target = e.originalEvent?.target;
+        if (this._isWeatherCardDomTarget(target)) return;
         if (target && target.closest && target.closest('.wp-weather-badge')) {
           if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
           return;
         }
-        if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true);
+        if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
       });
 
-      marker.on('dblclick', (e) => {
-        L.DomEvent.stopPropagation(e);
+      const handleReturnWaypointDoubleClick = (e) => {
+        const oe = e?.originalEvent || e;
+        oe?.preventDefault?.();
+        oe?.stopPropagation?.();
+        oe?.stopImmediatePropagation?.();
+        L.DomEvent.stopPropagation(e?.originalEvent ? e : oe);
+        if (Date.now() - this._lastMultiTouchAt < 700) return;
         this._clearWaypointClickTimeout();
-        this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
-        this._deferTopWaypointLayerHighlight(marker._wpIndex);
-      });
+        this._cycleWaypointLayerThenSelect(marker._wpIndex, true, marker.getLatLng());
+      };
 
-      // Long-press (500ms) to cycle overlapping layers
+      marker.on('dblclick', handleReturnWaypointDoubleClick);
+
+      // Long-press drags the paired editable waypoint; dblclick handles layer cycling.
       let _lpTimer = null;
-      let _startX = 0, _startY = 0;
-      let _pendingLPHighlight = false;
+      let _pendingClientX = 0, _pendingClientY = 0;
+      let _returnTouchStartClientX = 0, _returnTouchStartClientY = 0;
+      let _returnTouchTapMoved = false;
+      let _lastReturnTouchTapAt = 0;
+      let _lastReturnTouchTapX = 0;
+      let _lastReturnTouchTapY = 0;
+      let _returnGestureStarted = false;
+      const getPointer = (oe) => oe?.touches?.[0] || oe?.changedTouches?.[0] || oe;
+      const restoreMapDragging = () => {
+        setTimeout(() => this.map.dragging.enable(), 0);
+      };
+      const beginReturnGesture = () => {
+        if (_returnGestureStarted) return;
+        _returnGestureStarted = true;
+        this._beginWaypointGesture();
+      };
+      const endReturnGesture = () => {
+        if (!_returnGestureStarted) return;
+        _returnGestureStarted = false;
+        this._endWaypointGesture();
+      };
+      const returnTouchMovedBeyondTapTolerance = (touch) => {
+        if (!touch) return true;
+        const dx = touch.clientX - _returnTouchStartClientX;
+        const dy = touch.clientY - _returnTouchStartClientY;
+        return dx * dx + dy * dy > WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX ** 2;
+      };
+      const handleReturnWaypointTouchTap = (oe) => {
+        const touch = oe?.changedTouches?.[0] || getPointer(oe);
+        if (
+          !touch ||
+          _returnDragActive ||
+          _returnTouchTapMoved ||
+          returnTouchMovedBeyondTapTolerance(touch) ||
+          Date.now() - this._lastMultiTouchAt < 700
+        ) {
+          _lastReturnTouchTapAt = 0;
+          return false;
+        }
+
+        const now = Date.now();
+        const dx = touch.clientX - _lastReturnTouchTapX;
+        const dy = touch.clientY - _lastReturnTouchTapY;
+        const isDoubleTap =
+          _lastReturnTouchTapAt > 0 &&
+          now - _lastReturnTouchTapAt <= WAYPOINT_DOUBLE_TAP_DELAY_MS &&
+          dx * dx + dy * dy <= WAYPOINT_DOUBLE_TAP_DISTANCE_PX ** 2;
+
+        if (!isDoubleTap) {
+          _lastReturnTouchTapAt = now;
+          _lastReturnTouchTapX = touch.clientX;
+          _lastReturnTouchTapY = touch.clientY;
+          if (pt.wpIndex !== undefined) this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
+          return false;
+        }
+
+        _lastReturnTouchTapAt = 0;
+        handleReturnWaypointDoubleClick({ originalEvent: oe });
+        return true;
+      };
 
       const cleanupLPListeners = () => {
-        document.removeEventListener('mouseup', endLP);
-        document.removeEventListener('touchend', endLP);
+        document.removeEventListener('mouseup', cancelLP, true);
+        document.removeEventListener('mousemove', moveLPFromDom, true);
+        document.removeEventListener('touchend', cancelLP);
+        document.removeEventListener('touchmove', moveLPFromDom);
         document.removeEventListener('touchcancel', cancelLP);
       };
 
       const cancelLP = () => {
         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-        _pendingLPHighlight = false;
         cleanupLPListeners();
+        if (!_returnDragActive) restoreMapDragging();
+        if (!_returnDragActive) endReturnGesture();
       };
 
-      const endLP = () => {
-        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-        if (_pendingLPHighlight) {
-          _pendingLPHighlight = false;
-          this._deferTopWaypointLayerHighlight(marker._wpIndex);
+      const clientPointToLatLng = (clientX, clientY, source, anchorOffset = null) => {
+        const rect = this.map.getContainer().getBoundingClientRect();
+        const yOffset = anchorOffset ? 0 : (source === 'touch' ? 40 : 0);
+        return this.map.containerPointToLatLng([
+          clientX - rect.left + (anchorOffset?.x ?? 0),
+          clientY - rect.top - yOffset + (anchorOffset?.y ?? 0),
+        ]);
+      };
+
+      const markerAnchorOffsetFromClient = (latlng, clientX, clientY) => {
+        const rect = this.map.getContainer().getBoundingClientRect();
+        const anchorPoint = this.map.latLngToContainerPoint(latlng);
+        return {
+          x: anchorPoint.x - (clientX - rect.left),
+          y: anchorPoint.y - (clientY - rect.top),
+        };
+      };
+
+      const startManualReturnDrag = (source, initialClientX, initialClientY, anchorClientX = initialClientX, anchorClientY = initialClientY) => {
+        const pairedMarker = this.waypointMarkers[marker._wpIndex];
+        if (!pairedMarker) {
+          restoreMapDragging();
+          endReturnGesture();
+          return;
         }
-        cleanupLPListeners();
+        if (this.isFrozen) {
+          this._notifyFrozenInteraction('waypoint-drag');
+          restoreMapDragging();
+          endReturnGesture();
+          return;
+        }
+
+        _returnDragActive = true;
+        _returnJustDragged = true;
+        marker.getElement()?.classList.add('is-dragging');
+        pairedMarker.getElement()?.classList.add('is-dragging');
+        this.map.dragging.disable();
+        this._beginWaypointDrag();
+        const dragStartLatLng = pairedMarker.getLatLng();
+        const dragAnchorOffset = markerAnchorOffsetFromClient(
+          dragStartLatLng,
+          anchorClientX,
+          anchorClientY
+        );
+        this._startRubberBand(pairedMarker);
+
+        let lastClientX = null;
+        let lastClientY = null;
+
+        const moveTo = (clientX, clientY) => {
+          if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+          lastClientX = clientX;
+          lastClientY = clientY;
+          const latlng = clientPointToLatLng(clientX, clientY, source, dragAnchorOffset);
+          pairedMarker.setLatLng(latlng);
+          marker.setLatLng(latlng);
+          this._updateRubberBand(latlng);
+          this.updateTrashZoneHover(clientX, clientY);
+        };
+
+        const cleanupDragListeners = () => {
+          document.removeEventListener('mousemove', onMouseMove, true);
+          document.removeEventListener('mouseup', onPointerUp, true);
+          document.removeEventListener('touchmove', onTouchMove, true);
+          document.removeEventListener('touchend', onPointerUp, true);
+          document.removeEventListener('touchcancel', onTouchCancel, true);
+        };
+
+        const finishDrag = (clientX, clientY, forcedDropAction = null) => {
+          const dropAction = forcedDropAction || this.getTrashZoneDropAction(clientX, clientY);
+          _returnDragActive = false;
+          _returnJustDragged = true;
+          this._blockMapClick();
+          this._stopRubberBand();
+          this.hideTrashZone();
+          setTimeout(() => { _returnJustDragged = false; }, 150);
+          marker.getElement()?.classList.remove('is-dragging');
+          pairedMarker.getElement()?.classList.remove('is-dragging');
+          restoreMapDragging();
+          cleanupDragListeners();
+
+          const idx = this.waypointMarkers.indexOf(pairedMarker);
+          try {
+            if (idx < 0) return;
+            if (dropAction === 'delete') {
+              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+              this.removeWaypoint(idx);
+            } else if (dropAction === 'cancel') {
+              pairedMarker.setLatLng(dragStartLatLng);
+              marker.setLatLng(dragStartLatLng);
+            } else {
+              const hasReleasePoint = Number.isFinite(clientX) && Number.isFinite(clientY);
+              const pos = hasReleasePoint
+                ? clientPointToLatLng(clientX, clientY, source, dragAnchorOffset)
+                : pairedMarker.getLatLng();
+              pairedMarker.setLatLng(pos);
+              marker.setLatLng(pos);
+              this.waypoints[idx] = [pos.lat, pos.lng];
+              this._emitWaypointChange();
+              this.onWaypointSelect?.(idx, (this.waypointLayerSwapped[idx] ?? true) === false);
+            }
+          } finally {
+            this._endWaypointDrag();
+            endReturnGesture();
+          }
+        };
+
+        function onMouseMove(ev) {
+          ev.stopPropagation();
+          ev.preventDefault();
+          moveTo(ev.clientX, ev.clientY);
+        }
+
+        const onTouchMove = (ev) => {
+          if (this._isMultiTouchEvent(ev)) {
+            this._noteMultiTouchGesture();
+            finishDrag(lastClientX, lastClientY, 'cancel');
+            return;
+          }
+          ev.preventDefault();
+          const t = ev.touches[0];
+          if (!t) return;
+          moveTo(t.clientX, t.clientY);
+        };
+
+        const onPointerUp = (ev) => {
+          ev.stopPropagation?.();
+          ev.preventDefault?.();
+          if (source === 'touch' && (this._isMultiTouchEvent(ev) || Date.now() - this._lastMultiTouchAt < 700)) {
+            finishDrag(lastClientX, lastClientY, 'cancel');
+            return;
+          }
+          const point = getPointer(ev);
+          finishDrag(
+            point?.clientX ?? lastClientX,
+            point?.clientY ?? lastClientY
+          );
+        };
+
+        const onTouchCancel = (ev) => {
+          ev.stopPropagation?.();
+          ev.preventDefault?.();
+          finishDrag(lastClientX, lastClientY, 'cancel');
+        };
+
+        if (source === 'touch') {
+          // Capture active drag events before marker DOM fallbacks can stop them.
+          document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+          document.addEventListener('touchend', onPointerUp, true);
+          document.addEventListener('touchcancel', onTouchCancel, true);
+        } else {
+          document.addEventListener('mousemove', onMouseMove, true);
+          document.addEventListener('mouseup', onPointerUp, true);
+        }
       };
       
       const startLP = (e) => {
         const oe = e.originalEvent;
+        if (this._isWeatherBadgeDomTarget(oe?.target)) return;
+        if (this._isWeatherCardDomTarget(oe?.target)) {
+          L.DomEvent.stopPropagation(oe);
+          return;
+        }
+        if (this._isMultiTouchEvent(oe)) {
+          this._noteMultiTouchGesture();
+          return;
+        }
         if (oe.button !== undefined && oe.button !== 0) return;
-        cancelLP();
-        const touch = oe.touches ? oe.touches[0] : oe;
-        _startX = touch.clientX;
-        _startY = touch.clientY;
+        L.DomEvent.stopPropagation(oe);
+        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        cleanupLPListeners();
+        const point = getPointer(oe);
+        if (!point) return;
+        beginReturnGesture();
+        _pendingClientX = point.clientX;
+        _pendingClientY = point.clientY;
+        _returnTouchStartClientX = point.clientX;
+        _returnTouchStartClientY = point.clientY;
+        _returnTouchTapMoved = false;
+        const source = oe.touches || oe.type?.startsWith('touch') ? 'touch' : 'mouse';
+        if (source === 'touch') {
+          oe.preventDefault?.();
+          this._clearNativeSelection();
+        }
+        this.map.dragging.disable();
         
         _lpTimer = setTimeout(() => {
           _lpTimer = null;
+          cleanupLPListeners();
           if (navigator.vibrate) navigator.vibrate(40);
-          this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
-          _pendingLPHighlight = true;
+          startManualReturnDrag(
+            source,
+            _pendingClientX,
+            _pendingClientY,
+            _returnTouchStartClientX,
+            _returnTouchStartClientY
+          );
         }, 500);
 
-        document.addEventListener('mouseup', endLP);
-        document.addEventListener('touchend', endLP);
+        document.addEventListener('mouseup', cancelLP, true);
+        document.addEventListener('mousemove', moveLPFromDom, true);
+        document.addEventListener('touchend', cancelLP);
+        document.addEventListener('touchmove', moveLPFromDom, { passive: true });
         document.addEventListener('touchcancel', cancelLP);
       };
       
       const moveLP = (e) => {
         if (!_lpTimer) return;
-        const oe = e.originalEvent;
-        const touch = oe.touches ? oe.touches[0] : oe;
-        if (Math.hypot(touch.clientX - _startX, touch.clientY - _startY) > 10) {
-          clearTimeout(_lpTimer);
-          _lpTimer = null;
+        if (this._isMultiTouchEvent(e.originalEvent)) {
+          this._noteMultiTouchGesture();
+          cancelLP();
+          return;
         }
+        const point = getPointer(e.originalEvent);
+        if (!point) return;
+        if (e.originalEvent?.touches) {
+          e.originalEvent.preventDefault?.();
+          this._clearNativeSelection();
+          const dx = point.clientX - _returnTouchStartClientX;
+          const dy = point.clientY - _returnTouchStartClientY;
+          if (dx * dx + dy * dy > WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX ** 2) {
+            _returnTouchTapMoved = true;
+          }
+        }
+        _pendingClientX = point.clientX;
+        _pendingClientY = point.clientY;
       };
 
-      marker.on('mousedown touchstart', startLP);
-      marker.on('mousemove touchmove', moveLP);
-      marker.on('mouseup touchend', endLP);
-      marker.on('mouseleave touchcancel', cancelLP);
+      function moveLPFromDom(oe) {
+        if (_lpTimer) {
+          oe.stopPropagation?.();
+          if (!oe.touches) oe.preventDefault?.();
+        }
+        moveLP({ originalEvent: oe });
+      }
+
+      marker.on('mousedown touchstart', (e) => {
+        if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
+        startLP(e);
+      });
+      marker.on('mousemove touchmove', (e) => {
+        if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
+        if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
+        moveLP(e);
+      });
+      marker.on('mouseup touchend', (e) => {
+        if (e.originalEvent?._mappingElfReturnWaypointDomHandled) return;
+        if (this._isWeatherCardDomTarget(e.originalEvent?.target)) return;
+        if (e.originalEvent?.type?.startsWith('touch')) {
+          handleReturnWaypointTouchTap(e.originalEvent);
+        }
+        cancelLP();
+      });
+      marker.on('touchcancel', cancelLP);
       marker.on('contextmenu', (e) => {
         L.DomEvent.stop(e);
-        this._cycleWaypointOverlapLayers(marker._wpIndex, marker.getLatLng(), { select: false });
-        this._deferTopWaypointLayerHighlight(marker._wpIndex);
+        cancelLP();
+        if (this.isFrozen) this._notifyFrozenInteraction('waypoint-drag');
       });
 
+      const bindReturnWaypointDomFallback = () => {
+        const el = marker.getElement?.();
+        if (!el) return;
+        this._bindWeatherBadgeClick(marker, () => {
+          if (pt.colIdx !== undefined) this.onWeatherBadgeClick?.(pt.colIdx, true);
+        }, '_mappingElfReturnWaypointDomHandled');
+        if (el._mappingElfReturnWaypointDomBound) return;
+        el._mappingElfReturnWaypointDomBound = true;
+
+        const wrap = (handler) => (oe) => {
+          if (this._isMultiTouchEvent(oe)) {
+            this._noteMultiTouchGesture();
+            cancelLP();
+            return;
+          }
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
+          if (this._isWeatherBadgeDomTarget(oe.target)) return;
+          oe._mappingElfReturnWaypointDomHandled = true;
+          oe.stopPropagation();
+          handler({ originalEvent: oe });
+        };
+
+        el.addEventListener('mousedown', wrap(startLP), { capture: true });
+        el.addEventListener('mousemove', wrap(moveLP), { capture: true });
+        el.addEventListener('click', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
+          if (this._isWeatherBadgeDomTarget(oe.target)) return;
+          oe._mappingElfReturnWaypointDomHandled = true;
+          oe.stopPropagation();
+          oe.preventDefault();
+          if (Date.now() - this._lastMultiTouchAt < 700) return;
+          if (_returnDragActive || _returnJustDragged) return;
+          if (pt.wpIndex !== undefined) {
+            this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
+          }
+        }, { capture: true });
+        el.addEventListener('dblclick', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
+          if (this._isWeatherBadgeDomTarget(oe.target)) {
+            oe.preventDefault?.();
+            oe.stopPropagation?.();
+            return;
+          }
+          oe._mappingElfReturnWaypointDomHandled = true;
+          cancelLP();
+          restoreMapDragging();
+          handleReturnWaypointDoubleClick({ originalEvent: oe });
+        }, { capture: true });
+        el.addEventListener('mouseup', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
+          if (this._isWeatherBadgeDomTarget(oe.target)) return;
+          oe._mappingElfReturnWaypointDomHandled = true;
+          cancelLP();
+          if (oe.button !== 0 || Date.now() - this._lastMultiTouchAt < 700) return;
+          if (_returnDragActive || _returnJustDragged) return;
+          if (pt.wpIndex !== undefined) {
+            this._scheduleWaypointSelect(pt.wpIndex, true, marker.getLatLng());
+          }
+        }, { capture: true });
+        el.addEventListener('touchstart', wrap(startLP), { passive: false, capture: true });
+        el.addEventListener('touchmove', wrap(moveLP), { passive: false, capture: true });
+        el.addEventListener('touchend', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
+          if (this._isWeatherBadgeDomTarget(oe.target)) return;
+          oe._mappingElfReturnWaypointDomHandled = true;
+          oe.stopPropagation();
+          oe.preventDefault?.();
+          handleReturnWaypointTouchTap(oe);
+          cancelLP();
+        }, { passive: false, capture: true });
+        el.addEventListener('touchcancel', (oe) => {
+          if (this._isWeatherCardDomTarget(oe.target)) {
+            return;
+          }
+          if (this._isWeatherBadgeDomTarget(oe.target)) return;
+          oe._mappingElfReturnWaypointDomHandled = true;
+          oe.stopPropagation();
+          cancelLP();
+        }, { passive: true, capture: true });
+      };
+
+      marker._bindReturnWaypointDomFallback = bindReturnWaypointDomFallback;
+      bindReturnWaypointDomFallback();
+      setTimeout(bindReturnWaypointDomFallback, 0);
       this.returnWaypointMarkers.push(marker);
     });
+    this._restoreWaypointHighlightDom();
+    this._syncWeatherBadgeOpenStates();
   }
 
   clearReturnWaypoints() {
@@ -1838,19 +2788,21 @@ export class MapManager {
     const isEndpoint = (pt.wpIndex === 0 || pt.wpIndex === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
     const num = (pt.wpIndex ?? 0) + 1;
-    const weatherHtml = pt.weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(pt.weather)}</div>` : '';
+    const weatherHtml = this._weatherBadgeHtml(pt.weather);
     const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
     const innerStyle = pt.color
-      ? `style="background:${pt.color}; box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${pt.color}55;"`
+      ? `style="--wp-pin-fill:${pt.color}; --wp-pin-glow-color:${pt.color};"`
       : '';
     const cls = `custom-waypoint-icon return-leg${isStacked ? ' is-stacked' : ''}`;
+    const metrics = waypointPinMetrics(size);
     return L.divIcon({
       className: cls,
       html:
-        `<div class="wp-icon-inner" ${innerStyle}>${weatherHtml}` +
-        `<span>${num}</span></div>${labelHtml}`,
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
+        `<div class="wp-pin-shell">${weatherHtml}` +
+        `<div class="wp-icon-inner" ${innerStyle}>` +
+        `${waypointPinSvgHtml()}<span>${num}</span></div></div>${labelHtml}`,
+      iconSize: [metrics.width, metrics.height],
+      iconAnchor: metrics.anchor,
     });
   }
 
@@ -1870,14 +2822,14 @@ export class MapManager {
   }
 
   showHoverMarker(lat, lng, color = null) {
-    const styleStr = color ? `background-color: ${color}; box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 8px ${color};` : '';
+    const styleStr = color ? `background-color: ${color}; box-shadow: 0 0 0 1.5px rgba(255,255,255,0.9), 0 0 7px ${color};` : '';
     const html = color ? `<div style="width:100%; height:100%; border-radius:50%; ${styleStr}"></div>` : '';
     if (!this.hoverMarker) {
       const icon = L.divIcon({
         className: color ? '' : 'elevation-hover-marker',
         html: html,
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
+        iconSize: [HOVER_MARKER_SIZE, HOVER_MARKER_SIZE],
+        iconAnchor: [HOVER_MARKER_SIZE / 2, HOVER_MARKER_SIZE / 2],
       });
       this.hoverMarker = L.marker([lat, lng], { icon, interactive: false }).addTo(this.map);
     } else {
@@ -1886,8 +2838,8 @@ export class MapManager {
         this.hoverMarker.setIcon(L.divIcon({
           className: '',
           html: html,
-          iconSize: [14, 14],
-          iconAnchor: [7, 7],
+          iconSize: [HOVER_MARKER_SIZE, HOVER_MARKER_SIZE],
+          iconAnchor: [HOVER_MARKER_SIZE / 2, HOVER_MARKER_SIZE / 2],
         }));
       }
     }
@@ -1986,6 +2938,128 @@ export class MapManager {
     cb(this.waypoints);
   }
 
+  _weatherBadgeHtml(icon) {
+    const hasWeather = !!icon;
+    return `<div class="wp-weather-badge${hasWeather ? ' is-loaded' : ' is-placeholder'}">` +
+      `<span class="wp-weather-badge-face">${buildWeatherRoundIconHtml(icon || '?')}</span>` +
+      '<div class="wp-weather-card-slot"></div>' +
+      '</div>';
+  }
+
+  _findWeatherTargetMarker(colIdx, isIntermediate = false, waypointIndex = -1, isReturn = false) {
+    if (isIntermediate) {
+      return this.intermediateMarkers.find(m => m._colIdx === colIdx) || null;
+    }
+    if (isReturn) {
+      return this.returnWaypointMarkers.find(m => m._colIdx === colIdx)
+        || this.returnWaypointMarkers.find(m => m._wpIndex === waypointIndex)
+        || null;
+    }
+    if (waypointIndex >= 0) return this.waypointMarkers[waypointIndex] || null;
+    return this.waypointMarkers[colIdx] || null;
+  }
+
+  _weatherBadgeForMarker(marker) {
+    return marker?.getElement?.()?.querySelector('.wp-weather-badge') || null;
+  }
+
+  _weatherCardSlotForBadge(badge) {
+    if (!badge) return null;
+    let slot = badge.querySelector('.wp-weather-card-slot');
+    if (!slot) {
+      slot = document.createElement('div');
+      slot.className = 'wp-weather-card-slot';
+      badge.appendChild(slot);
+    }
+    return slot;
+  }
+
+  _mobileWeatherCardLayer() {
+    let layer = document.getElementById('mobile-weather-card-layer');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.id = 'mobile-weather-card-layer';
+      layer.className = 'wp-weather-card-slot mobile-weather-card-layer';
+      document.body.appendChild(layer);
+    }
+    return layer;
+  }
+
+  _shouldUseMobileWeatherCardLayer(htmlContent = '') {
+    return window.matchMedia?.('(max-width: 768px)').matches
+      && /\bweather-card\b[^>]*\bfull\b/.test(htmlContent);
+  }
+
+  _isWeatherCardDomTarget(target) {
+    return !!target?.closest?.('.weather-card');
+  }
+
+  _isWeatherBadgeDomTarget(target) {
+    return !!target?.closest?.('.wp-weather-badge') && !this._isWeatherCardDomTarget(target);
+  }
+
+  _bindWeatherBadgeClick(marker, notify, handledFlag = '_mappingElfWeatherBadgeClickHandled') {
+    const el = marker?.getElement?.();
+    if (!el || el._mappingElfWeatherBadgeClickBound) return;
+    el._mappingElfWeatherBadgeClickBound = true;
+
+    el.addEventListener('click', (oe) => {
+      if (!this._isWeatherBadgeDomTarget(oe.target)) return;
+      oe[handledFlag] = true;
+      oe.preventDefault?.();
+      oe.stopPropagation?.();
+      oe.stopImmediatePropagation?.();
+      notify?.();
+    }, { capture: true });
+  }
+
+  _attachWeatherPopupEntry(colIdx, entry) {
+    if (!entry) return false;
+    const targetMarker = this._findWeatherTargetMarker(
+      colIdx,
+      !!entry.isIntermediate,
+      Number.isInteger(entry.waypointIndex) ? entry.waypointIndex : -1,
+      !!entry.isReturn
+    ) || entry.marker;
+    if (!targetMarker) return false;
+
+    const badge = this._weatherBadgeForMarker(targetMarker);
+    const useMobileLayer = this._shouldUseMobileWeatherCardLayer(entry.htmlContent);
+    const slot = useMobileLayer ? this._mobileWeatherCardLayer() : this._weatherCardSlotForBadge(badge);
+    if (!badge || !slot) return false;
+
+    const needsRender = !slot.querySelector('.weather-card');
+    if (needsRender && !entry.htmlContent) return false;
+    entry.marker = targetMarker;
+    entry.badge = badge;
+    if (entry.slot && entry.slot !== slot) entry.slot.innerHTML = '';
+    entry.slot = slot;
+
+    badge.classList.remove('is-card-closing');
+    badge.classList.add('is-card-open');
+    targetMarker.getElement?.()?.classList.add('has-weather-card');
+
+    if (needsRender && entry.htmlContent) {
+      slot.innerHTML = entry.htmlContent;
+    }
+
+    L.DomEvent.disableClickPropagation(slot);
+    L.DomEvent.disableScrollPropagation(slot);
+    const card = slot.querySelector('.weather-card');
+    if (card) {
+      L.DomEvent.disableClickPropagation(card);
+      L.DomEvent.disableScrollPropagation(card);
+      if (needsRender && entry.onReady) entry.onReady(slot);
+    }
+    return true;
+  }
+
+  _syncWeatherBadgeOpenStates() {
+    this._weatherPopups.forEach((entry, colIdx) => {
+      this._attachWeatherPopupEntry(colIdx, entry);
+    });
+  }
+
   _createIcon(index) {
     const total = this.waypoints.length;
     let cls = '';
@@ -1994,28 +3068,35 @@ export class MapManager {
     if (this.stackedWaypointFlags?.[index]) cls += (cls ? ' ' : '') + 'is-stacked';
 
     const weather = this.waypointWeather[index];
-    const weatherHtml = weather ? `<div class="wp-weather-badge">${buildWeatherRoundIconHtml(weather)}</div>` : '';
+    const weatherHtml = this._weatherBadgeHtml(weather);
 
     const isEndpoint = (index === 0 || index === total - 1) && total > 1;
     const size = isEndpoint ? 40 : 36;
     const labelText = this.waypointLabels[index];
-    const externalLabel = labelText ? `<div class="marker-external-label">${labelText}</div>` : '';
+    const externalLabelText = labelText ? `${index + 1}. ${labelText}` : '';
+    const externalLabel = externalLabelText
+      ? `<div class="marker-external-label" data-label="${escapeHtml(externalLabelText)}" aria-label="${escapeHtml(externalLabelText)}"></div>`
+      : '';
+    const metrics = waypointPinMetrics(size);
 
     return L.divIcon({
       className: `custom-waypoint-icon ${cls}`,
-      html: `<div class="wp-icon-inner">${weatherHtml}<span>${index + 1}</span></div>${externalLabel}`,
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
+      html:
+        `<div class="wp-pin-shell">${weatherHtml}` +
+        `<div class="wp-icon-inner">${waypointPinSvgHtml()}<span>${index + 1}</span></div>` +
+        `</div>${externalLabel}`,
+      iconSize: [metrics.width, metrics.height],
+      iconAnchor: metrics.anchor,
     });
   }
 
-  _updateMarkerIcons() {
-    this.waypointMarkers.forEach((marker, i) => {
-      marker._wpIndex = i;
-      marker.setIcon(this._createIcon(i));
-      this._applyColorToMarker(marker, i);
-      marker._bindWaypointDomFallback?.();
-    });
+  _updateMarkerIcons(force = false) {
+    if (!force && this.isWaypointDragging()) {
+      this._deferWaypointIconUpdate();
+      return;
+    }
+    this.waypointMarkers.forEach((marker, i) => this._refreshWaypointIcon(i));
+    this._syncWeatherBadgeOpenStates();
   }
 
   /** Apply the stored gradient color to a marker's DOM element. */
@@ -2026,8 +3107,8 @@ export class MapManager {
     if (el) {
       const inner = el.querySelector('.wp-icon-inner');
       if (inner) {
-        inner.style.background = color;
-        inner.style.setProperty('box-shadow', `0 2px 8px rgba(0,0,0,0.4), 0 0 0 2px ${color}55`);
+        inner.style.setProperty('--wp-pin-fill', color);
+        inner.style.setProperty('--wp-pin-glow-color', color);
       }
     }
   }
@@ -2046,9 +3127,13 @@ export class MapManager {
     let lpTriggered = false;
     let startX = 0, startY = 0;
     let startSource = 'mouse';
+    let routeInsertDragActive = false;
+    let routeInsertPreview = null;
+    let routeInsertLatLng = null;
+    let routeInsertIndex = null;
 
     const domEventPoint = (oe) => {
-      const touch = oe.touches ? oe.touches[0] : (oe.changedTouches ? oe.changedTouches[0] : oe);
+      const touch = oe.touches?.[0] || oe.changedTouches?.[0] || oe;
       return touch ? { x: touch.clientX, y: touch.clientY } : { x: 0, y: 0 };
     };
 
@@ -2063,6 +3148,10 @@ export class MapManager {
     };
 
     const startLongPress = (oe, latlng) => {
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        return;
+      }
       if (oe.button !== undefined && oe.button !== 0) return;
       lpTriggered = false;
       const point = domEventPoint(oe);
@@ -2073,13 +3162,23 @@ export class MapManager {
       lpTimer = setTimeout(() => {
         lpTimer = null;
         lpTriggered = true;
+        if (this.isFrozen) {
+          this._notifyFrozenInteraction('route-edit');
+          return;
+        }
         if (navigator.vibrate) navigator.vibrate(40);
-        this._cycleOverlappingLayers(polyline, latlng, { source: startSource });
+        startRouteInsertDrag(latlng, startSource);
       }, 500);
     };
 
     const moveLongPress = (oe) => {
       if (!lpTimer) return;
+      if (this._isMultiTouchEvent(oe)) {
+        this._noteMultiTouchGesture();
+        clearTimeout(lpTimer);
+        lpTimer = null;
+        return;
+      }
       const point = domEventPoint(oe);
       const source = domEventSource(oe);
       const tolerance = ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX[source] ?? ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX.mouse;
@@ -2091,9 +3190,109 @@ export class MapManager {
     };
 
     const endLongPress = () => {
+      if (routeInsertDragActive) return;
       if (lpTimer) {
         clearTimeout(lpTimer);
         lpTimer = null;
+      }
+    };
+
+    const cleanupRouteInsertDrag = () => {
+      document.removeEventListener('mousemove', onRouteInsertMouseMove);
+      document.removeEventListener('mouseup', onRouteInsertMouseUp);
+      document.removeEventListener('touchmove', onRouteInsertTouchMove);
+      document.removeEventListener('touchend', onRouteInsertTouchEnd);
+      document.removeEventListener('touchcancel', onRouteInsertTouchCancel);
+    };
+
+    const updateRouteInsertPreview = (latlng) => {
+      routeInsertLatLng = latlng;
+      if (!routeInsertPreview) {
+        routeInsertPreview = L.circleMarker(latlng, {
+          radius: 8,
+          color: '#fbbf24',
+          weight: 3,
+          fillColor: '#f59e0b',
+          fillOpacity: 0.85,
+          opacity: 1,
+          interactive: false,
+          pane: 'markerPane',
+          className: 'route-insert-preview-marker',
+        }).addTo(this.map);
+      } else {
+        routeInsertPreview.setLatLng(latlng);
+      }
+    };
+
+    const finishRouteInsertDrag = (oe, shouldCommit = true) => {
+      if (!routeInsertDragActive) return;
+      routeInsertDragActive = false;
+      cleanupRouteInsertDrag();
+      this.map.dragging.enable();
+      this._blockMapClick();
+
+      if (oe && shouldCommit) {
+        updateRouteInsertPreview(domEventLatLng(oe));
+      }
+
+      const latlng = routeInsertLatLng;
+      const insertIndex = routeInsertIndex;
+      if (routeInsertPreview) {
+        this.map.removeLayer(routeInsertPreview);
+        routeInsertPreview = null;
+      }
+      routeInsertLatLng = null;
+      routeInsertIndex = null;
+
+      if (shouldCommit && latlng) {
+        this.addWaypoint(latlng.lat, latlng.lng, insertIndex ?? this._findInsertionIndex(latlng));
+      }
+    };
+
+    function onRouteInsertMouseMove(ev) {
+      updateRouteInsertPreview(domEventLatLng(ev));
+    }
+
+    function onRouteInsertMouseUp(ev) {
+      finishRouteInsertDrag(ev, true);
+    }
+
+    const onRouteInsertTouchMove = (ev) => {
+      if (this._isMultiTouchEvent(ev)) {
+        this._noteMultiTouchGesture();
+        finishRouteInsertDrag(ev, false);
+        return;
+      }
+      ev.preventDefault();
+      updateRouteInsertPreview(domEventLatLng(ev));
+    };
+
+    const onRouteInsertTouchEnd = (ev) => {
+      if (this._isMultiTouchEvent(ev) || Date.now() - this._lastMultiTouchAt < 700) {
+        this._noteMultiTouchGesture();
+        finishRouteInsertDrag(ev, false);
+        return;
+      }
+      finishRouteInsertDrag(ev, true);
+    };
+
+    function onRouteInsertTouchCancel(ev) {
+      finishRouteInsertDrag(ev, false);
+    }
+
+    const startRouteInsertDrag = (latlng, source) => {
+      routeInsertDragActive = true;
+      routeInsertIndex = this._findInsertionIndex(latlng);
+      updateRouteInsertPreview(latlng);
+      this.map.dragging.disable();
+
+      if (source === 'touch') {
+        document.addEventListener('touchmove', onRouteInsertTouchMove, { passive: false });
+        document.addEventListener('touchend', onRouteInsertTouchEnd);
+        document.addEventListener('touchcancel', onRouteInsertTouchCancel);
+      } else {
+        document.addEventListener('mousemove', onRouteInsertMouseMove);
+        document.addEventListener('mouseup', onRouteInsertMouseUp);
       }
     };
 
@@ -2111,7 +3310,8 @@ export class MapManager {
 
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
-      if (lpTriggered) return;
+      if (Date.now() - this._lastMultiTouchAt < 700) return;
+      if (lpTriggered || routeInsertDragActive) return;
       if (this.isFrozen) {
         this._notifyFrozenInteraction('route-edit');
         return;
@@ -2319,6 +3519,27 @@ export class MapManager {
     return ids;
   }
 
+  _markerLegIds(marker) {
+    if (!marker) return [];
+    const ids = [];
+    if (marker._legId !== undefined) ids.push(marker._legId);
+    if (Array.isArray(marker._legIds)) {
+      marker._legIds.forEach((id) => {
+        if (id !== undefined && !ids.includes(id)) ids.push(id);
+      });
+    }
+    return ids;
+  }
+
+  _routeLegIsReturn(legId) {
+    const chunks = this.gradientPolylines.filter((pl) => this._polylineLegIds(pl).includes(legId));
+    if (!chunks.length) return null;
+    const returnCount = chunks.filter((pl) => pl._isReturn === true).length;
+    const outboundCount = chunks.filter((pl) => pl._isReturn === false).length;
+    if (returnCount === outboundCount) return null;
+    return returnCount > outboundCount;
+  }
+
   _debugRouteLayerCycle(reason, details = {}) {
     try {
       if (localStorage.getItem(ROUTE_LAYER_DEBUG_KEY) !== '1') return;
@@ -2349,12 +3570,7 @@ export class MapManager {
       ...this.returnWaypointMarkers,
     ];
 
-    const markerLegs = (m) => {
-      const ids = new Set();
-      if (m._legId !== undefined) ids.add(m._legId);
-      if (Array.isArray(m._legIds)) m._legIds.forEach((id) => ids.add(id));
-      return Array.from(ids);
-    };
+    const markerLegs = (m) => this._markerLegIds(m);
     const matchesAny = (m) => markerLegs(m).some((id) => legSet.has(id));
     const matchesTop = (m) => markerLegs(m).includes(topLeg);
     const switchablePairKey = (m) => {
@@ -2386,9 +3602,10 @@ export class MapManager {
         candidates.push(...group.filter(nearClick));
       }
     });
-    this._syncStackedWaypointLayerForTopLeg(topLeg);
+    this._syncStackedWaypointLayerForTopLeg(topLeg, legs);
     if (candidates.length < 2) return;
 
+    const isWaypointMarker = (m) => this.waypointMarkers.includes(m) || this.returnWaypointMarkers.includes(m);
     const rank = new Map(legs.map((leg, i) => [leg, i]));
     candidates
       .sort((a, b) => {
@@ -2396,23 +3613,54 @@ export class MapManager {
         const br = Math.min(...markerLegs(b).map((id) => rank.get(id) ?? 0));
         return ar - br;
       })
-      .forEach((m, i) => m.setZIndexOffset(200 + i * 20));
-    candidates.filter(matchesTop).forEach((m) => m.setZIndexOffset(900));
+      .forEach((m, i) => m.setZIndexOffset((isWaypointMarker(m) ? WAYPOINT_Z_BASE : 200) + i * 20));
+    candidates
+      .filter(matchesTop)
+      .forEach((m) => m.setZIndexOffset(isWaypointMarker(m) ? WAYPOINT_Z_SELECTED : 900));
+    this._syncStackedWaypointLayerForTopLeg(topLeg, legs);
   }
 
-  _syncStackedWaypointLayerForTopLeg(topLeg) {
+  _syncStackedWaypointLayerForTopLeg(topLeg, legs = null) {
+    const legSet = Array.isArray(legs) ? new Set(legs) : null;
+    const topIsReturn = this._routeLegIsReturn(topLeg);
+    let highlightedPairNeedsRefresh = false;
+
     this.waypointMarkers.forEach((outbound, idx) => {
       const ret = this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
       if (!outbound || !ret) return;
-      const outboundIds = new Set([outbound._legId, ...(outbound._legIds || [])]);
-      const returnIds = new Set([ret._legId, ...(ret._legIds || [])]);
-      const outboundMatches = outboundIds.has(topLeg);
-      const returnMatches = returnIds.has(topLeg);
-      if (outboundMatches === returnMatches) return;
-      this.waypointLayerSwapped[idx] = outboundMatches;
-      outbound.setZIndexOffset(outboundMatches ? 900 : 200);
-      ret.setZIndexOffset(returnMatches ? 900 : 200);
+
+      const outboundIds = this._markerLegIds(outbound);
+      const returnIds = this._markerLegIds(ret);
+      const pairMatchesGroup = !legSet || [...outboundIds, ...returnIds].some((id) => legSet.has(id));
+      if (!pairMatchesGroup) return;
+
+      const outboundMatchesTop = outboundIds.includes(topLeg);
+      const returnMatchesTop = returnIds.includes(topLeg);
+      let outboundOnTop = null;
+
+      if (topIsReturn === true && (returnMatchesTop || !legSet || returnIds.some((id) => legSet.has(id)))) {
+        outboundOnTop = false;
+      } else if (topIsReturn === false && (outboundMatchesTop || !legSet || outboundIds.some((id) => legSet.has(id)))) {
+        outboundOnTop = true;
+      } else if (outboundMatchesTop !== returnMatchesTop) {
+        outboundOnTop = outboundMatchesTop;
+      }
+
+      if (outboundOnTop === null) return;
+
+      this.waypointLayerSwapped[idx] = outboundOnTop;
+      outbound.setZIndexOffset(WAYPOINT_Z_BASE + (outboundOnTop ? WAYPOINT_Z_PAIR_STEP : 0));
+      ret.setZIndexOffset(WAYPOINT_Z_BASE + (outboundOnTop ? 0 : WAYPOINT_Z_PAIR_STEP));
+
+      const topIsReturnMarker = !outboundOnTop;
+      if (this.highlightedWpIndex === idx && this.highlightedIsReturn !== topIsReturnMarker) {
+        highlightedPairNeedsRefresh = true;
+      }
     });
+
+    if (highlightedPairNeedsRefresh) {
+      this._highlightTopWaypointLayer(this.highlightedWpIndex);
+    }
   }
 
   /**
@@ -2506,8 +3754,8 @@ export class MapManager {
 
       // true means outbound rests above return; false means return rests above outbound.
       this.waypointLayerSwapped[idx] = returnMovesBack;
-      outbound.setZIndexOffset(returnMovesBack ? 100 : 0);
-      ret.setZIndexOffset(returnMovesBack ? 0 : 100);
+      outbound.setZIndexOffset(WAYPOINT_Z_BASE + (returnMovesBack ? WAYPOINT_Z_PAIR_STEP : 0));
+      ret.setZIndexOffset(WAYPOINT_Z_BASE + (returnMovesBack ? 0 : WAYPOINT_Z_PAIR_STEP));
     });
   }
 
@@ -2596,14 +3844,40 @@ export class MapManager {
   _cycleWaypointOverlapLayers(idx, latlng, { select = true } = {}) {
     if (idx === undefined || idx < 0 || !this._hasReturnWaypointPair(idx)) return false;
 
-    const wasOutboundOnTop = this.waypointLayerSwapped[idx] ?? true;
-    const switchedRoute = this._cycleOverlappingLayers(null, latlng);
-    if (!switchedRoute) {
-      this._toggleWaypointLayer(idx, { select: false });
-    } else if ((this.waypointLayerSwapped[idx] ?? true) === wasOutboundOnTop) {
-      this._toggleWaypointLayer(idx, { select: false });
+    const desiredOutboundOnTop = !(this.waypointLayerSwapped[idx] ?? true);
+    const switchedRoute = this._bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng);
+    if (!switchedRoute || (this.waypointLayerSwapped[idx] ?? true) !== desiredOutboundOnTop) {
+      this.waypointLayerSwapped[idx] = desiredOutboundOnTop;
+      this._resetWaypointMarkerZ();
     }
     if (select) this._highlightTopWaypointLayer(idx);
+    return true;
+  }
+
+  _bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng) {
+    if (!this.gradientPolylines.length) return false;
+
+    this._syncAllMarkerLegIds();
+
+    const source = 'mouse';
+    const proximityPx = ROUTE_OVERLAP_PROXIMITY_PX[source] ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
+    const nearby = this._findOverlappingRouteChunks(latlng, null, { proximityPx });
+    const legs = this._uniqueNearbyLegs(nearby);
+    if (legs.length < 2) return false;
+
+    const targetMarker = desiredOutboundOnTop
+      ? this.waypointMarkers[idx]
+      : this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
+    const desiredIsReturn = !desiredOutboundOnTop;
+    const targetLegs = this._markerLegIds(targetMarker).filter((leg) => legs.includes(leg));
+    const targetLeg = targetLegs.find((leg) => this._routeLegIsReturn(leg) === desiredIsReturn)
+      ?? targetLegs[0];
+    if (targetLeg === undefined) return false;
+
+    this._overlapCycleState.set(this._overlapStackKey(legs), targetLeg);
+    this._bringOverlapLegToFront(legs, targetLeg);
+    this._syncOverlapMarkerStack(legs, targetLeg, latlng);
+    this._debugRouteLayerCycle('waypoint-sync', { legs, targetLeg, desiredOutboundOnTop });
     return true;
   }
 
@@ -2614,17 +3888,59 @@ export class MapManager {
     }
   }
 
-  _scheduleWaypointSelect(wpIndex, isReturn = false, shouldToggle = false) {
+  _waypointSelectionLatLng(wpIndex, isReturn = false) {
+    const marker = isReturn
+      ? this.returnWaypointMarkers.find((m) => m._wpIndex === wpIndex)
+      : this.waypointMarkers[wpIndex];
+    if (marker?.getLatLng) return marker.getLatLng();
+
+    const wp = this.waypoints[wpIndex];
+    return wp ? L.latLng(wp[0], wp[1]) : null;
+  }
+
+  _isWaypointHighlighted(wpIndex, isReturn = false) {
+    return this.highlightedWpIndex === wpIndex && this.highlightedIsReturn === isReturn;
+  }
+
+  _selectWaypointFromMap(wpIndex, isReturn = false, latlng = null) {
+    if (this._isWaypointHighlighted(wpIndex, isReturn) && this._hasReturnWaypointPair(wpIndex)) {
+      this._cycleWaypointOverlapLayers(
+        wpIndex,
+        latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
+        { select: false }
+      );
+      this._highlightTopWaypointLayer(wpIndex);
+      return;
+    }
+
+    this.onWaypointSelect?.(wpIndex, isReturn, false);
+  }
+
+  _scheduleWaypointSelect(wpIndex, isReturn = false, latlng = null) {
     this._clearWaypointClickTimeout();
     this._waypointClickTimeout = setTimeout(() => {
       this._waypointClickTimeout = null;
-      this.onWaypointSelect?.(wpIndex, isReturn, shouldToggle);
-    }, 250);
+      this._selectWaypointFromMap(wpIndex, isReturn, latlng);
+    }, WAYPOINT_SINGLE_TAP_DELAY_MS);
   }
 
   _deferWaypointSelect(wpIndex, isReturn = false, shouldToggle = false) {
     this._clearWaypointClickTimeout();
     setTimeout(() => this.onWaypointSelect?.(wpIndex, isReturn, shouldToggle), 0);
+  }
+
+  _cycleWaypointLayerThenSelect(wpIndex, isReturn = false, latlng = null) {
+    if (this._hasReturnWaypointPair(wpIndex)) {
+      this._cycleWaypointOverlapLayers(
+        wpIndex,
+        latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
+        { select: false }
+      );
+      this._deferTopWaypointLayerHighlight(wpIndex);
+      return;
+    }
+
+    this._deferWaypointSelect(wpIndex, isReturn, false);
   }
 
   _deferTopWaypointLayerHighlight(idx) {
@@ -2648,22 +3964,25 @@ export class MapManager {
 
   /**
    * Reset all marker z-indices to their default stack order.
-   * Default: outbound leg (100) is above return leg (0).
+   * Default: outbound leg is above return leg.
    * Overridden by waypointLayerSwapped[idx].
    */
   _resetWaypointMarkerZ() {
     this.waypointMarkers.forEach((m, i) => {
-      m.getElement()?.classList.remove('is-selected');
+      m.getElement()?.classList.remove('is-selected', 'has-highlighted-weather-card');
       const outboundOnTop = this.waypointLayerSwapped[i] ?? true;
-      const offset = outboundOnTop ? 100 : 0;
+      const offset = WAYPOINT_Z_BASE + (outboundOnTop ? WAYPOINT_Z_PAIR_STEP : 0);
       m.setZIndexOffset(offset);
     });
     this.returnWaypointMarkers.forEach((m) => {
-      m.getElement()?.classList.remove('is-selected');
+      m.getElement()?.classList.remove('is-selected', 'has-highlighted-weather-card');
       const i = m._wpIndex;
       const outboundOnTop = i !== undefined ? (this.waypointLayerSwapped[i] ?? true) : true;
-      const offset = outboundOnTop ? 0 : 100;
+      const offset = WAYPOINT_Z_BASE + (outboundOnTop ? 0 : WAYPOINT_Z_PAIR_STEP);
       m.setZIndexOffset(offset);
+    });
+    this.intermediateMarkers.forEach((m) => {
+      m.getElement()?.classList.remove('has-highlighted-weather-card');
     });
   }
 
@@ -2673,17 +3992,36 @@ export class MapManager {
       && this.returnWaypointMarkers.some((m) => m._wpIndex === idx);
   }
 
+  _restoreWaypointHighlightDom() {
+    if (this.highlightedWpIndex < 0) return;
+    const m = this.highlightedIsReturn
+      ? this.returnWaypointMarkers.find((x) => x._wpIndex === this.highlightedWpIndex)
+      : this.waypointMarkers[this.highlightedWpIndex];
+    if (!m) return;
+
+    const el = m.getElement();
+    el?.classList.add('is-selected');
+    if (el?.classList.contains('has-weather-card')) {
+      el.classList.add('has-highlighted-weather-card');
+    }
+    m.setZIndexOffset(WAYPOINT_Z_SELECTED);
+  }
+
   /** Highlight an outbound waypoint marker by index. Bumps the marker's
    *  Leaflet zIndexOffset so it rises above any colocated return marker
-   *  (which sits at +100 by default). */
+   *  and route interval markers. */
   highlightWaypoint(wpIndex) {
     this._resetWaypointMarkerZ();
     this.highlightedWpIndex = wpIndex;
     this.highlightedIsReturn = false;
     const m = this.waypointMarkers[wpIndex];
     if (m) {
-      m.getElement()?.classList.add('is-selected');
-      m.setZIndexOffset(1000);
+      const el = m.getElement();
+      el?.classList.add('is-selected');
+      if (el?.classList.contains('has-weather-card')) {
+        el.classList.add('has-highlighted-weather-card');
+      }
+      m.setZIndexOffset(WAYPOINT_Z_SELECTED);
     }
   }
 
@@ -2694,8 +4032,12 @@ export class MapManager {
     this.highlightedIsReturn = true;
     const m = this.returnWaypointMarkers.find((x) => x._wpIndex === wpIndex);
     if (m) {
-      m.getElement()?.classList.add('is-selected');
-      m.setZIndexOffset(1000);
+      const el = m.getElement();
+      el?.classList.add('is-selected');
+      if (el?.classList.contains('has-weather-card')) {
+        el.classList.add('has-highlighted-weather-card');
+      }
+      m.setZIndexOffset(WAYPOINT_Z_SELECTED);
     }
   }
 
@@ -2707,78 +4049,114 @@ export class MapManager {
   }
 
   /**
-   * Open a weather card popup attached to a marker.
-   * Multiple popups can coexist.
+   * Expand the marker's weather badge into an inline weather card.
+   * Multiple cards can coexist because each one lives inside its own badge.
    * @param {number} colIdx - weather column index
-   * @param {string} htmlContent - full inner HTML for the popup
-   * @param {function} onReady - callback(wrapper) fired when popup is added to DOM
+   * @param {string} htmlContent - full inner HTML for the card
+   * @param {function} onReady - callback(wrapper) fired when the card is in DOM
    * @param {boolean} isIntermediate - if true, attach to intermediate markers
+   * @param {boolean} isReturn - if true, attach to return-leg waypoint markers
    */
-  openWeatherPopup(colIdx, htmlContent, onReady, isIntermediate = false, waypointIndex = -1) {
-    const marker = isIntermediate
-      ? this.intermediateMarkers.find(m => m.options.colIdx === colIdx) // We'll need to store colIdx on marker options
-      : this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx]; // fallback for legacy logic
-
-    // Better: let the caller provide the marker or latlng. 
-    // But since we want to attach to the marker, let's find it.
-    let targetMarker = null;
-    if (isIntermediate) {
-      // Find intermediate marker by some property? 
-      // I'll update setIntermediateMarkers to store colIdx on the marker.
-      targetMarker = this.intermediateMarkers.find(m => m._colIdx === colIdx);
-    } else {
-      targetMarker = this.waypointMarkers[waypointIndex >= 0 ? waypointIndex : colIdx];
-    }
-
+  openWeatherPopup(colIdx, htmlContent, onReady, isIntermediate = false, waypointIndex = -1, isReturn = false) {
+    const targetMarker = this._findWeatherTargetMarker(colIdx, isIntermediate, waypointIndex, isReturn);
     if (!targetMarker) return;
+    const badge = this._weatherBadgeForMarker(targetMarker);
+    const useMobileLayer = this._shouldUseMobileWeatherCardLayer(htmlContent);
+    const slot = useMobileLayer ? this._mobileWeatherCardLayer() : this._weatherCardSlotForBadge(badge);
+    if (!badge || !slot) return;
 
-    // If already open for this index, update it instead of recreating (prevents flashing)
-    let popup = this._weatherPopups.get(colIdx);
-    if (!popup) {
-      popup = L.popup({
-        className: 'weather-popup',
-        closeButton: false,
-        closeOnClick: false,
-        autoClose: false,
-        autoPan: true,
-        autoPanPaddingTopLeft: [20, 60],
-        autoPanPaddingBottomRight: [20, 20],
-        offset: isIntermediate ? [0, -12] : [0, -24],
-        maxWidth: 320,
-        minWidth: 200,
-      });
-      this._weatherPopups.set(colIdx, popup);
+    const existing = this._weatherPopups.get(colIdx);
+    if (existing && (existing.badge !== badge || existing.slot !== slot)) {
+      this._closeInlineWeatherCardNow(colIdx, existing);
     }
 
-    popup
-      .setLatLng(targetMarker.getLatLng())
-      .setContent(htmlContent)
-      .openOn(this.map);
-
-    // Prevent Leaflet from swallowing click events inside the popup
-    const wrapper = popup.getElement();
-    if (wrapper) {
-      L.DomEvent.disableClickPropagation(wrapper);
-      L.DomEvent.disableScrollPropagation(wrapper);
+    const closeTimer = this._weatherPopupCloseTimers.get(colIdx);
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      this._weatherPopupCloseTimers.delete(colIdx);
     }
+
+    badge.classList.remove('is-card-closing');
+    badge.classList.add('is-card-open');
+    targetMarker.getElement?.()?.classList.add('has-weather-card');
+    slot.innerHTML = htmlContent;
+
+    L.DomEvent.disableClickPropagation(slot);
+    L.DomEvent.disableScrollPropagation(slot);
+    const card = slot.querySelector('.weather-card');
+    if (card) {
+      L.DomEvent.disableClickPropagation(card);
+      L.DomEvent.disableScrollPropagation(card);
+    }
+
+    const entry = {
+      marker: targetMarker,
+      badge,
+      slot,
+      closeToken: null,
+      htmlContent,
+      onReady,
+      isIntermediate,
+      waypointIndex,
+      isReturn,
+    };
+    this._weatherPopups.set(colIdx, entry);
 
     // Call onReady callback so event handlers can be bound
-    if (onReady) onReady(wrapper);
+    if (onReady) onReady(slot);
   }
 
   /**
-   * Close a specific weather card popup or all of them.
-   * @param {number} colIdx - if undefined, closes ALL popups
+   * Remove an inline marker weather card without animation.
    */
-  closeWeatherPopup(colIdx) {
+  _closeInlineWeatherCardNow(colIdx, entry) {
+    const closeTimer = this._weatherPopupCloseTimers.get(colIdx);
+    if (closeTimer) clearTimeout(closeTimer);
+    this._weatherPopupCloseTimers.delete(colIdx);
+    entry.badge?.classList.remove('is-card-open', 'is-card-closing');
+    const currentMarker = this._findWeatherTargetMarker(
+      colIdx,
+      !!entry.isIntermediate,
+      Number.isInteger(entry.waypointIndex) ? entry.waypointIndex : -1,
+      !!entry.isReturn
+    ) || entry.marker;
+    currentMarker?.getElement?.()?.classList.remove('has-weather-card');
+    this._weatherBadgeForMarker(currentMarker)?.classList.remove('is-card-open', 'is-card-closing');
+    if (entry.slot) entry.slot.innerHTML = '';
+    this._weatherPopups.delete(colIdx);
+  }
+
+  /**
+   * Close a specific inline weather card or all of them.
+   * @param {number} colIdx - if undefined, closes ALL cards
+   */
+  closeWeatherPopup(colIdx, options = {}) {
+    const animate = options.animate === true;
+
     if (colIdx !== undefined) {
-      const popup = this._weatherPopups.get(colIdx);
-      if (popup) {
-        this.map.closePopup(popup);
-        this._weatherPopups.delete(colIdx);
+      const entry = this._weatherPopups.get(colIdx);
+      if (entry) {
+        const card = entry.slot?.querySelector('.weather-card');
+        const isMobileLayerCard = entry.slot?.classList.contains('mobile-weather-card-layer');
+        if (!animate || isMobileLayerCard || !entry.badge || !card) {
+          this._closeInlineWeatherCardNow(colIdx, entry);
+          return;
+        }
+        const token = Symbol('weather-close');
+        entry.closeToken = token;
+        entry.badge.classList.remove('is-card-open');
+        entry.badge.classList.add('is-card-closing');
+        let finished = false;
+        const finish = () => {
+          if (finished || entry.closeToken !== token) return;
+          finished = true;
+          this._closeInlineWeatherCardNow(colIdx, entry);
+        };
+        card.addEventListener('animationend', finish, { once: true });
+        this._weatherPopupCloseTimers.set(colIdx, setTimeout(finish, 260));
       }
     } else {
-      this._weatherPopups.forEach(p => this.map.closePopup(p));
+      this._weatherPopups.forEach((entry, idx) => this._closeInlineWeatherCardNow(idx, entry));
       this._weatherPopups.clear();
     }
   }
@@ -2786,7 +4164,6 @@ export class MapManager {
   /** Check if a specific weather popup is currently open. */
   isWeatherPopupOpen(colIdx) {
     if (colIdx === undefined) return this._weatherPopups.size > 0;
-    const popup = this._weatherPopups.get(colIdx);
-    return !!popup && this.map.hasLayer(popup);
+    return this._weatherPopups.has(colIdx);
   }
 }

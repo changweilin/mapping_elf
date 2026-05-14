@@ -97,6 +97,237 @@ function showImportedTrackEditNotice(duration = 3200) {
   showNotification(IMPORTED_TRACK_EDIT_NOTICE, 'warning', duration);
 }
 
+const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
+  '#btn-clear-route',
+  '#btn-replan-route',
+  '#btn-undo',
+  '#btn-redo',
+  '.search-result-add',
+].join(',');
+
+const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
+  '#btn-clear-route',
+  '#btn-replan-route',
+  '#btn-undo',
+  '#btn-redo',
+  '#btn-fit-route',
+  '#btn-my-location',
+  '#waypoint-list button',
+  '#weather-table-container button',
+  '#weather-table-container input',
+  '#weather-table-container select',
+  '.search-result-add',
+].join(',');
+
+const WEATHER_CARD_BUSY_DISABLE_SELECTOR = [
+  '.weather-card button',
+  '.weather-card input',
+  '.weather-card select',
+].join(',');
+
+let routeWeatherBusyTasks = new Map();
+let deferredBusySettings = new Map();
+let busyInteractionNoticeAt = 0;
+let deferredSettingsNoticeAt = 0;
+let weatherCardBusyNoticeAt = 0;
+let weatherNotLoadedNoticeAt = 0;
+let busyTaskSeq = 0;
+
+function hasRouteWeatherBusyTasks() {
+  return routeWeatherBusyTasks.size > 0;
+}
+
+function isRouteWeatherBusy() {
+  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'weather-card');
+}
+
+function isWeatherCardInteractionLocked() {
+  return hasRouteWeatherBusyTasks();
+}
+
+function showRouteWeatherBusyNotice(duration = 2200) {
+  const now = Date.now();
+  if (now - busyInteractionNoticeAt < 900) return;
+  busyInteractionNoticeAt = now;
+  showNotification('路線或天氣資料處理中，暫時鎖定編輯操作', 'warning', duration);
+}
+
+function showDeferredSettingNotice() {
+  const now = Date.now();
+  if (now - deferredSettingsNoticeAt < 1400) return;
+  deferredSettingsNoticeAt = now;
+  showNotification('目前正在處理路線/天氣，參數會在完成後套用', 'info', 2200);
+}
+
+function showWeatherCardBusyNotice(duration = 2200) {
+  const now = Date.now();
+  if (now - weatherCardBusyNoticeAt < 900) return;
+  weatherCardBusyNoticeAt = now;
+  showNotification('天氣資訊載入中，天氣卡暫時不可操作。', 'warning', duration);
+}
+
+function showWeatherNotLoadedNotice(duration = 2400) {
+  const now = Date.now();
+  if (now - weatherNotLoadedNoticeAt < 900) return;
+  weatherNotLoadedNoticeAt = now;
+  showNotification('尚未載入天氣資訊，取得完成後才能展開天氣卡。', 'warning', duration);
+}
+
+function syncBusyDisabledControls(selector, disabled, className) {
+  document.querySelectorAll(selector).forEach((el) => {
+    if (disabled) {
+      if (!el.dataset.busyWasDisabled) el.dataset.busyWasDisabled = el.disabled ? '1' : '0';
+      el.disabled = true;
+      el.classList.add(className);
+    } else if (el.dataset.busyWasDisabled !== undefined) {
+      el.disabled = el.dataset.busyWasDisabled === '1';
+      delete el.dataset.busyWasDisabled;
+      el.classList.remove(className);
+    }
+  });
+}
+
+function updateRouteWeatherBusyOverlay() {
+  const busy = hasRouteWeatherBusyTasks();
+  const routeLocked = isRouteWeatherBusy();
+  const weatherCardLocked = isWeatherCardInteractionLocked();
+  const wasRouteLocked = document.body.classList.contains('route-weather-busy');
+  document.body.classList.toggle('route-weather-busy', routeLocked);
+  document.body.classList.toggle('weather-card-busy', weatherCardLocked);
+  document.body.classList.toggle('route-weather-progress-busy', busy);
+
+  const overlay = document.getElementById('route-weather-busy-overlay');
+  const titleEl = document.getElementById('route-weather-busy-title');
+  const detailEl = document.getElementById('route-weather-busy-detail');
+  const progressEl = document.getElementById('route-weather-busy-progress');
+  const fillEl = document.getElementById('route-weather-busy-fill');
+  const barEl = overlay?.querySelector('.loading-bar');
+  const brandEl = document.getElementById('route-weather-busy-brand');
+
+  if (overlay) overlay.classList.toggle('hidden', !busy);
+  if (busy) {
+    const task = Array.from(routeWeatherBusyTasks.values()).at(-1);
+    const showCenterBrand = !!task?.centerBrand;
+    const progress = Number.isFinite(task?.progress) ? Math.max(0, Math.min(100, task.progress)) : null;
+    if (overlay) overlay.classList.toggle('has-center-brand', showCenterBrand);
+    if (brandEl) {
+      brandEl.classList.toggle('hidden', !showCenterBrand);
+      brandEl.setAttribute('aria-hidden', showCenterBrand ? 'false' : 'true');
+    }
+    if (titleEl) titleEl.textContent = task?.title || '處理中';
+    if (detailEl) detailEl.textContent = task?.detail || '請稍候...';
+    if (progressEl) progressEl.textContent = progress == null ? '處理中' : `${Math.round(progress)}%`;
+    if (fillEl) {
+      fillEl.classList.toggle('is-determinate', progress != null);
+      fillEl.style.setProperty('--busy-progress', `${progress ?? 0}%`);
+    }
+    if (barEl) {
+      barEl.setAttribute('aria-busy', 'true');
+      barEl.setAttribute('aria-valuenow', String(Math.round(progress ?? 0)));
+    }
+  } else if (fillEl) {
+    if (overlay) overlay.classList.remove('has-center-brand');
+    if (brandEl) {
+      brandEl.classList.add('hidden');
+      brandEl.setAttribute('aria-hidden', 'true');
+    }
+    fillEl.classList.remove('is-determinate');
+    fillEl.style.removeProperty('--busy-progress');
+  }
+
+  syncBusyDisabledControls(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR, routeLocked, 'route-edit-control');
+  syncBusyDisabledControls(WEATHER_CARD_BUSY_DISABLE_SELECTOR, weatherCardLocked, 'weather-edit-control');
+
+  if (typeof mapManager !== 'undefined' && mapManager) {
+    mapManager.setFrozen(!!importedTrackMode || routeLocked);
+  }
+  if (!busy && typeof syncTrackModeUI === 'function') {
+    syncTrackModeUI();
+    if (wasRouteLocked && !routeLocked && typeof updateWaypointList === 'function' && typeof mapManager !== 'undefined' && mapManager) {
+      updateWaypointList(mapManager.waypoints);
+    }
+    if (typeof _updateHistoryButtons === 'function') _updateHistoryButtons();
+  }
+}
+
+function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null, lockScope = 'route', centerBrand = false } = {}) {
+  const id = `busy_${++busyTaskSeq}`;
+  routeWeatherBusyTasks.set(id, { title, detail, progress, lockScope, centerBrand });
+  updateRouteWeatherBusyOverlay();
+  let ended = false;
+  return {
+    set(update = {}) {
+      if (ended || !routeWeatherBusyTasks.has(id)) return;
+      routeWeatherBusyTasks.set(id, { ...routeWeatherBusyTasks.get(id), ...update });
+      updateRouteWeatherBusyOverlay();
+    },
+    end() {
+      if (ended) return;
+      ended = true;
+      routeWeatherBusyTasks.delete(id);
+      updateRouteWeatherBusyOverlay();
+      if (!isRouteWeatherBusy()) flushDeferredBusySettings();
+    },
+  };
+}
+
+function runOrDeferBusySetting(key, applyFn) {
+  if (!isRouteWeatherBusy()) {
+    applyFn();
+    return;
+  }
+  deferredBusySettings.set(key, applyFn);
+  showDeferredSettingNotice();
+}
+
+function flushDeferredBusySettings() {
+  if (deferredBusySettings.size === 0) return;
+  const pending = Array.from(deferredBusySettings.values());
+  deferredBusySettings.clear();
+  showNotification('正在套用等待中的參數設定...', 'info', 1400);
+  pending.forEach((applyFn) => applyFn());
+}
+
+function installRouteWeatherBusyGuard() {
+  const blockPointerEvent = (e) => {
+    const target = e.target;
+    const isWeatherBadgeClick = e.type === 'click' && target?.closest?.('.wp-weather-badge');
+    if (isWeatherCardInteractionLocked() && (target?.closest?.('.weather-card') || isWeatherBadgeClick)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showWeatherCardBusyNotice();
+      return;
+    }
+    if (isRouteWeatherBusy() && target?.closest?.(ROUTE_WEATHER_BUSY_BLOCK_SELECTOR)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showRouteWeatherBusyNotice();
+    }
+  };
+  ['click', 'dblclick', 'mousedown', 'touchstart', 'contextmenu', 'dragstart'].forEach((type) => {
+    document.addEventListener(type, blockPointerEvent, true);
+  });
+  document.addEventListener('keydown', (e) => {
+    const target = e.target;
+    if (isWeatherCardInteractionLocked() && target?.closest?.('.weather-card')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showWeatherCardBusyNotice();
+      return;
+    }
+    if (!isRouteWeatherBusy()) return;
+    const tag = target?.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+    const editKey = e.key === 'Delete' || e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase()));
+    if (!editKey) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    showRouteWeatherBusyNotice();
+  }, true);
+}
+
+installRouteWeatherBusyGuard();
+
 let routeExportersPromise = null;
 async function ensureRouteExporters() {
   routeExportersPromise ||= Promise.all([
@@ -244,6 +475,10 @@ const LS_ROUTE_MODE_KEY = 'mappingElf_routeMode';
 const LS_MAP_LAYER_KEY = 'mappingElf_mapLayer';
 const LS_MAP_VIEW_KEY = 'mappingElf_mapView';
 const LS_WEATHER_CACHE_KEY = 'mappingElf_weatherCache';
+const LS_WEATHER_CACHE_ENABLED_KEY = 'mappingElf_weatherCacheEnabled';
+const LS_WEATHER_CACHE_DISTANCE_M_KEY = 'mappingElf_weatherCacheDistanceM';
+const LS_WEATHER_CACHE_ELEVATION_M_KEY = 'mappingElf_weatherCacheElevationM';
+const LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY = 'mappingElf_weatherCacheMaxAgeDays';
 const LS_SPEED_MODE_KEY = 'mappingElf_speedMode';
 const LS_SPEED_ACTIVITY_KEY = 'mappingElf_speedActivity';
 const LS_PACE_PARAMS_KEY = 'mappingElf_paceParams';
@@ -262,6 +497,22 @@ const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
 const LS_PANEL_WIDTH_KEY = 'mappingElf_panelWidth';
+
+const WEATHER_CACHE_SCHEMA_VERSION = 2;
+const WEATHER_CACHE_DISTANCE_DEFAULT_M = 500;
+const WEATHER_CACHE_ELEVATION_DEFAULT_M = 100;
+const WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS = 1;
+const WEATHER_CACHE_MAX_DISTANCE_M = 50000;
+const WEATHER_CACHE_MAX_ELEVATION_M = 5000;
+const WEATHER_CACHE_MAX_AGE_DAYS = 365;
+
+function readStoredNumberSetting(key, fallback, min = -Infinity, max = Infinity) {
+  const raw = localStorage.getItem(key);
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
 
 const COUNTRY_SEARCH_LANGUAGES = {
   tw: ['zh-TW'],
@@ -353,6 +604,25 @@ let collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY
 let collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1'; // default false
 let waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0'; // default true
 let weatherTableCollapsed = localStorage.getItem(LS_WEATHER_TABLE_COLLAPSED_KEY) === '1';
+let weatherCacheEnabled = localStorage.getItem(LS_WEATHER_CACHE_ENABLED_KEY) !== '0';
+let weatherCacheDistanceM = readStoredNumberSetting(
+  LS_WEATHER_CACHE_DISTANCE_M_KEY,
+  WEATHER_CACHE_DISTANCE_DEFAULT_M,
+  1,
+  WEATHER_CACHE_MAX_DISTANCE_M
+);
+let weatherCacheElevationM = readStoredNumberSetting(
+  LS_WEATHER_CACHE_ELEVATION_M_KEY,
+  WEATHER_CACHE_ELEVATION_DEFAULT_M,
+  1,
+  WEATHER_CACHE_MAX_ELEVATION_M
+);
+let weatherCacheMaxAgeDays = readStoredNumberSetting(
+  LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY,
+  WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS,
+  0.1,
+  WEATHER_CACHE_MAX_AGE_DAYS
+);
 
 const LS_SHOW_WP_ICON_KEY = 'mappingElf_showWpIcon';
 const LS_SHOW_IM_ICON_KEY = 'mappingElf_showImIcon';
@@ -507,9 +777,27 @@ const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
-mapManager.onFrozenInteraction = () => showImportedTrackEditNotice();
+mapManager.onFrozenInteraction = () => {
+  if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+  else showImportedTrackEditNotice();
+};
 mapManager.onGpsFix = (lat, lng) => {
   lastGpsLatLng = [lat, lng];
+};
+let pendingWeatherMarkerRefreshAfterDrag = false;
+function refreshWeatherMarkersAfterWeatherUpdate() {
+  if (mapManager.isWaypointInteracting?.() || mapManager.isWaypointDragging?.()) {
+    pendingWeatherMarkerRefreshAfterDrag = true;
+    return;
+  }
+  updateElevationMarkers();
+  updateIntermediateMarkers();
+}
+mapManager.onWaypointDragEnd = () => {
+  if (!pendingWeatherMarkerRefreshAfterDrag) return;
+  pendingWeatherMarkerRefreshAfterDrag = false;
+  updateElevationMarkers();
+  updateIntermediateMarkers();
 };
 
 // =========== Undo/Redo History ===========
@@ -629,7 +917,7 @@ function historyRedo() {
 }
 
 function _updateHistoryButtons() {
-  const frozen = !!importedTrackMode;
+  const frozen = !!importedTrackMode || isRouteWeatherBusy();
   if (btnUndo) btnUndo.disabled = frozen || history.undo.length === 0;
   if (btnRedo) btnRedo.disabled = frozen || history.redo.length === 0;
 }
@@ -662,6 +950,16 @@ function applySettingsFromStorage() {
     windyLayer = (saved && REMAINING_WINDY_LAYERS.has(saved)) ? saved : 'meteogram';
   }
   windyModel = localStorage.getItem(LS_WINDY_MODEL_KEY) || 'ecmwf';
+  weatherCacheEnabled = localStorage.getItem(LS_WEATHER_CACHE_ENABLED_KEY) !== '0';
+  weatherCacheDistanceM = readStoredNumberSetting(LS_WEATHER_CACHE_DISTANCE_M_KEY, WEATHER_CACHE_DISTANCE_DEFAULT_M, 1, WEATHER_CACHE_MAX_DISTANCE_M);
+  weatherCacheElevationM = readStoredNumberSetting(LS_WEATHER_CACHE_ELEVATION_M_KEY, WEATHER_CACHE_ELEVATION_DEFAULT_M, 1, WEATHER_CACHE_MAX_ELEVATION_M);
+  weatherCacheMaxAgeDays = readStoredNumberSetting(LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY, WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS, 0.1, WEATHER_CACHE_MAX_AGE_DAYS);
+  try {
+    cachedWeatherData = normalizeWeatherCacheStore(JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}'));
+    pruneWeatherCache({ persist: true });
+  } catch {
+    cachedWeatherData = {};
+  }
   collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0';
   collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
   collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1';
@@ -733,6 +1031,7 @@ function applySettingsFromStorage() {
   if (showWpIconEl) showWpIconEl.checked = showWpIcon;
   const showImIconEl = document.getElementById('show-intermediate-weather-icon');
   if (showImIconEl) showImIconEl.checked = showImIcon;
+  syncWeatherCacheSettingsUI();
 
   // Refresh UI
   syncTrackModeUI();
@@ -814,6 +1113,10 @@ mapManager.onRouteHover = (lat, lng) => {
 
 // Map-cursor action menu (placed by GPS button — set as waypoint / copy / weather)
 mapManager.onMapCursorAction = (action, lat, lng) => {
+  if (isRouteWeatherBusy() && ['waypoint', 'weather', 'clear'].includes(action)) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
   if (action === 'waypoint') {
     mapManager.addWaypoint(lat, lng);
     showNotification('已設為航點', 'success', 1200);
@@ -1137,22 +1440,38 @@ function initWaypointSettings() {
   };
 
   collectiveMarkedEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('collective-marked', () => collectiveMarkedEl.dispatchEvent(new Event('change')));
+      return;
+    }
     collectiveMarked = collectiveMarkedEl.checked;
     localStorage.setItem(LS_COLLECTIVE_MARKED_KEY, collectiveMarked ? '1' : '0');
   });
 
   collectiveIntermediateEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('collective-intermediate', () => collectiveIntermediateEl.dispatchEvent(new Event('change')));
+      return;
+    }
     collectiveIntermediate = collectiveIntermediateEl.checked;
     localStorage.setItem(LS_COLLECTIVE_INTERMEDIATE_KEY, collectiveIntermediate ? '1' : '0');
   });
 
   collectiveAllEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('collective-all', () => collectiveAllEl.dispatchEvent(new Event('change')));
+      return;
+    }
     collectiveAll = collectiveAllEl.checked;
     localStorage.setItem(LS_COLLECTIVE_ALL_KEY, collectiveAll ? '1' : '0');
     syncCollectiveLock();
   });
 
   waypointCenteringEl?.addEventListener('change', () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('waypoint-centering', () => waypointCenteringEl.dispatchEvent(new Event('change')));
+      return;
+    }
     waypointCentering = waypointCenteringEl.checked;
     localStorage.setItem(LS_WAYPOINT_CENTERING_KEY, waypointCentering ? '1' : '0');
   });
@@ -1161,6 +1480,10 @@ function initWaypointSettings() {
   if (showWpIconEl) {
     showWpIconEl.checked = showWpIcon;
     showWpIconEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('show-wp-icon', () => showWpIconEl.dispatchEvent(new Event('change')));
+        return;
+      }
       showWpIcon = showWpIconEl.checked;
       localStorage.setItem(LS_SHOW_WP_ICON_KEY, showWpIcon ? '1' : '0');
       updateMapWeatherIconVisibility();
@@ -1171,6 +1494,10 @@ function initWaypointSettings() {
   if (showImIconEl) {
     showImIconEl.checked = showImIcon;
     showImIconEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('show-im-icon', () => showImIconEl.dispatchEvent(new Event('change')));
+        return;
+      }
       showImIcon = showImIconEl.checked;
       localStorage.setItem(LS_SHOW_IM_ICON_KEY, showImIcon ? '1' : '0');
       updateMapWeatherIconVisibility();
@@ -1181,6 +1508,10 @@ function initWaypointSettings() {
   if (importAutoSortEl) {
     importAutoSortEl.checked = importAutoSortMode;
     importAutoSortEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-sort', () => importAutoSortEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoSortMode = importAutoSortEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_SORT_KEY, importAutoSortMode ? '1' : '0');
     });
@@ -1190,6 +1521,10 @@ function initWaypointSettings() {
   if (importAutoNameEl) {
     importAutoNameEl.checked = importAutoNameMode;
     importAutoNameEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-name', () => importAutoNameEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoNameMode = importAutoNameEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_NAME_KEY, importAutoNameMode ? '1' : '0');
     });
@@ -1468,8 +1803,9 @@ gpxFileInput.addEventListener('change', importFile);
 
 /** Show/hide the re-plan button based on whether we are in imported-track mode. */
 function syncTrackModeUI() {
+  const busy = isRouteWeatherBusy();
   if (btnReplanRoute) {
-    btnReplanRoute.disabled = !importedTrackMode;
+    btnReplanRoute.disabled = busy || !importedTrackMode;
   }
 
   // Freeze route and pace parameter inputs when in imported track mode (except replan/clear)
@@ -1495,7 +1831,7 @@ function syncTrackModeUI() {
 
   // Sync frozen state to map manager
   if (mapManager) {
-    mapManager.setFrozen(frozen);
+    mapManager.setFrozen(frozen || busy);
   }
 
   // Visual dimming for frozen sections
@@ -1514,6 +1850,10 @@ function syncTrackModeUI() {
 }
 
 btnReplanRoute?.addEventListener('click', () => {
+  if (isRouteWeatherBusy()) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
   const toRemove = [];
   if (importedTrackMode) {
     for (let i = 0; i < mapManager.waypoints.length; i++) {
@@ -1555,6 +1895,10 @@ btnReplanRoute?.addEventListener('click', () => {
 });
 
 btnClearRoute.addEventListener('click', () => {
+  if (isRouteWeatherBusy()) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
   importedTrackMode = false;
   importedIntermediatePoints = [];
   importedWaypointMeta = [];
@@ -1568,8 +1912,6 @@ btnClearRoute.addEventListener('click', () => {
   elevationProfile.clear();
   resetStats();
   weatherPoints = [];
-  cachedWeatherData = {};
-  localStorage.removeItem(LS_WEATHER_CACHE_KEY);
   setCurrentRouteData([], []);
   lastWaypoints = [];
   pendingNewWaypointIndex = null;
@@ -1624,14 +1966,14 @@ window.addEventListener('keydown', (e) => {
       const curMode = _wcStates.get(activeColIdx) || 'compact';
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
-      highlightPoint(activeColIdx);
+      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === activeColIdx }));
+      highlightPoint(activeColIdx, false, { centerMap: nextMode === 'compact' });
       return;
     }
     if (k === 'arrowdown') {
       e.preventDefault();
       const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => closeWeatherCard(idx));
+      targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === activeColIdx }));
       return;
     }
   }
@@ -1920,12 +2262,14 @@ if (layerSwitcherEl) {
 
 routeModeRadios.forEach((radio) => {
   radio.addEventListener('change', (e) => {
-    routeEngine.setMode(e.target.value);
-    localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
-    bumpRouteVersion();
-    if (mapManager.waypoints.length >= 2) {
-      onWaypointsChanged(mapManager.waypoints);
-    }
+    runOrDeferBusySetting('route-mode', () => {
+      routeEngine.setMode(e.target.value);
+      localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
+      bumpRouteVersion();
+      if (mapManager.waypoints.length >= 2) {
+        onWaypointsChanged(mapManager.waypoints);
+      }
+    });
   });
 });
 
@@ -1933,6 +2277,7 @@ routeModeRadios.forEach((radio) => {
 // =========== Core Logic ===========
 
 async function onWaypointsChanged(waypoints) {
+  cancelWeatherFetchForRouteReplan();
   ensureWaypointIds();
   bumpWaypointVersion();
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
@@ -2023,16 +2368,26 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
     return;
   }
 
+  cancelWeatherFetchForRouteReplan();
   isProcessing = true;
   pendingUpdate = false;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在規劃路線',
+    detail: '準備路線與高度資料...',
+    progress: 8,
+    centerBrand: true,
+  });
 
   try {
     showNotification('規劃最佳路徑中...', 'info', 1500);
+
+    busyTask.set({ detail: '清除舊的天氣圖示...', progress: 15 });
 
     // Clear stale weather icons while recalculating
     mapManager.clearWaypointWeather();
 
     // Get all alternative routes (with elevation already fetched)
+    busyTask.set({ detail: '取得路線與高度資料...', progress: 35 });
     const isLoop = waypoints.length >= 3 && haversineDistance(waypoints[0], waypoints[waypoints.length - 1]) < 0.1;
     const routeWaypoints = roundTripMode && waypoints.length >= 2
       ? [...waypoints, ...waypoints.slice(0, -1).reverse()]
@@ -2040,6 +2395,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
         ? [...waypoints, waypoints[0]]
         : waypoints;
     allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
+    busyTask.set({ detail: '繪製路線與高度圖...', progress: 72 });
 
     if (allAlternatives.length > 0) {
       // Draw all routes on map with continuous gradient coloring.
@@ -2067,6 +2423,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
 
       // Select the best route by default
       await selectAlternative(0);
+      busyTask.set({ detail: '更新路線統計與天氣欄位...', progress: 94 });
 
       const altMsg = allAlternatives.length > 1
         ? `找到 ${allAlternatives.length} 組建議路徑`
@@ -2081,9 +2438,13 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   }
 
   isProcessing = false;
+  busyTask.set({ detail: '完成', progress: 100 });
 
   if (pendingUpdate) {
+    busyTask.end();
     debouncedCalculateRoute(mapManager.waypoints);
+  } else {
+    busyTask.end();
   }
 }, 500);
 
@@ -2184,7 +2545,7 @@ function hideAlternatives() {
 }
 
 function updateWaypointList(waypoints) {
-  const frozen = !!importedTrackMode;
+  const frozen = !!importedTrackMode || isRouteWeatherBusy();
   if (waypoints.length === 0) {
     waypointList.innerHTML = `
       <div class="empty-state">
@@ -2278,7 +2639,8 @@ function updateWaypointList(waypoints) {
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       if (frozen) {
-        showImportedTrackEditNotice();
+        if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+        else showImportedTrackEditNotice();
         return;
       }
       if (nameEl.querySelector('input')) return;
@@ -2312,10 +2674,12 @@ function updateWaypointList(waypoints) {
   let placeholder = null;
   let lastDragClientX = null;
   let lastDragClientY = null;
+  let dragCancelledByMultiTouch = false;
 
   const startDrag = (item, idx, clientX, clientY) => {
     dragItem = item;
     dragIndex = idx;
+    dragCancelledByMultiTouch = false;
     lastDragClientX = clientX;
     lastDragClientY = clientY;
     item.classList.add('is-dragging');
@@ -2359,6 +2723,12 @@ function updateWaypointList(waypoints) {
   };
 
   const onMove = (e) => {
+    if (e.touches && e.touches.length !== 1) {
+      dragCancelledByMultiTouch = true;
+      if (e.cancelable) e.preventDefault();
+      onEnd(e);
+      return;
+    }
     if (e.cancelable) e.preventDefault();
     const cx = e.touches ? e.touches[0].clientX : e.clientX;
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
@@ -2366,11 +2736,17 @@ function updateWaypointList(waypoints) {
     lastDragClientY = cy;
     updateGhostPos(cx, cy);
 
-    // Removal detection: use the central trash zone logic from mapManager
-    const overTrash = mapManager.updateTrashZoneHover(cx, cy);
-    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
+    // Drop-zone detection: mirrors map waypoint dragging (cancel / remove).
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const overTrash = dropAction === 'delete';
+    const overCancel = dropAction === 'cancel';
+    mapManager.updateTrashZoneHover(cx, cy);
+    if (ghost) {
+      ghost.classList.toggle('drag-to-remove', overTrash);
+      ghost.classList.toggle('drag-to-cancel', overCancel);
+    }
 
-    if (overTrash) return;
+    if (dropAction) return;
 
     // Sorting logic (only if not over trash)
     const rect = sidePanel.getBoundingClientRect();
@@ -2403,15 +2779,21 @@ function updateWaypointList(waypoints) {
     document.removeEventListener('touchend', onEnd);
     document.removeEventListener('touchcancel', onEnd);
     document.body.classList.remove('route-list-dragging');
+    const cancelledByMultiTouch = dragCancelledByMultiTouch || e.type === 'touchcancel';
+    dragCancelledByMultiTouch = false;
 
     const changedTouch = e.changedTouches?.[0];
     const cx = changedTouch?.clientX ?? e.clientX ?? lastDragClientX;
     const cy = changedTouch?.clientY ?? e.clientY ?? lastDragClientY;
     
-    const isOverTrash = mapManager.isOverTrashZone(cx, cy);
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const isCancelDrop = dropAction === 'cancel';
+    const isOverTrash = dropAction === 'delete';
     mapManager.hideTrashZone();
 
-    if (isOverTrash) {
+    if (cancelledByMultiTouch || isCancelDrop) {
+      updateWaypointList(mapManager.waypoints);
+    } else if (isOverTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
       mapManager.removeWaypoint(dragIndex);
     } else {
@@ -2478,7 +2860,8 @@ function updateWaypointList(waypoints) {
         if (e.button === 0 && !e.target.closest('.wp-actions')) {
           lpTimer = setTimeout(() => {
             lpTimer = null;
-            showImportedTrackEditNotice();
+            if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+            else showImportedTrackEditNotice();
           }, 500);
           const clearFrozenTimer = () => {
             if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
@@ -2517,11 +2900,16 @@ function updateWaypointList(waypoints) {
     });
 
     item.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       if (frozen) {
         if (!e.target.closest('.wp-actions')) {
           lpTimer = setTimeout(() => {
             lpTimer = null;
-            showImportedTrackEditNotice();
+            if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
+            else showImportedTrackEditNotice();
           }, 500);
         }
         return;
@@ -2532,11 +2920,16 @@ function updateWaypointList(waypoints) {
     }, { passive: true });
     
     item.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       const t = e.touches[0];
       checkMove(t.clientX, t.clientY);
     }, { passive: true });
 
     item.addEventListener('touchend', cancelLP, { passive: true });
+    item.addEventListener('touchcancel', cancelLP, { passive: true });
   });
 }
 
@@ -3504,7 +3897,7 @@ function collectExportData() {
     const h = container?.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value;
     const hour = h != null ? parseInt(h) : 0;
     const time = h != null ? `${String(hour).padStart(2, '0')}:00` : '';
-    const cached = date ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, date, hour)] : null;
+    const cached = date ? getWeatherCacheData(pt, date, hour) : null;
     const weather = {};
     if (cached) {
       WEATHER_ROWS.forEach(row => {
@@ -4053,7 +4446,93 @@ function getSavedWeatherCellValue(cells, key) {
     if (cells._weatherCode != null) return `${icon} ${tWmo(cells._weatherCode)}`.trim();
     return translateWeatherText(cells.weather || '—');
   }
-  return cells[key] || '—';
+  if (!Object.prototype.hasOwnProperty.call(cells, key)) return '—';
+  const value = cells[key];
+  return value != null && String(value).trim() !== '' ? value : '—';
+}
+
+const WEATHER_CONTENT_KEYS = [...WEATHER_TOP_ROWS, ...WEATHER_MIDDLE_ROWS].map(row => row.key);
+const WEATHER_DETAIL_KEYS = WEATHER_CONTENT_KEYS.filter(key => key !== 'weather');
+
+function isMeaningfulWeatherValue(value) {
+  const text = String(value ?? '').trim();
+  return !!text && !['—', '-', '--', '...', '??', '?'].includes(text);
+}
+
+function hasSavedWeatherCellField(cells, key) {
+  if (!cells) return false;
+  return Object.prototype.hasOwnProperty.call(cells, key)
+    || (key === 'weather' && (cells._weatherCode != null || isMeaningfulWeatherValue(cells._icon)));
+}
+
+function hasSavedWeatherDetailInfo(cells) {
+  if (!cells) return false;
+  return WEATHER_DETAIL_KEYS.some(key =>
+    hasSavedWeatherCellField(cells, key) && isMeaningfulWeatherValue(getSavedWeatherCellValue(cells, key))
+  );
+}
+
+function hasWeatherDataDetailInfo(data, pt = null) {
+  if (!data) return false;
+  return WEATHER_DETAIL_KEYS.some(key => isMeaningfulWeatherValue(getCellValue(data, key, pt)));
+}
+
+function getWeatherTableCellDisplayValue(colIdx, key) {
+  const container = document.getElementById('weather-table-container');
+  const valueEl = container?.querySelector(`[data-col="${colIdx}"][data-key="${key}"] .wt-cell-value`);
+  const text = valueEl?.textContent?.trim() || '';
+  return isMeaningfulWeatherValue(text) ? text : null;
+}
+
+function hasWeatherTableDetailInfo(colIdx) {
+  return WEATHER_DETAIL_KEYS.some(key => getWeatherTableCellDisplayValue(colIdx, key) !== null);
+}
+
+function weatherCellsMatchSchedule(cells, dateStr, hour) {
+  if (!cells) return false;
+  const storedDate = cells._weatherDate || cells._date || null;
+  const storedHour = cells._weatherHour ?? cells._hour ?? null;
+  if (!storedDate && storedHour == null) return true;
+  if (storedDate && dateStr && storedDate !== dateStr) return false;
+  if (storedHour != null && hour != null && Number(storedHour) !== Number(hour)) return false;
+  return true;
+}
+
+function hasCompletedWeatherLoad(cells, dateStr, hour) {
+  if (!cells || !weatherCellsMatchSchedule(cells, dateStr, hour)) return false;
+  return hasSavedWeatherDetailInfo(cells);
+}
+
+function markWeatherCellsLoaded(cells, dateStr, hour) {
+  return {
+    ...cells,
+    _weatherLoaded: true,
+    _weatherLoadState: 'loaded',
+    _weatherDate: dateStr || null,
+    _weatherHour: Number.isFinite(Number(hour)) ? Number(hour) : null,
+  };
+}
+
+function applySavedWeatherCellsToColumn(pt, colIdx, cells) {
+  if (!pt || !cells) return;
+  const container = document.getElementById('weather-table-container');
+  WEATHER_ROWS.forEach(row => {
+    const hasStoredValue = hasSavedWeatherCellField(cells, row.key);
+    if (!hasStoredValue) return;
+    const cell = container?.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
+    const val = getSavedWeatherCellValue(cells, row.key);
+    if (cell && val) {
+      updateWeatherTableCell(cell, row.key, val);
+      cell.classList.remove('loading', 'error');
+    }
+  });
+  const icon = cells._icon || String(cells.weather || '').split(' ')[0] || '';
+  if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && isMeaningfulWeatherValue(icon)) {
+    mapManager.setWaypointWeather(pt.wpIndex, icon);
+  }
+  updateElevationMarkers();
+  updateIntermediateMarkers();
+  if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx)) _renderWeatherCard(colIdx);
 }
 
 function getWeatherPointShortLabel(pt, fallbackIdx = 0) {
@@ -4613,14 +5092,234 @@ function startLabelEdit(labelEl, pt) {
   });
 }
 
-// Persist fetched weather data across route edits and page refreshes
-let cachedWeatherData = (() => {
-  try { return JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}'); }
-  catch { return {}; }
-})();
 /** Cache key includes date+hour so going/return at the same location can differ. */
 const weatherCoordKey = (lat, lng, date, hour) =>
   `${lat.toFixed(4)},${lng.toFixed(4)},${date},${hour}`;
+
+// Temporary weather database. Entries survive route edits/deleted waypoints and
+// are removed by manual weather refresh or the update-time cleanup rule.
+let cachedWeatherData = (() => {
+  try { return normalizeWeatherCacheStore(JSON.parse(localStorage.getItem(LS_WEATHER_CACHE_KEY) || '{}')); }
+  catch { return {}; }
+})();
+pruneWeatherCache({ persist: true });
+
+function normalizeWeatherCacheStore(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const now = Date.now();
+  const normalized = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    const parsedKey = parseWeatherCacheKey(key);
+    const isEntry = value
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && value.data
+      && typeof value.data === 'object';
+    const data = isEntry ? value.data : value;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+
+    const lat = finiteOrNull(isEntry ? value.lat : parsedKey?.lat);
+    const lng = finiteOrNull(isEntry ? value.lng : parsedKey?.lng);
+    const date = String((isEntry ? value.date : parsedKey?.date) || '');
+    const hour = finiteOrNull(isEntry ? value.hour : parsedKey?.hour);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !date || !Number.isFinite(hour)) return;
+
+    normalized[key] = {
+      schema: WEATHER_CACHE_SCHEMA_VERSION,
+      lat,
+      lng,
+      ele: finiteOrNull(isEntry ? value.ele : pointElevationForWeatherCache(null, data)),
+      date,
+      hour,
+      updatedAt: finiteOrNull(isEntry ? value.updatedAt : null) || now,
+      data,
+    };
+  });
+  return normalized;
+}
+
+function parseWeatherCacheKey(key) {
+  const parts = String(key || '').split(',');
+  if (parts.length < 4) return null;
+  const lat = Number(parts[0]);
+  const lng = Number(parts[1]);
+  const date = parts[2];
+  const hour = Number(parts[3]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !date || !Number.isFinite(hour)) return null;
+  return { lat, lng, date, hour };
+}
+
+function finiteOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pointElevationForWeatherCache(pt, data = null) {
+  const direct = finiteOrNull(pt?._ele ?? pt?.ele);
+  if (Number.isFinite(direct)) return direct;
+  const dataElevation = data?.elevation;
+  if (typeof dataElevation === 'number') return finiteOrNull(dataElevation);
+  if (typeof dataElevation === 'string') {
+    const parsed = Number(dataElevation.replace(/[^\d.-]/g, ''));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function makeWeatherCacheEntry(pt, dateStr, hour, data, updatedAt = Date.now()) {
+  return {
+    schema: WEATHER_CACHE_SCHEMA_VERSION,
+    lat: Number(pt.lat),
+    lng: Number(pt.lng),
+    ele: pointElevationForWeatherCache(pt, data),
+    date: dateStr,
+    hour: Number(hour),
+    updatedAt,
+    data,
+  };
+}
+
+function persistWeatherCache() {
+  try { localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData)); } catch (_) { }
+}
+
+function clearWeatherTempCache() {
+  cachedWeatherData = {};
+  try { localStorage.removeItem(LS_WEATHER_CACHE_KEY); } catch (_) { }
+}
+
+function pruneWeatherCache({ persist = false } = {}) {
+  const maxAgeMs = Math.max(0.1, Number(weatherCacheMaxAgeDays) || WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS) * 86400000;
+  const cutoff = Date.now() - maxAgeMs;
+  let changed = false;
+  Object.entries(cachedWeatherData || {}).forEach(([key, entry]) => {
+    const updatedAt = finiteOrNull(entry?.updatedAt);
+    if (!updatedAt || updatedAt < cutoff || !entry?.data) {
+      delete cachedWeatherData[key];
+      changed = true;
+    }
+  });
+  if (changed && persist) persistWeatherCache();
+  return changed;
+}
+
+function setWeatherCacheData(pt, dateStr, hour, data, options = {}) {
+  if (!weatherCacheEnabled || !pt || !dateStr || !data) return null;
+  const cacheKey = options.cacheKey || weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+  const updatedAt = finiteOrNull(options.updatedAt) || Date.now();
+  cachedWeatherData[cacheKey] = makeWeatherCacheEntry(pt, dateStr, hour, data, updatedAt);
+  persistWeatherCache();
+  return cachedWeatherData[cacheKey];
+}
+
+function rememberWeatherCacheHitForPoint(hit, pt, dateStr, hour) {
+  if (!hit?.entry || !pt || !dateStr) return;
+  const currentKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+  if (hit.key === currentKey) return;
+  setWeatherCacheData(pt, dateStr, hour, hit.entry.data, {
+    cacheKey: currentKey,
+    updatedAt: hit.entry.updatedAt,
+  });
+}
+
+function getWeatherCacheHit(pt, dateStr, hour) {
+  if (!weatherCacheEnabled || !pt || !dateStr) return null;
+  pruneWeatherCache({ persist: true });
+
+  const exactKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
+  const exactEntry = cachedWeatherData[exactKey];
+  if (isWeatherCacheEntryUsable(exactEntry, pt, dateStr, hour)) {
+    return { key: exactKey, entry: exactEntry, data: exactEntry.data, distanceM: 0 };
+  }
+
+  const targetEle = pointElevationForWeatherCache(pt);
+  let best = null;
+  Object.entries(cachedWeatherData).forEach(([key, entry]) => {
+    if (!isWeatherCacheEntryUsable(entry, pt, dateStr, hour, { skipSpatial: true })) return;
+    const distanceM = haversineDistance([pt.lat, pt.lng], [entry.lat, entry.lng]);
+    if (!Number.isFinite(distanceM) || distanceM > weatherCacheDistanceM) return;
+
+    const entryEle = finiteOrNull(entry.ele);
+    const elevationDeltaM = Number.isFinite(targetEle) && Number.isFinite(entryEle)
+      ? Math.abs(targetEle - entryEle)
+      : 0;
+    if (Number.isFinite(targetEle) && Number.isFinite(entryEle) && elevationDeltaM > weatherCacheElevationM) return;
+
+    const score = (distanceM / Math.max(1, weatherCacheDistanceM))
+      + (elevationDeltaM / Math.max(1, weatherCacheElevationM));
+    if (!best || score < best.score) {
+      best = { key, entry, data: entry.data, distanceM, elevationDeltaM, score };
+    }
+  });
+  return best;
+}
+
+function getWeatherCacheData(pt, dateStr, hour) {
+  return getWeatherCacheHit(pt, dateStr, hour)?.data || null;
+}
+
+function isWeatherCacheEntryUsable(entry, pt, dateStr, hour, options = {}) {
+  if (!entry?.data) return false;
+  if (entry.date !== dateStr || Number(entry.hour) !== Number(hour)) return false;
+  if (!Number.isFinite(Number(entry.lat)) || !Number.isFinite(Number(entry.lng))) return false;
+  if (!options.skipSpatial) {
+    const distanceM = haversineDistance([pt.lat, pt.lng], [entry.lat, entry.lng]);
+    if (!Number.isFinite(distanceM) || distanceM > weatherCacheDistanceM) return false;
+    const targetEle = pointElevationForWeatherCache(pt);
+    const entryEle = finiteOrNull(entry.ele);
+    if (Number.isFinite(targetEle) && Number.isFinite(entryEle)
+      && Math.abs(targetEle - entryEle) > weatherCacheElevationM) return false;
+  }
+  return hasWeatherDataDetailInfo(entry.data, pt);
+}
+
+function syncWeatherCacheSettingsUI() {
+  const enabledEl = document.getElementById('weather-cache-enable');
+  const distanceEl = document.getElementById('weather-cache-distance');
+  const elevationEl = document.getElementById('weather-cache-elevation');
+  const maxAgeEl = document.getElementById('weather-cache-max-age-days');
+  if (enabledEl) enabledEl.checked = weatherCacheEnabled;
+  if (distanceEl) distanceEl.value = String(weatherCacheDistanceM);
+  if (elevationEl) elevationEl.value = String(weatherCacheElevationM);
+  if (maxAgeEl) maxAgeEl.value = formatWeatherCacheMaxAgeDays(weatherCacheMaxAgeDays);
+  [distanceEl, elevationEl, maxAgeEl].forEach(el => {
+    if (el) el.disabled = !weatherCacheEnabled;
+  });
+}
+
+function formatWeatherCacheMaxAgeDays(value) {
+  const n = Number(value);
+  return (Number.isFinite(n) ? n : WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS).toFixed(1);
+}
+
+function initWeatherCacheSettingsControls() {
+  const enabledEl = document.getElementById('weather-cache-enable');
+  const distanceEl = document.getElementById('weather-cache-distance');
+  const elevationEl = document.getElementById('weather-cache-elevation');
+  const maxAgeEl = document.getElementById('weather-cache-max-age-days');
+  syncWeatherCacheSettingsUI();
+
+  enabledEl?.addEventListener('change', () => {
+    weatherCacheEnabled = enabledEl.checked;
+    localStorage.setItem(LS_WEATHER_CACHE_ENABLED_KEY, weatherCacheEnabled ? '1' : '0');
+    syncWeatherCacheSettingsUI();
+  });
+
+  const bindNumber = (el, key, fallback, min, max, onChange) => {
+    el?.addEventListener('change', () => {
+      const value = Math.min(max, Math.max(min, Number(el.value) || fallback));
+      onChange(value);
+      el.value = key === LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY
+        ? formatWeatherCacheMaxAgeDays(value)
+        : String(value);
+      localStorage.setItem(key, el.value);
+      pruneWeatherCache({ persist: true });
+    });
+  };
+  bindNumber(distanceEl, LS_WEATHER_CACHE_DISTANCE_M_KEY, WEATHER_CACHE_DISTANCE_DEFAULT_M, 1, WEATHER_CACHE_MAX_DISTANCE_M, value => { weatherCacheDistanceM = value; });
+  bindNumber(elevationEl, LS_WEATHER_CACHE_ELEVATION_M_KEY, WEATHER_CACHE_ELEVATION_DEFAULT_M, 1, WEATHER_CACHE_MAX_ELEVATION_M, value => { weatherCacheElevationM = value; });
+  bindNumber(maxAgeEl, LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY, WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS, 0.1, WEATHER_CACHE_MAX_AGE_DAYS, value => { weatherCacheMaxAgeDays = value; });
+}
 
 function getWeatherIconMeta(icon) {
   const normalized = String(icon || '').replace(/\ufe0f/g, '');
@@ -5298,7 +5997,7 @@ function updateIntermediateMarkers() {
     .map(x => {
       // Look up weather icon for intermediate point
       const schedule = getWeatherPointSchedule(x.pt, x.i);
-      const cached = schedule ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, schedule.date, schedule.hour)] : null;
+      const cached = schedule ? getWeatherCacheData(x.pt, schedule.date, schedule.hour) : null;
       const weatherIcon = cached?.weatherIcon || getSavedWeatherCells(x.pt)?.weather?.split(' ')[0] || null;
 
       return {
@@ -5339,7 +6038,7 @@ function updateReturnWaypointMarkers() {
     .filter((x) => x.pt.isWaypoint && x.pt.isReturn)
     .map((x) => {
       const schedule = getWeatherPointSchedule(x.pt, x.i);
-      const cached = schedule ? cachedWeatherData[weatherCoordKey(x.pt.lat, x.pt.lng, schedule.date, schedule.hour)] : null;
+      const cached = schedule ? getWeatherCacheData(x.pt, schedule.date, schedule.hour) : null;
       const weatherIcon = cached?.weatherIcon || getSavedWeatherCells(x.pt)?.weather?.split(' ')[0] || null;
       return {
         lat: x.pt.lat,
@@ -6258,9 +6957,11 @@ function renderWeatherPanel() {
     const dateStr = container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value;
     const hour = parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
     if (!dateStr) return;
-    const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
-    if (cached) {
-      const cells = { _icon: cached.weatherIcon, _weatherCode: cached.weatherCode };
+    const cacheHit = getWeatherCacheHit(pt, dateStr, hour);
+    const cached = cacheHit?.data || null;
+    if (cached && hasWeatherDataDetailInfo(cached, pt)) {
+      rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
+      const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
       WEATHER_ROWS.forEach(row => {
         const val = getCellValue(cached, row.key, pt);
         cells[row.key] = val;
@@ -6275,11 +6976,7 @@ function renderWeatherPanel() {
       // Fallback: restore display values saved from a previous fetch
       const saved = getSavedWeatherCells(pt);
       if (saved) {
-        WEATHER_ROWS.forEach(row => {
-          const cell = container.querySelector(`[data-col="${colIdx}"][data-key="${row.key}"]`);
-          const val = getSavedWeatherCellValue(saved, row.key);
-          if (cell && val) updateWeatherTableCell(cell, row.key, val);
-        });
+        applySavedWeatherCellsToColumn(pt, colIdx, saved);
       }
     }
   });
@@ -6387,7 +7084,14 @@ function renderWeatherPanel() {
           }
         }
         if (Object.keys(cells).length > 0) {
-          saveWeatherCells(getSemanticKey(pt), cells);
+          const scheduleDate = importedData.date || container.querySelector(`.wt-th-date[data-idx="${colIdx}"] .wt-date-input`)?.value || null;
+          const scheduleHour = importedData.time
+            ? parseInt(importedData.time.split(':')[0])
+            : parseInt(container.querySelector(`.wt-th-time[data-idx="${colIdx}"] .wt-time-select`)?.value ?? '0');
+          const cellsToSave = hasSavedWeatherDetailInfo(cells)
+            ? markWeatherCellsLoaded(cells, scheduleDate, scheduleHour)
+            : cells;
+          saveWeatherCells(getSemanticKey(pt), cellsToSave);
         }
       }
     });
@@ -6400,6 +7104,7 @@ function renderWeatherPanel() {
   // (covers the case where user never manually changes any date/time input)
   saveWeatherSettings();
   refreshOpenWeatherCards();
+  if (isRouteWeatherBusy()) updateRouteWeatherBusyOverlay();
 }
 
 /**
@@ -6419,6 +7124,7 @@ function bindWeatherTableColumnDrag(container) {
   let ghost = null;
   let targetTh = null;
   let targetAfter = false;
+  let dragCancelledByMultiTouch = false;
 
   const updateGhost = (x, y) => {
     if (!ghost) return;
@@ -6452,14 +7158,27 @@ function bindWeatherTableColumnDrag(container) {
   };
 
   const onMove = (e) => {
+    if (e.touches && e.touches.length !== 1) {
+      dragCancelledByMultiTouch = true;
+      if (e.cancelable) e.preventDefault();
+      clearTargetHighlight();
+      onEnd(e);
+      return;
+    }
     if (e.cancelable) e.preventDefault();
     const cx = e.touches ? e.touches[0].clientX : e.clientX;
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
     updateGhost(cx, cy);
 
-    const overTrash = mapManager.updateTrashZoneHover(cx, cy);
-    if (ghost) ghost.classList.toggle('drag-to-remove', overTrash);
-    if (overTrash) { clearTargetHighlight(); return; }
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const overTrash = dropAction === 'delete';
+    const overCancel = dropAction === 'cancel';
+    mapManager.updateTrashZoneHover(cx, cy);
+    if (ghost) {
+      ghost.classList.toggle('drag-to-remove', overTrash);
+      ghost.classList.toggle('drag-to-cancel', overCancel);
+    }
+    if (dropAction) { clearTargetHighlight(); return; }
 
     const found = findDropTarget(cx);
     if (found.th !== targetTh) {
@@ -6488,17 +7207,23 @@ function bindWeatherTableColumnDrag(container) {
     document.removeEventListener('mouseup', onEnd);
     document.removeEventListener('touchmove', onMove);
     document.removeEventListener('touchend', onEnd);
+    document.removeEventListener('touchcancel', onEnd);
 
-    const cx = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
-    const cy = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    const changedTouch = e.changedTouches?.[0];
+    const cx = changedTouch?.clientX ?? e.clientX;
+    const cy = changedTouch?.clientY ?? e.clientY;
 
-    const overTrash = mapManager.isOverTrashZone(cx, cy);
+    const dropAction = mapManager.getTrashZoneDropAction(cx, cy);
+    const isCancelDrop = dropAction === 'cancel';
+    const overTrash = dropAction === 'delete';
     mapManager.hideTrashZone();
 
     const _draggedWpIdx = dragWpIdx;
     const _targetTh = targetTh;
     const _targetAfter = targetAfter;
     const _originEl = dragOriginTh;
+    const cancelledByMultiTouch = dragCancelledByMultiTouch || e.type === 'touchcancel';
+    dragCancelledByMultiTouch = false;
 
     clearTargetHighlight();
     if (dragOriginTh) dragOriginTh.classList.remove('wt-col-dragging');
@@ -6508,6 +7233,10 @@ function bindWeatherTableColumnDrag(container) {
 
     // Suppress the click that would otherwise toggle the highlight
     suppressNextClick(_originEl);
+
+    if (cancelledByMultiTouch || isCancelDrop) {
+      return;
+    }
 
     if (overTrash) {
       if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
@@ -6552,6 +7281,7 @@ function bindWeatherTableColumnDrag(container) {
 
   const startDrag = (el, clientX, clientY) => {
     dragOriginTh = el;
+    dragCancelledByMultiTouch = false;
     const colIdx = parseInt(el.dataset.idx || el.dataset.col);
     const pt = weatherPoints[colIdx];
     if (!pt?.isWaypoint || pt.isReturn || pt.wpIndex == null) {
@@ -6586,6 +7316,7 @@ function bindWeatherTableColumnDrag(container) {
     document.addEventListener('mouseup', onEnd);
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchcancel', onEnd);
 
     mapManager.showTrashZone('table');
   };
@@ -6640,15 +7371,24 @@ function bindWeatherTableColumnDrag(container) {
     });
 
     el.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
       const t = e.touches[0];
       triggerLP(t.clientX, t.clientY);
     }, { passive: true });
     el.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 1) {
+        cancelLP();
+        return;
+      }
       const t = e.touches[0];
       checkMove(t.clientX, t.clientY);
     }, { passive: true });
     el.addEventListener('touchend', cancelLP, { passive: true });
+    el.addEventListener('touchcancel', cancelLP, { passive: true });
   });
 }
 
@@ -6683,56 +7423,263 @@ function bindWeatherTableNamePeek(container) {
  * Debounced and checks for existing UI states to avoid conflicting fetches.
  */
 let autoFetchTimeout = 0;
+let isWeatherFetching = false;
+let initialWeatherLoadPending = false;
+let activeWeatherFetchRun = null;
+let weatherFetchRunSeq = 0;
+
+function waitForWeatherProgressPaint() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+function isAbortError(err) {
+  return err?.name === 'AbortError'
+    || (typeof DOMException !== 'undefined' && err?.code === DOMException.ABORT_ERR);
+}
+
+function waitForWeatherFetchDelay(ms, signal) {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener?.('abort', onAbort);
+      resolve(true);
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      resolve(false);
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+  });
+}
+
+function isWeatherFetchRunCancelled(run) {
+  return !run || run.cancelled || run.signal?.aborted || activeWeatherFetchRun !== run;
+}
+
+function cancelWeatherFetchForRouteReplan() {
+  if (autoFetchTimeout) {
+    clearTimeout(autoFetchTimeout);
+    autoFetchTimeout = 0;
+  }
+  if (!activeWeatherFetchRun || activeWeatherFetchRun.cancelled) return;
+  activeWeatherFetchRun.cancelled = true;
+  activeWeatherFetchRun.controller?.abort();
+}
+
 function autoFetchWeather(options = {}) {
   if (autoFetchTimeout) clearTimeout(autoFetchTimeout);
+  const queuedOptions = {
+    ...options,
+    initialLoad: !!options.initialLoad || initialWeatherLoadPending,
+  };
   autoFetchTimeout = setTimeout(() => {
     // Only auto-fetch if we are not already processing a route
     // and if the "Fetch" button is not currently disabled (meaning a fetch is in progress)
     const fetchBtn = document.querySelector('[data-action="fetch"]');
-    if (!isProcessing && fetchBtn && !fetchBtn.disabled) {
-      fetchAllWeatherData(options);
+    if (!isProcessing && !isWeatherFetching && fetchBtn && !fetchBtn.disabled) {
+      fetchAllWeatherData({
+        ...queuedOptions,
+        initialLoad: queuedOptions.initialLoad || initialWeatherLoadPending,
+      });
+    } else if (queuedOptions.initialLoad || initialWeatherLoadPending) {
+      autoFetchWeather(queuedOptions);
     }
-  }, 1000); // 1s delay to let everything settle
+  }, queuedOptions.initialLoad ? 250 : 1000); // Let rendering settle before the API/cache pass.
 }
 
 async function fetchAllWeatherData(options = {}) {
   const { force = false, onlyWaypointIndex = null, onlyColIndex = null } = options;
-  if (weatherPoints.length === 0) { showNotification('請先建立路線', 'warning'); return; }
+  const isInitialWeatherLoad = !!options.initialLoad || initialWeatherLoadPending;
+  if (isWeatherFetching) return;
+  if (weatherPoints.length === 0) {
+    if (isInitialWeatherLoad) initialWeatherLoadPending = false;
+    showNotification('請先建立路線', 'warning');
+    return;
+  }
 
   const container = document.getElementById('weather-table-container');
   if (!container) return;
+
+  if (force && onlyWaypointIndex === null && onlyColIndex === null) {
+    clearWeatherTempCache();
+  } else {
+    pruneWeatherCache({ persist: true });
+  }
+
+  const targetStates = weatherPoints
+    .map((pt, i) => ({ pt, i }))
+    .filter(({ pt, i }) => {
+      if (onlyWaypointIndex !== null && (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex)) return false;
+      if (onlyColIndex !== null && i !== onlyColIndex) return false;
+      return true;
+    })
+    .map(({ pt, i }) => {
+      const schedule = getWeatherPointSchedule(pt, i);
+      const dateStr = schedule?.date || null;
+      const hour = schedule?.hour ?? 8;
+      const cacheKey = dateStr ? weatherCoordKey(pt.lat, pt.lng, dateStr, hour) : null;
+      const cacheHit = dateStr ? getWeatherCacheHit(pt, dateStr, hour) : null;
+      const cached = hasWeatherDataDetailInfo(cacheHit?.data, pt) ? cacheHit.data : null;
+      const saved = !force ? getSavedWeatherCells(pt) : null;
+      const tableLoaded = !force && hasWeatherTableDetailInfo(i);
+      const savedLoaded = !force && (hasCompletedWeatherLoad(saved, dateStr, hour) || tableLoaded);
+      return {
+        pt,
+        i,
+        dateStr,
+        hour,
+        cacheKey,
+        cacheHit,
+        cached,
+        saved,
+        savedLoaded,
+        needsFetch: !!dateStr && (force || (!cached && !savedLoaded)),
+      };
+    });
+  const needsNetworkFetch = targetStates.some(state => state.needsFetch);
+  minimizeWeatherCardsForLoading(targetStates);
+  if (!needsNetworkFetch) {
+    targetStates.forEach(({ pt, i, cached, cacheHit, saved, savedLoaded, dateStr, hour }) => {
+      if (cached) {
+        rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
+        const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
+        WEATHER_ROWS.forEach(row => {
+          const val = getCellValue(cached, row.key, pt);
+          cells[row.key] = val;
+        });
+        saveWeatherCells(getSemanticKey(pt), cells);
+        applySavedWeatherCellsToColumn(pt, i, cells);
+      } else if (savedLoaded) {
+        applySavedWeatherCellsToColumn(pt, i, saved);
+      }
+    });
+    if (isInitialWeatherLoad) initialWeatherLoadPending = false;
+    return;
+  }
+
+  const totalTargets = Math.max(1, targetStates.length);
+  let processedTargets = 0;
+  const progressPaintEvery = Math.max(1, Math.ceil(totalTargets / 12));
+  const fetchStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const minInitialProgressMs = isInitialWeatherLoad ? 700 : 0;
+  const controller = new AbortController();
+  const fetchRun = {
+    id: ++weatherFetchRunSeq,
+    controller,
+    signal: controller.signal,
+    cancelled: false,
+  };
+  activeWeatherFetchRun = fetchRun;
+  isWeatherFetching = true;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在載入天氣資訊',
+    detail: isInitialWeatherLoad
+      ? `網頁開啟時載入天氣資訊 0/${totalTargets}`
+      : `準備天氣欄位 0/${totalTargets}`,
+    progress: 0,
+    lockScope: 'weather-card',
+  });
+  const markWeatherProgress = () => {
+    busyTask.set({
+      detail: isInitialWeatherLoad
+        ? `網頁開啟時載入天氣資訊 ${processedTargets}/${totalTargets}`
+        : `載入天氣資訊 ${processedTargets}/${totalTargets}`,
+      progress: (processedTargets / totalTargets) * 100,
+    });
+  };
+  const maybePaintWeatherProgress = async () => {
+    if (!isInitialWeatherLoad) return;
+    if (processedTargets < totalTargets && processedTargets % progressPaintEvery !== 0) return;
+    await waitForWeatherProgressPaint();
+  };
 
   saveWeatherSettings();
   const fetchBtn = document.querySelector('[data-action="fetch"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
-  for (let i = 0; i < weatherPoints.length; i++) {
-    const pt = weatherPoints[i];
+  try {
+    for (const state of targetStates) {
+      if (isWeatherFetchRunCancelled(fetchRun)) break;
+      let { pt, i, dateStr, hour, cacheKey, cacheHit, saved, savedLoaded } = state;
+      if (fetchBtn) {
+        const labelSpan = fetchBtn.querySelector('span');
+        const label = `${Math.min(processedTargets + 1, totalTargets)}/${totalTargets}`;
+        if (labelSpan) labelSpan.textContent = label;
+        else fetchBtn.textContent = label;
+      }
 
-    // Filter by specific waypoint or column if requested
-    if (onlyWaypointIndex !== null) {
-        if (!pt.isWaypoint || pt.wpIndex !== onlyWaypointIndex) continue;
-    }
-    if (onlyColIndex !== null && i !== onlyColIndex) continue;
+      if (!dateStr) {
+        processedTargets++;
+        markWeatherProgress();
+        await maybePaintWeatherProgress();
+        continue;
+      }
 
-    if (fetchBtn) {
-      const labelSpan = fetchBtn.querySelector('span');
-      if (labelSpan) labelSpan.textContent = `${i + 1}/${weatherPoints.length}`;
-      else fetchBtn.textContent = `${i + 1}/${weatherPoints.length}`;
-    }
+      let data = state.cached;
 
-    const schedule = getWeatherPointSchedule(pt, i);
-    const dateStr = schedule?.date;
-    const hour = schedule?.hour ?? 8;
-    if (!dateStr) continue;
+      // If not forced and we have cache, just apply it and skip fetching
+      if (!force) {
+        if (!data) {
+          cacheHit = getWeatherCacheHit(pt, dateStr, hour);
+          data = hasWeatherDataDetailInfo(cacheHit?.data, pt) ? cacheHit.data : null;
+        }
+        if (data) {
+          rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
+          const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
+          WEATHER_ROWS.forEach(row => {
+            const val = getCellValue(data, row.key, pt);
+            cells[row.key] = val;
+            const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+            if (cell) {
+              updateWeatherTableCell(cell, row.key, val);
+              cell.classList.remove('loading', 'error');
+            }
+          });
+          saveWeatherCells(getSemanticKey(pt), cells);
+          if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
+            mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
 
-    const cacheKey = weatherCoordKey(pt.lat, pt.lng, dateStr, hour);
-    let data = cachedWeatherData[cacheKey];
+          // Update chart/map weather markers when it will not interrupt an active waypoint drag.
+          refreshWeatherMarkersAfterWeatherUpdate();
+          if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+          processedTargets++;
+          markWeatherProgress();
+          await maybePaintWeatherProgress();
+          continue;
+        }
 
-    // If not forced and we have cache, just apply it and skip fetching
-    if (!force) {
-      if (data) {
-        const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
+        // Also check if UI already restored this point's weather from map pack (savedWeatherCells)
+        if (savedLoaded) {
+          applySavedWeatherCellsToColumn(pt, i, saved);
+          processedTargets++;
+          markWeatherProgress();
+          await maybePaintWeatherProgress();
+          continue;
+        }
+      }
+
+      WEATHER_ROWS.forEach(row => {
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) {
+          const valueEl = cell.querySelector('.wt-cell-value');
+          if (valueEl) valueEl.textContent = '...';
+          else cell.textContent = '...';
+          cell.classList.remove('error');
+          cell.classList.add('loading');
+        }
+      });
+
+      try {
+        data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
+        if (isWeatherFetchRunCancelled(fetchRun)) break;
+        setWeatherCacheData(pt, dateStr, hour, data, { cacheKey });
+        const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
         WEATHER_ROWS.forEach(row => {
           const val = getCellValue(data, row.key, pt);
           cells[row.key] = val;
@@ -6743,89 +7690,61 @@ async function fetchAllWeatherData(options = {}) {
           }
         });
         saveWeatherCells(getSemanticKey(pt), cells);
+        // Update only the outbound map badge; return markers carry their own icon.
         if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
           mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
-        
-        // Update chart markers to show icon immediately
-        updateElevationMarkers();
-        updateIntermediateMarkers();
-        if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
-        continue;
-      }
-      
-      // Also check if UI already restored this point's weather from map pack (savedWeatherCells)
-      const existingCells = getSavedWeatherCells(pt);
-      if (existingCells && existingCells.weather && existingCells.weather !== '—') {
-        const cell = container.querySelector(`[data-col="${i}"][data-key="weather"]`);
-        if (cell && cell.textContent !== '...' && cell.textContent !== '—') {
-          // Data is already populated correctly in the UI
-          if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && existingCells._icon) {
-            mapManager.setWaypointWeather(pt.wpIndex, existingCells._icon);
+
+        // Refresh chart/map weather markers when it will not interrupt an active waypoint drag.
+        refreshWeatherMarkersAfterWeatherUpdate();
+      } catch (err) {
+        if (isWeatherFetchRunCancelled(fetchRun) || isAbortError(err)) break;
+        console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
+        WEATHER_ROWS.forEach(row => {
+          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+          if (cell) {
+            const valueEl = cell.querySelector('.wt-cell-value');
+            if (valueEl) valueEl.textContent = '—';
+            else cell.textContent = '—';
+            cell.classList.remove('loading');
+            cell.classList.add('error');
           }
-          updateElevationMarkers();
-          updateIntermediateMarkers();
-          continue;
-        }
+        });
+      }
+      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      processedTargets++;
+      markWeatherProgress();
+      await maybePaintWeatherProgress();
+
+      if (processedTargets < totalTargets) {
+        const shouldContinue = await waitForWeatherFetchDelay(400, fetchRun.signal);
+        if (!shouldContinue || isWeatherFetchRunCancelled(fetchRun)) break;
       }
     }
-
-    WEATHER_ROWS.forEach(row => {
-      const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-      if (cell) {
-        const valueEl = cell.querySelector('.wt-cell-value');
-        if (valueEl) valueEl.textContent = '...';
-        else cell.textContent = '...';
-        cell.classList.remove('error');
-        cell.classList.add('loading');
+  } finally {
+    const wasCancelled = isWeatherFetchRunCancelled(fetchRun);
+    if (isInitialWeatherLoad && !wasCancelled) {
+      const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - fetchStartedAt;
+      if (elapsed < minInitialProgressMs) {
+        await new Promise(r => setTimeout(r, minInitialProgressMs - elapsed));
       }
-    });
-
-    try {
-      data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour);
-      cachedWeatherData[cacheKey] = data;
-      // Save after each point so partial data survives a mid-fetch page close
-      localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData));
-      const cells = { _icon: data.weatherIcon, _weatherCode: data.weatherCode };
-      WEATHER_ROWS.forEach(row => {
-        const val = getCellValue(data, row.key, pt);
-        cells[row.key] = val;
-        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) {
-          updateWeatherTableCell(cell, row.key, val);
-          cell.classList.remove('loading', 'error');
-        }
-      });
-      saveWeatherCells(getSemanticKey(pt), cells);
-      // Update only the outbound map badge; return markers carry their own icon.
-      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
-        mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
-
-      // Refresh chart markers to show icon immediately
-      updateElevationMarkers();
-      updateIntermediateMarkers();
-    } catch (err) {
-      console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
-      WEATHER_ROWS.forEach(row => {
-        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) {
-          const valueEl = cell.querySelector('.wt-cell-value');
-          if (valueEl) valueEl.textContent = '—';
-          else cell.textContent = '—';
-          cell.classList.remove('loading');
-          cell.classList.add('error');
-        }
-      });
+      initialWeatherLoadPending = false;
     }
-    if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
-
-    if (i < weatherPoints.length - 1) await new Promise(r => setTimeout(r, 400));
+    if (activeWeatherFetchRun === fetchRun) {
+      activeWeatherFetchRun = null;
+      isWeatherFetching = false;
+    }
+    if (!wasCancelled) {
+      busyTask.set({ detail: '完成', progress: 100 });
+      if (isInitialWeatherLoad) await waitForWeatherProgressPaint();
+    }
+    busyTask.end();
+    if (fetchBtn) {
+      fetchBtn.disabled = false;
+      fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
+    }
+    if (wasCancelled) return;
+    showNotification('天氣資訊已更新', 'success', 2000);
   }
-
-  if (fetchBtn) {
-    fetchBtn.disabled = false;
-    fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
-  }
-  showNotification('天氣資訊已更新', 'success', 2000);
 }
 
 // =========== Weather Card (Map Popup) ===========
@@ -6836,18 +7755,105 @@ let _wcStates = new Map();
 // re-uses the size the user last had open.
 let _wcLastMode = 'full';
 
+function isMobileWeatherCardCenterMode() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function getWeatherCardInteractionIndices(colIdx) {
+  return isMobileWeatherCardCenterMode() ? [colIdx] : getCollectiveIndices(colIdx);
+}
+
+function closeOtherOpenWeatherCardsOnMobile(colIdx) {
+  if (!isMobileWeatherCardCenterMode()) return;
+  Array.from(_wcStates.keys()).forEach((openIdx) => {
+    if (openIdx !== colIdx) closeWeatherCard(openIdx);
+  });
+}
+
+function getLoadedWeatherCardInfo(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return null;
+
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+  if (!dateStr) return null;
+
+  const cacheHit = getWeatherCacheHit(pt, dateStr, hour);
+  const cached = cacheHit?.data || null;
+  rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
+  if (cached && hasWeatherDataDetailInfo(cached, pt)) return { data: cached, pt, dateStr, hour, colIdx };
+
+  const saved = getSavedWeatherCells(pt);
+  if (hasCompletedWeatherLoad(saved, dateStr, hour)) {
+    return { cells: saved, pt, dateStr, hour, colIdx };
+  }
+  if (hasWeatherTableDetailInfo(colIdx)) {
+    return { cells: saved || {}, pt, dateStr, hour, colIdx };
+  }
+
+  return null;
+}
+
+function hasLoadedWeatherCardInfo(colIdx) {
+  return !!getLoadedWeatherCardInfo(colIdx);
+}
+
+function minimizeWeatherCardsForLoading(targetStates = []) {
+  const loadingCols = new Set(
+    targetStates
+      .filter(state => state.needsFetch || !state.cached && !state.savedLoaded)
+      .map(state => state.i)
+  );
+  Array.from(_wcStates.keys()).forEach((colIdx) => {
+    if (loadingCols.has(colIdx) || !hasLoadedWeatherCardInfo(colIdx)) {
+      closeWeatherCard(colIdx);
+    }
+  });
+}
+
+function fetchWeatherForUnloadedCard(colIdx) {
+  if (isWeatherCardInteractionLocked()) {
+    showWeatherCardBusyNotice();
+    return false;
+  }
+  if (hasLoadedWeatherCardInfo(colIdx)) return false;
+  closeWeatherCard(colIdx);
+  showNotification('開始載入此點天氣資訊...', 'info', 1600);
+  fetchAllWeatherData({ onlyColIndex: colIdx });
+  return true;
+}
+
 /**
  * Open (or toggle) the weather card popup for a point.
  * Reopens at the size the user last had open (tracked in _wcLastMode).
  */
-function openWeatherCard(colIdx) {
+function openWeatherCard(colIdx, options = {}) {
   // If already open, close it (toggle behavior)
   if (_wcStates.has(colIdx)) {
-    closeWeatherCard(colIdx);
-    return;
+    closeWeatherCard(colIdx, { centerAfterClose: true });
+    return false;
   }
+  if (isWeatherCardInteractionLocked()) {
+    if (hasLoadedWeatherCardInfo(colIdx)) showWeatherCardBusyNotice();
+    else showWeatherNotLoadedNotice();
+    return false;
+  }
+  if (!hasLoadedWeatherCardInfo(colIdx)) {
+    closeWeatherCard(colIdx);
+    if (options.notify !== false) showWeatherNotLoadedNotice();
+    return false;
+  }
+  closeOtherOpenWeatherCardsOnMobile(colIdx);
   _wcStates.set(colIdx, _wcLastMode);
   _renderWeatherCard(colIdx);
+  if (
+    options.centerOnMobileExpand === true &&
+    _wcLastMode === 'full'
+  ) {
+    scheduleWeatherCardCenter(colIdx, { settle: true });
+  }
+  return true;
 }
 
 /**
@@ -6856,31 +7862,50 @@ function openWeatherCard(colIdx) {
  */
 function handleWeatherIconInteraction(colIdx) {
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
+  if (isWeatherCardInteractionLocked()) {
+    if (hasLoadedWeatherCardInfo(colIdx)) showWeatherCardBusyNotice();
+    else showWeatherNotLoadedNotice();
+    return;
+  }
+  if (!hasLoadedWeatherCardInfo(colIdx)) {
+    fetchWeatherForUnloadedCard(colIdx);
+    return;
+  }
 
-  const collectiveCols = getCollectiveIndices(colIdx);
+  const collectiveCols = getWeatherCardInteractionIndices(colIdx);
   if (collectiveCols.length > 1) {
     // Collective toggle based on the state of the target point
     const isAlreadyOpen = _wcStates.has(colIdx);
     if (isAlreadyOpen) {
-      collectiveCols.forEach(ci => closeWeatherCard(ci));
+      collectiveCols.forEach(ci => closeWeatherCard(ci, { centerAfterClose: ci === colIdx }));
     } else {
-      collectiveCols.forEach(ci => { if (!_wcStates.has(ci)) openWeatherCard(ci); });
+      collectiveCols.forEach(ci => {
+        if (hasLoadedWeatherCardInfo(ci)) {
+          if (!_wcStates.has(ci)) openWeatherCard(ci, { notify: false, centerOnMobileExpand: ci === colIdx });
+        } else {
+          closeWeatherCard(ci);
+        }
+      });
       // Sync highlight so keyboard/centering targets this group
       highlightPoint(colIdx);
     }
   } else {
     // Single toggle
-    openWeatherCard(colIdx);
+    openWeatherCard(colIdx, { centerOnMobileExpand: true });
     highlightPoint(colIdx);
   }
 }
 
 /** Close a specific weather card. */
-function closeWeatherCard(colIdx) {
+function closeWeatherCard(colIdx, options = {}) {
   const prev = _wcStates.get(colIdx);
   if (prev === 'compact' || prev === 'full') _wcLastMode = prev;
   _wcStates.delete(colIdx);
-  mapManager.closeWeatherPopup(colIdx);
+  mapManager.closeWeatherPopup(colIdx, { animate: true });
+  if (options.centerAfterClose === true && prev === 'full') {
+    highlightPoint(colIdx, false, { centerMap: true, centerFullCard: false });
+  }
+  return prev;
 }
 
 /** Set the card mode and re-render. */
@@ -6889,9 +7914,24 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
     closeWeatherCard(colIdx);
     return;
   }
+  if (isWeatherCardInteractionLocked()) {
+    showWeatherCardBusyNotice();
+    return;
+  }
+  if (!hasLoadedWeatherCardInfo(colIdx)) {
+    closeWeatherCard(colIdx);
+    if (options.notify) showWeatherNotLoadedNotice();
+    return;
+  }
+  closeOtherOpenWeatherCardsOnMobile(colIdx);
+  const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
-  if (mode === 'full' && options.center !== false) {
+  if (
+    options.centerOnMobileExpand === true &&
+    prevMode !== 'full' &&
+    mode === 'full'
+  ) {
     scheduleWeatherCardCenter(colIdx, { settle: true });
   }
 }
@@ -6904,12 +7944,7 @@ function navigateWeatherCard(colIdx, delta) {
   weatherPoints.forEach((pt, i) => {
     // Skip points whose icon type is hidden by the toggle
     if (!isPointIconVisible(i)) return;
-
-    const schedule = getWeatherPointSchedule(pt, i);
-    const cached = schedule ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, schedule.date, schedule.hour)] : null;
-    const icon = cached?.weatherIcon || getSavedWeatherCells(pt)?.weather?.split(' ')[0] || null;
-    
-    if (icon) colsWithWeather.push(i);
+    if (hasLoadedWeatherCardInfo(i)) colsWithWeather.push(i);
   });
 
   if (colsWithWeather.length === 0) return;
@@ -6930,9 +7965,10 @@ function navigateWeatherCard(colIdx, delta) {
   // than stacking new popups on top of the old one.
   const mode = _wcStates.get(colIdx) || 'compact';
   closeWeatherCard(colIdx);
-  setWeatherCardMode(nextColIdx, mode);
-  // highlightPoint handles mode-aware pan/centering
-  highlightPoint(nextColIdx);
+  setWeatherCardMode(nextColIdx, mode, { centerOnMobileExpand: mode === 'full' });
+  // Full-card centering is scheduled by setWeatherCardMode; compact cards
+  // need the marker itself centred because the card no longer reserves room.
+  highlightPoint(nextColIdx, false, { centerMap: mode !== 'full' });
 }
 
 /**
@@ -6944,23 +7980,9 @@ function _getWeatherCardData(colIdx) {
   if (!pt) return null;
 
   const schedule = getWeatherPointSchedule(pt, colIdx);
-  const dateStr = schedule.date;
-  const hour = schedule.hour;
-
-  // 1) Try exact cache hit
-  const cached = cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, dateStr, hour)];
-  if (cached) {
-    return { data: cached, pt, dateStr, hour, colIdx };
-  }
-
-  // 2) Try savedWeatherCells (display values)
-  const saved = getSavedWeatherCells(pt);
-  if (saved) {
-    return { cells: saved, pt, dateStr, hour, colIdx };
-  }
-
-  // 3) No data
-  return { data: null, pt, dateStr, hour, colIdx };
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+  return getLoadedWeatherCardInfo(colIdx) || { data: null, pt, dateStr, hour, colIdx, isLoaded: false };
 }
 
 function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '') {
@@ -7017,6 +8039,59 @@ function buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour) {
   </div>`;
 }
 
+function colorWithAlpha(color, alpha) {
+  const text = String(color || '').trim();
+  const rgb = text.match(/^rgb\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
+  const rgba = text.match(/^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*[\d.]+\s*\)$/i);
+  if (rgba) return `rgba(${rgba[1]}, ${rgba[2]}, ${rgba[3]}, ${alpha})`;
+  const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const raw = hex[1].length === 3
+      ? hex[1].split('').map(ch => ch + ch).join('')
+      : hex[1];
+    const int = parseInt(raw, 16);
+    return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+  }
+  return text;
+}
+
+function buildCompactWeatherValuesHtml(values) {
+  const safeValues = values
+    .map(value => String(value ?? '').trim())
+    .filter(value => value && value !== '??');
+  const itemHtml = (safeValues.length ? safeValues : ['??'])
+    .map(value => `<span class="wc-compact-value">${_escapeHtml(value)}</span>`)
+    .join('');
+  return `<span class="wc-compact-data-viewport">
+    <span class="wc-compact-marquee">
+      <span class="wc-compact-value-set">${itemHtml}</span>
+      <span class="wc-compact-value-set" aria-hidden="true">${itemHtml}</span>
+    </span>
+  </span>`;
+}
+
+function updateCompactWeatherMarquee(root) {
+  if (!root?.classList?.contains('compact')) return;
+  const viewport = root.querySelector('.wc-compact-data-viewport');
+  const firstSet = root.querySelector('.wc-compact-value-set:not([aria-hidden="true"])');
+  if (!viewport || !firstSet) return;
+
+  requestAnimationFrame(() => {
+    const overflow = firstSet.scrollWidth > viewport.clientWidth + 1;
+    root.classList.toggle('has-compact-marquee', overflow);
+    if (!overflow) {
+      root.style.removeProperty('--wc-marquee-distance');
+      root.style.removeProperty('--wc-marquee-duration');
+      return;
+    }
+    const distance = Math.ceil(firstSet.scrollWidth + 18);
+    const duration = Math.min(18, Math.max(7, distance / 18));
+    root.style.setProperty('--wc-marquee-distance', `${distance}px`);
+    root.style.setProperty('--wc-marquee-duration', `${duration.toFixed(1)}s`);
+  });
+}
+
 /** Render a specific weather card. */
 function _renderWeatherCard(colIdx) {
   const state = _wcStates.get(colIdx);
@@ -7026,8 +8101,9 @@ function _renderWeatherCard(colIdx) {
   }
 
   const info = _getWeatherCardData(colIdx);
-  if (!info) {
+  if (!info || info.isLoaded === false) {
     mapManager.closeWeatherPopup(colIdx);
+    _wcStates.delete(colIdx);
     return;
   }
 
@@ -7045,60 +8121,62 @@ function _renderWeatherCard(colIdx) {
     if (key === 'elevation') return formatElevation(pt._ele);
     if (key === 'coords') return formatCoords(pt.lat, pt.lng);
     if (data) return getCellValue(data, key, pt);
-    if (cells && cells[key]) return getSavedWeatherCellValue(cells, key);
+    if (hasSavedWeatherCellField(cells, key)) return getSavedWeatherCellValue(cells, key);
+    const tableValue = getWeatherTableCellDisplayValue(colIdx, key);
+    if (tableValue !== null) return tableValue;
     return '—';
   };
 
   // Weather info
   const weatherStr = val('weather');
   const weatherParts = weatherStr.split(' ');
-  const wIcon = weatherParts[0] || '❓';
+  const hasWeatherPayload = !!(
+    data
+    || hasSavedWeatherCellField(cells, 'weather')
+    || getWeatherTableCellDisplayValue(colIdx, 'weather') !== null
+  );
+  const displayWeatherIcon = hasWeatherPayload ? (weatherParts[0] || '?') : '?';
   const wDesc = weatherParts.slice(1).join(' ') || '—';
   const temp = val('temp');
   const precipitation = val('precipitation');
   const precipProb = val('precipProb');
+  const windSpeed = val('windSpeed');
   const cardLabel = isCompact ? getWeatherPointShortLabel(pt, colIdx) : (pt.label || getWeatherPointShortLabel(pt, colIdx));
-  const label = pt.label || (pt.isWaypoint ? `航點 ${pt.wpIndex + 1}` : '中繼點');
 
   // Build HTML with unique ID per column card. Use gradient color for card accent.
   const gradColor = _weatherPointGradColor(pt);
-  const cardStyle = `--wc-accent: ${gradColor};`;
-  let html = `<div class="weather-card${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}" style="${cardStyle}">`;
+  const cardStyle = `--wc-accent: ${gradColor}; --wc-accent-soft: ${colorWithAlpha(gradColor, 0.18)}; --wc-accent-wash: ${colorWithAlpha(gradColor, 0.08)};`;
+  let html = `<div class="weather-card${isCompact ? ' compact' : ''}${isFull ? ' full' : ''}${isHighlighted ? ' is-highlighted' : ''}" id="wc-root-${colIdx}" data-col-idx="${colIdx}" style="${cardStyle}">`;
 
   // Header
-  const headerStyle = `background: ${gradColor.replace('rgb', 'rgba').replace(')', ', 0.1)')};`;
-  html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title" title="${pt.label || cardLabel}">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${cardLabel}</span>`;
   if (isFull) {
+    const headerStyle = `background: ${colorWithAlpha(gradColor, 0.1)};`;
+    html += `<div class="wc-header" style="${headerStyle}">`;
+    html += `<span class="wc-title" title="${pt.label || cardLabel}">${cardLabel}</span>`;
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
     html += `<button class="wc-btn q-next" title="下一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg></button>`;
+    html += `<button class="wc-btn q-toggle" title="收縮">`;
+    html += `<svg viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z" fill="currentColor"/></svg></button>`;
+    html += `<button class="wc-btn q-close" title="關閉">`;
+    html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
+    html += `</div>`;
   }
-  html += `<button class="wc-btn q-toggle" title="${isCompact ? '展開詳細' : '收縮'}">`;
-  html += `<svg viewBox="0 0 24 24"><path d="${isCompact
-    ? 'M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z'
-    : 'M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z'
-  }" fill="currentColor"/></svg></button>`;
-  html += `<button class="wc-btn q-close" title="關閉">`;
-  html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
-  html += `</div>`;
 
   // Body
   html += `<div class="wc-body">`;
 
   if (isCompact) {
-    // Compact: Single row grid for values
     html += `<div class="wc-compact">`;
-    html += `<div class="wc-c-row">`;
-    html += `<span class="wc-c-val">${temp}</span>`;
-    html += `<span class="wc-c-val">${precipitation}</span>`;
-    html += `<span class="wc-c-val">${precipProb}</span>`;
-    html += `</div>`;
+    html += `<button class="wc-compact-icon q-close" type="button" title="Close weather card" aria-label="Close weather card">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-compact-weather-icon')}</button>`;
+    html += `<button class="wc-compact-data q-toggle" type="button" title="Expand weather details" aria-label="Expand weather details">`;
+    html += buildCompactWeatherValuesHtml([temp, precipitation, precipProb, windSpeed]);
+    html += `</button>`;
     html += `</div>`;
   } else {
     const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
-    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
@@ -7116,8 +8194,7 @@ function _renderWeatherCard(colIdx) {
 
   mapManager.openWeatherPopup(colIdx, html, (wrapper) => {
     _bindWeatherCardEvents(colIdx, wrapper);
-    if (isFull) scheduleWeatherCardCenter(colIdx, { settle: isHighlighted });
-  }, !pt.isWaypoint, pt.wpIndex);
+  }, !pt.isWaypoint, pt.wpIndex, !!pt.isReturn);
 }
 
 /**
@@ -7126,6 +8203,10 @@ function _renderWeatherCard(colIdx) {
  * Toggles closed if already open.
  */
 async function openCursorWeatherCard(lat, lng) {
+  if (isWeatherCardInteractionLocked()) {
+    showWeatherCardBusyNotice();
+    return;
+  }
   if (mapManager.isCursorWeatherPopupOpen?.()) {
     mapManager.closeCursorWeatherPopup();
     return;
@@ -7143,8 +8224,10 @@ async function openCursorWeatherCard(lat, lng) {
     });
   };
 
-  let data = cachedWeatherData[cacheKey] || null;
+  const cacheHit = getWeatherCacheHit({ lat, lng }, dateStr, hour);
+  let data = cacheHit?.data || null;
   if (data) {
+    rememberWeatherCacheHitForPoint(cacheHit, { lat, lng }, dateStr, hour);
     renderCard(data, 'ok');
     return;
   }
@@ -7153,8 +8236,7 @@ async function openCursorWeatherCard(lat, lng) {
   renderCard(null, 'loading');
   try {
     data = await weatherService.getWeatherAtPoint(lat, lng, dateStr, hour);
-    cachedWeatherData[cacheKey] = data;
-    try { localStorage.setItem(LS_WEATHER_CACHE_KEY, JSON.stringify(cachedWeatherData)); } catch {}
+    setWeatherCacheData({ lat, lng }, dateStr, hour, data, { cacheKey });
     if (mapManager.isCursorWeatherPopupOpen?.()) renderCard(data, 'ok');
   } catch (err) {
     console.warn('Cursor weather fetch failed:', err.message);
@@ -7183,7 +8265,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   let html = `<div class="weather-card full cursor-weather-card" data-cursor-card="1" style="${cardStyle}">`;
   html += `<div class="wc-header" style="${headerStyle}">`;
-  html += `<span class="wc-title">${buildWeatherRoundIconHtml(wIcon, 'wc-title-weather-icon')} ${title}</span>`;
+  html += `<span class="wc-title">${title}</span>`;
   html += `<button class="wc-btn q-close" title="關閉">`;
   html += `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg></button>`;
   html += `</div>`;
@@ -7230,28 +8312,29 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
 function _bindWeatherCardEvents(colIdx, wrapper) {
   const root = wrapper?.querySelector(`.weather-card`) || document.getElementById(`wc-root-${colIdx}`);
   if (!root) return;
+  updateCompactWeatherMarquee(root);
 
   // Clicking the card highlights the point
   root.addEventListener('click', (e) => {
     // Requirement: Don't highlight when clicking inputs/selects in the card
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.target.closest('.clickable-coords')) return;
-    highlightPoint(colIdx);
+    highlightPoint(colIdx, false, { centerFullCard: true });
   });
 
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const targets = getCollectiveIndices(colIdx);
-    targets.forEach(idx => closeWeatherCard(idx));
+    const targets = getWeatherCardInteractionIndices(colIdx);
+    targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
   });
   root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curMode = _wcStates.get(colIdx) || 'compact';
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
-    const targets = getCollectiveIndices(colIdx);
-    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
-    highlightPoint(colIdx);
+    const targets = getWeatherCardInteractionIndices(colIdx);
+    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
+    highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -7359,13 +8442,13 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         // Swipe up: toggle between compact and full
         const curMode = _wcStates.get(colIdx) || 'compact';
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
-        const targets = getCollectiveIndices(colIdx);
-        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { center: false }));
-        highlightPoint(colIdx);
+        const targets = getWeatherCardInteractionIndices(colIdx);
+        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
+        highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
       } else {
         // Swipe down: close
-        const targets = getCollectiveIndices(colIdx);
-        targets.forEach(idx => closeWeatherCard(idx));
+        const targets = getWeatherCardInteractionIndices(colIdx);
+        targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
       }
     }
   }, { passive: false });
@@ -7525,18 +8608,32 @@ function panMapToCenterFullCard(colIdx) {
   const map = mapManager.map;
 
   const cardEl = document.getElementById(`wc-root-${colIdx}`);
+  const { rect, safeLeft, safeRight, safeTop, safeBottom } = _getMapSafeArea();
+  const safeCenterX = (safeLeft + safeRight) / 2;
+  const safeCenterY = (safeTop + safeBottom) / 2;
+
+  // Inline map cards inherit different marker anchors for waypoints versus
+  // interval points. Measure the rendered card itself so switching between
+  // those marker types lands on the same visual centre.
+  if (cardEl && !cardEl.closest('.mobile-weather-card-layer')) {
+    const cardRect = cardEl.getBoundingClientRect();
+    const cardCenterX = cardRect.left - rect.left + cardRect.width / 2;
+    const cardCenterY = cardRect.top - rect.top + cardRect.height / 2;
+    const dx = cardCenterX - safeCenterX;
+    const dy = cardCenterY - safeCenterY;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    map.panBy([dx, dy], { animate: true, duration: 0.25 });
+    return;
+  }
+
   const cardW = cardEl?.offsetWidth || 280;
   const cardH = cardEl?.offsetHeight || 260;
   const popupOffsetY = pt.isWaypoint ? 24 : 12;
-
-  const { safeLeft, safeRight, safeTop, safeBottom } = _getMapSafeArea();
 
   // The popup wrapper sits with its bottom at marker_y - popupOffsetY (the
   // tip is hidden via CSS, so no extra gap is needed). Prefer centering the
   // card between the toolbar and bottom-panel divider, but clamp its top edge
   // into the safe area so the header buttons remain reachable on small phones.
-  const safeCenterX = (safeLeft + safeRight) / 2;
-  const safeCenterY = (safeTop + safeBottom) / 2;
   const targetX = safeCenterX;
   const desiredCardTop = safeCenterY - cardH / 2;
   const cardTop = Math.max(safeTop, desiredCardTop);
@@ -7582,7 +8679,11 @@ function panMapToVisibleCenter(latlng) {
  * and side-panel waypoint item for the given weather-column index.
  * All columns that share the same coordinate are highlighted together.
  */
-function highlightPoint(colIdx, toggle = false) {
+function highlightPoint(colIdx, toggle = false, options = {}) {
+  if (toggle && typeof toggle === 'object') {
+    options = toggle;
+    toggle = !!options.toggle;
+  }
   if (colIdx < 0 || colIdx >= weatherPoints.length) return;
   const pt = weatherPoints[colIdx];
 
@@ -7639,23 +8740,26 @@ function highlightPoint(colIdx, toggle = false) {
     el.classList.remove('is-highlighted');
     const popup = el.closest('.leaflet-popup');
     if (popup) popup.style.zIndex = '';
+    el.closest('.leaflet-marker-icon')?.classList.remove('has-highlighted-weather-card');
   });
   const card = document.getElementById(`wc-root-${colIdx}`);
   if (card) {
     card.classList.add('is-highlighted');
     const popup = card.closest('.leaflet-popup');
     if (popup) popup.style.zIndex = '1000';
+    card.closest('.leaflet-marker-icon')?.classList.add('has-highlighted-weather-card');
   }
 
-  // 6. Map Centering — when a card is open, centre the card in the visible
-  // safe area (so its top buttons stay clear of the toolbar and it sits
-  // above the bottom-panel divider). Otherwise just centre the marker.
-  const mode = _wcStates.get(colIdx);
-  if (mode === 'full') {
+  // 6. Map Centering: default highlight taps only pan when there is no open
+  // card. Card navigation/collapse can opt in so the newly highlighted marker
+  // remains visible after the popup size or target changes.
+  const cardMode = _wcStates.get(colIdx);
+  if (waypointCentering && cardMode === 'full' && options.centerFullCard !== false) {
     scheduleWeatherCardCenter(colIdx, { settle: true });
-  } else if (mode === 'compact') {
-    panMapToCenterFullCard(colIdx);
-  } else if (waypointCentering) {
+    return;
+  }
+  const shouldCenterMap = options.centerMap === true || (options.centerMap !== false && !cardMode);
+  if (waypointCentering && shouldCenterMap) {
     panMapToVisibleCenter([pt.lat, pt.lng]);
   }
 }
@@ -7671,6 +8775,7 @@ function clearAllHighlights() {
     el.classList.remove('is-highlighted');
     const popup = el.closest('.leaflet-popup');
     if (popup) popup.style.zIndex = '';
+    el.closest('.leaflet-marker-icon')?.classList.remove('has-highlighted-weather-card');
   });
   mapManager.clearWaypointHighlight();
   mapManager.clearHoverMarker();
@@ -7703,7 +8808,7 @@ function updateElevationMarkers() {
 
       // Try to find weather icon for this point
       const schedule = getWeatherPointSchedule(pt, colIdx);
-      const cached = schedule ? cachedWeatherData[weatherCoordKey(pt.lat, pt.lng, schedule.date, schedule.hour)] : null;
+      const cached = schedule ? getWeatherCacheData(pt, schedule.date, schedule.hour) : null;
       let weatherIcon = cached?.weatherIcon || getSavedWeatherCells(pt)?.weather?.split(' ')[0] || null;
 
       // Filter weather icons based on visibility settings
@@ -7791,13 +8896,15 @@ async function init() {
     navModeEls.forEach(radio => {
       radio.addEventListener('change', () => {
         if (!radio.checked) return;
-        roundTripMode = radio.value === 'roundtrip';
-        oLoopMode = radio.value === 'oloop';
-        bumpRouteVersion();
-        localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
-        localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
-        if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
-        else historyRecord();
+        runOrDeferBusySetting('nav-mode', () => {
+          roundTripMode = radio.value === 'roundtrip';
+          oLoopMode = radio.value === 'oloop';
+          bumpRouteVersion();
+          localStorage.setItem(LS_ROUNDTRIP_KEY, roundTripMode ? '1' : '0');
+          localStorage.setItem(LS_OLOOP_KEY, oLoopMode ? '1' : '0');
+          if (mapManager.waypoints.length >= 2) onWaypointsChanged(mapManager.waypoints);
+          else historyRecord();
+        });
       });
     });
   }
@@ -7830,6 +8937,10 @@ async function init() {
     let prevActivity = speedActivity;
 
     const applyIntervalMode = () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('interval-mode', applyIntervalMode);
+        return;
+      }
       const mode = Array.from(intervalModeEls).find(r => r.checked)?.value || 'off';
       const newActivity = speedActivityEl?.value || 'hiking';
 
@@ -7934,6 +9045,10 @@ async function init() {
 
   // Read all pace inputs → paceParams (always in km/h internally) → save → recalc
   const onPaceParamChange = () => {
+    if (isRouteWeatherBusy()) {
+      runOrDeferBusySetting('pace-params', onPaceParamChange);
+      return;
+    }
     const rawDisplay = parseFloat(paceFlatInput?.value);
     const flatKmh = (!isNaN(rawDisplay) && paceFlatInput?.value !== '')
       ? displayToKmh(rawDisplay)
@@ -7964,6 +9079,10 @@ async function init() {
   // --- Pace unit toggle (km/h ↔ 上河速度) ---
   if (paceUnitSelect) {
     paceUnitSelect.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('pace-unit', () => paceUnitSelect.dispatchEvent(new Event('change')));
+        return;
+      }
       const prevUnit = paceUnit;
       paceUnit = paceUnitSelect.value;
       localStorage.setItem(LS_PACE_UNIT_KEY, paceUnit);
@@ -7985,6 +9104,10 @@ async function init() {
   if (perSegmentEl) {
     perSegmentEl.checked = perSegmentMode;
     perSegmentEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('per-segment', () => perSegmentEl.dispatchEvent(new Event('change')));
+        return;
+      }
       perSegmentMode = perSegmentEl.checked;
       localStorage.setItem(LS_PER_SEGMENT_KEY, perSegmentMode ? '1' : '0');
       bumpPaceVersion();
@@ -7997,6 +9120,10 @@ async function init() {
   if (strictLinearEl) {
     strictLinearEl.checked = strictLinearMode;
     strictLinearEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('strict-linear', () => strictLinearEl.dispatchEvent(new Event('change')));
+        return;
+      }
       strictLinearMode = strictLinearEl.checked;
       localStorage.setItem(LS_STRICT_LINEAR_KEY, strictLinearMode ? '1' : '0');
       if (strictLinearMode) {
@@ -8012,6 +9139,10 @@ async function init() {
   if (importAutoSortEl) {
     importAutoSortEl.checked = importAutoSortMode;
     importAutoSortEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-sort-init', () => importAutoSortEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoSortMode = importAutoSortEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_SORT_KEY, importAutoSortMode ? '1' : '0');
     });
@@ -8022,6 +9153,10 @@ async function init() {
   if (importAutoNameEl) {
     importAutoNameEl.checked = importAutoNameMode;
     importAutoNameEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('import-auto-name-init', () => importAutoNameEl.dispatchEvent(new Event('change')));
+        return;
+      }
       importAutoNameMode = importAutoNameEl.checked;
       localStorage.setItem(LS_IMPORT_AUTO_NAME_KEY, importAutoNameMode ? '1' : '0');
     });
@@ -8031,6 +9166,10 @@ async function init() {
   syncPaceCalibrationUI();
   if (paceCalibrationEnable) {
     paceCalibrationEnable.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('pace-calibration-enable', () => paceCalibrationEnable.dispatchEvent(new Event('change')));
+        return;
+      }
       paceCalibration.enabled = paceCalibrationEnable.checked;
       savePaceCalibration();
       syncPaceCalibrationUI();
@@ -8051,6 +9190,10 @@ async function init() {
   }
   if (paceCalibrationClear) {
     paceCalibrationClear.addEventListener('click', () => {
+      if (isRouteWeatherBusy()) {
+        showRouteWeatherBusyNotice();
+        return;
+      }
       paceCalibration = { enabled: false, factor: 1, tracks: [] };
       savePaceCalibration();
       syncPaceCalibrationUI();
@@ -8079,6 +9222,10 @@ async function init() {
   if (windyLayerEl) {
     windyLayerEl.value = windyLayer;
     windyLayerEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('windy-layer', () => windyLayerEl.dispatchEvent(new Event('change')));
+        return;
+      }
       windyLayer = windyLayerEl.value;
       localStorage.setItem(LS_WINDY_LAYER_KEY, windyLayer);
       refreshWindyLinks();
@@ -8088,11 +9235,16 @@ async function init() {
   if (windyModelEl) {
     windyModelEl.value = windyModel;
     windyModelEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('windy-model', () => windyModelEl.dispatchEvent(new Event('change')));
+        return;
+      }
       windyModel = windyModelEl.value;
       localStorage.setItem(LS_WINDY_MODEL_KEY, windyModel);
       refreshWindyLinks();
     });
   }
+  initWeatherCacheSettingsControls();
 
   updateFlatPlaceholder();
 
@@ -8103,6 +9255,7 @@ async function init() {
     try { return localStorage.getItem(LS_PENDING_GPX_KEY); } catch { return null; }
   })();
   if (pendingGpx) {
+    initialWeatherLoadPending = true;
     try { localStorage.removeItem(LS_PENDING_GPX_KEY); } catch (_) { }
     try {
       const { GpxExporter } = await ensureRouteExporters();
@@ -8110,6 +9263,7 @@ async function init() {
       await applyImportedResult(result);
     } catch (err) {
       console.error('Pending GPX replay failed:', err);
+      initialWeatherLoadPending = false;
     }
   }
 
@@ -8120,6 +9274,10 @@ async function init() {
     catch { return null; }
   })();
   const trackRestored = pendingGpx ? true : (savedTrackSession ? await restoreImportedTrack(savedTrackSession) : false);
+  if (!pendingGpx && trackRestored) {
+    initialWeatherLoadPending = true;
+    autoFetchWeather({ force: false, initialLoad: true });
+  }
 
   // Otherwise, fall back to normal waypoint-only restore (triggers route recalc).
   const savedWaypoints = trackRestored ? null : (() => {
@@ -8127,6 +9285,7 @@ async function init() {
     catch { return null; }
   })();
   if (savedWaypoints && savedWaypoints.length > 0) {
+    initialWeatherLoadPending = true;
     skipAutoGeocode = true;
     const savedWaypointIds = getPersistedWaypointIds();
     mapManager.setWaypointsFromImport(savedWaypoints, savedWaypointIds.map(waypointId => ({ waypointId })));
@@ -8496,6 +9655,11 @@ function resetToDefaults() {
     LS_PACE_UNIT_KEY,
     LS_WINDY_LAYER_KEY,
     LS_WINDY_MODEL_KEY,
+    LS_WEATHER_CACHE_KEY,
+    LS_WEATHER_CACHE_ENABLED_KEY,
+    LS_WEATHER_CACHE_DISTANCE_M_KEY,
+    LS_WEATHER_CACHE_ELEVATION_M_KEY,
+    LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY,
     LS_PANEL_WIDTH_KEY,
     LS_MAP_VIEW_KEY
   ];

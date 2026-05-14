@@ -180,19 +180,19 @@ export class WeatherService {
    * @param {string} dateStr  YYYY-MM-DD
    * @param {number} hour     0-23
    */
-  async getWeatherAtPoint(lat, lng, dateStr, hour) {
+  async getWeatherAtPoint(lat, lng, dateStr, hour, options = {}) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const targetDate = new Date(dateStr + 'T00:00:00');
     const diffDays = Math.round((targetDate - today) / (1000 * 60 * 60 * 24));
     if (diffDays >= 0 && diffDays <= 16) {
-      return this._fetchForecastFull(lat, lng, dateStr, hour);
+      return this._fetchForecastFull(lat, lng, dateStr, hour, options);
     } else {
-      return this._fetchHistoricalFull(lat, lng, dateStr, hour);
+      return this._fetchHistoricalFull(lat, lng, dateStr, hour, options);
     }
   }
 
-  async _fetchForecastFull(lat, lng, dateStr, hour) {
+  async _fetchForecastFull(lat, lng, dateStr, hour, options = {}) {
     const hourly = [
       'temperature_2m', 'apparent_temperature', 'relative_humidity_2m', 'dewpoint_2m',
       'precipitation', 'precipitation_probability', 'weathercode',
@@ -204,12 +204,12 @@ export class WeatherService {
       'sunshine_duration', 'precipitation_probability_max', 'uv_index_max', 'shortwave_radiation_sum',
     ].join(',');
     const url = `${FORECAST_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&hourly=${hourly}&daily=${daily}&timezone=Asia%2FTaipei&start_date=${dateStr}&end_date=${dateStr}`;
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal: options.signal });
     if (!resp.ok) throw new Error(`Forecast API error: ${resp.status}`);
     return this._parseFullData(await resp.json(), hour, true);
   }
 
-  async _fetchHistoricalFull(lat, lng, dateStr, hour) {
+  async _fetchHistoricalFull(lat, lng, dateStr, hour, options = {}) {
     const hourly = [
       'temperature_2m', 'apparent_temperature', 'relative_humidity_2m', 'dewpoint_2m',
       'precipitation', 'weathercode', 'windspeed_10m', 'windgusts_10m', 'visibility', 'cloudcover',
@@ -220,7 +220,7 @@ export class WeatherService {
       'sunshine_duration', 'shortwave_radiation_sum',
     ].join(',');
     const url = `${HISTORICAL_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&hourly=${hourly}&daily=${daily}&timezone=Asia%2FTaipei&start_date=${dateStr}&end_date=${dateStr}`;
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal: options.signal });
     if (!resp.ok) throw new Error(`Historical API error: ${resp.status}`);
     return this._parseFullData(await resp.json(), hour, false);
   }
