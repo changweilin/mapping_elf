@@ -211,6 +211,24 @@ const PHRASES = {
   '復原 /': { en: 'undo /', ja: '元に戻す /', ko: '실행 취소 /', fr: 'annuler /', de: 'rückgängig /', es: 'deshacer /', it: 'annulla /' },
   '重做': { en: 'redo', ja: 'やり直し', ko: '다시 실행', fr: 'rétablir', de: 'wiederholen', es: 'rehacer', it: 'ripeti' },
   '關閉搜尋結果或選單': { en: 'close search results or menus', ja: '検索結果またはメニューを閉じる', ko: '검색 결과 또는 메뉴 닫기', fr: 'fermer les résultats ou menus', de: 'Suchergebnisse oder Menüs schließen', es: 'cerrar resultados o menús', it: 'chiudi risultati o menu' },
+  '航點': { en: 'waypoint', ja: 'ウェイポイント', ko: '웨이포인트', fr: 'waypoint', de: 'Wegpunkt', es: 'waypoint', it: 'waypoint' },
+  '軌跡': { en: 'track', ja: '軌跡', ko: '트랙', fr: 'trace', de: 'Track', es: 'traza', it: 'traccia' },
+  '天氣卡': { en: 'weather card', ja: '天気カード', ko: '날씨 카드', fr: 'carte météo', de: 'Wetterkarte', es: 'tarjeta del tiempo', it: 'scheda meteo' },
+  '游標': { en: 'cursor', ja: 'カーソル', ko: '커서', fr: 'curseur', de: 'Cursor', es: 'cursor', it: 'cursore' },
+  '剪貼簿': { en: 'clipboard', ja: 'クリップボード', ko: '클립보드', fr: 'presse-papiers', de: 'Zwischenablage', es: 'portapapeles', it: 'appunti' },
+  '拖曳': { en: 'drag', ja: 'ドラッグ', ko: '드래그', fr: 'glisser', de: 'ziehen', es: 'arrastrar', it: 'trascina' },
+  '雙擊': { en: 'double-click', ja: 'ダブルクリック', ko: '두 번 클릭', fr: 'double-cliquez', de: 'Doppelklick', es: 'doble clic', it: 'doppio clic' },
+  '長按': { en: 'long-press', ja: '長押し', ko: '길게 누르기', fr: 'appui long', de: 'Langdruck', es: 'mantener pulsado', it: 'pressione lunga' },
+  '右鍵': { en: 'right-click', ja: '右クリック', ko: '우클릭', fr: 'clic droit', de: 'Rechtsklick', es: 'clic derecho', it: 'clic destro' },
+  '展開': { en: 'expand', ja: '展開', ko: '펼치기', fr: 'déployer', de: 'erweitern', es: 'expandir', it: 'espandi' },
+  '收合': { en: 'collapse', ja: '折りたたみ', ko: '접기', fr: 'replier', de: 'einklappen', es: 'plegar', it: 'chiudi' },
+  '縮小': { en: 'minimize', ja: '小さく', ko: '작게', fr: 'réduire', de: 'verkleinern', es: 'reducir', it: 'riduci' },
+  '集體連動': { en: 'linked bulk actions', ja: '一括連動操作', ko: '일괄 연동 작업', fr: 'actions groupées liées', de: 'gekoppelte Sammelaktionen', es: 'acciones en lote vinculadas', it: 'azioni di gruppo collegate' },
+  '候選路線': { en: 'route option', ja: '候補ルート', ko: '후보 루트', fr: 'option d’itinéraire', de: 'Routenoption', es: 'opción de ruta', it: 'opzione percorso' },
+  '候選卡': { en: 'option card', ja: '候補カード', ko: '후보 카드', fr: 'carte option', de: 'Optionskarte', es: 'tarjeta de opción', it: 'scheda opzione' },
+  '主路線': { en: 'main route', ja: '主ルート', ko: '주 루트', fr: 'itinéraire principal', de: 'Hauptroute', es: 'ruta principal', it: 'percorso principale' },
+  '移除區': { en: 'Remove zone', ja: '削除エリア', ko: '제거 영역', fr: 'zone Supprimer', de: 'Entfernen-Bereich', es: 'zona Quitar', it: 'zona Rimuovi' },
+  '取消區': { en: 'Cancel zone', ja: 'キャンセルエリア', ko: '취소 영역', fr: 'zone Annuler', de: 'Abbrechen-Bereich', es: 'zona Cancelar', it: 'zona Annulla' },
   'GPS 游標與定位': { en: 'GPS cursor and location', ja: 'GPSカーソルと現在地', ko: 'GPS 커서와 위치', fr: 'Curseur GPS et localisation', de: 'GPS-Cursor und Standort', es: 'Cursor GPS y ubicación', it: 'Cursore GPS e posizione' },
   '點擊右側': { en: 'Tap the', ja: '右側の', ko: '오른쪽의', fr: 'Touchez le', de: 'Tippe auf die', es: 'Toca el', it: 'Tocca il' },
   '定位按鈕': { en: 'location button', ja: '現在地ボタン', ko: '위치 버튼', fr: 'bouton de localisation', de: 'Standort-Schaltfläche', es: 'botón de ubicación', it: 'pulsante posizione' },
@@ -576,26 +594,26 @@ function renderInstructionsContent() {
         plainLine('標籤與卡片均支援集體連動'),
       ]),
       instructionGroup('💻', '電腦版快捷鍵', [
-        `<li><span class="instr-badge">↑</span> / <span class="instr-badge">↓</span>: ${t('展開/縮放或關閉卡片')}</li>`,
-        `<li><span class="instr-badge">←</span> / <span class="instr-badge">→</span>: ${t('左右切換點位')}</li>`,
-        `<li><span class="instr-badge">Ctrl+Z</span>: ${t('復原')} / <span class="instr-badge">Ctrl+Shift+Z</span>: ${t('重做')}</li>`,
-        `<li><span class="instr-badge">Esc</span>: ${t('關閉搜尋結果或選單')}</li>`,
+        `<li><span class="instr-badge">↑</span> / <span class="instr-badge">↓</span>: ${instructionText('展開/縮放或關閉卡片')}</li>`,
+        `<li><span class="instr-badge">←</span> / <span class="instr-badge">→</span>: ${instructionText('左右切換點位')}</li>`,
+        `<li><span class="instr-badge">Ctrl+Z</span>: ${instructionText('復原')} / <span class="instr-badge">Ctrl+Shift+Z</span>: ${instructionText('重做')}</li>`,
+        `<li><span class="instr-badge">Esc</span>: ${instructionText('關閉搜尋結果或選單')}</li>`,
       ]),
     ]),
     instructionRow([
       instructionGroup('📍', 'GPS 游標與定位', [
-        `<li>${t('點擊右側')} <span style="color: var(--accent-primary);">${t('定位按鈕')}</span> ${t('放置游標')}</li>`,
-        `<li>${t('點擊/長按游標可')} <span style="color: var(--accent-primary);">${t('設為航點')}</span> ${t('或查詢天氣')}</li>`,
+        `<li>${instructionText('點擊右側')} ${instructionKey('定位按鈕')} ${instructionText('放置游標')}</li>`,
+        `<li>${instructionText('點擊/長按游標可')} ${instructionKey('設為航點')} ${instructionText('或查詢天氣')}</li>`,
       ]),
       instructionGroup('⭐', '我的最愛與匯出', [
-        `<li>${t('點擊')} <span style="color: var(--accent-primary);">${t('星號')}</span> ${t('儲存路線，上限 10 筆')}</li>`,
+        `<li>${instructionText('點擊')} ${instructionKey('星號')} ${instructionText('儲存路線，上限 10 筆')}</li>`,
         plainLine('支援匯出 GPX、KML 與離線地圖包'),
       ]),
     ]),
     instructionRow([
       instructionGroup('🧭', '路線規劃說明', [
         plainLine('依序點選地圖即可建立航點；拖曳航點可微調路線位置'),
-        `<li><span class="instr-badge">${t('單程')}</span> ${t('適合 A 到 B；')} <span class="instr-badge">${t('來回')}</span> ${t('會自動折返；')} <span class="instr-badge">${t('O繞')}</span> ${t('會尋找回到起點的替代路線')}</li>`,
+        `<li><span class="instr-badge">${t('單程')}</span> ${instructionText('適合 A 到 B；')} <span class="instr-badge">${t('來回')}</span> ${instructionText('會自動折返；')} <span class="instr-badge">${t('O繞')}</span> ${instructionText('會尋找回到起點的替代路線')}</li>`,
         plainLine('若出現多條候選路線，可點選候選卡或地圖上的軌跡切換主路線'),
       ]),
       instructionGroup('🌦', '天氣資料說明', [
@@ -622,7 +640,7 @@ function renderInstructionsContent() {
         ${tipLine('快速複製', '點擊任何座標、GPS 游標或天氣卡中的經緯度，即可複製到剪貼簿')}
         ${tipLine('收起也能找點', '側欄收起時，點頂部標題仍可搜尋地點、切換運動或天氣模式')}
         ${tipLine('同步查看高度', '拖曳高度圖游標可同步高亮地圖位置；雙擊高度圖可快速收放面板')}
-        <li><span style="font-weight: 500; color: var(--text-primary);">${t('快速編輯航點')}</span>: ${t('雙擊側欄或表頭的')} <span style="color: var(--accent-primary);">${t('名稱')}</span> ${t('可改名；長按或右鍵地圖航點可拖曳微調')}</li>
+        <li>${instructionLabel('快速編輯航點')}: ${instructionText('雙擊側欄或表頭的')} ${instructionKey('名稱')} ${instructionText('可改名；長按或右鍵地圖航點可拖曳微調')}</li>
         ${tipLine('重疊層級切換', '重疊軌跡可雙擊軌跡輪換上下層；重疊航點可雙擊航點切換顯示層級，已選取時再點一次也會輪換；長按或右鍵航點只會拖曳微調')}
         ${tipLine('天氣卡操作', '大格可點天氣圖示或下滑關閉、點空白處縮小，且只操作目前卡片；小格可點資訊展開、點圖示關閉，會依集體設定連動；再次開啟會記住大格或小格')}
         ${tipLine('批次天氣卡', '在「航點設置」勾選連動對象後，收合、展開或關閉會套用到整組天氣卡')}
@@ -648,15 +666,142 @@ function instructionTitle(icon, title) {
 }
 
 function badgeLine(badge, text) {
-  return `<li><span class="instr-badge">${t(badge)}</span>: ${t(text)}</li>`;
+  return `<li><span class="instr-badge">${t(badge)}</span>: ${instructionText(text)}</li>`;
 }
 
 function plainLine(text) {
-  return `<li>${t(text)}</li>`;
+  return `<li>${instructionText(text)}</li>`;
 }
 
 function tipLine(label, text) {
-  return `<li><span style="font-weight: 500; color: var(--text-primary);">${t(label)}</span>: ${t(text)}</li>`;
+  return `<li>${instructionLabel(label)}: ${instructionText(text)}</li>`;
+}
+
+function instructionText(key) {
+  return highlightInstructionText(t(key));
+}
+
+function instructionLabel(key) {
+  return `<span class="instr-label">${escapeHtml(t(key))}</span>`;
+}
+
+function instructionKey(key) {
+  return `<span class="instr-key">${escapeHtml(t(key))}</span>`;
+}
+
+const INSTRUCTION_HIGHLIGHT_KEYS = [
+  '切換 詳細/簡要 模式',
+  '關閉天氣卡',
+  '切換點位',
+  '集體連動',
+  '展開',
+  '關閉',
+  '搜尋',
+  '選單',
+  '定位按鈕',
+  '游標',
+  '設為航點',
+  '或查詢天氣',
+  '星號',
+  '匯入',
+  '匯出',
+  '路線',
+  '航點',
+  '軌跡',
+  '天氣卡',
+  '拖曳',
+  '雙擊',
+  '長按',
+  '右鍵',
+  '收合',
+  '縮小',
+  '候選路線',
+  '候選卡',
+  '主路線',
+  '天氣',
+  '降雨',
+  '陣風',
+  '雷暴',
+  '配速',
+  '距離',
+  '負重',
+  '休息間隔',
+  '疲勞程度',
+  '個人配速校正',
+  '座標',
+  '剪貼簿',
+  '移除',
+  '取消',
+  '移除區',
+  '取消區',
+  '集體連動',
+];
+
+const INSTRUCTION_SHARED_HIGHLIGHTS = [
+  'GPS',
+  'GPX',
+  'KML',
+  'Open-Meteo',
+  'Windy',
+  '.melmap',
+  'Ctrl+Z',
+  'Ctrl+Shift+Z',
+  'Esc',
+  '16 天',
+  '1940 年',
+  '10 筆',
+  '10 entries',
+];
+
+function highlightInstructionText(value) {
+  const text = String(value ?? '');
+  if (!text) return '';
+  const terms = getInstructionHighlightTerms();
+  if (!terms.length) return escapeHtml(text);
+  const haystack = text.toLocaleLowerCase();
+  const ranges = [];
+  for (const term of terms) {
+    const needle = term.toLocaleLowerCase();
+    let index = haystack.indexOf(needle);
+    while (index !== -1) {
+      const end = index + term.length;
+      if (!ranges.some(([start, stop]) => index < stop && end > start)) {
+        ranges.push([index, end]);
+      }
+      index = haystack.indexOf(needle, index + Math.max(needle.length, 1));
+    }
+  }
+  if (!ranges.length) return escapeHtml(text);
+  ranges.sort((a, b) => a[0] - b[0]);
+  let html = '';
+  let cursor = 0;
+  for (const [start, end] of ranges) {
+    html += escapeHtml(text.slice(cursor, start));
+    html += `<span class="instr-key">${escapeHtml(text.slice(start, end))}</span>`;
+    cursor = end;
+  }
+  html += escapeHtml(text.slice(cursor));
+  return html;
+}
+
+function getInstructionHighlightTerms() {
+  const localized = INSTRUCTION_HIGHLIGHT_KEYS
+    .map(key => t(key))
+    .concat(INSTRUCTION_SHARED_HIGHLIGHTS);
+  return [...new Set(localized)]
+    .map(term => String(term || '').trim())
+    .filter(term => term.length >= 2)
+    .sort((a, b) => b.length - a.length);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
 }
 
 function translateTree(root) {

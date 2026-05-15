@@ -5868,6 +5868,33 @@ html.light-theme .wc-time-select {
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
 }
 
+.instr-label {
+  display: inline;
+  padding: 0 0.16em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-primary) 13%, transparent);
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.instr-key {
+  display: inline;
+  padding: 0 0.14em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-primary) 11%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 82%, var(--text-primary));
+  font-weight: 650;
+}
+
+[data-theme="dark"] .instr-label {
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+[data-theme="dark"] .instr-key {
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color: color-mix(in srgb, var(--accent-primary) 86%, var(--text-primary));
+}
+
 .instr-title svg {
   opacity: 0.8;
 }
