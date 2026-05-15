@@ -834,8 +834,18 @@ test('desktop waypoint weather card controls stay clickable inside the marker', 
   await card.locator('.q-prev').click();
   await expect(card).toHaveAttribute('data-col-idx', '0');
 
-  await card.locator('.q-toggle').click();
+  await card.locator('.wc-header').click({ position: { x: 2, y: 12 } });
   await expect(card).not.toHaveClass(/full/);
+
+  await card.locator('.q-toggle').click();
+  await expect(card).toHaveClass(/full/);
+
+  await card.locator('.q-weather-icon-close').click();
+  await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+
+  await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
+  await expect(card).toBeVisible();
+  await expect(card).toHaveClass(/full/);
 
   await card.locator('.q-close').click();
   await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);

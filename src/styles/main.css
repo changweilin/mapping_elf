@@ -5594,6 +5594,23 @@ body.modal-open {
   line-height: 1;
 }
 
+button.wc-weather-icon {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--transition-fast);
+}
+
+button.wc-weather-icon:hover,
+button.wc-weather-icon:focus-visible {
+  outline: none;
+  transform: scale(1.06);
+}
+
 .wc-main-weather-icon {
   width: 36px;
   height: 36px;

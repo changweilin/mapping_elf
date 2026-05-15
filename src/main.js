@@ -8176,7 +8176,7 @@ function _renderWeatherCard(colIdx) {
     html += `</div>`;
   } else {
     const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
-    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+    html += `<div class="wc-weather-main"><button class="wc-weather-icon q-weather-icon-close" type="button" title="關閉天氣卡" aria-label="關閉天氣卡">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</button><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
@@ -8272,7 +8272,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   html += `<div class="wc-body">`;
   const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(lat, lng, dateStr, hour, 'temp'), 14);
-  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+  html += `<div class="wc-weather-main"><button class="wc-weather-icon q-weather-icon-close" type="button" title="關閉天氣卡" aria-label="關閉天氣卡">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</button><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
 
   if (status === 'ok') {
     html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-top-stats');
@@ -8299,6 +8299,10 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
     e.stopPropagation();
     mapManager.closeCursorWeatherPopup();
   });
+  wrapper.querySelector('.q-weather-icon-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    mapManager.closeCursorWeatherPopup();
+  });
   wrapper.querySelectorAll('.clickable-coords').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -8306,6 +8310,30 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
       copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
     });
   });
+}
+
+function isWeatherCardBlankClickTarget(target, root) {
+  if (!target?.closest || !root?.contains?.(target)) return false;
+  if (!root.classList.contains('full')) return false;
+
+  const contentOrControlSelector = [
+    'button',
+    'a',
+    'input',
+    'select',
+    'textarea',
+    '.clickable-coords',
+    '.wc-title',
+    '.wc-weather-icon',
+    '.wc-weather-desc',
+    '.wc-weather-temp',
+    '.wc-info-item',
+    '.wc-time-edit-wrap',
+  ].join(',');
+  const contentOrControl = target.closest(contentOrControlSelector);
+  if (contentOrControl && root.contains(contentOrControl)) return false;
+
+  return !!target.closest('.weather-card.full, .wc-header, .wc-body, .wc-weather-main, .wc-info-grid');
 }
 
 /** Bind click and touch events to the weather card DOM. */
@@ -8319,11 +8347,23 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     // Requirement: Don't highlight when clicking inputs/selects in the card
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.target.closest('.clickable-coords')) return;
+    if (isWeatherCardBlankClickTarget(e.target, root)) {
+      e.stopPropagation();
+      const targets = getWeatherCardInteractionIndices(colIdx);
+      targets.forEach(idx => setWeatherCardMode(idx, 'compact'));
+      highlightPoint(colIdx, false, { centerMap: true });
+      return;
+    }
     highlightPoint(colIdx, false, { centerFullCard: true });
   });
 
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const targets = getWeatherCardInteractionIndices(colIdx);
+    targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
+  });
+  root.querySelector('.q-weather-icon-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const targets = getWeatherCardInteractionIndices(colIdx);
     targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
