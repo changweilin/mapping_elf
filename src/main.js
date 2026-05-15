@@ -1555,7 +1555,7 @@ function initWaypointSettings() {
       }
     }
     const targetMode = firstOpenMode === 'full' ? 'compact' : 'full';
-    targetCols.forEach(idx => setWeatherCardMode(idx, targetMode));
+    setWeatherCardModeForTargets(targetCols, targetMode, targetCols[0] ?? -1);
     showNotification(`已切換 ${targetCols.length} 個天氣卡模式`, 'success', 1500);
   });
 
@@ -1965,14 +1965,14 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       const curMode = _wcStates.get(activeColIdx) || 'compact';
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
-      const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === activeColIdx }));
+      const targets = getWeatherCardInteractionIndices(activeColIdx, curMode);
+      setWeatherCardModeForTargets(targets, nextMode, activeColIdx);
       highlightPoint(activeColIdx, false, { centerMap: nextMode === 'compact' });
       return;
     }
     if (k === 'arrowdown') {
       e.preventDefault();
-      const targets = getCollectiveIndices(activeColIdx);
+      const targets = getWeatherCardInteractionIndices(activeColIdx, _wcStates.get(activeColIdx) || 'compact');
       targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === activeColIdx }));
       return;
     }
@@ -7751,22 +7751,59 @@ async function fetchAllWeatherData(options = {}) {
 
 // Map of colIdx -> state ('compact' | 'full') for currently open weather cards
 let _wcStates = new Map();
-// Last-seen card mode at close time — used so the cursor's "open weather card"
-// re-uses the size the user last had open.
+// Last-seen card mode fallback; individual route cards also remember their own
+// last closed size by semantic weather-point key.
 let _wcLastMode = 'full';
+let _wcLastModes = new Map();
 
 function isMobileWeatherCardCenterMode() {
   return window.matchMedia('(max-width: 768px)').matches;
 }
 
-function getWeatherCardInteractionIndices(colIdx) {
-  return isMobileWeatherCardCenterMode() ? [colIdx] : getCollectiveIndices(colIdx);
+function getWeatherCardModeMemoryKey(colIdx) {
+  const pt = weatherPoints[colIdx];
+  return pt ? getSemanticKey(pt) : `idx:${colIdx}`;
 }
 
-function closeOtherOpenWeatherCardsOnMobile(colIdx) {
-  if (!isMobileWeatherCardCenterMode()) return;
+function rememberWeatherCardMode(colIdx, mode) {
+  if (mode !== 'compact' && mode !== 'full') return;
+  _wcLastMode = mode;
+  _wcLastModes.set(getWeatherCardModeMemoryKey(colIdx), mode);
+}
+
+function getWeatherCardPreferredMode(colIdx) {
+  return _wcLastModes.get(getWeatherCardModeMemoryKey(colIdx)) || _wcLastMode;
+}
+
+function getWeatherCardInteractionIndices(colIdx, mode = _wcStates.get(colIdx) || getWeatherCardPreferredMode(colIdx)) {
+  if (isMobileWeatherCardCenterMode() && mode === 'full') return [colIdx];
+  return getCollectiveIndices(colIdx);
+}
+
+function closeOtherOpenWeatherCardsOnMobile(colIdx, mode = 'full') {
+  if (!isMobileWeatherCardCenterMode() || mode !== 'full') return;
   Array.from(_wcStates.keys()).forEach((openIdx) => {
-    if (openIdx !== colIdx) closeWeatherCard(openIdx);
+    if (openIdx !== colIdx && _wcStates.get(openIdx) === 'full') closeWeatherCard(openIdx);
+  });
+}
+
+function setWeatherCardModeForTargets(targets, mode, pivotIdx, options = {}) {
+  if (!targets.length) return;
+  const pivot = targets.includes(pivotIdx) ? pivotIdx : targets[0];
+  if (
+    isMobileWeatherCardCenterMode() &&
+    mode === 'full' &&
+    targets.length > 1
+  ) {
+    targets
+      .filter(idx => idx !== pivot)
+      .forEach(idx => setWeatherCardMode(idx, 'compact', options));
+    setWeatherCardMode(pivot, 'full', { ...options, centerOnMobileExpand: true });
+    return;
+  }
+
+  targets.forEach(idx => {
+    setWeatherCardMode(idx, mode, { ...options, centerOnMobileExpand: idx === pivot });
   });
 }
 
@@ -7844,12 +7881,13 @@ function openWeatherCard(colIdx, options = {}) {
     if (options.notify !== false) showWeatherNotLoadedNotice();
     return false;
   }
-  closeOtherOpenWeatherCardsOnMobile(colIdx);
-  _wcStates.set(colIdx, _wcLastMode);
+  const mode = getWeatherCardPreferredMode(colIdx);
+  closeOtherOpenWeatherCardsOnMobile(colIdx, mode);
+  _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
   if (
     options.centerOnMobileExpand === true &&
-    _wcLastMode === 'full'
+    mode === 'full'
   ) {
     scheduleWeatherCardCenter(colIdx, { settle: true });
   }
@@ -7872,20 +7910,15 @@ function handleWeatherIconInteraction(colIdx) {
     return;
   }
 
-  const collectiveCols = getWeatherCardInteractionIndices(colIdx);
+  const preferredMode = _wcStates.get(colIdx) || getWeatherCardPreferredMode(colIdx);
+  const collectiveCols = getWeatherCardInteractionIndices(colIdx, preferredMode);
   if (collectiveCols.length > 1) {
     // Collective toggle based on the state of the target point
     const isAlreadyOpen = _wcStates.has(colIdx);
     if (isAlreadyOpen) {
       collectiveCols.forEach(ci => closeWeatherCard(ci, { centerAfterClose: ci === colIdx }));
     } else {
-      collectiveCols.forEach(ci => {
-        if (hasLoadedWeatherCardInfo(ci)) {
-          if (!_wcStates.has(ci)) openWeatherCard(ci, { notify: false, centerOnMobileExpand: ci === colIdx });
-        } else {
-          closeWeatherCard(ci);
-        }
-      });
+      setWeatherCardModeForTargets(collectiveCols, preferredMode, colIdx, { notify: false });
       // Sync highlight so keyboard/centering targets this group
       highlightPoint(colIdx);
     }
@@ -7899,7 +7932,7 @@ function handleWeatherIconInteraction(colIdx) {
 /** Close a specific weather card. */
 function closeWeatherCard(colIdx, options = {}) {
   const prev = _wcStates.get(colIdx);
-  if (prev === 'compact' || prev === 'full') _wcLastMode = prev;
+  rememberWeatherCardMode(colIdx, prev);
   _wcStates.delete(colIdx);
   mapManager.closeWeatherPopup(colIdx, { animate: true });
   if (options.centerAfterClose === true && prev === 'full') {
@@ -7923,7 +7956,7 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
     if (options.notify) showWeatherNotLoadedNotice();
     return;
   }
-  closeOtherOpenWeatherCardsOnMobile(colIdx);
+  closeOtherOpenWeatherCardsOnMobile(colIdx, mode);
   const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
@@ -8349,8 +8382,8 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     if (e.target.closest('.clickable-coords')) return;
     if (isWeatherCardBlankClickTarget(e.target, root)) {
       e.stopPropagation();
-      const targets = getWeatherCardInteractionIndices(colIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, 'compact'));
+      const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'full');
+      setWeatherCardModeForTargets(targets, 'compact', colIdx);
       highlightPoint(colIdx, false, { centerMap: true });
       return;
     }
@@ -8360,20 +8393,20 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const targets = getWeatherCardInteractionIndices(colIdx);
+    const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'compact');
     targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
   });
   root.querySelector('.q-weather-icon-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const targets = getWeatherCardInteractionIndices(colIdx);
+    const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'compact');
     targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
   });
   root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curMode = _wcStates.get(colIdx) || 'compact';
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
-    const targets = getWeatherCardInteractionIndices(colIdx);
-    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
+    const targets = getWeatherCardInteractionIndices(colIdx, curMode);
+    setWeatherCardModeForTargets(targets, nextMode, colIdx);
     highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
@@ -8482,12 +8515,12 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         // Swipe up: toggle between compact and full
         const curMode = _wcStates.get(colIdx) || 'compact';
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
-        const targets = getWeatherCardInteractionIndices(colIdx);
-        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
+        const targets = getWeatherCardInteractionIndices(colIdx, curMode);
+        setWeatherCardModeForTargets(targets, nextMode, colIdx);
         highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
       } else {
         // Swipe down: close
-        const targets = getWeatherCardInteractionIndices(colIdx);
+        const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'compact');
         targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
       }
     }

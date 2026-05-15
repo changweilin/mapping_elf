@@ -1143,6 +1143,90 @@ test.describe('mobile weather cards', () => {
     expect(Math.abs(offset.dx)).toBeLessThan(35);
     expect(Math.abs(offset.dy)).toBeLessThan(55);
   });
+
+  test('mobile weather cards remember size while compact actions stay linked', async ({ page }) => {
+    const loadedCells = (weather, temp) => ({
+      _weatherLoaded: true,
+      _weatherLoadState: 'loaded',
+      weather,
+      _icon: weather.split(' ')[0],
+      temp,
+      precipitation: '0 mm',
+      precipProb: '10%',
+      windSpeed: '10 km/h',
+    });
+
+    await openLayerTestApp(page, {
+      roundTrip: '0',
+      importedTrackSession: {
+        coords: [
+          [24.00, 121.00],
+          [24.80, 121.80],
+        ],
+        elevations: [100, 140],
+        waypoints: [
+          [24.00, 121.00],
+          [24.80, 121.80],
+        ],
+        waypointMeta: [
+          { waypointId: 'mobile-bulk-start', label: 'Start', cumDistM: 0 },
+          { waypointId: 'mobile-bulk-end', label: 'End', cumDistM: 120000 },
+        ],
+        intermediates: [],
+      },
+      weatherCells: {
+        'wp:mobile-bulk-start': loadedCells('sunny Clear', '21 C'),
+        'wp:mobile-bulk-end': loadedCells('cloudy Cloudy', '22 C'),
+      },
+    });
+
+    await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded')).toHaveCount(2);
+    await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+
+    const endColIdx = await page.locator('#weather-table-container .wt-col-head').evaluateAll((heads) => {
+      const end = heads.find((head) => (head.textContent || '').includes('End'));
+      return end?.dataset.idx || '';
+    });
+    expect(endColIdx).not.toBe('');
+
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+
+    const fullCard = page.locator('#mobile-weather-card-layer .weather-card.full');
+    await expect(fullCard).toBeVisible();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '0');
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await fullCard.locator('.q-close').tap();
+    await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+    await expect(page.locator(`.weather-card[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+    await expect(fullCard).toBeVisible();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '0');
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await fullCard.locator('.q-toggle').tap();
+    await expect(page.locator('#mobile-weather-card-layer .weather-card.full')).toHaveCount(0);
+    await expect(page.locator('.weather-card.compact[data-col-idx="0"]')).toHaveCount(1);
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await page.locator('.weather-card.compact[data-col-idx="0"] .q-close').tap();
+    await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+    await expect(page.locator(`.weather-card[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+    await expect(page.locator('.weather-card.compact[data-col-idx="0"]')).toHaveCount(1);
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(1);
+
+    await page.locator('.weather-card.compact[data-col-idx="0"] .q-toggle').tap();
+    await expect(fullCard).toBeVisible();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '0');
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(1);
+
+    await fullCard.locator('.q-close').tap();
+    await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(1);
+  });
 });
 
 test('double-clicking an overlapped route marker cycles visible layer order', async ({ page }) => {
