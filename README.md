@@ -170,7 +170,6 @@ mapping_elf/
 ├─ android/                   # Capacitor Android 專案
 ├─ ios/                       # Capacitor iOS 專案
 ├─ doc/                       # 開發文件與重構規劃
-├─ tools/                     # 圖像與 SVG 輔助工具
 ├─ .github/workflows/         # GitHub Pages 部署流程
 ├─ vite.config.js             # Vite 建置與分包設定
 ├─ playwright.config.js       # Playwright 測試設定
