@@ -9,6 +9,11 @@ import {
   computeHourlyPoints,
   computeTripStats,
 } from '../src/modules/paceEngine.js';
+import {
+  MELMAP_STATE_KEYS,
+  RESET_STATE_KEYS,
+  STATE_KEY_GROUPS,
+} from '../src/modules/stateKeys.js';
 
 const closeTo = (actual, expected, epsilon = 1e-6) => {
   assert.ok(
@@ -81,5 +86,39 @@ assert.deepEqual(
   { date: '2026-04-30', hour: '8' },
 );
 assert.equal(getSavedColRule({ isWaypoint: false, key: 'int:1000' }, 1, savedWeather), null);
+
+const savedCols = [];
+[
+  { isWaypoint: true, entry: { date: '2026-04-30', hour: '8' } },
+  { isWaypoint: false, entry: { date: '2026-04-30', hour: '9' } },
+  { isWaypoint: true, entry: { date: '2026-04-30', hour: '10' } },
+].forEach((pt, i) => {
+  savedCols[i] = pt.isWaypoint ? pt.entry : null;
+});
+assert.deepEqual(savedCols, [
+  { date: '2026-04-30', hour: '8' },
+  null,
+  { date: '2026-04-30', hour: '10' },
+]);
+
+assert.equal(new Set(MELMAP_STATE_KEYS).size, MELMAP_STATE_KEYS.length);
+assert.equal(new Set(RESET_STATE_KEYS).size, RESET_STATE_KEYS.length);
+[
+  'mappingElf_roundTrip',
+  'mappingElf_oLoop',
+  'mappingElf_mapLayer',
+  'mappingElf_customNames',
+  'mappingElf_weatherTableCollapsed',
+  'mappingElf_theme',
+].forEach((key) => assert.ok(MELMAP_STATE_KEYS.includes(key), `${key} should export with .melmap state`));
+assert.ok(RESET_STATE_KEYS.includes('mappingElf_pendingGpx'));
+assert.ok(RESET_STATE_KEYS.includes('mappingElf_waypoints'));
+assert.ok(!MELMAP_STATE_KEYS.includes('mappingElf_waypoints'));
+assert.ok(!MELMAP_STATE_KEYS.includes('mappingElf_importedTrack'));
+assert.ok(!MELMAP_STATE_KEYS.includes('mappingElf_favorites'));
+assert.deepEqual(
+  Object.keys(STATE_KEY_GROUPS).sort(),
+  ['layout', 'pace', 'preference', 'route', 'routeSession', 'session', 'userCollection', 'weather'].sort(),
+);
 
 console.log('Numeric regression ok');

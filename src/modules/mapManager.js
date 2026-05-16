@@ -2131,7 +2131,7 @@ export class MapManager {
       }
 
       const weatherHtml = this._weatherBadgeHtml(pt.weatherIcon);
-      const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
+      const labelHtml = pt.label ? `<div class="marker-external-label">${escapeHtml(pt.label)}</div>` : '';
 
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
@@ -2789,7 +2789,7 @@ export class MapManager {
     const size = isEndpoint ? 40 : 36;
     const num = (pt.wpIndex ?? 0) + 1;
     const weatherHtml = this._weatherBadgeHtml(pt.weather);
-    const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
+    const labelHtml = pt.label ? `<div class="marker-external-label">${escapeHtml(pt.label)}</div>` : '';
     const innerStyle = pt.color
       ? `style="--wp-pin-fill:${pt.color}; --wp-pin-glow-color:${pt.color};"`
       : '';
