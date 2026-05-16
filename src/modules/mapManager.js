@@ -111,8 +111,8 @@ const ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX = {
 };
 const ROUTE_LAYER_DEBUG_KEY = 'mappingElfDebugRouteLayerCycle';
 const WAYPOINT_DOUBLE_TAP_DELAY_MS = 360;
-// Single-tap selection must wait longer than the double-tap window so layer
-// cycling can cancel it before highlight/z-index state changes.
+// Single-tap selection must wait longer than the double-tap window so double
+// taps can resolve against the marker's pre-existing highlight state.
 const WAYPOINT_SINGLE_TAP_DELAY_MS = WAYPOINT_DOUBLE_TAP_DELAY_MS + 40;
 const WAYPOINT_DOUBLE_TAP_DISTANCE_PX = 30;
 const WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
@@ -1581,7 +1581,7 @@ export class MapManager {
       }
     };
 
-    // Double-click on marker: switch visible layer order for stacked waypoint pairs.
+    // Double-click on marker: select first; only an already highlighted marker cycles layers.
     marker.on('dblclick', handleWaypointDoubleClick);
 
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
@@ -2336,7 +2336,7 @@ export class MapManager {
 
       marker.on('dblclick', handleReturnWaypointDoubleClick);
 
-      // Long-press drags the paired editable waypoint; dblclick handles layer cycling.
+      // Long-press drags the paired editable waypoint; dblclick follows waypoint selection rules.
       let _lpTimer = null;
       let _pendingClientX = 0, _pendingClientY = 0;
       let _returnTouchStartClientX = 0, _returnTouchStartClientY = 0;
@@ -3841,43 +3841,12 @@ export class MapManager {
     if (select) this._highlightTopWaypointLayer(idx);
   }
 
-  _cycleWaypointOverlapLayers(idx, latlng, { select = true } = {}) {
+  _cycleWaypointOverlapLayers(idx, _latlng = null, { select = true } = {}) {
     if (idx === undefined || idx < 0 || !this._hasReturnWaypointPair(idx)) return false;
 
-    const desiredOutboundOnTop = !(this.waypointLayerSwapped[idx] ?? true);
-    const switchedRoute = this._bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng);
-    if (!switchedRoute || (this.waypointLayerSwapped[idx] ?? true) !== desiredOutboundOnTop) {
-      this.waypointLayerSwapped[idx] = desiredOutboundOnTop;
-      this._resetWaypointMarkerZ();
-    }
+    this.waypointLayerSwapped[idx] = !(this.waypointLayerSwapped[idx] ?? true);
+    this._resetWaypointMarkerZ();
     if (select) this._highlightTopWaypointLayer(idx);
-    return true;
-  }
-
-  _bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng) {
-    if (!this.gradientPolylines.length) return false;
-
-    this._syncAllMarkerLegIds();
-
-    const source = 'mouse';
-    const proximityPx = ROUTE_OVERLAP_PROXIMITY_PX[source] ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
-    const nearby = this._findOverlappingRouteChunks(latlng, null, { proximityPx });
-    const legs = this._uniqueNearbyLegs(nearby);
-    if (legs.length < 2) return false;
-
-    const targetMarker = desiredOutboundOnTop
-      ? this.waypointMarkers[idx]
-      : this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
-    const desiredIsReturn = !desiredOutboundOnTop;
-    const targetLegs = this._markerLegIds(targetMarker).filter((leg) => legs.includes(leg));
-    const targetLeg = targetLegs.find((leg) => this._routeLegIsReturn(leg) === desiredIsReturn)
-      ?? targetLegs[0];
-    if (targetLeg === undefined) return false;
-
-    this._overlapCycleState.set(this._overlapStackKey(legs), targetLeg);
-    this._bringOverlapLegToFront(legs, targetLeg);
-    this._syncOverlapMarkerStack(legs, targetLeg, latlng);
-    this._debugRouteLayerCycle('waypoint-sync', { legs, targetLeg, desiredOutboundOnTop });
     return true;
   }
 
@@ -3930,7 +3899,7 @@ export class MapManager {
   }
 
   _cycleWaypointLayerThenSelect(wpIndex, isReturn = false, latlng = null) {
-    if (this._hasReturnWaypointPair(wpIndex)) {
+    if (this._hasReturnWaypointPair(wpIndex) && this._isWaypointHighlighted(wpIndex, isReturn)) {
       this._cycleWaypointOverlapLayers(
         wpIndex,
         latlng || this._waypointSelectionLatLng(wpIndex, isReturn),

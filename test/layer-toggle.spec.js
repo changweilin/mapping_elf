@@ -284,6 +284,16 @@ async function topWaypointCenter(page, number) {
   return target;
 }
 
+async function clickTopWaypoint(page, number) {
+  const target = await topWaypointCenter(page, number);
+  await page.mouse.click(target.x, target.y);
+}
+
+async function selectTopWaypoint(page, number) {
+  await clickTopWaypoint(page, number);
+  await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
+}
+
 async function waypointCenter(page, number, isReturn) {
   const target = await page.evaluate(({ targetNumber, targetIsReturn }) => {
     const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
@@ -392,9 +402,10 @@ async function touchTap(page, point) {
   await page.waitForTimeout(70);
 }
 
-async function touchDoubleTap(page, point) {
-  await touchTap(page, point);
-  await touchTap(page, point);
+async function touchSelectTopWaypoint(page, number) {
+  const target = await topWaypointCenter(page, number);
+  await touchTap(page, target);
+  await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
 }
 
 async function touchLongPressDrag(page, startPoint, endPoint) {
@@ -412,7 +423,7 @@ async function touchLongPressDrag(page, startPoint, endPoint) {
   await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
 }
 
-test('double-clicking an overlapped waypoint cycles visible layer order', async ({ page }) => {
+test('double-clicking an unhighlighted overlapped waypoint selects without cycling layers', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
   await expect.poll(async () =>
@@ -420,18 +431,24 @@ test('double-clicking an overlapped waypoint cycles visible layer order', async 
   ).toBe(true);
 
   const before = await layerState(page);
-  const waypoint = await page.locator('.leaflet-marker-pane .custom-waypoint-icon').first().boundingBox();
-  expect(waypoint).not.toBeNull();
-  await page.mouse.dblclick(waypoint.x + waypoint.width / 2, waypoint.y + waypoint.height / 2);
+  const waypoint = await topWaypointCenter(page, 1);
+  await page.mouse.dblclick(waypoint.x, waypoint.y);
   await expect.poll(async () => {
     const state = await layerState(page);
+    const selected = await selectedWaypointState(page, 1);
     return {
       routeChanged: state.topStroke !== before.topStroke,
       returnAboveOutbound: state.returnAboveOutbound,
+      selectedCount: selected.selectedCount,
+      selectedIsReturn: selected.selectedIsReturn,
+      topIsReturn: selected.topIsReturn,
     };
   }).toMatchObject({
-    routeChanged: true,
-    returnAboveOutbound: true,
+    routeChanged: false,
+    returnAboveOutbound: before.returnAboveOutbound,
+    selectedCount: 1,
+    selectedIsReturn: false,
+    topIsReturn: false,
   });
 });
 
@@ -450,8 +467,19 @@ test('clicking a highlighted overlapped waypoint cycles visible layer and keeps 
     topIsReturn: false,
   });
 
+  const before = await layerState(page);
   await page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-selected .wp-icon-inner').click();
-  await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
+  await expect.poll(async () => {
+    const state = await layerState(page);
+    const selected = await selectedWaypointState(page, 1);
+    return {
+      routeChanged: state.topStroke !== before.topStroke,
+      selectedCount: selected.selectedCount,
+      selectedIsReturn: selected.selectedIsReturn,
+      topIsReturn: selected.topIsReturn,
+    };
+  }).toMatchObject({
+    routeChanged: false,
     selectedCount: 1,
     selectedIsReturn: true,
     topIsReturn: true,
@@ -1265,8 +1293,18 @@ test('route layer cycling moves an already highlighted waypoint to the switched-
     (await waypointPairState(page)).find((pair) => pair.number === 1)?.hasReturn ?? false
   ).toBe(true);
 
-  const waypoint = await topWaypointCenter(page, 1);
-  await page.mouse.dblclick(waypoint.x, waypoint.y);
+  const firstRoutePoint = await page.evaluate(() => {
+    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
+    if (!path) return null;
+    const rect = path.getBoundingClientRect();
+    return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
+  });
+  expect(firstRoutePoint).not.toBeNull();
+
+  await page.mouse.dblclick(firstRoutePoint.x, firstRoutePoint.y);
+  await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
+
+  await selectTopWaypoint(page, 1);
   await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
     selectedCount: 1,
     selectedIsReturn: true,
@@ -1357,7 +1395,9 @@ test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint',
     }, number);
     expect(target).not.toBeNull();
 
-    await page.mouse.dblclick(target.x, target.y);
+    await page.mouse.click(target.x, target.y);
+    await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
+    await clickTopWaypoint(page, number);
     await expect.poll(async () => {
       const pairs = await waypointPairState(page);
       return pairs.find((pair) => pair.number === number)?.returnAbove ?? null;
@@ -1369,8 +1409,8 @@ test('long-press dragging a return waypoint edits its paired outbound waypoint i
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
 
-  let target = await topWaypointCenter(page, 1);
-  await page.mouse.dblclick(target.x, target.y);
+  await selectTopWaypoint(page, 1);
+  await clickTopWaypoint(page, 1);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
 
   const beforeLayer = await layerState(page);
@@ -1452,13 +1492,19 @@ test('long-press dragging a waypoint into the cancel zone leaves it unchanged', 
 test.describe('touch waypoint gestures', () => {
   test.use({ hasTouch: true });
 
-  test('touch double-tapping an overlapped waypoint cycles visible layer order', async ({ page }) => {
+  test('touch tapping a highlighted overlapped waypoint cycles visible layer order', async ({ page }) => {
     await openLayerTestApp(page);
     await addRoundTripWaypoints(page);
 
     const before = await layerState(page);
+    await touchSelectTopWaypoint(page, 1);
+    await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
+      selectedCount: 1,
+      selectedIsReturn: false,
+      topIsReturn: false,
+    });
     const target = await topWaypointCenter(page, 1);
-    await touchDoubleTap(page, target);
+    await touchTap(page, target);
 
     await expect.poll(async () => (await layerState(page)).returnAboveOutbound)
       .toBe(!before.returnAboveOutbound);
@@ -1470,8 +1516,8 @@ test.describe('touch waypoint gestures', () => {
     await openLayerTestApp(page);
     await addRoundTripWaypoints(page);
 
-    const target = await topWaypointCenter(page, 1);
-    await touchDoubleTap(page, target);
+    await touchSelectTopWaypoint(page, 1);
+    await touchTap(page, await topWaypointCenter(page, 1));
     await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
 
     const beforeLayer = await layerState(page);
