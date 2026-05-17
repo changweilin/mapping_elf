@@ -491,7 +491,7 @@ async function touchLongPressDrag(page, startPoint, endPoint) {
   await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
 }
 
-test('double-clicking an unhighlighted overlapped waypoint selects without cycling layers', async ({ page }) => {
+test('double-clicking an unhighlighted overlapped waypoint cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
   await expect.poll(async () =>
@@ -513,10 +513,10 @@ test('double-clicking an unhighlighted overlapped waypoint selects without cycli
     };
   }).toMatchObject({
     routeChanged: false,
-    returnAboveOutbound: before.returnAboveOutbound,
+    returnAboveOutbound: !before.returnAboveOutbound,
     selectedCount: 1,
-    selectedIsReturn: false,
-    topIsReturn: false,
+    selectedIsReturn: !before.returnAboveOutbound,
+    topIsReturn: !before.returnAboveOutbound,
   });
 });
 

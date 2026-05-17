@@ -1583,7 +1583,7 @@ export class MapManager {
       }
     };
 
-    // Double-click on marker: select first; only an already highlighted marker cycles layers.
+    // Double-click on overlapped waypoint markers cycles the visible layer immediately.
     marker.on('dblclick', handleWaypointDoubleClick);
 
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
@@ -2338,7 +2338,7 @@ export class MapManager {
 
       marker.on('dblclick', handleReturnWaypointDoubleClick);
 
-      // Long-press drags the paired editable waypoint; dblclick follows waypoint selection rules.
+      // Long-press drags the paired editable waypoint; dblclick cycles overlapped layers.
       let _lpTimer = null;
       let _pendingClientX = 0, _pendingClientY = 0;
       let _returnTouchStartClientX = 0, _returnTouchStartClientY = 0;
@@ -3915,7 +3915,7 @@ export class MapManager {
   }
 
   _cycleWaypointLayerThenSelect(wpIndex, isReturn = false, latlng = null) {
-    if (this._hasReturnWaypointPair(wpIndex) && this._isWaypointPairHighlighted(wpIndex)) {
+    if (this._hasReturnWaypointPair(wpIndex)) {
       this._cycleWaypointOverlapLayers(
         wpIndex,
         latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
