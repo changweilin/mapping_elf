@@ -787,6 +787,16 @@ body.weather-card-busy .weather-edit-control:disabled {
   overflow: visible;
 }
 
+.wp-pin-highlight-ring {
+  fill: none;
+  stroke: #fbbf24;
+  stroke-linejoin: round;
+  stroke-width: 5.6;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
 .wp-pin-body {
   fill: var(--wp-pin-fill);
   stroke: var(--wp-pin-outline);
@@ -804,6 +814,10 @@ body.weather-card-busy .weather-edit-control:disabled {
   --wp-pin-outline: #fbbf24;
   --wp-pin-glow-color: rgba(251, 191, 36, 0.95);
   transform: scale(1.1);
+}
+
+.custom-waypoint-icon.is-selected .wp-pin-highlight-ring {
+  opacity: 1;
 }
 
 .custom-waypoint-icon.is-dragging .wp-icon-inner {
@@ -842,7 +856,7 @@ body.weather-card-busy .weather-edit-control:disabled {
 }
 
 .custom-waypoint-icon.is-selected {
-  z-index: 1900 !important;
+  z-index: 5000 !important;
 }
 
 .leaflet-marker-icon.has-weather-card {
@@ -851,6 +865,10 @@ body.weather-card-busy .weather-edit-control:disabled {
 
 .leaflet-marker-icon.has-highlighted-weather-card {
   z-index: 2300 !important;
+}
+
+.leaflet-marker-icon.custom-waypoint-icon.is-selected {
+  z-index: 5000 !important;
 }
 
 .custom-waypoint-icon.has-weather-card:hover .wp-icon-inner {
@@ -1342,6 +1360,11 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 
 .custom-waypoint-icon.return-leg .wp-pin-body {
   stroke-dasharray: 4 3;
+}
+
+.custom-waypoint-icon.return-leg.is-selected .wp-icon-inner {
+  --wp-pin-outline: #fbbf24;
+  --wp-pin-glow-color: rgba(251, 191, 36, 0.95);
 }
 
 .custom-waypoint-icon.return-leg:hover .wp-icon-inner {

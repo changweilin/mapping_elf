@@ -118,7 +118,7 @@ const WAYPOINT_DOUBLE_TAP_DISTANCE_PX = 30;
 const WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
 const WAYPOINT_Z_BASE = 1300;
 const WAYPOINT_Z_PAIR_STEP = 120;
-const WAYPOINT_Z_SELECTED = 1800;
+const WAYPOINT_Z_SELECTED = 5000;
 const WAYPOINT_PIN_HEIGHT_RATIO = 1.44;
 const INTERMEDIATE_Z_OFFSET = -300;
 const INTERMEDIATE_MARKER_SIZE = 18;
@@ -134,8 +134,10 @@ function waypointPinMetrics(size) {
 }
 
 function waypointPinSvgHtml() {
+  const pinPath = 'M18 1.7C9.05 1.7 1.8 8.95 1.8 17.9c0 12.35 16.2 32.4 16.2 32.4s16.2-20.05 16.2-32.4C34.2 8.95 26.95 1.7 18 1.7Z';
   return '<svg class="wp-pin-svg" viewBox="0 0 36 52" aria-hidden="true" focusable="false">' +
-    '<path class="wp-pin-body" d="M18 1.7C9.05 1.7 1.8 8.95 1.8 17.9c0 12.35 16.2 32.4 16.2 32.4s16.2-20.05 16.2-32.4C34.2 8.95 26.95 1.7 18 1.7Z"/>' +
+    `<path class="wp-pin-highlight-ring" d="${pinPath}"/>` +
+    `<path class="wp-pin-body" d="${pinPath}"/>` +
     '<circle class="wp-pin-dot" cx="18" cy="17.9" r="8.1"/>' +
     '</svg>';
 }

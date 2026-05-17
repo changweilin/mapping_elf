@@ -263,6 +263,54 @@ async function selectedWaypointState(page, number) {
   }, number);
 }
 
+async function selectedWaypointRingState(page, number, isReturn = false) {
+  return page.evaluate(({ targetNumber, targetIsReturn }) => {
+    const markerNumber = (el) => Number.parseInt(el.querySelector('.wp-icon-inner > span')?.textContent.trim() || '', 10);
+    const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .find((el) =>
+        markerNumber(el) === targetNumber &&
+        el.classList.contains('return-leg') === targetIsReturn
+      );
+    const ring = marker?.querySelector('.wp-pin-highlight-ring');
+    const body = marker?.querySelector('.wp-pin-body');
+    return {
+      selected: marker?.classList.contains('is-selected') ?? false,
+      ringOpacity: ring ? Number.parseFloat(getComputedStyle(ring).opacity) : 0,
+      ringStroke: ring ? getComputedStyle(ring).stroke : '',
+      bodyStroke: body ? getComputedStyle(body).stroke : '',
+    };
+  }, { targetNumber: number, targetIsReturn: isReturn });
+}
+
+async function selectedWaypointStackState(page, number, isReturn = false) {
+  return page.evaluate(({ targetNumber, targetIsReturn }) => {
+    const markerNumber = (el) => Number.parseInt(el.querySelector('.wp-icon-inner > span')?.textContent.trim() || '', 10);
+    const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .map((el, index) => ({
+        index,
+        number: markerNumber(el),
+        isReturn: el.classList.contains('return-leg'),
+        selected: el.classList.contains('is-selected'),
+        z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+      }))
+      .filter((marker) => Number.isFinite(marker.number));
+    const selected = markers.find((marker) =>
+      marker.number === targetNumber &&
+      marker.isReturn === targetIsReturn &&
+      marker.selected
+    ) || null;
+    const sorted = markers.slice().sort((a, b) => b.z - a.z);
+    const top = sorted[0] || null;
+    return {
+      selectedZ: selected?.z ?? null,
+      topZ: top?.z ?? null,
+      topNumber: top?.number ?? null,
+      topIsReturn: top?.isReturn ?? null,
+      selectedIsTop: !!selected && !!top && selected.index === top.index,
+    };
+  }, { targetNumber: number, targetIsReturn: isReturn });
+}
+
 async function topWaypointCenter(page, number) {
   const target = await page.evaluate((targetNumber) => {
     const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
@@ -504,6 +552,11 @@ test('clicking a highlighted overlapped waypoint cycles visible layer and keeps 
     selectedIsReturn: true,
     topIsReturn: true,
   });
+
+  await expect.poll(async () => {
+    const state = await selectedWaypointRingState(page, 1, true);
+    return state.selected && state.ringOpacity > 0.9 && state.bodyStroke.includes('251');
+  }).toBe(true);
 });
 
 test('first click on an unhighlighted overlapped start waypoint preserves the visible layer', async ({ page }) => {
@@ -534,6 +587,28 @@ test('first click on an unhighlighted overlapped start waypoint preserves the vi
   await expect.poll(async () =>
     (await waypointPairState(page)).find((pair) => pair.number === 1)?.returnAbove ?? null
   ).toBe(!beforePair.returnAbove);
+});
+
+test('clicking start and end waypoint markers shows the selected outline', async ({ page }) => {
+  await openLayerTestApp(page, { roundTrip: '0' });
+  await addWaypointsAtFractions(page, [
+    [0.40, 0.25],
+    [0.58, 0.78],
+  ]);
+
+  for (const number of [1, 2]) {
+    await clickTopWaypoint(page, number);
+    await expect.poll(async () => {
+      const state = await selectedWaypointRingState(page, number, false);
+      return state.selected && state.ringOpacity > 0.9 && state.ringStroke.includes('251');
+    }).toBe(true);
+    await expect.poll(async () => selectedWaypointStackState(page, number, false))
+      .toMatchObject({
+        selectedIsTop: true,
+        topNumber: number,
+        topIsReturn: false,
+      });
+  }
 });
 
 test('waypoint marker text is not selectable during long press gestures', async ({ page }) => {
