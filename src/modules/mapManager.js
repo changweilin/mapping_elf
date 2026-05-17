@@ -3867,12 +3867,26 @@ export class MapManager {
     return wp ? L.latLng(wp[0], wp[1]) : null;
   }
 
-  _isWaypointHighlighted(wpIndex, isReturn = false) {
-    return this.highlightedWpIndex === wpIndex && this.highlightedIsReturn === isReturn;
+  _isWaypointLayerSelected(wpIndex, isReturn = false) {
+    const marker = isReturn
+      ? this.returnWaypointMarkers.find((m) => m._wpIndex === wpIndex)
+      : this.waypointMarkers[wpIndex];
+    return !!marker?.getElement?.()?.classList.contains('is-selected');
+  }
+
+  _isWaypointPairHighlighted(wpIndex) {
+    if (this.highlightedWpIndex !== wpIndex) return false;
+    return this._isWaypointLayerSelected(wpIndex, false)
+      || this._isWaypointLayerSelected(wpIndex, true);
+  }
+
+  _topWaypointLayerIsReturn(wpIndex, fallbackIsReturn = false) {
+    if (!this._hasReturnWaypointPair(wpIndex)) return fallbackIsReturn;
+    return (this.waypointLayerSwapped[wpIndex] ?? true) === false;
   }
 
   _selectWaypointFromMap(wpIndex, isReturn = false, latlng = null) {
-    if (this._isWaypointHighlighted(wpIndex, isReturn) && this._hasReturnWaypointPair(wpIndex)) {
+    if (this._hasReturnWaypointPair(wpIndex) && this._isWaypointPairHighlighted(wpIndex)) {
       this._cycleWaypointOverlapLayers(
         wpIndex,
         latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
@@ -3882,7 +3896,7 @@ export class MapManager {
       return;
     }
 
-    this.onWaypointSelect?.(wpIndex, isReturn, false);
+    this.onWaypointSelect?.(wpIndex, this._topWaypointLayerIsReturn(wpIndex, isReturn), false);
   }
 
   _scheduleWaypointSelect(wpIndex, isReturn = false, latlng = null) {
@@ -3899,7 +3913,7 @@ export class MapManager {
   }
 
   _cycleWaypointLayerThenSelect(wpIndex, isReturn = false, latlng = null) {
-    if (this._hasReturnWaypointPair(wpIndex) && this._isWaypointHighlighted(wpIndex, isReturn)) {
+    if (this._hasReturnWaypointPair(wpIndex) && this._isWaypointPairHighlighted(wpIndex)) {
       this._cycleWaypointOverlapLayers(
         wpIndex,
         latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
@@ -3909,7 +3923,7 @@ export class MapManager {
       return;
     }
 
-    this._deferWaypointSelect(wpIndex, isReturn, false);
+    this._deferWaypointSelect(wpIndex, this._topWaypointLayerIsReturn(wpIndex, isReturn), false);
   }
 
   _deferTopWaypointLayerHighlight(idx) {

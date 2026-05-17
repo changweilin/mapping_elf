@@ -289,6 +289,26 @@ async function clickTopWaypoint(page, number) {
   await page.mouse.click(target.x, target.y);
 }
 
+async function dispatchWaypointMarkerClick(page, number, isReturn) {
+  await page.evaluate(({ targetNumber, targetIsReturn }) => {
+    const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .find((el) =>
+        Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === targetNumber &&
+        el.classList.contains('return-leg') === targetIsReturn
+      );
+    if (!marker) throw new Error(`Waypoint marker ${targetNumber} ${targetIsReturn ? 'return' : 'outbound'} not found`);
+    const rect = marker.getBoundingClientRect();
+    marker.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: rect.x + rect.width / 2,
+      clientY: rect.y + rect.height / 2,
+      view: window,
+    }));
+  }, { targetNumber: number, targetIsReturn: isReturn });
+}
+
 async function selectTopWaypoint(page, number) {
   await clickTopWaypoint(page, number);
   await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
@@ -484,6 +504,36 @@ test('clicking a highlighted overlapped waypoint cycles visible layer and keeps 
     selectedIsReturn: true,
     topIsReturn: true,
   });
+});
+
+test('first click on an unhighlighted overlapped start waypoint preserves the visible layer', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const beforePair = (await waypointPairState(page)).find((pair) => pair.number === 1);
+  expect(beforePair?.hasReturn).toBe(true);
+
+  await dispatchWaypointMarkerClick(page, 1, !beforePair.returnAbove);
+  await expect.poll(async () => {
+    const pair = (await waypointPairState(page)).find((item) => item.number === 1);
+    const selected = await selectedWaypointState(page, 1);
+    return {
+      returnAbove: pair?.returnAbove,
+      selectedCount: selected.selectedCount,
+      selectedIsReturn: selected.selectedIsReturn,
+      topIsReturn: selected.topIsReturn,
+    };
+  }).toMatchObject({
+    returnAbove: beforePair.returnAbove,
+    selectedCount: 1,
+    selectedIsReturn: beforePair.returnAbove,
+    topIsReturn: beforePair.returnAbove,
+  });
+
+  await clickTopWaypoint(page, 1);
+  await expect.poll(async () =>
+    (await waypointPairState(page)).find((pair) => pair.number === 1)?.returnAbove ?? null
+  ).toBe(!beforePair.returnAbove);
 });
 
 test('waypoint marker text is not selectable during long press gestures', async ({ page }) => {
