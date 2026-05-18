@@ -211,6 +211,24 @@ const PHRASES = {
   '復原 /': { en: 'undo /', ja: '元に戻す /', ko: '실행 취소 /', fr: 'annuler /', de: 'rückgängig /', es: 'deshacer /', it: 'annulla /' },
   '重做': { en: 'redo', ja: 'やり直し', ko: '다시 실행', fr: 'rétablir', de: 'wiederholen', es: 'rehacer', it: 'ripeti' },
   '關閉搜尋結果或選單': { en: 'close search results or menus', ja: '検索結果またはメニューを閉じる', ko: '검색 결과 또는 메뉴 닫기', fr: 'fermer les résultats ou menus', de: 'Suchergebnisse oder Menüs schließen', es: 'cerrar resultados o menús', it: 'chiudi risultati o menu' },
+  '航點': { en: 'waypoint', ja: 'ウェイポイント', ko: '웨이포인트', fr: 'waypoint', de: 'Wegpunkt', es: 'waypoint', it: 'waypoint' },
+  '軌跡': { en: 'track', ja: '軌跡', ko: '트랙', fr: 'trace', de: 'Track', es: 'traza', it: 'traccia' },
+  '天氣卡': { en: 'weather card', ja: '天気カード', ko: '날씨 카드', fr: 'carte météo', de: 'Wetterkarte', es: 'tarjeta del tiempo', it: 'scheda meteo' },
+  '游標': { en: 'cursor', ja: 'カーソル', ko: '커서', fr: 'curseur', de: 'Cursor', es: 'cursor', it: 'cursore' },
+  '剪貼簿': { en: 'clipboard', ja: 'クリップボード', ko: '클립보드', fr: 'presse-papiers', de: 'Zwischenablage', es: 'portapapeles', it: 'appunti' },
+  '拖曳': { en: 'drag', ja: 'ドラッグ', ko: '드래그', fr: 'glisser', de: 'ziehen', es: 'arrastrar', it: 'trascina' },
+  '雙擊': { en: 'double-click', ja: 'ダブルクリック', ko: '두 번 클릭', fr: 'double-cliquez', de: 'Doppelklick', es: 'doble clic', it: 'doppio clic' },
+  '長按': { en: 'long-press', ja: '長押し', ko: '길게 누르기', fr: 'appui long', de: 'Langdruck', es: 'mantener pulsado', it: 'pressione lunga' },
+  '右鍵': { en: 'right-click', ja: '右クリック', ko: '우클릭', fr: 'clic droit', de: 'Rechtsklick', es: 'clic derecho', it: 'clic destro' },
+  '展開': { en: 'expand', ja: '展開', ko: '펼치기', fr: 'déployer', de: 'erweitern', es: 'expandir', it: 'espandi' },
+  '收合': { en: 'collapse', ja: '折りたたみ', ko: '접기', fr: 'replier', de: 'einklappen', es: 'plegar', it: 'chiudi' },
+  '縮小': { en: 'minimize', ja: '小さく', ko: '작게', fr: 'réduire', de: 'verkleinern', es: 'reducir', it: 'riduci' },
+  '集體連動': { en: 'linked bulk actions', ja: '一括連動操作', ko: '일괄 연동 작업', fr: 'actions groupées liées', de: 'gekoppelte Sammelaktionen', es: 'acciones en lote vinculadas', it: 'azioni di gruppo collegate' },
+  '候選路線': { en: 'route option', ja: '候補ルート', ko: '후보 루트', fr: 'option d’itinéraire', de: 'Routenoption', es: 'opción de ruta', it: 'opzione percorso' },
+  '候選卡': { en: 'option card', ja: '候補カード', ko: '후보 카드', fr: 'carte option', de: 'Optionskarte', es: 'tarjeta de opción', it: 'scheda opzione' },
+  '主路線': { en: 'main route', ja: '主ルート', ko: '주 루트', fr: 'itinéraire principal', de: 'Hauptroute', es: 'ruta principal', it: 'percorso principale' },
+  '移除區': { en: 'Remove zone', ja: '削除エリア', ko: '제거 영역', fr: 'zone Supprimer', de: 'Entfernen-Bereich', es: 'zona Quitar', it: 'zona Rimuovi' },
+  '取消區': { en: 'Cancel zone', ja: 'キャンセルエリア', ko: '취소 영역', fr: 'zone Annuler', de: 'Abbrechen-Bereich', es: 'zona Cancelar', it: 'zona Annulla' },
   'GPS 游標與定位': { en: 'GPS cursor and location', ja: 'GPSカーソルと現在地', ko: 'GPS 커서와 위치', fr: 'Curseur GPS et localisation', de: 'GPS-Cursor und Standort', es: 'Cursor GPS y ubicación', it: 'Cursore GPS e posizione' },
   '點擊右側': { en: 'Tap the', ja: '右側の', ko: '오른쪽의', fr: 'Touchez le', de: 'Tippe auf die', es: 'Toca el', it: 'Tocca il' },
   '定位按鈕': { en: 'location button', ja: '現在地ボタン', ko: '위치 버튼', fr: 'bouton de localisation', de: 'Standort-Schaltfläche', es: 'botón de ubicación', it: 'pulsante posizione' },
@@ -239,24 +257,25 @@ const PHRASES = {
   '.melmap 可保存路線、航點、目前圖層圖磚與部分個人偏好': { en: '.melmap can save the route, waypoints, current layer tiles, and some personal preferences', ja: '.melmapはルート、ウェイポイント、現在レイヤーのタイル、一部の個人設定を保存できます', ko: '.melmap은 루트, 웨이포인트, 현재 레이어 타일 및 일부 개인 설정을 저장할 수 있습니다', fr: '.melmap peut enregistrer itinéraire, waypoints, tuiles de la couche actuelle et certaines préférences', de: '.melmap speichert Route, Wegpunkte, aktuelle Layer-Kacheln und einige persönliche Einstellungen', es: '.melmap guarda ruta, waypoints, teselas de la capa actual y algunas preferencias', it: '.melmap salva percorso, waypoint, tile del layer corrente e alcune preferenze' },
   '離線圖磚只會包含匯出當下選取的範圍與縮放層級': { en: 'Offline tiles only include the selected area and zoom levels at export time', ja: 'オフラインタイルは書き出し時に選択した範囲とズームレベルのみ含みます', ko: '오프라인 타일은 내보내기 시 선택한 범위와 확대 수준만 포함합니다', fr: 'Les tuiles hors ligne ne couvrent que la zone et les niveaux de zoom sélectionnés à l’export', de: 'Offline-Kacheln enthalten nur den beim Export gewählten Bereich und Zoomstufen', es: 'Las teselas offline solo incluyen el área y niveles de zoom seleccionados al exportar', it: 'Le tile offline includono solo area e livelli di zoom scelti all’esportazione' },
   '地圖包可能較大；出發前請先匯入測試，確認路線與圖層都能正常開啟': { en: 'Map packs may be large; import and test before departure to confirm the route and layers open correctly', ja: '地図パックは大きくなる場合があります。出発前に読み込んでルートとレイヤーを確認してください', ko: '지도 팩은 클 수 있습니다. 출발 전 가져와 테스트하여 루트와 레이어가 정상적으로 열리는지 확인하세요', fr: 'Les packs peuvent être volumineux ; importez et testez avant le départ', de: 'Kartenpakete können groß sein; vor dem Aufbruch importieren und Route/Layer prüfen', es: 'Los paquetes pueden ser grandes; impórtalos y pruébalos antes de salir', it: 'I pacchetti possono essere grandi; importali e testali prima della partenza' },
-  '實用小秘訣': { en: 'Useful tips', ja: '便利なヒント', ko: '유용한 팁', fr: 'Astuces utiles', de: 'Nützliche Tipps', es: 'Consejos útiles', it: 'Suggerimenti utili' },
-  '複製座標': { en: 'Copy coordinates', ja: '座標をコピー', ko: '좌표 복사', fr: 'Copier les coordonnées', de: 'Koordinaten kopieren', es: 'Copiar coordenadas', it: 'Copia coordinate' },
-  '所有的座標（即經緯度）都可以透過點擊直接複製': { en: 'All coordinates (latitude/longitude) can be copied with one click', ja: 'すべての座標（緯度/経度）はクリックでコピーできます', ko: '모든 좌표(위도/경도)는 클릭 한 번으로 복사할 수 있습니다', fr: 'Toutes les coordonnées (latitude/longitude) se copient en un clic', de: 'Alle Koordinaten (Breite/Länge) lassen sich per Klick kopieren', es: 'Todas las coordenadas (latitud/longitud) se copian con un clic', it: 'Tutte le coordinate (latitudine/longitudine) si copiano con un clic' },
-  '側欄收合功能': { en: 'Collapsed sidebar', ja: 'サイドバー折りたたみ', ko: '사이드바 접기', fr: 'Volet latéral replié', de: 'Eingeklappte Seitenleiste', es: 'Barra lateral plegada', it: 'Barra laterale chiusa' },
-  '側欄收起時，頂部標題仍可進行搜尋、切換運動或天氣模式': { en: 'When collapsed, the top title still supports search and switching activity or weather mode', ja: '折りたたみ時も上部タイトルから検索、アクティビティ/天気モード切替ができます', ko: '접힌 상태에서도 상단 제목에서 검색, 활동 또는 날씨 모드 전환이 가능합니다', fr: 'Replié, le titre supérieur permet encore recherche et changement de mode activité/météo', de: 'Eingeklappt erlaubt der obere Titel weiterhin Suche sowie Aktivitäts-/Wettermoduswechsel', es: 'Plegada, el título superior aún permite buscar y cambiar actividad o modo tiempo', it: 'Da chiusa, il titolo in alto permette ancora ricerca e cambio attività/meteo' },
-  '高度圖互動': { en: 'Elevation profile interaction', ja: '標高グラフ操作', ko: '고도 그래프 상호작용', fr: 'Interaction avec le profil d’altitude', de: 'Höhenprofil-Interaktion', es: 'Interacción con perfil de elevación', it: 'Interazione profilo altimetrico' },
-  '雙擊高度圖可快速收放面板；滑動高度圖時地圖會同步顯示對應點': { en: 'Double-click the elevation profile to collapse/expand the panel; sliding on it highlights the matching map point', ja: '標高グラフをダブルクリックでパネルを開閉し、スライドすると地図上の対応点を表示します', ko: '고도 그래프를 두 번 클릭해 패널을 접거나 펼치고, 슬라이드하면 지도에 해당 지점이 표시됩니다', fr: 'Double-cliquez le profil pour replier/déployer ; le balayage affiche le point correspondant', de: 'Doppelklick auf das Höhenprofil klappt das Panel ein/aus; Wischen zeigt den passenden Kartenpunkt', es: 'Doble clic en el perfil para plegar/desplegar; al deslizar se muestra el punto correspondiente', it: 'Doppio clic sul profilo per chiudere/aprire; scorrendo appare il punto corrispondente' },
-  '航點編輯': { en: 'Waypoint editing', ja: 'ウェイポイント編集', ko: '웨이포인트 편집', fr: 'Modification des waypoints', de: 'Wegpunkte bearbeiten', es: 'Editar waypoints', it: 'Modifica waypoint' },
+  '使用者小提示': { en: 'User tips', ja: 'ユーザー向けヒント', ko: '사용자 팁', fr: 'Conseils utilisateur', de: 'Nutzertipps', es: 'Consejos de uso', it: 'Suggerimenti utente' },
+  '快速複製': { en: 'Quick copy', ja: 'クイックコピー', ko: '빠른 복사', fr: 'Copie rapide', de: 'Schnell kopieren', es: 'Copia rápida', it: 'Copia rapida' },
+  '點擊任何座標、GPS 游標或天氣卡中的經緯度，即可複製到剪貼簿': { en: 'Click any coordinate, GPS cursor, or latitude/longitude in a weather card to copy it to the clipboard', ja: '座標、GPSカーソル、天気カード内の緯度/経度をクリックするとクリップボードへコピーできます', ko: '좌표, GPS 커서 또는 날씨 카드의 위도/경도를 클릭하면 클립보드에 복사됩니다', fr: 'Cliquez sur une coordonnée, le curseur GPS ou une latitude/longitude de carte météo pour la copier', de: 'Klicke auf Koordinaten, den GPS-Cursor oder Breite/Länge in einer Wetterkarte, um sie zu kopieren', es: 'Haz clic en cualquier coordenada, cursor GPS o latitud/longitud de una tarjeta del tiempo para copiarla', it: 'Fai clic su coordinate, cursore GPS o latitudine/longitudine in una scheda meteo per copiarle' },
+  '收起也能找點': { en: 'Search while collapsed', ja: '折りたたみ中も検索', ko: '접은 상태에서도 검색', fr: 'Recherche volet replié', de: 'Suche im eingeklappten Zustand', es: 'Buscar plegado', it: 'Cerca da chiuso' },
+  '側欄收起時，點頂部標題仍可搜尋地點、切換運動或天氣模式': { en: 'When the sidebar is collapsed, tap the top title to search places or switch activity/weather mode', ja: 'サイドバーを折りたたんだ状態でも、上部タイトルから場所検索やアクティビティ/天気モード切替ができます', ko: '사이드바가 접힌 상태에서도 상단 제목을 눌러 장소 검색 또는 활동/날씨 모드를 전환할 수 있습니다', fr: 'Volet replié, touchez le titre supérieur pour chercher un lieu ou changer de mode activité/météo', de: 'Bei eingeklappter Seitenleiste über den oberen Titel Orte suchen oder Aktivitäts-/Wettermodus wechseln', es: 'Con la barra plegada, toca el título superior para buscar lugares o cambiar actividad/tiempo', it: 'Con la barra chiusa, tocca il titolo in alto per cercare luoghi o cambiare modalità attività/meteo' },
+  '同步查看高度': { en: 'Sync elevation view', ja: '標高を同期表示', ko: '고도 보기 동기화', fr: 'Profil synchronisé', de: 'Höhenansicht synchronisieren', es: 'Vista de elevación sincronizada', it: 'Vista quota sincronizzata' },
+  '拖曳高度圖游標可同步高亮地圖位置；雙擊高度圖可快速收放面板': { en: 'Drag the elevation cursor to highlight the matching map position; double-click the profile to collapse or expand the panel', ja: '標高グラフのカーソルをドラッグすると地図上の対応位置が強調表示され、ダブルクリックでパネルを開閉できます', ko: '고도 그래프 커서를 드래그하면 지도 위치가 함께 강조되고, 그래프를 두 번 클릭하면 패널을 접거나 펼칠 수 있습니다', fr: 'Faites glisser le curseur du profil pour surligner le point sur la carte ; double-cliquez pour replier/déployer le panneau', de: 'Ziehe den Höhenprofil-Cursor, um die Kartenposition zu markieren; doppelklicke das Profil, um das Panel ein- oder auszuklappen', es: 'Arrastra el cursor del perfil para resaltar el punto en el mapa; doble clic para plegar o desplegar el panel', it: 'Trascina il cursore del profilo per evidenziare il punto sulla mappa; doppio clic per chiudere o aprire il pannello' },
+  '快速編輯航點': { en: 'Quick waypoint edits', ja: 'ウェイポイントを素早く編集', ko: '웨이포인트 빠른 편집', fr: 'Édition rapide des waypoints', de: 'Wegpunkte schnell bearbeiten', es: 'Edición rápida de waypoints', it: 'Modifica rapida waypoint' },
   '雙擊側欄或表頭的': { en: 'Double-click the sidebar or table-header', ja: 'サイドバーまたは表ヘッダーの', ko: '사이드바 또는 표 머리글의', fr: 'Double-cliquez le', de: 'Doppelklicke in Seitenleiste oder Tabellenkopf auf', es: 'Doble clic en el', it: 'Fai doppio clic sul' },
   '名稱': { en: 'name', ja: '名前', ko: '이름', fr: 'nom', de: 'Name', es: 'nombre', it: 'nome' },
-  '可編輯；右鍵點擊地圖航點可啟用拖曳': { en: 'to edit it; right-click a map waypoint to enable dragging', ja: 'を編集できます。地図上のウェイポイントを右クリックするとドラッグできます', ko: '을 편집할 수 있고, 지도 웨이포인트를 우클릭하면 드래그가 활성화됩니다', fr: 'pour le modifier ; clic droit sur un waypoint de carte pour activer le glisser', de: 'bearbeiten; Rechtsklick auf einen Wegpunkt aktiviert Ziehen', es: 'para editarlo; clic derecho en un waypoint para arrastrarlo', it: 'per modificarlo; clic destro su un waypoint per abilitarne il trascinamento' },
-  '軌跡層級': { en: 'Track stacking', ja: '軌跡の重なり順', ko: '트랙 레이어 순서', fr: 'Superposition des traces', de: 'Track-Stapelung', es: 'Orden de trazas', it: 'Ordine tracce' },
-  '來回/O繞路線重疊時，雙擊或長按軌跡可更換上下層': { en: 'When out-and-back/loop routes overlap, double-click or long-press a track to change its stacking order', ja: '往復/O繞ルートが重なる場合、軌跡をダブルクリックまたは長押しして上下順を変えられます', ko: '왕복/O자 루트가 겹치면 트랙을 두 번 클릭하거나 길게 눌러 위아래 순서를 바꿀 수 있습니다', fr: 'Si aller-retour/boucle se chevauchent, double-cliquez ou appuyez longuement pour changer l’ordre', de: 'Wenn Hin-zurück-/Loop-Routen überlappen, per Doppelklick oder Langdruck die Stapelung ändern', es: 'Si ida/vuelta o circuito se superponen, doble clic o pulsación larga cambia el orden', it: 'Se andata/ritorno o anello si sovrappongono, doppio clic o pressione lunga cambia ordine' },
-  '在「航點設置」中勾選連動對象，即可一次操作所有天氣卡': { en: 'Select linked targets in “Waypoint settings” to control all weather cards at once', ja: '「ウェイポイント設定」で連動対象を選ぶと、すべての天気カードを一括操作できます', ko: '“웨이포인트 설정”에서 연동 대상을 선택하면 모든 날씨 카드를 한 번에 조작할 수 있습니다', fr: 'Choisissez les cibles liées dans « Réglages des waypoints » pour contrôler toutes les cartes météo', de: 'In „Wegpunkt-Einstellungen“ Ziele wählen, um alle Wetterkarten gemeinsam zu steuern', es: 'Selecciona objetivos vinculados en “Ajustes de waypoints” para controlar todas las tarjetas', it: 'Seleziona i target in “Impostazioni waypoint” per gestire tutte le schede meteo' },
-  '刪除項目': { en: 'Delete items', ja: '項目を削除', ko: '항목 삭제', fr: 'Supprimer des éléments', de: 'Elemente löschen', es: 'Eliminar elementos', it: 'Elimina elementi' },
-  '在地圖上將航點拖至頂部': { en: 'Drag a waypoint on the map to the top', ja: '地図上のウェイポイントを上部の', ko: '지도에서 웨이포인트를 상단', fr: 'Faites glisser un waypoint sur la carte vers la', de: 'Ziehe einen Wegpunkt auf der Karte nach oben in den', es: 'Arrastra un waypoint del mapa a la', it: 'Trascina un waypoint sulla mappa nel' },
-  '垃圾桶': { en: 'trash', ja: 'ゴミ箱', ko: '휴지통', fr: 'corbeille', de: 'Papierkorb', es: 'papelera', it: 'cestino' },
-  '或將側欄/最愛項目向外拖曳即可刪除': { en: 'or drag sidebar/favorite items outward to delete them', ja: 'またはサイドバー/お気に入り項目を外側へドラッグして削除できます', ko: '또는 사이드바/즐겨찾기 항목을 바깥쪽으로 드래그해 삭제합니다', fr: 'ou faites glisser les éléments du volet/favoris vers l’extérieur', de: 'oder Seitenleisten-/Favoriteneinträge nach außen ziehen', es: 'o arrastra hacia afuera elementos de barra/favoritos', it: 'oppure trascina fuori elementi laterali/preferiti' },
+  '可改名；長按或右鍵地圖航點可拖曳微調': { en: 'to rename it; long-press or right-click a map waypoint to drag and fine-tune it', ja: 'を変更できます。地図上のウェイポイントは長押しまたは右クリックでドラッグ調整できます', ko: '을 변경할 수 있고, 지도 웨이포인트를 길게 누르거나 우클릭하면 드래그해 조정할 수 있습니다', fr: 'pour le renommer ; appui long ou clic droit sur un waypoint pour le déplacer', de: 'um ihn umzubenennen; Wegpunkt auf der Karte lang drücken oder rechtsklicken und fein verschieben', es: 'para renombrarlo; mantén pulsado o haz clic derecho en un waypoint para arrastrarlo y ajustarlo', it: 'per rinominarlo; pressione lunga o clic destro su un waypoint per trascinarlo e regolarlo' },
+  '重疊層級切換': { en: 'Overlap layer switching', ja: '重なり順の切り替え', ko: '겹침 레이어 전환', fr: 'Changer les couches superposées', de: 'Überlappende Ebenen wechseln', es: 'Cambiar capas superpuestas', it: 'Cambio livelli sovrapposti' },
+  '重疊軌跡可雙擊軌跡輪換上下層；重疊航點可雙擊航點切換顯示層級，已選取時再點一次也會輪換；長按或右鍵航點只會拖曳微調': { en: 'For overlapping tracks, double-click the track to rotate the visible layer; for overlapping waypoints, double-click the waypoint to switch the visible layer, or click it again when already selected; long-press or right-click only drags and fine-tunes the waypoint', ja: '重なった軌跡は軌跡をダブルクリックすると表示レイヤーを切り替えます。重なったウェイポイントはダブルクリックで表示レイヤーを切り替え、選択済みならもう一度クリックしても切り替わります。長押しまたは右クリックはドラッグ調整だけに使います', ko: '겹친 트랙은 트랙을 두 번 클릭해 보이는 레이어를 순환합니다. 겹친 웨이포인트는 두 번 클릭해 표시 레이어를 바꾸고, 이미 선택된 상태에서는 다시 클릭해도 순환합니다. 길게 누르기나 우클릭은 웨이포인트 드래그 조정에만 사용됩니다', fr: 'Pour les traces superposées, double-cliquez la trace pour faire tourner la couche visible ; pour les waypoints superposés, double-cliquez le waypoint, ou cliquez-le encore s’il est déjà sélectionné ; l’appui long ou le clic droit ne sert qu’au déplacement fin', de: 'Bei überlappenden Tracks per Doppelklick auf den Track die sichtbare Ebene wechseln; bei überlappenden Wegpunkten per Doppelklick wechseln, oder erneut klicken, wenn er schon ausgewählt ist; Langdruck oder Rechtsklick dient nur zum Ziehen und Feinjustieren', es: 'En trazas superpuestas, haz doble clic en la traza para rotar la capa visible; en waypoints superpuestos, haz doble clic en el waypoint, o vuelve a hacer clic si ya está seleccionado; mantener pulsado o clic derecho solo arrastra y ajusta el waypoint', it: 'Per tracce sovrapposte, fai doppio clic sulla traccia per ruotare il livello visibile; per waypoint sovrapposti, fai doppio clic sul waypoint, oppure cliccalo di nuovo se è già selezionato; pressione lunga o clic destro servono solo a trascinare e regolare' },
+  '天氣卡操作': { en: 'Weather card controls', ja: '天気カード操作', ko: '날씨 카드 조작', fr: 'Commandes des cartes météo', de: 'Wetterkarten steuern', es: 'Controles de tarjetas del tiempo', it: 'Comandi schede meteo' },
+  '大格可點天氣圖示或下滑關閉、點空白處縮小，且只操作目前卡片；小格可點資訊展開、點圖示關閉，會依集體設定連動；再次開啟會記住大格或小格': { en: 'Full cards close from the weather icon or swipe down, shrink from blank space, and affect only the current card; compact cards expand from the info area, close from the icon, follow bulk settings, and reopen at the remembered size', ja: '大きなカードは天気アイコンまたは下スワイプで閉じ、空白部分で小さくなり、現在のカードだけに作用します。小さなカードは情報部分で展開、アイコンで閉じ、一括設定に連動し、再表示時は前回の大きさを記憶します', ko: '큰 카드는 날씨 아이콘이나 아래로 스와이프해서 닫고, 빈 공간을 누르면 작아지며 현재 카드에만 적용됩니다. 작은 카드는 정보 영역을 눌러 펼치고 아이콘으로 닫으며, 일괄 설정을 따르고 다시 열 때 이전 크기를 기억합니다', fr: 'Les grandes cartes se ferment par l’icône météo ou un balayage vers le bas, se réduisent via l’espace vide et n’agissent que sur la carte courante ; les cartes compactes s’ouvrent via les infos, se ferment par l’icône, suivent les réglages groupés et mémorisent leur taille', de: 'Große Karten schließen über das Wettersymbol oder Wischen nach unten, verkleinern sich über Leerfläche und betreffen nur die aktuelle Karte; kompakte Karten öffnen über den Infobereich, schließen über das Symbol, folgen den Sammelaktionen und merken sich ihre Größe', es: 'Las tarjetas grandes se cierran con el icono del tiempo o deslizando abajo, se reducen tocando espacio vacío y solo afectan a la tarjeta actual; las compactas se abren desde la información, se cierran con el icono, siguen los ajustes en lote y recuerdan su tamaño', it: 'Le schede grandi si chiudono dall’icona meteo o scorrendo verso il basso, si riducono toccando lo spazio vuoto e agiscono solo sulla scheda corrente; le compatte si aprono dai dati, si chiudono dall’icona, seguono le impostazioni di gruppo e ricordano la dimensione' },
+  '批次天氣卡': { en: 'Batch weather cards', ja: '天気カードの一括操作', ko: '날씨 카드 일괄 작업', fr: 'Cartes météo en lot', de: 'Wetterkarten gesammelt steuern', es: 'Tarjetas del tiempo en lote', it: 'Schede meteo in gruppo' },
+  '在「航點設置」勾選連動對象後，收合、展開或關閉會套用到整組天氣卡': { en: 'After choosing linked targets in “Waypoint settings”, collapse, expand, or close applies to the whole weather-card group', ja: '「ウェイポイント設定」で連動対象を選ぶと、折りたたみ、展開、閉じる操作が天気カード全体に適用されます', ko: '“웨이포인트 설정”에서 연동 대상을 선택하면 접기, 펼치기, 닫기가 날씨 카드 그룹 전체에 적용됩니다', fr: 'Après avoir choisi les cibles liées dans « Réglages des waypoints », replier, déployer ou fermer agit sur tout le groupe météo', de: 'Nach Auswahl gekoppelter Ziele in „Wegpunkt-Einstellungen“ gilt Einklappen, Ausklappen oder Schließen für die ganze Wetterkartengruppe', es: 'Tras elegir objetivos vinculados en “Ajustes de waypoints”, plegar, desplegar o cerrar se aplica a todo el grupo', it: 'Dopo aver scelto i target in “Impostazioni waypoint”, chiudi, apri o minimizza tutto il gruppo meteo' },
+  '拖曳刪除與取消': { en: 'Drag to delete or cancel', ja: 'ドラッグで削除・キャンセル', ko: '드래그 삭제/취소', fr: 'Glisser pour supprimer ou annuler', de: 'Ziehen zum Löschen oder Abbrechen', es: 'Arrastrar para borrar o cancelar', it: 'Trascina per eliminare o annullare' },
+  '地圖航點、側欄與表格項目拖曳時會出現取消與移除區；拖到移除區刪除，拖到取消區取消本次拖曳；最愛項目拖出框外刪除，放回框內取消': { en: 'When dragging map waypoints, sidebar items, or table items, cancel and remove zones appear; drop on Remove to delete, or on Cancel to cancel this drag; drag favorite items outside the box to delete them, or back inside to cancel', ja: '地図上のウェイポイント、サイドバー項目、表項目をドラッグすると、キャンセルと削除エリアが表示されます。削除エリアへ落とすと削除、キャンセルエリアへ落とすと今回のドラッグを取り消します。お気に入り項目は枠外へドラッグすると削除、枠内へ戻すとキャンセルします', ko: '지도 웨이포인트, 사이드바 항목, 표 항목을 드래그하면 취소와 제거 영역이 나타납니다. 제거 영역에 놓으면 삭제되고, 취소 영역에 놓으면 이번 드래그가 취소됩니다. 즐겨찾기 항목은 상자 밖으로 드래그하면 삭제되고, 안으로 되돌리면 취소됩니다', fr: 'Quand vous faites glisser un waypoint de carte, un élément du volet ou du tableau, des zones Annuler et Supprimer apparaissent ; déposez sur Supprimer pour effacer, ou sur Annuler pour annuler ce glisser ; sortez un favori du cadre pour le supprimer, ou remettez-le dedans pour annuler', de: 'Beim Ziehen von Karten-Wegpunkten sowie Seitenleisten- oder Tabelleneinträgen erscheinen Bereiche für Abbrechen und Entfernen; auf Entfernen ablegen löscht, auf Abbrechen legt den aktuellen Ziehvorgang zurück; Favoriten außerhalb des Rahmens ziehen löscht sie, zurück im Rahmen bricht ab', es: 'Al arrastrar waypoints del mapa, elementos de la barra o de la tabla aparecen zonas de cancelar y quitar; suelta en Quitar para borrar, o en Cancelar para cancelar este arrastre; arrastra favoritos fuera del cuadro para borrarlos, o devuélvelos dentro para cancelar', it: 'Quando trascini waypoint della mappa, elementi laterali o della tabella compaiono le zone Annulla e Rimuovi; rilascia su Rimuovi per eliminare, o su Annulla per annullare il trascinamento; trascina i preferiti fuori dal riquadro per eliminarli, o riportali dentro per annullare' },
   '勾選全航點時將自動包含前兩項': { en: 'Selecting all waypoints also includes the first two options', ja: '全ウェイポイントを選ぶと前2項目も含まれます', ko: '모든 웨이포인트를 선택하면 앞의 두 항목도 포함됩니다', fr: 'Tous les waypoints inclut aussi les deux premières options', de: 'Alle Wegpunkte umfasst auch die ersten beiden Optionen', es: 'Todos los waypoints incluye también las dos primeras opciones', it: 'Tutti i waypoint include anche le prime due opzioni' },
   '勾選的天氣卡收縮為最小模式': { en: 'Minimize selected weather cards', ja: '選択した天気カードを最小化', ko: '선택한 날씨 카드 최소화', fr: 'Réduire les cartes météo sélectionnées', de: 'Ausgewählte Wetterkarten minimieren', es: 'Minimizar tarjetas seleccionadas', it: 'Riduci schede meteo selezionate' },
   '勾選的天氣卡切換詳細/精簡': { en: 'Toggle selected cards between full and compact', ja: '選択カードの詳細/簡易を切り替え', ko: '선택한 카드의 상세/간단 전환', fr: 'Basculer les cartes sélectionnées détail/compact', de: 'Ausgewählte Karten Detail/Kompakt umschalten', es: 'Cambiar seleccionadas entre detalle/compacto', it: 'Alterna selezionate tra dettaglio/compatto' },
@@ -575,26 +594,26 @@ function renderInstructionsContent() {
         plainLine('標籤與卡片均支援集體連動'),
       ]),
       instructionGroup('💻', '電腦版快捷鍵', [
-        `<li><span class="instr-badge">↑</span> / <span class="instr-badge">↓</span>: ${t('展開/縮放或關閉卡片')}</li>`,
-        `<li><span class="instr-badge">←</span> / <span class="instr-badge">→</span>: ${t('左右切換點位')}</li>`,
-        `<li><span class="instr-badge">Ctrl+Z</span>: ${t('復原')} / <span class="instr-badge">Ctrl+Shift+Z</span>: ${t('重做')}</li>`,
-        `<li><span class="instr-badge">Esc</span>: ${t('關閉搜尋結果或選單')}</li>`,
+        `<li><span class="instr-badge">↑</span> / <span class="instr-badge">↓</span>: ${instructionText('展開/縮放或關閉卡片')}</li>`,
+        `<li><span class="instr-badge">←</span> / <span class="instr-badge">→</span>: ${instructionText('左右切換點位')}</li>`,
+        `<li><span class="instr-badge">Ctrl+Z</span>: ${instructionText('復原')} / <span class="instr-badge">Ctrl+Shift+Z</span>: ${instructionText('重做')}</li>`,
+        `<li><span class="instr-badge">Esc</span>: ${instructionText('關閉搜尋結果或選單')}</li>`,
       ]),
     ]),
     instructionRow([
       instructionGroup('📍', 'GPS 游標與定位', [
-        `<li>${t('點擊右側')} <span style="color: var(--accent-primary);">${t('定位按鈕')}</span> ${t('放置游標')}</li>`,
-        `<li>${t('點擊/長按游標可')} <span style="color: var(--accent-primary);">${t('設為航點')}</span> ${t('或查詢天氣')}</li>`,
+        `<li>${instructionText('點擊右側')} ${instructionKey('定位按鈕')} ${instructionText('放置游標')}</li>`,
+        `<li>${instructionText('點擊/長按游標可')} ${instructionKey('設為航點')} ${instructionText('或查詢天氣')}</li>`,
       ]),
       instructionGroup('⭐', '我的最愛與匯出', [
-        `<li>${t('點擊')} <span style="color: var(--accent-primary);">${t('星號')}</span> ${t('儲存路線，上限 10 筆')}</li>`,
+        `<li>${instructionText('點擊')} ${instructionKey('星號')} ${instructionText('儲存路線，上限 10 筆')}</li>`,
         plainLine('支援匯出 GPX、KML 與離線地圖包'),
       ]),
     ]),
     instructionRow([
       instructionGroup('🧭', '路線規劃說明', [
         plainLine('依序點選地圖即可建立航點；拖曳航點可微調路線位置'),
-        `<li><span class="instr-badge">${t('單程')}</span> ${t('適合 A 到 B；')} <span class="instr-badge">${t('來回')}</span> ${t('會自動折返；')} <span class="instr-badge">${t('O繞')}</span> ${t('會尋找回到起點的替代路線')}</li>`,
+        `<li><span class="instr-badge">${t('單程')}</span> ${instructionText('適合 A 到 B；')} <span class="instr-badge">${t('來回')}</span> ${instructionText('會自動折返；')} <span class="instr-badge">${t('O繞')}</span> ${instructionText('會尋找回到起點的替代路線')}</li>`,
         plainLine('若出現多條候選路線，可點選候選卡或地圖上的軌跡切換主路線'),
       ]),
       instructionGroup('🌦', '天氣資料說明', [
@@ -616,15 +635,16 @@ function renderInstructionsContent() {
       ]),
     ]),
     `<div class="instr-group" style="margin-bottom: 16px;">
-      ${instructionTitle('💡', '實用小秘訣')}
+      ${instructionTitle('💡', '使用者小提示')}
       <ul class="instr-list" style="margin: 0; padding-left: 18px; line-height: 1.6;">
-        ${tipLine('複製座標', '所有的座標（即經緯度）都可以透過點擊直接複製')}
-        ${tipLine('側欄收合功能', '側欄收起時，頂部標題仍可進行搜尋、切換運動或天氣模式')}
-        ${tipLine('高度圖互動', '雙擊高度圖可快速收放面板；滑動高度圖時地圖會同步顯示對應點')}
-        <li><span style="font-weight: 500; color: var(--text-primary);">${t('航點編輯')}</span>: ${t('雙擊側欄或表頭的')} <span style="color: var(--accent-primary);">${t('名稱')}</span> ${t('可編輯；右鍵點擊地圖航點可啟用拖曳')}</li>
-        ${tipLine('軌跡層級', '來回/O繞路線重疊時，雙擊或長按軌跡可更換上下層')}
-        ${tipLine('集體操作', '在「航點設置」中勾選連動對象，即可一次操作所有天氣卡')}
-        <li><span style="font-weight: 500; color: var(--text-primary);">${t('刪除項目')}</span>: ${t('在地圖上將航點拖至頂部')} <span style="color: var(--danger);">${t('垃圾桶')}</span>, ${t('或將側欄/最愛項目向外拖曳即可刪除')}</li>
+        ${tipLine('快速複製', '點擊任何座標、GPS 游標或天氣卡中的經緯度，即可複製到剪貼簿')}
+        ${tipLine('收起也能找點', '側欄收起時，點頂部標題仍可搜尋地點、切換運動或天氣模式')}
+        ${tipLine('同步查看高度', '拖曳高度圖游標可同步高亮地圖位置；雙擊高度圖可快速收放面板')}
+        <li>${instructionLabel('快速編輯航點')}: ${instructionText('雙擊側欄或表頭的')} ${instructionKey('名稱')} ${instructionText('可改名；長按或右鍵地圖航點可拖曳微調')}</li>
+        ${tipLine('重疊層級切換', '重疊軌跡可雙擊軌跡輪換上下層；重疊航點可雙擊航點切換顯示層級，已選取時再點一次也會輪換；長按或右鍵航點只會拖曳微調')}
+        ${tipLine('天氣卡操作', '大格可點天氣圖示或下滑關閉、點空白處縮小，且只操作目前卡片；小格可點資訊展開、點圖示關閉，會依集體設定連動；再次開啟會記住大格或小格')}
+        ${tipLine('批次天氣卡', '在「航點設置」勾選連動對象後，收合、展開或關閉會套用到整組天氣卡')}
+        ${tipLine('拖曳刪除與取消', '地圖航點、側欄與表格項目拖曳時會出現取消與移除區；拖到移除區刪除，拖到取消區取消本次拖曳；最愛項目拖出框外刪除，放回框內取消')}
       </ul>
     </div>`,
   ].join('');
@@ -646,15 +666,142 @@ function instructionTitle(icon, title) {
 }
 
 function badgeLine(badge, text) {
-  return `<li><span class="instr-badge">${t(badge)}</span>: ${t(text)}</li>`;
+  return `<li><span class="instr-badge">${t(badge)}</span>: ${instructionText(text)}</li>`;
 }
 
 function plainLine(text) {
-  return `<li>${t(text)}</li>`;
+  return `<li>${instructionText(text)}</li>`;
 }
 
 function tipLine(label, text) {
-  return `<li><span style="font-weight: 500; color: var(--text-primary);">${t(label)}</span>: ${t(text)}</li>`;
+  return `<li>${instructionLabel(label)}: ${instructionText(text)}</li>`;
+}
+
+function instructionText(key) {
+  return highlightInstructionText(t(key));
+}
+
+function instructionLabel(key) {
+  return `<span class="instr-label">${escapeHtml(t(key))}</span>`;
+}
+
+function instructionKey(key) {
+  return `<span class="instr-key">${escapeHtml(t(key))}</span>`;
+}
+
+const INSTRUCTION_HIGHLIGHT_KEYS = [
+  '切換 詳細/簡要 模式',
+  '關閉天氣卡',
+  '切換點位',
+  '集體連動',
+  '展開',
+  '關閉',
+  '搜尋',
+  '選單',
+  '定位按鈕',
+  '游標',
+  '設為航點',
+  '或查詢天氣',
+  '星號',
+  '匯入',
+  '匯出',
+  '路線',
+  '航點',
+  '軌跡',
+  '天氣卡',
+  '拖曳',
+  '雙擊',
+  '長按',
+  '右鍵',
+  '收合',
+  '縮小',
+  '候選路線',
+  '候選卡',
+  '主路線',
+  '天氣',
+  '降雨',
+  '陣風',
+  '雷暴',
+  '配速',
+  '距離',
+  '負重',
+  '休息間隔',
+  '疲勞程度',
+  '個人配速校正',
+  '座標',
+  '剪貼簿',
+  '移除',
+  '取消',
+  '移除區',
+  '取消區',
+  '集體連動',
+];
+
+const INSTRUCTION_SHARED_HIGHLIGHTS = [
+  'GPS',
+  'GPX',
+  'KML',
+  'Open-Meteo',
+  'Windy',
+  '.melmap',
+  'Ctrl+Z',
+  'Ctrl+Shift+Z',
+  'Esc',
+  '16 天',
+  '1940 年',
+  '10 筆',
+  '10 entries',
+];
+
+function highlightInstructionText(value) {
+  const text = String(value ?? '');
+  if (!text) return '';
+  const terms = getInstructionHighlightTerms();
+  if (!terms.length) return escapeHtml(text);
+  const haystack = text.toLocaleLowerCase();
+  const ranges = [];
+  for (const term of terms) {
+    const needle = term.toLocaleLowerCase();
+    let index = haystack.indexOf(needle);
+    while (index !== -1) {
+      const end = index + term.length;
+      if (!ranges.some(([start, stop]) => index < stop && end > start)) {
+        ranges.push([index, end]);
+      }
+      index = haystack.indexOf(needle, index + Math.max(needle.length, 1));
+    }
+  }
+  if (!ranges.length) return escapeHtml(text);
+  ranges.sort((a, b) => a[0] - b[0]);
+  let html = '';
+  let cursor = 0;
+  for (const [start, end] of ranges) {
+    html += escapeHtml(text.slice(cursor, start));
+    html += `<span class="instr-key">${escapeHtml(text.slice(start, end))}</span>`;
+    cursor = end;
+  }
+  html += escapeHtml(text.slice(cursor));
+  return html;
+}
+
+function getInstructionHighlightTerms() {
+  const localized = INSTRUCTION_HIGHLIGHT_KEYS
+    .map(key => t(key))
+    .concat(INSTRUCTION_SHARED_HIGHLIGHTS);
+  return [...new Set(localized)]
+    .map(term => String(term || '').trim())
+    .filter(term => term.length >= 2)
+    .sort((a, b) => b.length - a.length);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
 }
 
 function translateTree(root) {

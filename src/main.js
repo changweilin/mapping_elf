@@ -11,6 +11,7 @@ import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, projectMileage, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
+import { RESET_STATE_KEYS } from './modules/stateKeys.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -497,6 +498,8 @@ const LS_WINDY_LAYER_KEY = 'mappingElf_windyLayer';
 const LS_WINDY_MODEL_KEY = 'mappingElf_windyModel';
 const LS_WEATHER_TABLE_COLLAPSED_KEY = 'mappingElf_weatherTableCollapsed';
 const LS_PANEL_WIDTH_KEY = 'mappingElf_panelWidth';
+const LS_THEME_KEY = 'mappingElf_theme';
+const LS_PENDING_GPX_KEY = 'mappingElf_pendingGpx';
 
 const WEATHER_CACHE_SCHEMA_VERSION = 2;
 const WEATHER_CACHE_DISTANCE_DEFAULT_M = 500;
@@ -1555,7 +1558,7 @@ function initWaypointSettings() {
       }
     }
     const targetMode = firstOpenMode === 'full' ? 'compact' : 'full';
-    targetCols.forEach(idx => setWeatherCardMode(idx, targetMode));
+    setWeatherCardModeForTargets(targetCols, targetMode, targetCols[0] ?? -1);
     showNotification(`已切換 ${targetCols.length} 個天氣卡模式`, 'success', 1500);
   });
 
@@ -1724,7 +1727,7 @@ if (btnToggleTheme) {
   updateThemeIcons();
   btnToggleTheme.addEventListener('click', () => {
     const isLight = document.documentElement.classList.toggle('light-theme');
-    localStorage.setItem('mappingElf_theme', isLight ? 'light' : 'dark');
+    localStorage.setItem(LS_THEME_KEY, isLight ? 'light' : 'dark');
     updateThemeIcons();
   });
 }
@@ -1965,14 +1968,14 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       const curMode = _wcStates.get(activeColIdx) || 'compact';
       const nextMode = curMode === 'compact' ? 'full' : 'compact';
-      const targets = getCollectiveIndices(activeColIdx);
-      targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === activeColIdx }));
+      const targets = getWeatherCardInteractionIndices(activeColIdx, curMode);
+      setWeatherCardModeForTargets(targets, nextMode, activeColIdx);
       highlightPoint(activeColIdx, false, { centerMap: nextMode === 'compact' });
       return;
     }
     if (k === 'arrowdown') {
       e.preventDefault();
-      const targets = getCollectiveIndices(activeColIdx);
+      const targets = getWeatherCardInteractionIndices(activeColIdx, _wcStates.get(activeColIdx) || 'compact');
       targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === activeColIdx }));
       return;
     }
@@ -2521,7 +2524,7 @@ function renderAlternatives(routes, selectedIdx) {
     <div class="alt-card ${i === selectedIdx ? 'selected' : ''}" data-color="${i}" data-index="${i}">
       <div class="alt-card-header" style="margin-bottom: 0;">
         <span class="alt-color-dot"></span>
-        <span class="alt-card-label">${r.label}</span>
+        <span class="alt-card-label">${_escapeHtml(r.label)}</span>
         ${i === 0 ? '<span class="alt-badge">推薦</span>' : ''}
       </div>
     </div>
@@ -2570,13 +2573,14 @@ function updateWaypointList(waypoints) {
       // Consistently resolve label
       const pt = weatherPoints.find(p => p.isWaypoint && !p.isReturn && p.wpIndex === i);
       const displayName = pt ? pt.label : getWaypointLabel(i, wp[0], wp[1]);
+      const safeDisplayName = _escapeHtml(displayName);
       const cumM = waypointCumDistM[i];
       const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
       return `
         <div class="waypoint-item ${frozen ? 'is-frozen' : ''}">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
           <span class="wp-coords" title="單擊高亮" style="color:${gradColor}">
-            <span class="wp-place-name">${displayName}</span>
+            <span class="wp-place-name">${safeDisplayName}</span>
             ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
           <div class="wp-actions" style="${frozen ? 'display:none' : ''}">
@@ -3022,6 +3026,17 @@ function setColToMs(th, ms) {
   if (hs) hs.value = String(d.getHours());
 }
 
+function getWeatherDateHead(container, idx) {
+  return container?.querySelector?.(`.wt-th-date[data-idx="${idx}"]`) || null;
+}
+
+function findAdjacentWaypointIndex(idx, direction) {
+  for (let i = idx + direction; i >= 0 && i < weatherPoints.length; i += direction) {
+    if (weatherPoints[i]?.isWaypoint) return i;
+  }
+  return -1;
+}
+
 /** Add elapsedH hours to a date/hour, returning the new { date, hour }. */
 function addHoursToDateTime(dateStr, startHour, elapsedH) {
   const totalMins = startHour * 60 + Math.round(elapsedH * 60);
@@ -3201,7 +3216,9 @@ function enforceTimeOrdering() {
     const pt = weatherPoints[i];
     if (!pt?.isWaypoint) continue;
 
-    const prevMs = toMs(i - 1);
+    const prevIdx = findAdjacentWaypointIndex(i, -1);
+    if (prevIdx < 0) continue;
+    const prevMs = toMs(prevIdx);
     const curMs = toMs(i);
     if (curMs >= prevMs) continue;
 
@@ -3224,8 +3241,8 @@ function enforceTimeOrdering() {
 
     // Fallback: pace time itself is too early (waypoints out of order) —
     // reset to predecessor's date+time as the minimum valid state.
-    const prevDi = container.querySelector(`.wt-th-date[data-idx="${i - 1}"] .wt-date-input`);
-    const prevHs = container.querySelector(`.wt-th-time[data-idx="${i - 1}"] .wt-time-select`);
+    const prevDi = container.querySelector(`.wt-th-date[data-idx="${prevIdx}"] .wt-date-input`);
+    const prevHs = container.querySelector(`.wt-th-time[data-idx="${prevIdx}"] .wt-time-select`);
     if (di && prevDi?.value) di.value = prevDi.value;
     if (hs && prevHs?.value != null) hs.value = prevHs.value;
   }
@@ -3241,11 +3258,16 @@ function updateDateConstraints() {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
   const heads = Array.from(container.querySelectorAll('.wt-th-date'));
-  for (let i = 1; i < heads.length; i++) {
+  for (const th of heads) {
+    const i = parseInt(th.dataset.idx, 10);
+    if (!Number.isFinite(i) || i <= 0) continue;
     const pt = weatherPoints[i];
     if (!pt?.isWaypoint) continue;
-    const prevDi = heads[i - 1].querySelector('.wt-date-input');
-    const di = heads[i].querySelector('.wt-date-input');
+    const prevIdx = findAdjacentWaypointIndex(i, -1);
+    const prevDi = prevIdx >= 0
+      ? container.querySelector(`.wt-th-date[data-idx="${prevIdx}"] .wt-date-input`)
+      : null;
+    const di = th.querySelector('.wt-date-input');
     if (di && prevDi?.value) {
       di.min = prevDi.value;
       // Sync to open weather card
@@ -3275,7 +3297,8 @@ function updateWeatherTimeAdjustButtons() {
     const canPlus = !locked;
 
     if (strictLinearMode && !locked && i > 0) {
-      const prevTh = container.querySelector(`.wt-th-date[data-idx="${i - 1}"]`);
+      const prevIdx = findAdjacentWaypointIndex(i, -1);
+      const prevTh = prevIdx >= 0 ? getWeatherDateHead(container, prevIdx) : null;
       const curMs = colToMs(thDate);
       const prevMs = prevTh ? colToMs(prevTh) : -Infinity;
       canMinusDay = curMs - 86400000 >= prevMs;
@@ -5452,6 +5475,10 @@ function saveWeatherSettings() {
   const byKey = {};
   const cols = [];
   weatherPoints.forEach((pt, i) => {
+    if (!pt.isWaypoint) {
+      cols[i] = null; // keep legacy index alignment without persisting computed interval times
+      return;
+    }
     const thDate = container.querySelector(`.wt-th-date[data-idx="${i}"]`);
     const thTime = container.querySelector(`.wt-th-time[data-idx="${i}"]`);
     const previousEntry = getSavedCol(pt, i, previous) || previous?.cols?.[i] || defaultWeatherSchedule();
@@ -5459,8 +5486,7 @@ function saveWeatherSettings() {
       date: thDate?.querySelector('.wt-date-input')?.value || previousEntry.date || '',
       hour: thTime?.querySelector('.wt-time-select')?.value ?? previousEntry.hour ?? '8',
     };
-    cols.push(entry); // keep legacy array for backwards compat
-    if (!pt.isWaypoint) return; // Interval times are recalculated — no need to persist
+    cols[i] = entry; // keep legacy array for backwards compat
     byKey[getSemanticKey(pt)] = entry;
   });
   localStorage.setItem(LS_WEATHER_KEY, JSON.stringify({ byKey, cols }));
@@ -5554,7 +5580,8 @@ function shiftWaypointTime(idx, deltaMs) {
     // For manual shifts, we block going earlier than previous if it's a DATE shift.
     // For HOUR shifts, we let handleWeatherTimeChange handle the bumping.
     if (Math.abs(deltaMs) >= 86400000 && idx > 0) {
-       const prevTh = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"]`);
+       const prevIdx = findAdjacentWaypointIndex(idx, -1);
+       const prevTh = prevIdx >= 0 ? getWeatherDateHead(container, prevIdx) : null;
        if (prevTh && newMs < colToMs(prevTh)) return;
     }
   }
@@ -6457,16 +6484,20 @@ function computeWeatherPointPositions() {
 function handleWeatherTimeChange(idx, th) {
   const container = document.getElementById('weather-table-container');
   if (!container) return;
-  const heads = Array.from(container.querySelectorAll('.wt-th-date'));
-  if (!th) th = heads[idx];
+  if (!th) th = getWeatherDateHead(container, idx);
   if (!th) return;
 
   // 1. Enforce strict linear ordering: if this waypoint is earlier than its predecessor
   // on the same day, bump it to the next day.
   if (strictLinearMode && idx > 0) {
-    const prevDate = container.querySelector(`.wt-th-date[data-idx="${idx - 1}"] .wt-date-input`)?.value;
+    const prevIdx = findAdjacentWaypointIndex(idx, -1);
+    const prevDate = prevIdx >= 0
+      ? container.querySelector(`.wt-th-date[data-idx="${prevIdx}"] .wt-date-input`)?.value
+      : '';
     const curDate = container.querySelector(`.wt-th-date[data-idx="${idx}"] .wt-date-input`)?.value;
-    const prevH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx - 1}"] .wt-time-select`)?.value ?? '0');
+    const prevH = prevIdx >= 0
+      ? parseInt(container.querySelector(`.wt-th-time[data-idx="${prevIdx}"] .wt-time-select`)?.value ?? '0')
+      : 0;
     const curH = parseInt(container.querySelector(`.wt-th-time[data-idx="${idx}"] .wt-time-select`)?.value ?? '0');
 
     if (prevDate && curDate && prevDate === curDate && curH < prevH) {
@@ -6498,9 +6529,10 @@ function handleWeatherTimeChange(idx, th) {
   if (deltaMs !== 0) {
     // Shifting subsequent waypoints linearly provides a natural "move entire trip" UX.
     // Interval points are skipped here and handled by the cascade logic below.
-    for (let j = idx + 1; j < heads.length; j++) {
+    for (let j = idx + 1; j < weatherPoints.length; j++) {
       if (weatherPoints[j]?.isWaypoint) {
-        setColToMs(heads[j], colToMs(heads[j]) + deltaMs);
+        const nextTh = getWeatherDateHead(container, j);
+        if (nextTh) setColToMs(nextTh, colToMs(nextTh) + deltaMs);
       }
     }
   }
@@ -6715,10 +6747,12 @@ function renderWeatherPanel() {
       : '';
 
     const displayLabel = weatherTableCollapsed ? getWeatherPointShortLabel(pt, visiblePos) : pt.label;
-    const titleAttr = weatherTableCollapsed ? ` title="${pt.label || displayLabel}"` : '';
+    const safeDisplayLabel = _escapeHtml(displayLabel);
+    const safeTitle = _escapeHtml(pt.label || displayLabel || '');
+    const titleAttr = weatherTableCollapsed ? ` title="${safeTitle}"` : '';
 
     html += `<th class="${thClass}" data-idx="${i}" ${thStyle}${titleAttr}>
-      <div class="wt-col-label" ${labelStyle}${titleAttr}>${displayLabel}${weatherTableCollapsed ? '' : elapsedBadge}</div>
+      <div class="wt-col-label" ${labelStyle}${titleAttr}>${safeDisplayLabel}${weatherTableCollapsed ? '' : elapsedBadge}</div>
     </th>`;
   });
   html += `</tr>`;
@@ -6748,20 +6782,22 @@ function renderWeatherPanel() {
 
     let minAttr = '';
     if (strictLinearMode && i > 0) {
-      const prevVal = getSavedCol(weatherPoints[i - 1], i - 1, saved)?.date || todayStr;
+      const prevIdx = findAdjacentWaypointIndex(i, -1);
+      const prevVal = prevIdx >= 0 ? (getSavedCol(weatherPoints[prevIdx], prevIdx, saved)?.date || todayStr) : '';
       if (prevVal) minAttr = ` min="${prevVal}"`;
     }
 
     let canMinus = !locked;
     let canPlus = !locked;
     if (strictLinearMode && !locked && i > 0) {
-      const prevSv = getSavedCol(weatherPoints[i - 1], i - 1, saved);
+      const prevIdx = findAdjacentWaypointIndex(i, -1);
+      const prevSv = prevIdx >= 0 ? getSavedCol(weatherPoints[prevIdx], prevIdx, saved) : null;
       const curDateMs = new Date(date + 'T00:00:00').getTime();
       const prevDateMs = new Date((prevSv?.date || todayStr) + 'T00:00:00').getTime();
       if (curDateMs - 86400000 < prevDateMs) canMinus = false;
     }
 
-    html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
+    html += `<th class="${thClass}" data-idx="${i}" title="${_escapeHtml(pt.label || '')}">
       <div class="wt-adj-wrap">
         <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
         <span class="wt-picker-icon wt-date-picker has-day-first" title="選擇日期">
@@ -6805,20 +6841,24 @@ function renderWeatherPanel() {
     if (strictLinearMode && !locked) {
       const curMs = new Date((sv?.date || todayStr) + 'T00:00:00').getTime() + hour * 3600000;
       if (i > 0) {
-        const prevPt = weatherPoints[i - 1];
-        const prevSv = getSavedCol(prevPt, i - 1, saved);
+        const prevIdx = findAdjacentWaypointIndex(i, -1);
+        const prevPt = prevIdx >= 0 ? weatherPoints[prevIdx] : null;
+        const prevSv = prevIdx >= 0 ? getSavedCol(prevPt, prevIdx, saved) : null;
         const prevMs = new Date((prevSv?.date || todayStr) + 'T00:00:00').getTime() + (prevSv?.hour != null ? parseInt(prevSv.hour) : nowHour) * 3600000;
         if (curMs - 86400000 < prevMs) canMinus = false;
       }
       if (i < N - 1) {
-        const nextPt = weatherPoints[i + 1];
-        const nextSv = getSavedCol(nextPt, i + 1, saved);
-        const nextMs = new Date((nextSv?.date || todayStr) + 'T00:00:00').getTime() + (nextSv?.hour != null ? parseInt(nextSv.hour) : nowHour) * 3600000;
-        if (curMs + 86400000 > nextMs) canPlus = false;
+        const nextIdx = findAdjacentWaypointIndex(i, 1);
+        if (nextIdx >= 0) {
+          const nextPt = weatherPoints[nextIdx];
+          const nextSv = getSavedCol(nextPt, nextIdx, saved);
+          const nextMs = new Date((nextSv?.date || todayStr) + 'T00:00:00').getTime() + (nextSv?.hour != null ? parseInt(nextSv.hour) : nowHour) * 3600000;
+          if (curMs + 86400000 > nextMs) canPlus = false;
+        }
       }
     }
 
-    html += `<th class="${thClass}" data-idx="${i}" title="${pt.label || ''}">
+    html += `<th class="${thClass}" data-idx="${i}" title="${_escapeHtml(pt.label || '')}">
       <div class="wt-time-row">
         <button class="wt-adj-btn wt-adj-hour-minus" title="前一小時"${locked ? ' disabled' : ''}>−</button>
         <span class="wt-picker-icon wt-time-picker" title="選擇時間">
@@ -7751,22 +7791,59 @@ async function fetchAllWeatherData(options = {}) {
 
 // Map of colIdx -> state ('compact' | 'full') for currently open weather cards
 let _wcStates = new Map();
-// Last-seen card mode at close time — used so the cursor's "open weather card"
-// re-uses the size the user last had open.
+// Last-seen card mode fallback; individual route cards also remember their own
+// last closed size by semantic weather-point key.
 let _wcLastMode = 'full';
+let _wcLastModes = new Map();
 
 function isMobileWeatherCardCenterMode() {
   return window.matchMedia('(max-width: 768px)').matches;
 }
 
-function getWeatherCardInteractionIndices(colIdx) {
-  return isMobileWeatherCardCenterMode() ? [colIdx] : getCollectiveIndices(colIdx);
+function getWeatherCardModeMemoryKey(colIdx) {
+  const pt = weatherPoints[colIdx];
+  return pt ? getSemanticKey(pt) : `idx:${colIdx}`;
 }
 
-function closeOtherOpenWeatherCardsOnMobile(colIdx) {
-  if (!isMobileWeatherCardCenterMode()) return;
+function rememberWeatherCardMode(colIdx, mode) {
+  if (mode !== 'compact' && mode !== 'full') return;
+  _wcLastMode = mode;
+  _wcLastModes.set(getWeatherCardModeMemoryKey(colIdx), mode);
+}
+
+function getWeatherCardPreferredMode(colIdx) {
+  return _wcLastModes.get(getWeatherCardModeMemoryKey(colIdx)) || _wcLastMode;
+}
+
+function getWeatherCardInteractionIndices(colIdx, mode = _wcStates.get(colIdx) || getWeatherCardPreferredMode(colIdx)) {
+  if (isMobileWeatherCardCenterMode() && mode === 'full') return [colIdx];
+  return getCollectiveIndices(colIdx);
+}
+
+function closeOtherOpenWeatherCardsOnMobile(colIdx, mode = 'full') {
+  if (!isMobileWeatherCardCenterMode() || mode !== 'full') return;
   Array.from(_wcStates.keys()).forEach((openIdx) => {
-    if (openIdx !== colIdx) closeWeatherCard(openIdx);
+    if (openIdx !== colIdx && _wcStates.get(openIdx) === 'full') closeWeatherCard(openIdx);
+  });
+}
+
+function setWeatherCardModeForTargets(targets, mode, pivotIdx, options = {}) {
+  if (!targets.length) return;
+  const pivot = targets.includes(pivotIdx) ? pivotIdx : targets[0];
+  if (
+    isMobileWeatherCardCenterMode() &&
+    mode === 'full' &&
+    targets.length > 1
+  ) {
+    targets
+      .filter(idx => idx !== pivot)
+      .forEach(idx => setWeatherCardMode(idx, 'compact', options));
+    setWeatherCardMode(pivot, 'full', { ...options, centerOnMobileExpand: true });
+    return;
+  }
+
+  targets.forEach(idx => {
+    setWeatherCardMode(idx, mode, { ...options, centerOnMobileExpand: idx === pivot });
   });
 }
 
@@ -7844,12 +7921,13 @@ function openWeatherCard(colIdx, options = {}) {
     if (options.notify !== false) showWeatherNotLoadedNotice();
     return false;
   }
-  closeOtherOpenWeatherCardsOnMobile(colIdx);
-  _wcStates.set(colIdx, _wcLastMode);
+  const mode = getWeatherCardPreferredMode(colIdx);
+  closeOtherOpenWeatherCardsOnMobile(colIdx, mode);
+  _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
   if (
     options.centerOnMobileExpand === true &&
-    _wcLastMode === 'full'
+    mode === 'full'
   ) {
     scheduleWeatherCardCenter(colIdx, { settle: true });
   }
@@ -7872,20 +7950,15 @@ function handleWeatherIconInteraction(colIdx) {
     return;
   }
 
-  const collectiveCols = getWeatherCardInteractionIndices(colIdx);
+  const preferredMode = _wcStates.get(colIdx) || getWeatherCardPreferredMode(colIdx);
+  const collectiveCols = getWeatherCardInteractionIndices(colIdx, preferredMode);
   if (collectiveCols.length > 1) {
     // Collective toggle based on the state of the target point
     const isAlreadyOpen = _wcStates.has(colIdx);
     if (isAlreadyOpen) {
       collectiveCols.forEach(ci => closeWeatherCard(ci, { centerAfterClose: ci === colIdx }));
     } else {
-      collectiveCols.forEach(ci => {
-        if (hasLoadedWeatherCardInfo(ci)) {
-          if (!_wcStates.has(ci)) openWeatherCard(ci, { notify: false, centerOnMobileExpand: ci === colIdx });
-        } else {
-          closeWeatherCard(ci);
-        }
-      });
+      setWeatherCardModeForTargets(collectiveCols, preferredMode, colIdx, { notify: false });
       // Sync highlight so keyboard/centering targets this group
       highlightPoint(colIdx);
     }
@@ -7899,7 +7972,7 @@ function handleWeatherIconInteraction(colIdx) {
 /** Close a specific weather card. */
 function closeWeatherCard(colIdx, options = {}) {
   const prev = _wcStates.get(colIdx);
-  if (prev === 'compact' || prev === 'full') _wcLastMode = prev;
+  rememberWeatherCardMode(colIdx, prev);
   _wcStates.delete(colIdx);
   mapManager.closeWeatherPopup(colIdx, { animate: true });
   if (options.centerAfterClose === true && prev === 'full') {
@@ -7923,7 +7996,7 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
     if (options.notify) showWeatherNotLoadedNotice();
     return;
   }
-  closeOtherOpenWeatherCardsOnMobile(colIdx);
+  closeOtherOpenWeatherCardsOnMobile(colIdx, mode);
   const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
@@ -8152,7 +8225,7 @@ function _renderWeatherCard(colIdx) {
   if (isFull) {
     const headerStyle = `background: ${colorWithAlpha(gradColor, 0.1)};`;
     html += `<div class="wc-header" style="${headerStyle}">`;
-    html += `<span class="wc-title" title="${pt.label || cardLabel}">${cardLabel}</span>`;
+    html += `<span class="wc-title" title="${_escapeHtml(pt.label || cardLabel)}">${_escapeHtml(cardLabel)}</span>`;
     html += `<button class="wc-btn q-prev" title="上一個點">`;
     html += `<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg></button>`;
     html += `<button class="wc-btn q-next" title="下一個點">`;
@@ -8176,7 +8249,7 @@ function _renderWeatherCard(colIdx) {
     html += `</div>`;
   } else {
     const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(pt.lat, pt.lng, dateStr, hour, 'temp'), 14);
-    html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+    html += `<div class="wc-weather-main"><button class="wc-weather-icon q-weather-icon-close" type="button" title="關閉天氣卡" aria-label="關閉天氣卡">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</button><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
@@ -8272,7 +8345,7 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
   html += `<div class="wc-body">`;
   const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(lat, lng, dateStr, hour, 'temp'), 14);
-  html += `<div class="wc-weather-main"><span class="wc-weather-icon">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</span><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
+  html += `<div class="wc-weather-main"><button class="wc-weather-icon q-weather-icon-close" type="button" title="關閉天氣卡" aria-label="關閉天氣卡">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</button><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
 
   if (status === 'ok') {
     html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-top-stats');
@@ -8299,6 +8372,10 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
     e.stopPropagation();
     mapManager.closeCursorWeatherPopup();
   });
+  wrapper.querySelector('.q-weather-icon-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    mapManager.closeCursorWeatherPopup();
+  });
   wrapper.querySelectorAll('.clickable-coords').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -8306,6 +8383,30 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
       copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
     });
   });
+}
+
+function isWeatherCardBlankClickTarget(target, root) {
+  if (!target?.closest || !root?.contains?.(target)) return false;
+  if (!root.classList.contains('full')) return false;
+
+  const contentOrControlSelector = [
+    'button',
+    'a',
+    'input',
+    'select',
+    'textarea',
+    '.clickable-coords',
+    '.wc-title',
+    '.wc-weather-icon',
+    '.wc-weather-desc',
+    '.wc-weather-temp',
+    '.wc-info-item',
+    '.wc-time-edit-wrap',
+  ].join(',');
+  const contentOrControl = target.closest(contentOrControlSelector);
+  if (contentOrControl && root.contains(contentOrControl)) return false;
+
+  return !!target.closest('.weather-card.full, .wc-header, .wc-body, .wc-weather-main, .wc-info-grid');
 }
 
 /** Bind click and touch events to the weather card DOM. */
@@ -8319,21 +8420,33 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     // Requirement: Don't highlight when clicking inputs/selects in the card
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.target.closest('.clickable-coords')) return;
+    if (isWeatherCardBlankClickTarget(e.target, root)) {
+      e.stopPropagation();
+      const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'full');
+      setWeatherCardModeForTargets(targets, 'compact', colIdx);
+      highlightPoint(colIdx, false, { centerMap: true });
+      return;
+    }
     highlightPoint(colIdx, false, { centerFullCard: true });
   });
 
   // Button clicks
   root.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const targets = getWeatherCardInteractionIndices(colIdx);
+    const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'compact');
+    targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
+  });
+  root.querySelector('.q-weather-icon-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'compact');
     targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
   });
   root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curMode = _wcStates.get(colIdx) || 'compact';
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
-    const targets = getWeatherCardInteractionIndices(colIdx);
-    targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
+    const targets = getWeatherCardInteractionIndices(colIdx, curMode);
+    setWeatherCardModeForTargets(targets, nextMode, colIdx);
     highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
   });
   root.querySelector('.q-prev')?.addEventListener('click', (e) => {
@@ -8442,12 +8555,12 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         // Swipe up: toggle between compact and full
         const curMode = _wcStates.get(colIdx) || 'compact';
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
-        const targets = getWeatherCardInteractionIndices(colIdx);
-        targets.forEach(idx => setWeatherCardMode(idx, nextMode, { centerOnMobileExpand: idx === colIdx }));
+        const targets = getWeatherCardInteractionIndices(colIdx, curMode);
+        setWeatherCardModeForTargets(targets, nextMode, colIdx);
         highlightPoint(colIdx, false, { centerMap: nextMode === 'compact' });
       } else {
         // Swipe down: close
-        const targets = getWeatherCardInteractionIndices(colIdx);
+        const targets = getWeatherCardInteractionIndices(colIdx, _wcStates.get(colIdx) || 'compact');
         targets.forEach(idx => closeWeatherCard(idx, { centerAfterClose: idx === colIdx }));
       }
     }
@@ -9528,10 +9641,12 @@ function renderSearchResults(items, resultsEl) {
     const coordLine = distLabel
       ? `${lat.toFixed(5)}, ${lng.toFixed(5)} · ${distLabel}`
       : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    const safeName = _escapeHtml(name);
+    const safeCoordLine = _escapeHtml(coordLine);
     row.innerHTML = `
       <div class="search-result-text">
-        <div class="search-result-name" title="${name.replace(/"/g, '&quot;')}">${name}</div>
-        <div class="search-result-coord clickable-coords" data-coords="${lat.toFixed(5)}, ${lng.toFixed(5)}" title="點擊複製座標">${coordLine}</div>
+        <div class="search-result-name" title="${safeName}">${safeName}</div>
+        <div class="search-result-coord clickable-coords" data-coords="${lat.toFixed(5)}, ${lng.toFixed(5)}" title="點擊複製座標">${safeCoordLine}</div>
       </div>
       <button class="search-result-add" title="加入為航點" ${frozen ? 'disabled' : ''}>+ 航點</button>
     `;
@@ -9638,32 +9753,7 @@ function initKeywordSearch() {
 }
 
 function resetToDefaults() {
-  const keysToClear = [
-    LS_SEGMENT_KEY,
-    LS_ROUNDTRIP_KEY,
-    LS_OLOOP_KEY,
-    LS_ROUTE_MODE_KEY,
-    LS_MAP_LAYER_KEY,
-    LS_SPEED_MODE_KEY,
-    LS_SPEED_ACTIVITY_KEY,
-    LS_PACE_PARAMS_KEY,
-    LS_PACE_CALIBRATION_KEY,
-    LS_PER_SEGMENT_KEY,
-    LS_STRICT_LINEAR_KEY,
-    LS_IMPORT_AUTO_SORT_KEY,
-    LS_IMPORT_AUTO_NAME_KEY,
-    LS_PACE_UNIT_KEY,
-    LS_WINDY_LAYER_KEY,
-    LS_WINDY_MODEL_KEY,
-    LS_WEATHER_CACHE_KEY,
-    LS_WEATHER_CACHE_ENABLED_KEY,
-    LS_WEATHER_CACHE_DISTANCE_M_KEY,
-    LS_WEATHER_CACHE_ELEVATION_M_KEY,
-    LS_WEATHER_CACHE_MAX_AGE_DAYS_KEY,
-    LS_PANEL_WIDTH_KEY,
-    LS_MAP_VIEW_KEY
-  ];
-  keysToClear.forEach(key => localStorage.removeItem(key));
+  RESET_STATE_KEYS.forEach(key => localStorage.removeItem(key));
   window.location.reload();
 }
 

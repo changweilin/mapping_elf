@@ -111,14 +111,14 @@ const ROUTE_LONG_PRESS_MOVE_TOLERANCE_PX = {
 };
 const ROUTE_LAYER_DEBUG_KEY = 'mappingElfDebugRouteLayerCycle';
 const WAYPOINT_DOUBLE_TAP_DELAY_MS = 360;
-// Single-tap selection must wait longer than the double-tap window so layer
-// cycling can cancel it before highlight/z-index state changes.
+// Single-tap selection must wait longer than the double-tap window so double
+// taps can resolve against the marker's pre-existing highlight state.
 const WAYPOINT_SINGLE_TAP_DELAY_MS = WAYPOINT_DOUBLE_TAP_DELAY_MS + 40;
 const WAYPOINT_DOUBLE_TAP_DISTANCE_PX = 30;
 const WAYPOINT_TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
 const WAYPOINT_Z_BASE = 1300;
 const WAYPOINT_Z_PAIR_STEP = 120;
-const WAYPOINT_Z_SELECTED = 1800;
+const WAYPOINT_Z_SELECTED = 5000;
 const WAYPOINT_PIN_HEIGHT_RATIO = 1.44;
 const INTERMEDIATE_Z_OFFSET = -300;
 const INTERMEDIATE_MARKER_SIZE = 18;
@@ -134,8 +134,10 @@ function waypointPinMetrics(size) {
 }
 
 function waypointPinSvgHtml() {
+  const pinPath = 'M18 1.7C9.05 1.7 1.8 8.95 1.8 17.9c0 12.35 16.2 32.4 16.2 32.4s16.2-20.05 16.2-32.4C34.2 8.95 26.95 1.7 18 1.7Z';
   return '<svg class="wp-pin-svg" viewBox="0 0 36 52" aria-hidden="true" focusable="false">' +
-    '<path class="wp-pin-body" d="M18 1.7C9.05 1.7 1.8 8.95 1.8 17.9c0 12.35 16.2 32.4 16.2 32.4s16.2-20.05 16.2-32.4C34.2 8.95 26.95 1.7 18 1.7Z"/>' +
+    `<path class="wp-pin-highlight-ring" d="${pinPath}"/>` +
+    `<path class="wp-pin-body" d="${pinPath}"/>` +
     '<circle class="wp-pin-dot" cx="18" cy="17.9" r="8.1"/>' +
     '</svg>';
 }
@@ -1581,7 +1583,7 @@ export class MapManager {
       }
     };
 
-    // Double-click on marker: switch visible layer order for stacked waypoint pairs.
+    // Double-click on overlapped waypoint markers cycles the visible layer immediately.
     marker.on('dblclick', handleWaypointDoubleClick);
 
     // 綁定 Leaflet 內建拖曳功能 (Desktop 右鍵後觸發) 的事件
@@ -2131,7 +2133,7 @@ export class MapManager {
       }
 
       const weatherHtml = this._weatherBadgeHtml(pt.weatherIcon);
-      const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
+      const labelHtml = pt.label ? `<div class="marker-external-label">${escapeHtml(pt.label)}</div>` : '';
 
       const icon = L.divIcon({
         className: 'intermediate-point-icon',
@@ -2336,7 +2338,7 @@ export class MapManager {
 
       marker.on('dblclick', handleReturnWaypointDoubleClick);
 
-      // Long-press drags the paired editable waypoint; dblclick handles layer cycling.
+      // Long-press drags the paired editable waypoint; dblclick cycles overlapped layers.
       let _lpTimer = null;
       let _pendingClientX = 0, _pendingClientY = 0;
       let _returnTouchStartClientX = 0, _returnTouchStartClientY = 0;
@@ -2789,7 +2791,7 @@ export class MapManager {
     const size = isEndpoint ? 40 : 36;
     const num = (pt.wpIndex ?? 0) + 1;
     const weatherHtml = this._weatherBadgeHtml(pt.weather);
-    const labelHtml = pt.label ? `<div class="marker-external-label">${pt.label}</div>` : '';
+    const labelHtml = pt.label ? `<div class="marker-external-label">${escapeHtml(pt.label)}</div>` : '';
     const innerStyle = pt.color
       ? `style="--wp-pin-fill:${pt.color}; --wp-pin-glow-color:${pt.color};"`
       : '';
@@ -3841,43 +3843,12 @@ export class MapManager {
     if (select) this._highlightTopWaypointLayer(idx);
   }
 
-  _cycleWaypointOverlapLayers(idx, latlng, { select = true } = {}) {
+  _cycleWaypointOverlapLayers(idx, _latlng = null, { select = true } = {}) {
     if (idx === undefined || idx < 0 || !this._hasReturnWaypointPair(idx)) return false;
 
-    const desiredOutboundOnTop = !(this.waypointLayerSwapped[idx] ?? true);
-    const switchedRoute = this._bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng);
-    if (!switchedRoute || (this.waypointLayerSwapped[idx] ?? true) !== desiredOutboundOnTop) {
-      this.waypointLayerSwapped[idx] = desiredOutboundOnTop;
-      this._resetWaypointMarkerZ();
-    }
+    this.waypointLayerSwapped[idx] = !(this.waypointLayerSwapped[idx] ?? true);
+    this._resetWaypointMarkerZ();
     if (select) this._highlightTopWaypointLayer(idx);
-    return true;
-  }
-
-  _bringWaypointRouteLayerToFront(idx, desiredOutboundOnTop, latlng) {
-    if (!this.gradientPolylines.length) return false;
-
-    this._syncAllMarkerLegIds();
-
-    const source = 'mouse';
-    const proximityPx = ROUTE_OVERLAP_PROXIMITY_PX[source] ?? ROUTE_OVERLAP_PROXIMITY_PX.mouse;
-    const nearby = this._findOverlappingRouteChunks(latlng, null, { proximityPx });
-    const legs = this._uniqueNearbyLegs(nearby);
-    if (legs.length < 2) return false;
-
-    const targetMarker = desiredOutboundOnTop
-      ? this.waypointMarkers[idx]
-      : this.returnWaypointMarkers.find((m) => m._wpIndex === idx);
-    const desiredIsReturn = !desiredOutboundOnTop;
-    const targetLegs = this._markerLegIds(targetMarker).filter((leg) => legs.includes(leg));
-    const targetLeg = targetLegs.find((leg) => this._routeLegIsReturn(leg) === desiredIsReturn)
-      ?? targetLegs[0];
-    if (targetLeg === undefined) return false;
-
-    this._overlapCycleState.set(this._overlapStackKey(legs), targetLeg);
-    this._bringOverlapLegToFront(legs, targetLeg);
-    this._syncOverlapMarkerStack(legs, targetLeg, latlng);
-    this._debugRouteLayerCycle('waypoint-sync', { legs, targetLeg, desiredOutboundOnTop });
     return true;
   }
 
@@ -3898,12 +3869,26 @@ export class MapManager {
     return wp ? L.latLng(wp[0], wp[1]) : null;
   }
 
-  _isWaypointHighlighted(wpIndex, isReturn = false) {
-    return this.highlightedWpIndex === wpIndex && this.highlightedIsReturn === isReturn;
+  _isWaypointLayerSelected(wpIndex, isReturn = false) {
+    const marker = isReturn
+      ? this.returnWaypointMarkers.find((m) => m._wpIndex === wpIndex)
+      : this.waypointMarkers[wpIndex];
+    return !!marker?.getElement?.()?.classList.contains('is-selected');
+  }
+
+  _isWaypointPairHighlighted(wpIndex) {
+    if (this.highlightedWpIndex !== wpIndex) return false;
+    return this._isWaypointLayerSelected(wpIndex, false)
+      || this._isWaypointLayerSelected(wpIndex, true);
+  }
+
+  _topWaypointLayerIsReturn(wpIndex, fallbackIsReturn = false) {
+    if (!this._hasReturnWaypointPair(wpIndex)) return fallbackIsReturn;
+    return (this.waypointLayerSwapped[wpIndex] ?? true) === false;
   }
 
   _selectWaypointFromMap(wpIndex, isReturn = false, latlng = null) {
-    if (this._isWaypointHighlighted(wpIndex, isReturn) && this._hasReturnWaypointPair(wpIndex)) {
+    if (this._hasReturnWaypointPair(wpIndex) && this._isWaypointPairHighlighted(wpIndex)) {
       this._cycleWaypointOverlapLayers(
         wpIndex,
         latlng || this._waypointSelectionLatLng(wpIndex, isReturn),
@@ -3913,7 +3898,7 @@ export class MapManager {
       return;
     }
 
-    this.onWaypointSelect?.(wpIndex, isReturn, false);
+    this.onWaypointSelect?.(wpIndex, this._topWaypointLayerIsReturn(wpIndex, isReturn), false);
   }
 
   _scheduleWaypointSelect(wpIndex, isReturn = false, latlng = null) {
@@ -3940,7 +3925,7 @@ export class MapManager {
       return;
     }
 
-    this._deferWaypointSelect(wpIndex, isReturn, false);
+    this._deferWaypointSelect(wpIndex, this._topWaypointLayerIsReturn(wpIndex, isReturn), false);
   }
 
   _deferTopWaypointLayerHighlight(idx) {

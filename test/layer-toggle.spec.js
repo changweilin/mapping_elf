@@ -263,6 +263,54 @@ async function selectedWaypointState(page, number) {
   }, number);
 }
 
+async function selectedWaypointRingState(page, number, isReturn = false) {
+  return page.evaluate(({ targetNumber, targetIsReturn }) => {
+    const markerNumber = (el) => Number.parseInt(el.querySelector('.wp-icon-inner > span')?.textContent.trim() || '', 10);
+    const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .find((el) =>
+        markerNumber(el) === targetNumber &&
+        el.classList.contains('return-leg') === targetIsReturn
+      );
+    const ring = marker?.querySelector('.wp-pin-highlight-ring');
+    const body = marker?.querySelector('.wp-pin-body');
+    return {
+      selected: marker?.classList.contains('is-selected') ?? false,
+      ringOpacity: ring ? Number.parseFloat(getComputedStyle(ring).opacity) : 0,
+      ringStroke: ring ? getComputedStyle(ring).stroke : '',
+      bodyStroke: body ? getComputedStyle(body).stroke : '',
+    };
+  }, { targetNumber: number, targetIsReturn: isReturn });
+}
+
+async function selectedWaypointStackState(page, number, isReturn = false) {
+  return page.evaluate(({ targetNumber, targetIsReturn }) => {
+    const markerNumber = (el) => Number.parseInt(el.querySelector('.wp-icon-inner > span')?.textContent.trim() || '', 10);
+    const markers = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .map((el, index) => ({
+        index,
+        number: markerNumber(el),
+        isReturn: el.classList.contains('return-leg'),
+        selected: el.classList.contains('is-selected'),
+        z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+      }))
+      .filter((marker) => Number.isFinite(marker.number));
+    const selected = markers.find((marker) =>
+      marker.number === targetNumber &&
+      marker.isReturn === targetIsReturn &&
+      marker.selected
+    ) || null;
+    const sorted = markers.slice().sort((a, b) => b.z - a.z);
+    const top = sorted[0] || null;
+    return {
+      selectedZ: selected?.z ?? null,
+      topZ: top?.z ?? null,
+      topNumber: top?.number ?? null,
+      topIsReturn: top?.isReturn ?? null,
+      selectedIsTop: !!selected && !!top && selected.index === top.index,
+    };
+  }, { targetNumber: number, targetIsReturn: isReturn });
+}
+
 async function topWaypointCenter(page, number) {
   const target = await page.evaluate((targetNumber) => {
     const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
@@ -282,6 +330,36 @@ async function topWaypointCenter(page, number) {
   }, number);
   expect(target).not.toBeNull();
   return target;
+}
+
+async function clickTopWaypoint(page, number) {
+  const target = await topWaypointCenter(page, number);
+  await page.mouse.click(target.x, target.y);
+}
+
+async function dispatchWaypointMarkerClick(page, number, isReturn) {
+  await page.evaluate(({ targetNumber, targetIsReturn }) => {
+    const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+      .find((el) =>
+        Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === targetNumber &&
+        el.classList.contains('return-leg') === targetIsReturn
+      );
+    if (!marker) throw new Error(`Waypoint marker ${targetNumber} ${targetIsReturn ? 'return' : 'outbound'} not found`);
+    const rect = marker.getBoundingClientRect();
+    marker.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: rect.x + rect.width / 2,
+      clientY: rect.y + rect.height / 2,
+      view: window,
+    }));
+  }, { targetNumber: number, targetIsReturn: isReturn });
+}
+
+async function selectTopWaypoint(page, number) {
+  await clickTopWaypoint(page, number);
+  await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
 }
 
 async function waypointCenter(page, number, isReturn) {
@@ -392,9 +470,10 @@ async function touchTap(page, point) {
   await page.waitForTimeout(70);
 }
 
-async function touchDoubleTap(page, point) {
-  await touchTap(page, point);
-  await touchTap(page, point);
+async function touchSelectTopWaypoint(page, number) {
+  const target = await topWaypointCenter(page, number);
+  await touchTap(page, target);
+  await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
 }
 
 async function touchLongPressDrag(page, startPoint, endPoint) {
@@ -412,7 +491,7 @@ async function touchLongPressDrag(page, startPoint, endPoint) {
   await expect(page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-dragging')).toHaveCount(0);
 }
 
-test('double-clicking an overlapped waypoint cycles visible layer order', async ({ page }) => {
+test('double-clicking an unhighlighted overlapped waypoint cycles visible layer order', async ({ page }) => {
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
   await expect.poll(async () =>
@@ -420,18 +499,24 @@ test('double-clicking an overlapped waypoint cycles visible layer order', async 
   ).toBe(true);
 
   const before = await layerState(page);
-  const waypoint = await page.locator('.leaflet-marker-pane .custom-waypoint-icon').first().boundingBox();
-  expect(waypoint).not.toBeNull();
-  await page.mouse.dblclick(waypoint.x + waypoint.width / 2, waypoint.y + waypoint.height / 2);
+  const waypoint = await topWaypointCenter(page, 1);
+  await page.mouse.dblclick(waypoint.x, waypoint.y);
   await expect.poll(async () => {
     const state = await layerState(page);
+    const selected = await selectedWaypointState(page, 1);
     return {
       routeChanged: state.topStroke !== before.topStroke,
       returnAboveOutbound: state.returnAboveOutbound,
+      selectedCount: selected.selectedCount,
+      selectedIsReturn: selected.selectedIsReturn,
+      topIsReturn: selected.topIsReturn,
     };
   }).toMatchObject({
-    routeChanged: true,
-    returnAboveOutbound: true,
+    routeChanged: false,
+    returnAboveOutbound: !before.returnAboveOutbound,
+    selectedCount: 1,
+    selectedIsReturn: !before.returnAboveOutbound,
+    topIsReturn: !before.returnAboveOutbound,
   });
 });
 
@@ -450,12 +535,80 @@ test('clicking a highlighted overlapped waypoint cycles visible layer and keeps 
     topIsReturn: false,
   });
 
+  const before = await layerState(page);
   await page.locator('.leaflet-marker-pane .custom-waypoint-icon.is-selected .wp-icon-inner').click();
-  await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
+  await expect.poll(async () => {
+    const state = await layerState(page);
+    const selected = await selectedWaypointState(page, 1);
+    return {
+      routeChanged: state.topStroke !== before.topStroke,
+      selectedCount: selected.selectedCount,
+      selectedIsReturn: selected.selectedIsReturn,
+      topIsReturn: selected.topIsReturn,
+    };
+  }).toMatchObject({
+    routeChanged: false,
     selectedCount: 1,
     selectedIsReturn: true,
     topIsReturn: true,
   });
+
+  await expect.poll(async () => {
+    const state = await selectedWaypointRingState(page, 1, true);
+    return state.selected && state.ringOpacity > 0.9 && state.bodyStroke.includes('251');
+  }).toBe(true);
+});
+
+test('first click on an unhighlighted overlapped start waypoint preserves the visible layer', async ({ page }) => {
+  await openLayerTestApp(page);
+  await addRoundTripWaypoints(page);
+
+  const beforePair = (await waypointPairState(page)).find((pair) => pair.number === 1);
+  expect(beforePair?.hasReturn).toBe(true);
+
+  await dispatchWaypointMarkerClick(page, 1, !beforePair.returnAbove);
+  await expect.poll(async () => {
+    const pair = (await waypointPairState(page)).find((item) => item.number === 1);
+    const selected = await selectedWaypointState(page, 1);
+    return {
+      returnAbove: pair?.returnAbove,
+      selectedCount: selected.selectedCount,
+      selectedIsReturn: selected.selectedIsReturn,
+      topIsReturn: selected.topIsReturn,
+    };
+  }).toMatchObject({
+    returnAbove: beforePair.returnAbove,
+    selectedCount: 1,
+    selectedIsReturn: beforePair.returnAbove,
+    topIsReturn: beforePair.returnAbove,
+  });
+
+  await clickTopWaypoint(page, 1);
+  await expect.poll(async () =>
+    (await waypointPairState(page)).find((pair) => pair.number === 1)?.returnAbove ?? null
+  ).toBe(!beforePair.returnAbove);
+});
+
+test('clicking start and end waypoint markers shows the selected outline', async ({ page }) => {
+  await openLayerTestApp(page, { roundTrip: '0' });
+  await addWaypointsAtFractions(page, [
+    [0.40, 0.25],
+    [0.58, 0.78],
+  ]);
+
+  for (const number of [1, 2]) {
+    await clickTopWaypoint(page, number);
+    await expect.poll(async () => {
+      const state = await selectedWaypointRingState(page, number, false);
+      return state.selected && state.ringOpacity > 0.9 && state.ringStroke.includes('251');
+    }).toBe(true);
+    await expect.poll(async () => selectedWaypointStackState(page, number, false))
+      .toMatchObject({
+        selectedIsTop: true,
+        topNumber: number,
+        topIsReturn: false,
+      });
+  }
 });
 
 test('waypoint marker text is not selectable during long press gestures', async ({ page }) => {
@@ -834,8 +987,18 @@ test('desktop waypoint weather card controls stay clickable inside the marker', 
   await card.locator('.q-prev').click();
   await expect(card).toHaveAttribute('data-col-idx', '0');
 
-  await card.locator('.q-toggle').click();
+  await card.locator('.wc-header').click({ position: { x: 2, y: 12 } });
   await expect(card).not.toHaveClass(/full/);
+
+  await card.locator('.q-toggle').click();
+  await expect(card).toHaveClass(/full/);
+
+  await card.locator('.q-weather-icon-close').click();
+  await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+
+  await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().click();
+  await expect(card).toBeVisible();
+  await expect(card).toHaveClass(/full/);
 
   await card.locator('.q-close').click();
   await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
@@ -1133,6 +1296,90 @@ test.describe('mobile weather cards', () => {
     expect(Math.abs(offset.dx)).toBeLessThan(35);
     expect(Math.abs(offset.dy)).toBeLessThan(55);
   });
+
+  test('mobile weather cards remember size while compact actions stay linked', async ({ page }) => {
+    const loadedCells = (weather, temp) => ({
+      _weatherLoaded: true,
+      _weatherLoadState: 'loaded',
+      weather,
+      _icon: weather.split(' ')[0],
+      temp,
+      precipitation: '0 mm',
+      precipProb: '10%',
+      windSpeed: '10 km/h',
+    });
+
+    await openLayerTestApp(page, {
+      roundTrip: '0',
+      importedTrackSession: {
+        coords: [
+          [24.00, 121.00],
+          [24.80, 121.80],
+        ],
+        elevations: [100, 140],
+        waypoints: [
+          [24.00, 121.00],
+          [24.80, 121.80],
+        ],
+        waypointMeta: [
+          { waypointId: 'mobile-bulk-start', label: 'Start', cumDistM: 0 },
+          { waypointId: 'mobile-bulk-end', label: 'End', cumDistM: 120000 },
+        ],
+        intermediates: [],
+      },
+      weatherCells: {
+        'wp:mobile-bulk-start': loadedCells('sunny Clear', '21 C'),
+        'wp:mobile-bulk-end': loadedCells('cloudy Cloudy', '22 C'),
+      },
+    });
+
+    await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded')).toHaveCount(2);
+    await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+
+    const endColIdx = await page.locator('#weather-table-container .wt-col-head').evaluateAll((heads) => {
+      const end = heads.find((head) => (head.textContent || '').includes('End'));
+      return end?.dataset.idx || '';
+    });
+    expect(endColIdx).not.toBe('');
+
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+
+    const fullCard = page.locator('#mobile-weather-card-layer .weather-card.full');
+    await expect(fullCard).toBeVisible();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '0');
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await fullCard.locator('.q-close').tap();
+    await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+    await expect(page.locator(`.weather-card[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+    await expect(fullCard).toBeVisible();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '0');
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await fullCard.locator('.q-toggle').tap();
+    await expect(page.locator('#mobile-weather-card-layer .weather-card.full')).toHaveCount(0);
+    await expect(page.locator('.weather-card.compact[data-col-idx="0"]')).toHaveCount(1);
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await page.locator('.weather-card.compact[data-col-idx="0"] .q-close').tap();
+    await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+    await expect(page.locator(`.weather-card[data-col-idx="${endColIdx}"]`)).toHaveCount(0);
+
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+    await expect(page.locator('.weather-card.compact[data-col-idx="0"]')).toHaveCount(1);
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(1);
+
+    await page.locator('.weather-card.compact[data-col-idx="0"] .q-toggle').tap();
+    await expect(fullCard).toBeVisible();
+    await expect(fullCard).toHaveAttribute('data-col-idx', '0');
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(1);
+
+    await fullCard.locator('.q-close').tap();
+    await expect(page.locator('.weather-card[data-col-idx="0"]')).toHaveCount(0);
+    await expect(page.locator(`.weather-card.compact[data-col-idx="${endColIdx}"]`)).toHaveCount(1);
+  });
 });
 
 test('double-clicking an overlapped route marker cycles visible layer order', async ({ page }) => {
@@ -1171,8 +1418,18 @@ test('route layer cycling moves an already highlighted waypoint to the switched-
     (await waypointPairState(page)).find((pair) => pair.number === 1)?.hasReturn ?? false
   ).toBe(true);
 
-  const waypoint = await topWaypointCenter(page, 1);
-  await page.mouse.dblclick(waypoint.x, waypoint.y);
+  const firstRoutePoint = await page.evaluate(() => {
+    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
+    if (!path) return null;
+    const rect = path.getBoundingClientRect();
+    return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
+  });
+  expect(firstRoutePoint).not.toBeNull();
+
+  await page.mouse.dblclick(firstRoutePoint.x, firstRoutePoint.y);
+  await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
+
+  await selectTopWaypoint(page, 1);
   await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
     selectedCount: 1,
     selectedIsReturn: true,
@@ -1263,7 +1520,9 @@ test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint',
     }, number);
     expect(target).not.toBeNull();
 
-    await page.mouse.dblclick(target.x, target.y);
+    await page.mouse.click(target.x, target.y);
+    await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
+    await clickTopWaypoint(page, number);
     await expect.poll(async () => {
       const pairs = await waypointPairState(page);
       return pairs.find((pair) => pair.number === number)?.returnAbove ?? null;
@@ -1275,8 +1534,8 @@ test('long-press dragging a return waypoint edits its paired outbound waypoint i
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
 
-  let target = await topWaypointCenter(page, 1);
-  await page.mouse.dblclick(target.x, target.y);
+  await selectTopWaypoint(page, 1);
+  await clickTopWaypoint(page, 1);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
 
   const beforeLayer = await layerState(page);
@@ -1358,13 +1617,19 @@ test('long-press dragging a waypoint into the cancel zone leaves it unchanged', 
 test.describe('touch waypoint gestures', () => {
   test.use({ hasTouch: true });
 
-  test('touch double-tapping an overlapped waypoint cycles visible layer order', async ({ page }) => {
+  test('touch tapping a highlighted overlapped waypoint cycles visible layer order', async ({ page }) => {
     await openLayerTestApp(page);
     await addRoundTripWaypoints(page);
 
     const before = await layerState(page);
+    await touchSelectTopWaypoint(page, 1);
+    await expect.poll(async () => await selectedWaypointState(page, 1)).toMatchObject({
+      selectedCount: 1,
+      selectedIsReturn: false,
+      topIsReturn: false,
+    });
     const target = await topWaypointCenter(page, 1);
-    await touchDoubleTap(page, target);
+    await touchTap(page, target);
 
     await expect.poll(async () => (await layerState(page)).returnAboveOutbound)
       .toBe(!before.returnAboveOutbound);
@@ -1376,8 +1641,8 @@ test.describe('touch waypoint gestures', () => {
     await openLayerTestApp(page);
     await addRoundTripWaypoints(page);
 
-    const target = await topWaypointCenter(page, 1);
-    await touchDoubleTap(page, target);
+    await touchSelectTopWaypoint(page, 1);
+    await touchTap(page, await topWaypointCenter(page, 1));
     await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
 
     const beforeLayer = await layerState(page);

@@ -10,6 +10,7 @@
  * JSZip is pre-loaded at the top for reliability across environments.
  */
 import JSZip from 'jszip';
+import { MELMAP_STATE_KEYS } from './stateKeys.js';
 
 const MELMAP_VERSION = 1;
 const MAX_TILES = 8000;
@@ -20,31 +21,7 @@ const MAX_TILES = 8000;
 const SUBDOMAINS = ['a', 'b', 'c'];
 const RETINA_SUFFIXES = ['', '@2x'];
 
-const LS_STATE_KEYS = [
-  'mappingElf_weather',
-  'mappingElf_weatherCells',
-  'mappingElf_weatherCache',
-  'mappingElf_weatherCacheEnabled',
-  'mappingElf_weatherCacheDistanceM',
-  'mappingElf_weatherCacheElevationM',
-  'mappingElf_weatherCacheMaxAgeDays',
-  'mappingElf_geocode',
-  'mappingElf_segmentKm',
-  'mappingElf_speedMode',
-  'mappingElf_speedActivity',
-  'mappingElf_paceParams',
-  'mappingElf_paceCalibration',
-  'mappingElf_paceUnit',
-  'mappingElf_perSegment',
-  'mappingElf_strictLinear',
-  'mappingElf_importAutoSort',
-  'mappingElf_importAutoName',
-  'mappingElf_panelHeight',
-  'mappingElf_panelHeightRatio',
-  'mappingElf_windyLayer',
-  'mappingElf_windyModel',
-  'mappingElf_routeMode',
-];
+const LS_STATE_KEYS = MELMAP_STATE_KEYS;
 
 function lng2tile(lon, zoom) {
   return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
