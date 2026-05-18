@@ -3203,6 +3203,62 @@ body.route-list-dragging {
   gap: 10px;
 }
 
+.offline-pack-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.offline-pack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.offline-pack-empty {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 10px;
+}
+
+.offline-pack-item {
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  padding: 9px 10px;
+}
+
+.offline-pack-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.offline-pack-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+.offline-pack-delete {
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.offline-pack-actions {
+  margin-bottom: 2px;
+}
+
 .offline-status {
   display: flex;
   align-items: center;

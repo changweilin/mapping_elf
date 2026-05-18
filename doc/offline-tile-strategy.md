@@ -14,6 +14,7 @@ This note turns the pre-app optimization offline-map item into an implementation
 - Import restores tiles into `mapping-elf-tiles` and expands subdomain/retina URL variants so Leaflet can hit the cache regardless of the chosen subdomain.
 - Imported/exported tile URLs are tracked in `mapping-elf-tile-index` so a future UI can remove one pack without guessing from the current route.
 - The existing "clear cache" behavior deletes the whole `mapping-elf-tiles` cache and the tile pack index.
+- The file-management panel lists indexed offline tile packs and can delete one pack while preserving any tile URLs still referenced by other packs.
 
 Relevant code:
 
@@ -45,6 +46,7 @@ Implemented guard:
 - Tile-enabled `.melmap` exports include optional `manifest.tileProvider` metadata with provider id, name, attribution, and homepage when available.
 - Provider allow-list metadata lives with the map layer definitions. Blocked providers disable only the tile checkbox, leaving route and state export available.
 - Tile import/export writes a local pack index in `mapping-elf-tile-index`. The index stores source, layer, bounds, zoom range, provider, status, tile counts, and concrete cache URLs; it is not embedded in `.melmap` and is not stored in `localStorage`.
+- The indexed packs render in the file-management panel with per-pack delete controls, and `test/import-export.spec.js` verifies deleting one imported pack removes its cached URLs and index entry.
 
 Future implementation guard:
 
@@ -83,6 +85,7 @@ Deletion rules:
 
 - `deleteOfflineTilePack(packId)` removes only tile URLs that no other pack references.
 - "Clear all offline tiles" remains available and deletes `mapping-elf-tiles` plus the pack index.
+- The single-pack delete UI is user-initiated from the file-management panel.
 - Imported `.melmap` tile cleanup should be user-initiated. Do not automatically delete tiles just because the visible route changes.
 - Failed partial imports/exports are marked as incomplete so cleanup can find inserted tiles.
 

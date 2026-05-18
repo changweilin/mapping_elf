@@ -601,6 +601,28 @@
             <span>匯入自動命名</span>
           </label>
         </div>
+        <div class="settings-divider file-management-divider"></div>
+        <div class="offline-pack-panel">
+          <div class="settings-group-label">離線圖磚</div>
+          <div class="offline-controls">
+            <div class="offline-status">
+              <span class="status-dot online"></span>
+              <span>線上模式</span>
+            </div>
+            <div class="cache-info" id="cache-info"><span>快取瓦片：0 個</span></div>
+          </div>
+          <div class="offline-pack-list" id="offline-pack-list" aria-live="polite">
+            <div class="offline-pack-empty">尚無離線圖磚包</div>
+          </div>
+          <div class="settings-actions-btn-row offline-pack-actions">
+            <button class="btn-secondary file-action-btn" id="btn-clear-offline-cache" title="清除全部離線圖磚">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor" />
+              </svg>
+              <span>清除全部圖磚</span>
+            </button>
+          </div>
+        </div>
         <div class="settings-actions-btn-row file-management-actions file-management-footer">
           <button class="btn-secondary file-action-btn" id="btn-reset-defaults" title="全部回到預設">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">

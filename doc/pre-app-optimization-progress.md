@@ -73,6 +73,11 @@ Source plan: `doc/pre-app-optimization-plan.md`
   - full cache clearing deletes both tile cache and tile index;
   - a shared delete helper can remove one pack while preserving shared tile URLs;
   - import/export coverage verifies tile-only `.melmap` imports write the index.
+- Added file-management UI for indexed offline tile packs:
+  - shows the current online/offline/cache status in the file-management panel;
+  - lists imported/exported tile packs from `mapping-elf-tile-index`;
+  - supports deleting one pack without clearing unrelated cached URLs;
+  - keeps the existing "clear all tiles" behavior available.
 - Added actual `.melmap` tile download reporting:
   - exports record `manifest.downloadedTileCount` and `manifest.downloadedTileBytes`;
   - export completion reports final ZIP size;
@@ -81,5 +86,5 @@ Source plan: `doc/pre-app-optimization-plan.md`
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Convert the remaining offline tile strategy into implementation: single-pack cleanup UI and pre-export byte-size preview.
+2. Convert the remaining offline tile strategy into implementation: pre-export byte-size preview and richer offline-pack details.
 3. Profile native WebView behavior with real device builds once the Capacitor shell and plugins are ready.

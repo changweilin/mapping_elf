@@ -312,6 +312,22 @@ const PHRASES = {
   '拖曳至此刪除': { en: 'Drag here to delete', ja: 'ここへドラッグして削除', ko: '여기로 끌어 삭제', fr: 'Glisser ici pour supprimer', de: 'Zum Löschen hierher ziehen', es: 'Arrastra aquí para borrar', it: 'Trascina qui per eliminare' },
   '線上模式': { en: 'Online mode', ja: 'オンラインモード', ko: '온라인 모드', fr: 'Mode en ligne', de: 'Online-Modus', es: 'Modo en línea', it: 'Modalità online' },
   '離線模式': { en: 'Offline mode', ja: 'オフラインモード', ko: '오프라인 모드', fr: 'Mode hors ligne', de: 'Offline-Modus', es: 'Modo sin conexión', it: 'Modalità offline' },
+  '離線圖磚': { en: 'Offline tiles', ja: 'オフラインタイル', ko: '오프라인 타일', fr: 'Tuiles hors ligne', de: 'Offline-Kacheln', es: 'Teselas offline', it: 'Tile offline' },
+  '離線圖磚包': { en: 'Offline tile pack', ja: 'オフラインタイルパック', ko: '오프라인 타일 팩', fr: 'Pack de tuiles hors ligne', de: 'Offline-Kachelpaket', es: 'Paquete de teselas offline', it: 'Pacchetto tile offline' },
+  '尚無離線圖磚包': { en: 'No offline tile packs yet', ja: 'オフラインタイルパックはまだありません', ko: '아직 오프라인 타일 팩이 없습니다', fr: 'Aucun pack de tuiles hors ligne', de: 'Noch keine Offline-Kachelpakete', es: 'Aún no hay paquetes de teselas offline', it: 'Nessun pacchetto tile offline' },
+  '離線快取不支援': { en: 'Offline cache is not supported', ja: 'オフラインキャッシュは非対応です', ko: '오프라인 캐시가 지원되지 않습니다', fr: 'Le cache hors ligne n’est pas pris en charge', de: 'Offline-Cache wird nicht unterstützt', es: 'La caché offline no es compatible', it: 'Cache offline non supportata' },
+  '清除全部圖磚': { en: 'Clear all tiles', ja: 'すべてのタイルを消去', ko: '모든 타일 지우기', fr: 'Effacer toutes les tuiles', de: 'Alle Kacheln löschen', es: 'Borrar todas las teselas', it: 'Cancella tutte le tile' },
+  '清除全部離線圖磚': { en: 'Clear all offline tiles', ja: 'すべてのオフラインタイルを消去', ko: '모든 오프라인 타일 지우기', fr: 'Effacer toutes les tuiles hors ligne', de: 'Alle Offline-Kacheln löschen', es: 'Borrar todas las teselas offline', it: 'Cancella tutte le tile offline' },
+  '刪除此圖磚包': { en: 'Delete this tile pack', ja: 'このタイルパックを削除', ko: '이 타일 팩 삭제', fr: 'Supprimer ce pack de tuiles', de: 'Dieses Kachelpaket löschen', es: 'Eliminar este paquete de teselas', it: 'Elimina questo pacchetto tile' },
+  '張圖磚': { en: 'tiles', ja: 'タイル', ko: '타일', fr: 'tuiles', de: 'Kacheln', es: 'teselas', it: 'tile' },
+  '未知圖層': { en: 'Unknown layer', ja: '不明なレイヤー', ko: '알 수 없는 레이어', fr: 'Couche inconnue', de: 'Unbekannter Layer', es: 'Capa desconocida', it: 'Layer sconosciuto' },
+  '未知時間': { en: 'Unknown time', ja: '不明な時刻', ko: '알 수 없는 시간', fr: 'Heure inconnue', de: 'Unbekannte Zeit', es: 'Hora desconocida', it: 'Ora sconosciuta' },
+  '不完整': { en: 'Incomplete', ja: '未完了', ko: '미완료', fr: 'Incomplet', de: 'Unvollständig', es: 'Incompleto', it: 'Incompleto' },
+  '路線快取': { en: 'Route cache', ja: 'ルートキャッシュ', ko: '루트 캐시', fr: 'Cache itinéraire', de: 'Routen-Cache', es: 'Caché de ruta', it: 'Cache percorso' },
+  '範圍快取': { en: 'Area cache', ja: '範囲キャッシュ', ko: '범위 캐시', fr: 'Cache de zone', de: 'Bereichs-Cache', es: 'Caché de área', it: 'Cache area' },
+  '已清除全部離線圖磚': { en: 'All offline tiles cleared', ja: 'すべてのオフラインタイルを消去しました', ko: '모든 오프라인 타일을 지웠습니다', fr: 'Toutes les tuiles hors ligne ont été effacées', de: 'Alle Offline-Kacheln gelöscht', es: 'Todas las teselas offline se borraron', it: 'Tutte le tile offline sono state cancellate' },
+  '刪除圖磚包失敗': { en: 'Tile pack delete failed', ja: 'タイルパックの削除に失敗しました', ko: '타일 팩 삭제 실패', fr: 'Échec de la suppression du pack de tuiles', de: 'Kachelpaket konnte nicht gelöscht werden', es: 'Error al eliminar paquete de teselas', it: 'Eliminazione pacchetto tile non riuscita' },
+  '清除全部圖磚失敗': { en: 'Clear all tiles failed', ja: 'すべてのタイルの消去に失敗しました', ko: '모든 타일 지우기 실패', fr: 'Échec de l’effacement des tuiles', de: 'Alle Kacheln löschen fehlgeschlagen', es: 'Error al borrar todas las teselas', it: 'Cancellazione di tutte le tile non riuscita' },
   '快取瓦片：不支援': { en: 'Cached tiles: not supported', ja: 'キャッシュタイル：非対応', ko: '캐시 타일: 지원 안 됨', fr: 'Tuiles en cache : non pris en charge', de: 'Gecachte Kacheln: nicht unterstützt', es: 'Teselas en caché: no compatible', it: 'Tile in cache: non supportato' },
   '快取瓦片：0 個': { en: 'Cached tiles: 0', ja: 'キャッシュタイル：0', ko: '캐시 타일: 0개', fr: 'Tuiles en cache : 0', de: 'Gecachte Kacheln: 0', es: 'Teselas en caché: 0', it: 'Tile in cache: 0' },
   '查無結果': { en: 'No results', ja: '結果がありません', ko: '결과 없음', fr: 'Aucun résultat', de: 'Keine Ergebnisse', es: 'Sin resultados', it: 'Nessun risultato' },
@@ -888,6 +904,8 @@ function translatePattern(text) {
   if (m) return withNum('{n} waypoints', '{n}ウェイポイント', '{n}개 웨이포인트', '{n} waypoints', '{n} Wegpunkte', '{n} waypoints', '{n} waypoint', m[1]);
   m = text.match(/^快取瓦片：(\d+) 個$/);
   if (m) return withNum('Cached tiles: {n}', 'キャッシュタイル：{n}', '캐시 타일: {n}개', 'Tuiles en cache : {n}', 'Gecachte Kacheln: {n}', 'Teselas en caché: {n}', 'Tile in cache: {n}', m[1]);
+  m = text.match(/^已刪除 (\d+) 張圖磚$/);
+  if (m) return withNum('Deleted {n} tiles', '{n}タイルを削除しました', '{n}개 타일 삭제됨', '{n} tuiles supprimées', '{n} Kacheln gelöscht', '{n} teselas eliminadas', '{n} tile eliminate', m[1]);
   m = text.match(/^已複製座標 (.+)$/);
   if (m) return phraseWithText('Copied coordinates {x}', '座標をコピーしました {x}', '좌표 복사됨 {x}', 'Coordonnées copiées {x}', 'Koordinaten kopiert {x}', 'Coordenadas copiadas {x}', 'Coordinate copiate {x}', m[1]);
   m = text.match(/^已載入 (\d+) 條校正軌跡$/);

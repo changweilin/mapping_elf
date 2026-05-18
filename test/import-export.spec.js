@@ -307,7 +307,7 @@ test('map-pack disables tile export for providers outside the allow-list', async
   expect(consoleErrors).toEqual([]);
 });
 
-test('map-pack tile import writes an offline tile pack index', async ({ page }, testInfo) => {
+test('map-pack tile import writes and clears one offline tile pack index entry', async ({ page }, testInfo) => {
   const consoleErrors = await openApp(page);
   await clearOfflineTileCaches(page);
 
@@ -343,6 +343,17 @@ test('map-pack tile import writes an offline tile pack index', async ({ page }, 
   });
   expect(packs[0].tileUrls.every((url) => url.includes('tile.opentopomap.org'))).toBe(true);
   expect(await countCachedTiles(page)).toBe(packs[0].tileUrlCount);
+
+  await clickStable(page, '#file-management-toggle-header');
+  await expect(page.locator('#offline-pack-list .offline-pack-item')).toHaveCount(1);
+  await expect(page.locator('#offline-pack-list')).toContainText(/OpenTopoMap/);
+  await page.locator('#offline-pack-list [data-delete-pack-id]').click();
+  await expect.poll(async () => {
+    const indexAfterDelete = await readOfflineTileIndex(page);
+    return Object.keys(indexAfterDelete?.packs || {}).length;
+  }).toBe(0);
+  await expect.poll(() => countCachedTiles(page)).toBe(0);
+  await expect(page.locator('#offline-pack-list')).toContainText(/No offline tile packs yet|尚無離線圖磚包/);
 
   expect(consoleErrors).toEqual([]);
 });
