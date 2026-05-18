@@ -15,6 +15,10 @@ import {
   enumerateMapPackTiles,
   tilesForBoundsZoom,
 } from './tileEstimator.js';
+import {
+  OFFLINE_TILE_CACHE_NAME,
+  addOfflineTilePack,
+} from './offlineTileIndex.js';
 import { platform } from '../platform/index.js';
 
 const MELMAP_VERSION = 1;
@@ -138,7 +142,9 @@ export class MapPackExporter {
       manifest.tileCount = totalTiles;
       manifest.tileProvider = buildTileProviderManifest(layerInfo);
 
-      const cache = 'caches' in self ? await caches.open('mapping-elf-tiles') : null;
+      const cache = 'caches' in self ? await caches.open(OFFLINE_TILE_CACHE_NAME) : null;
+      const cachedTileUrls = new Set();
+      let downloadedTileCount = 0;
       onProgress(0, totalTiles, 'tiles');
 
       const chunkSize = 10;
@@ -147,15 +153,30 @@ export class MapPackExporter {
         const chunk = tiles.slice(i, i + chunkSize);
         await Promise.all(
           chunk.map(async ({ z, x, y }) => {
-            const blob = await this._fetchTile(layerInfo.urlTemplate, z, x, y, cache);
-            if (blob) {
-              zip.file(`tiles/${layerInfo.name}/${z}/${x}/${y}.png`, blob);
+            const result = await this._fetchTile(layerInfo.urlTemplate, z, x, y, cache);
+            if (result?.blob) {
+              zip.file(`tiles/${layerInfo.name}/${z}/${x}/${y}.png`, result.blob);
+              downloadedTileCount++;
+              (result.cacheUrls || []).forEach((url) => cachedTileUrls.add(url));
             }
             done++;
             onProgress(done, totalTiles, 'tiles');
           })
         );
       }
+
+      await addOfflineTilePack({
+        source: 'export',
+        status: downloadedTileCount === totalTiles ? 'complete' : 'incomplete',
+        layer: layerInfo.name,
+        bounds: manifest.bounds,
+        minZoom,
+        maxZoom,
+        expectedTileCount: totalTiles,
+        cachedTileCount: downloadedTileCount,
+        provider: manifest.tileProvider,
+        tileUrls: [...cachedTileUrls],
+      });
     }
 
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
@@ -189,7 +210,7 @@ export class MapPackExporter {
       for (const url of candidates) {
         try {
           const hit = await cache.match(url);
-          if (hit) return await hit.blob();
+          if (hit) return { blob: await hit.blob(), cacheUrls: [url] };
         } catch (_) { /* fall through */ }
       }
     }
@@ -198,10 +219,14 @@ export class MapPackExporter {
         const resp = await fetch(url, { mode: 'cors' });
         if (resp.ok) {
           const blob = await resp.blob();
+          const cacheUrls = [];
           if (cache) {
-            try { await cache.put(url, new Response(blob, { headers: resp.headers })); } catch (_) {}
+            try {
+              await cache.put(url, new Response(blob, { headers: resp.headers }));
+              cacheUrls.push(url);
+            } catch (_) {}
           }
-          return blob;
+          return { blob, cacheUrls };
         }
       } catch (_) { /* try next */ }
     }

@@ -116,6 +116,35 @@ async function writeStateOnlyMapPack(filePath, state) {
   await fs.writeFile(filePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
 }
 
+async function writeTilesOnlyMapPack(filePath) {
+  const zip = new JSZip();
+  const tiles = [
+    { z: 8, x: 214, y: 109 },
+    { z: 8, x: 215, y: 109 },
+  ];
+  zip.file('manifest.json', JSON.stringify({
+    version: 1,
+    generator: 'Mapping Elf Test',
+    createdAt: '2026-05-18T00:00:00.000Z',
+    includes: { route: false, tiles: true, state: false },
+    layer: 'topo',
+    bounds: { north: 24.3, south: 24.2, east: 121.5, west: 121.4 },
+    minZoom: 8,
+    maxZoom: 8,
+    tileCount: tiles.length,
+    tileProvider: {
+      id: 'opentopomap',
+      name: 'OpenTopoMap',
+      attribution: '(c) OpenTopoMap contributors',
+      homepage: 'https://opentopomap.org/about',
+    },
+  }, null, 2));
+  tiles.forEach(({ z, x, y }) => {
+    zip.file(`tiles/topo/${z}/${x}/${y}.png`, transparentPng);
+  });
+  await fs.writeFile(filePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
+}
+
 async function readMapPackManifest(filePath) {
   const zip = await JSZip.loadAsync(await fs.readFile(filePath));
   const manifest = JSON.parse(await zip.file('manifest.json').async('string'));
@@ -129,6 +158,29 @@ function parseTileEstimate(text) {
   const match = String(text || '').match(/\d+/);
   expect(match, `tile estimate should contain a count: ${text}`).toBeTruthy();
   return Number(match[0]);
+}
+
+async function clearOfflineTileCaches(page) {
+  await page.evaluate(async () => {
+    if (!('caches' in window)) return;
+    await caches.delete('mapping-elf-tiles');
+    await caches.delete('mapping-elf-tile-index');
+  });
+}
+
+async function readOfflineTileIndex(page) {
+  return page.evaluate(async () => {
+    const cache = await caches.open('mapping-elf-tile-index');
+    const response = await cache.match('https://mapping-elf.local/offline-tile-index.json');
+    return response ? response.json() : null;
+  });
+}
+
+async function countCachedTiles(page) {
+  return page.evaluate(async () => {
+    const cache = await caches.open('mapping-elf-tiles');
+    return (await cache.keys()).length;
+  });
 }
 
 async function downloadExport(page, testInfo, fmt, configure = async () => {}) {
@@ -246,6 +298,46 @@ test('map-pack disables tile export for providers outside the allow-list', async
   expect(manifest.tileCount).toBe(0);
   expect(manifest.tileProvider).toBeNull();
   expect(tileFiles).toHaveLength(0);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('map-pack tile import writes an offline tile pack index', async ({ page }, testInfo) => {
+  const consoleErrors = await openApp(page);
+  await clearOfflineTileCaches(page);
+
+  const packPath = testInfo.outputPath('tile-index.melmap');
+  await writeTilesOnlyMapPack(packPath);
+
+  await importFixture(page, packPath);
+  await expect(page.locator('#mappack-import-modal')).toBeVisible();
+  await expect(page.locator('#mappack-restore-route')).toBeDisabled();
+  await expect(page.locator('#mappack-restore-tiles')).toBeChecked();
+  await page.locator('#btn-mappack-import-confirm').click();
+  await expect(page.locator('#mappack-import-modal')).toHaveClass(/hidden/);
+
+  await expect.poll(async () => {
+    const index = await readOfflineTileIndex(page);
+    return Object.keys(index?.packs || {}).length;
+  }).toBe(1);
+
+  const index = await readOfflineTileIndex(page);
+  const packs = Object.values(index.packs);
+  expect(packs).toHaveLength(1);
+  expect(packs[0]).toMatchObject({
+    source: 'import',
+    status: 'complete',
+    layer: 'topo',
+    expectedTileCount: 2,
+    cachedTileCount: 2,
+    tileUrlCount: 6,
+    provider: {
+      id: 'opentopomap',
+      name: 'OpenTopoMap',
+    },
+  });
+  expect(packs[0].tileUrls.every((url) => url.includes('tile.opentopomap.org'))).toBe(true);
+  expect(await countCachedTiles(page)).toBe(packs[0].tileUrlCount);
 
   expect(consoleErrors).toEqual([]);
 });

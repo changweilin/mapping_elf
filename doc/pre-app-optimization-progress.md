@@ -67,9 +67,15 @@ Source plan: `doc/pre-app-optimization-plan.md`
   - route/state export remains available;
   - exporter rejects blocked tile exports even if UI state is bypassed;
   - import/export coverage verifies satellite-layer exports stay route-only.
+- Added a first-pass offline tile pack index:
+  - imported/exported tile URLs are tracked in `mapping-elf-tile-index`;
+  - the index stays out of `.melmap` and `localStorage`;
+  - full cache clearing deletes both tile cache and tile index;
+  - a shared delete helper can remove one pack while preserving shared tile URLs;
+  - import/export coverage verifies tile-only `.melmap` imports write the index.
 
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Convert the remaining offline tile strategy into implementation: pack index cleanup and byte-size/downloaded-tile reporting.
+2. Convert the remaining offline tile strategy into implementation: single-pack cleanup UI and byte-size/downloaded-tile reporting.
 3. Profile native WebView behavior with real device builds once the Capacitor shell and plugins are ready.

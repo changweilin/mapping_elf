@@ -4,6 +4,11 @@
  */
 
 import { translatePhrase } from './i18n.js';
+import {
+  OFFLINE_TILE_CACHE_NAME,
+  addOfflineTilePack,
+  clearOfflineTileIndex,
+} from './offlineTileIndex.js';
 
 export class OfflineManager {
   constructor() {
@@ -45,7 +50,7 @@ export class OfflineManager {
       return;
     }
     try {
-      const cache = await caches.open('mapping-elf-tiles');
+      const cache = await caches.open(OFFLINE_TILE_CACHE_NAME);
       const keys = await cache.keys();
       if (this._cacheInfo) {
         this._cacheInfo.querySelector('span').textContent = translatePhrase(`快取瓦片：${keys.length} 個`);
@@ -59,7 +64,8 @@ export class OfflineManager {
 
   async clearCache() {
     if ('caches' in window) {
-      await caches.delete('mapping-elf-tiles');
+      await caches.delete(OFFLINE_TILE_CACHE_NAME);
+      await clearOfflineTileIndex();
       this.updateCacheInfo();
     }
   }
@@ -120,7 +126,8 @@ export class OfflineManager {
 
     if (urlsToCache.length === 0) return;
 
-    const cache = await caches.open('mapping-elf-tiles');
+    const cache = await caches.open(OFFLINE_TILE_CACHE_NAME);
+    const cachedTileUrls = new Set();
     let count = 0;
     onProgress(0, urlsToCache.length);
 
@@ -133,6 +140,7 @@ export class OfflineManager {
           try {
             const resp = await fetch(url, { mode: 'no-cors' });
             await cache.put(url, resp);
+            cachedTileUrls.add(url);
           } catch (e) {
             // Silently ignore individual tile failures
           }
@@ -141,6 +149,23 @@ export class OfflineManager {
       );
       onProgress(count, urlsToCache.length);
     }
+    await addOfflineTilePack({
+      source: 'area-cache',
+      status: cachedTileUrls.size === urlsToCache.length ? 'complete' : 'incomplete',
+      layer: layerInfo.name || null,
+      bounds: {
+        north: bounds.getNorth(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        west: bounds.getWest(),
+      },
+      minZoom: minZ,
+      maxZoom: maxZ,
+      expectedTileCount: urlsToCache.length,
+      cachedTileCount: cachedTileUrls.size,
+      provider: layerInfo.provider || null,
+      tileUrls: [...cachedTileUrls],
+    });
     this.updateCacheInfo();
   }
 
@@ -178,6 +203,7 @@ export class OfflineManager {
       const [z, x, y] = key.split('/').map(Number);
       return this.buildTileUrl(layerInfo.urlTemplate, z, x, y);
     });
+    const routeBounds = this._boundsForCoords(routeCoords);
 
     if (urlsToCache.length > 5000) {
       throw new Error(`路線範圍過大 (${urlsToCache.length} 張瓦片)，請縮短路線後再試。`);
@@ -185,7 +211,8 @@ export class OfflineManager {
 
     if (urlsToCache.length === 0) return;
 
-    const cache = await caches.open('mapping-elf-tiles');
+    const cache = await caches.open(OFFLINE_TILE_CACHE_NAME);
+    const cachedTileUrls = new Set();
     let count = 0;
     onProgress(0, urlsToCache.length);
 
@@ -197,6 +224,7 @@ export class OfflineManager {
           try {
             const resp = await fetch(url, { mode: 'no-cors' });
             await cache.put(url, resp);
+            cachedTileUrls.add(url);
           } catch (e) {
             // Silently ignore individual tile failures
           }
@@ -205,12 +233,36 @@ export class OfflineManager {
       );
       onProgress(count, urlsToCache.length);
     }
+    await addOfflineTilePack({
+      source: 'route-cache',
+      status: cachedTileUrls.size === urlsToCache.length ? 'complete' : 'incomplete',
+      layer: layerInfo.name || null,
+      bounds: routeBounds,
+      minZoom: minZ,
+      maxZoom: maxZ,
+      expectedTileCount: urlsToCache.length,
+      cachedTileCount: cachedTileUrls.size,
+      provider: layerInfo.provider || null,
+      tileUrls: [...cachedTileUrls],
+    });
     this.updateCacheInfo();
   }
 
   /**
    * Sample route coordinates at a given interval (meters)
    */
+  _boundsForCoords(coords) {
+    if (!coords?.length) return null;
+    const lats = coords.map(([lat]) => lat);
+    const lngs = coords.map(([, lng]) => lng);
+    return {
+      north: Math.max(...lats),
+      south: Math.min(...lats),
+      east: Math.max(...lngs),
+      west: Math.min(...lngs),
+    };
+  }
+
   _sampleRoute(coords, intervalMeters) {
     if (coords.length === 0) return [];
     const result = [coords[0]];
