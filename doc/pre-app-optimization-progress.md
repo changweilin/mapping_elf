@@ -6,153 +6,37 @@ Source plan: `doc/pre-app-optimization-plan.md`
 
 ## Execution Order
 
-| Sprint | Scope | Status | Verification |
+| Sprint | Scope | Status | Remaining verification |
 | --- | --- | --- | --- |
-| Sprint 1 | Build mode, platform adapter, external platform calls, export channel split | Done | `npm run build:web`, `npm run build:app`, smoke/import-export tests |
-| Sprint 2 | Import/export round-trip tests, state contract, reset/import behavior | Done | `npm run test:import-export`, `npm run test:numeric` |
-| Sprint 3 | Error states, mobile UI QA, safe area, WebView differences | In progress | `npm run test:mobile`, browser mobile smoke checklist |
-| Sprint 4 | Long-route performance, request cancellation guards, offline strategy, privacy data flow | In progress | Long route fixture, request-race tests, privacy review |
+| Sprint 1 | Build mode, platform adapter, external platform calls, export channel split | Complete | Keep covered by regular build and smoke/import-export tests. |
+| Sprint 2 | Import/export round-trip tests, state contract, reset/import behavior | Complete | Keep covered by import/export and numeric regression tests. |
+| Sprint 3 | Error states, mobile UI QA, safe area, WebView differences | Needs device QA | Android device/emulator bridge checks; iOS Mac/Xcode validation. |
+| Sprint 4 | Long-route performance, request cancellation guards, offline strategy, privacy data flow | Needs release-readiness review | Provider terms, real-device offline tiles, privacy/store review, dependency audit. |
 
-## Completed In This Pass
+## Completed Scope Summary
 
-- Added Vite Web/App build modes:
-  - Web/default base: `/mapping_elf/`
-  - App mode base: `./`
-  - Scripts: `build:web`, `build:app`, `cap:sync`
-- Added a first-stage platform adapter under `src/platform/`:
-  - external URL opening
-  - file download
-  - file picking bridge
-  - file reading
-  - sharing fallback
-  - geolocation
-  - vibration
-  - network status
-- Routed existing export/import UI through the platform adapter where it affects App compatibility.
-- Added platform-neutral GPX/KML download payload helpers while keeping legacy `download()` wrappers.
-- Changed `.melmap` download to use the shared platform adapter.
-- Added `test:import-export` with a Playwright round-trip covering GPX, KML, and route-only `.melmap`.
-- Added `doc/state-contract.md`.
-- Added `doc/privacy-data-flow.md`.
+Completed details have been cleaned out of this progress file. High-level completed coverage now includes:
 
-## Completed In Next Round
+- Web/App build split and Capacitor sync helpers.
+- Platform adapter plus native plugin bridges for browser, files/share, location, haptics, network status, and Android back handling.
+- Import/export round-trip coverage for GPX, KML, and `.melmap`.
+- State contract, privacy inventory, offline tile strategy, provider guard, tile-pack index, and offline pack management.
+- Mobile UI, request-race, stale-result, long-route, numeric, chunk, and smoke regression coverage.
+- Android debug build verification with `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-- Added App-focused test fixtures under `data/app-test-routes/`:
-  - short GPX with Chinese names, elevation, date/time, weather extensions, and an interval point
-  - compact KML with Chinese names, weather description rows, and a route line
-- Expanded `test:import-export` to cover:
-  - Chinese GPX fixture import
-  - embedded weather/date/time metadata
-  - interval-point preservation
-  - `.melmap` state restore allow-list behavior
-  - reset defaults clearing app state while preserving favorites
-- Added `test:mobile` and `test/mobile-app-qa.spec.js`.
-- Added modal safe-area padding and viewport-bounded scrolling for small/mobile landscape screens.
-- Added route-planning version guards so stale route alternatives are discarded before they redraw the map, elevation chart, stats, or weather table.
-- Added geocode run guards so late Nominatim/Overpass results do not relabel a newer waypoint set.
-- Split stale route-plan results from real route failures and added an offline-specific route error message.
-- Added `test/request-race.spec.js` for stale route-plan and stale geocode discard coverage.
-- Prevented pending route recalculation from restarting after an imported track replaces the route while planning is still in flight.
-- Added `test/long-route-performance.spec.js` with an in-memory 901-point GPX baseline import check.
-- Expanded long-route performance coverage with a dense imported GPX containing 720 track points, 24 waypoint anchors, and 48 interval markers, including weather-table column and locked interval input assertions.
-- Aligned GPX no-waypoint fallback sampling with KML so generated waypoint anchors always include the real final track point without duplicating it.
-- Expanded mobile viewport QA to cover `.melmap` import modal bounds and touch expansion of the bottom weather panel.
-- Expanded mobile viewport QA to cover touch long-press waypoint drag and delete flows in a small landscape viewport.
-- Added `doc/offline-tile-strategy.md` with tile-count sizing rules, per-route cache cleanup design, provider gating, and release-time license review notes.
-- Extracted `.melmap` tile-count estimation into `src/modules/tileEstimator.js` so export modal estimates and map-pack tile enumeration share the same zoom/cap rules, with numeric regression coverage.
-- Added import/export regression coverage that compares the `.melmap` export modal tile estimate with the exported `manifest.tileCount`.
-- Added optional `.melmap` `manifest.tileProvider` metadata sourced from map layer provider attribution when tiles are included.
-- Added a provider allow-list guard for `.melmap` tile export:
-  - blocked providers disable only the tile checkbox;
-  - route/state export remains available;
-  - exporter rejects blocked tile exports even if UI state is bypassed;
-  - import/export coverage verifies satellite-layer exports stay route-only.
-- Added a first-pass offline tile pack index:
-  - imported/exported tile URLs are tracked in `mapping-elf-tile-index`;
-  - the index stays out of `.melmap` and `localStorage`;
-  - full cache clearing deletes both tile cache and tile index;
-  - a shared delete helper can remove one pack while preserving shared tile URLs;
-  - import/export coverage verifies tile-only `.melmap` imports write the index.
-- Added file-management UI for indexed offline tile packs:
-  - shows the current online/offline/cache status in the file-management panel;
-  - lists imported/exported tile packs from `mapping-elf-tile-index`;
-  - supports deleting one pack without clearing unrelated cached URLs;
-  - keeps the existing "clear all tiles" behavior available.
-- Added actual `.melmap` tile download reporting:
-  - exports record `manifest.downloadedTileCount` and `manifest.downloadedTileBytes`;
-  - export completion reports final ZIP size;
-  - import/export coverage verifies downloaded tile fields stay bounded by the estimated `manifest.tileCount`.
-- Added pre-export `.melmap` size preview and richer offline-pack details:
-  - tile import/export writes measured `tileBytes` into the local pack index;
-  - the export modal estimates byte size from previous same-provider/same-layer samples when available;
-  - the offline pack list shows measured byte size alongside tile and URL counts.
-- Centralized remaining online/offline checks behind the platform adapter:
-  - `webPlatform` now exposes `subscribeNetworkStatus()`;
-  - the file-management offline status and route-planning offline error use `platform.getNetworkStatus()`;
-  - future Capacitor Network plugin wiring can replace the adapter without changing route or UI flow code.
-- Expanded the Capacitor platform adapter with optional native plugin bridges:
-  - Browser external links;
-  - Filesystem + Share export/share flow;
-  - Geolocation;
-  - Haptics vibration;
-  - Network status subscription;
-  - App back-button/exit hooks;
-  - all paths keep Web fallbacks when plugins are unavailable.
-- Added a native-only Android back-button close order:
-  - export modal;
-  - `.melmap` import modal;
-  - favorites replace modal;
-  - favorites modal;
-  - open weather cards;
-  - search results;
-  - side panel;
-  - route/weather busy guard;
-  - app exit only when nothing else handled the back action.
-- Added Capacitor `appendUserAgent: "MappingElf/0.0.0"` so native WebView requests can identify the app consistently.
-- Installed and synced the chosen Capacitor native plugins:
-  - `@capacitor/app@8.1.0`
-  - `@capacitor/browser@8.0.3`
-  - `@capacitor/filesystem@8.1.2`
-  - `@capacitor/geolocation@8.2.0`
-  - `@capacitor/haptics@8.0.2`
-  - `@capacitor/network@8.0.1`
-  - `@capacitor/share@8.0.1`
-- Normalized generated iOS Swift Package paths to forward slashes after Windows `cap sync`.
-- Added `scripts/normalize-capacitor-spm-paths.mjs` to keep future `cap:sync` runs from reintroducing Windows path separators in `Package.swift`.
-- Added App build helper scripts:
-  - `cap:sync:android`
-  - `cap:sync:ios`
-  - `android:build:debug`
+## Remaining Work
 
-## Completed In Native Build Round
+1. Install `android/app/build/outputs/apk/debug/app-debug.apk` on an Android device or emulator and run the native bridge checklist in `doc/native-app-qa.md`.
+2. Validate Android real-device behavior for app launch, back button, external browser, file export/share, file import, location permission, network status, haptics, and offline tiles.
+3. Profile native WebView behavior on a real Android device now that the debug APK compiles.
+4. Validate iOS on a Mac/Xcode environment, including safe area, file import/export, external links, and TestFlight readiness.
+5. Re-check offline tile provider terms before any public app release.
+6. Convert `doc/privacy-data-flow.md` into the final privacy policy and store disclosure answers.
+7. Review `npm audit` findings manually before release; avoid automatic broad upgrades unless the impact is understood.
 
-- Added `android/local.properties` to `.gitignore` so local SDK paths stay out of version control.
-- Created a local Android SDK under `C:\tmp\android-sdk` with:
-  - Android SDK Platform 36
-  - Android SDK Build-Tools 35.0.0
-  - Android SDK Platform-Tools
-- Verified Android native debug build:
-  - command: `.\gradlew.bat assembleDebug`
-  - result: `BUILD SUCCESSFUL`
-  - artifact path: `android/app/build/outputs/apk/debug/app-debug.apk`
-- Verified Android build helper:
-  - command: `npm run android:build:debug`
-  - result: `BUILD SUCCESSFUL`
-- Native plugin compile coverage in the debug build included:
-  - `capacitor-app`
-  - `capacitor-browser`
-  - `capacitor-filesystem`
-  - `capacitor-geolocation`
-  - `capacitor-haptics`
-  - `capacitor-network`
-  - `capacitor-share`
-- Observed non-blocking build warnings:
-  - Gradle warns that `flatDir` should be avoided in generated Capacitor/Cordova config.
-  - `@capacitor/filesystem` warns that its `downloadFile` API is deprecated in favor of `@capacitor/file-transfer`; Mapping Elf currently uses `writeFile` + `Share`, not `downloadFile`.
-- Added `doc/native-app-qa.md` with Android/iOS native bridge and offline tile QA checks.
+## Reference Docs
 
-## Next Safe Steps
-
-1. Install `android/app/build/outputs/apk/debug/app-debug.apk` on an Android device/emulator and verify each native bridge.
-2. Continue native-readiness work around provider terms and real-device offline tile behavior.
-3. Profile native WebView behavior with real device builds now that the debug APK compiles.
+- `doc/native-app-qa.md`
+- `doc/offline-tile-strategy.md`
+- `doc/privacy-data-flow.md`
+- `doc/app-deployment-plan.md`
