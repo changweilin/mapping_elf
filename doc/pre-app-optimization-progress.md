@@ -82,9 +82,13 @@ Source plan: `doc/pre-app-optimization-plan.md`
   - exports record `manifest.downloadedTileCount` and `manifest.downloadedTileBytes`;
   - export completion reports final ZIP size;
   - import/export coverage verifies downloaded tile fields stay bounded by the estimated `manifest.tileCount`.
+- Added pre-export `.melmap` size preview and richer offline-pack details:
+  - tile import/export writes measured `tileBytes` into the local pack index;
+  - the export modal estimates byte size from previous same-provider/same-layer samples when available;
+  - the offline pack list shows measured byte size alongside tile and URL counts.
 
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Convert the remaining offline tile strategy into implementation: pre-export byte-size preview and richer offline-pack details.
+2. Continue native-readiness work around provider terms, app request identity, and real-device offline tile behavior.
 3. Profile native WebView behavior with real device builds once the Capacitor shell and plugins are ready.

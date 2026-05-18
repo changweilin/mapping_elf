@@ -191,9 +191,16 @@ export class OfflineManager {
     const expected = Number(pack.expectedTileCount || 0);
     const cached = Number(pack.cachedTileCount || 0);
     const urlCount = Number(pack.tileUrlCount || pack.tileUrls?.length || 0);
-    const status = pack.status === 'incomplete' ? ` · ${translatePhrase('不完整')}` : '';
+    const tileSize = this._formatByteSize(pack.tileBytes);
     const createdAt = this._formatPackDate(pack.createdAt);
-    return `${cached}/${expected} ${translatePhrase('張圖磚')} · ${urlCount} URL · ${createdAt}${status}`;
+    const parts = [
+      `${cached}/${expected} ${translatePhrase('張圖磚')}`,
+      ...(tileSize ? [tileSize] : []),
+      `${urlCount} URL`,
+      createdAt,
+    ];
+    if (pack.status === 'incomplete') parts.push(translatePhrase('不完整'));
+    return parts.join(' · ');
   }
 
   _formatPackDate(value) {
@@ -211,6 +218,20 @@ export class OfflineManager {
       'area-cache': '範圍快取',
     };
     return translatePhrase(labels[source] || '離線圖磚包');
+  }
+
+  _formatByteSize(bytes) {
+    const value = Number(bytes || 0);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = value;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    const digits = unitIndex === 0 || size >= 10 ? 0 : 1;
+    return `${size.toFixed(digits)} ${units[unitIndex]}`;
   }
 
   lng2tile(lon, zoom) {

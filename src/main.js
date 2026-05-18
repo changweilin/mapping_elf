@@ -355,6 +355,12 @@ async function ensureMapPackModules() {
   return mapPackModulesPromise;
 }
 
+let offlineTileIndexModulePromise = null;
+async function ensureOfflineTileIndexModule() {
+  offlineTileIndexModulePromise ||= import('./modules/offlineTileIndex.js');
+  return offlineTileIndexModulePromise;
+}
+
 class LazyElevationProfile {
   constructor(canvasId, emptyStateId, onHover, onMarkerClick) {
     this.args = [canvasId, emptyStateId, onHover, onMarkerClick];
@@ -2042,6 +2048,7 @@ window.addEventListener('keydown', (e) => {
 // =========== Map Pack (.melmap) helpers ===========
 
 const OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE = '此圖層暫不支援離線圖磚匯出';
+let mapPackTilePreviewRun = 0;
 
 function getOfflineTileExportPolicy(layerInfo = mapManager.getCurrentLayerInfo()) {
   const policy = layerInfo?.provider?.offlineTileExport;
@@ -2054,20 +2061,48 @@ function getOfflineTileExportPolicy(layerInfo = mapManager.getCurrentLayerInfo()
   return { allowed: true, reason: '' };
 }
 
-function _estimateTileCountForMapPack() {
+function _estimateTileCountForMapPack(layerInfo = mapManager.getCurrentLayerInfo()) {
   if (currentRouteCoords.length < 2) return { count: 0, layer: null };
-  const layerInfo = mapManager.getCurrentLayerInfo();
   if (!layerInfo) return { count: 0, layer: null };
   const bounds = L.latLngBounds(currentRouteCoords).pad(0.05);
   const estimate = estimateMapPackTiles(bounds, layerInfo);
   return { count: estimate.tileCount, layer: mapManager.currentLayerName };
 }
 
+function formatMapPackTileEstimate(est, bytePreview = null) {
+  if (!est?.count) return '';
+  const parts = [`約 ${est.count} 張`];
+  if (est.layer) parts.push(est.layer);
+  if (bytePreview?.estimatedBytes > 0) {
+    parts.push(`${translatePhrase('預估')} ${formatByteSize(bytePreview.estimatedBytes)}`);
+  }
+  return `(${parts.join(',')})`;
+}
+
+async function updateMapPackTileBytePreview(runId, info, est, layerInfo) {
+  if (!info || !est?.count) return;
+  try {
+    const { estimateOfflineTilePackBytes } = await ensureOfflineTileIndexModule();
+    const bytePreview = await estimateOfflineTilePackBytes({
+      layer: est.layer,
+      providerId: layerInfo?.provider?.id,
+      tileCount: est.count,
+    });
+    if (runId !== mapPackTilePreviewRun || !bytePreview?.estimatedBytes) return;
+    if (!info.isConnected || info.dataset.i18n) return;
+    info.textContent = formatMapPackTileEstimate(est, bytePreview);
+  } catch (err) {
+    console.warn('Map pack byte preview failed:', err);
+  }
+}
+
 function updateMapPackTileOptionState() {
   const checkbox = document.getElementById('mappack-inc-tiles');
   const info = document.getElementById('mappack-tiles-info');
   const option = checkbox?.closest('.export-option');
-  const policy = getOfflineTileExportPolicy();
+  const layerInfo = mapManager.getCurrentLayerInfo();
+  const policy = getOfflineTileExportPolicy(layerInfo);
+  const previewRun = ++mapPackTilePreviewRun;
 
   if (!checkbox) return policy;
 
@@ -2099,8 +2134,9 @@ function updateMapPackTileOptionState() {
 
   if (info) {
     delete info.dataset.i18n;
-    const est = _estimateTileCountForMapPack();
-    info.textContent = est.count > 0 ? `(約 ${est.count} 張,${est.layer})` : '';
+    const est = _estimateTileCountForMapPack(layerInfo);
+    info.textContent = formatMapPackTileEstimate(est);
+    updateMapPackTileBytePreview(previewRun, info, est, layerInfo);
   }
   return policy;
 }

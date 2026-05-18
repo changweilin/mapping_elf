@@ -176,6 +176,42 @@ async function readOfflineTileIndex(page) {
   });
 }
 
+async function seedOfflineTilePackSizeSample(page) {
+  await page.evaluate(async () => {
+    const cachedTileCount = 4;
+    const cache = await caches.open('mapping-elf-tile-index');
+    await cache.put('https://mapping-elf.local/offline-tile-index.json', new Response(JSON.stringify({
+      version: 1,
+      packs: {
+        'sample-topo-size': {
+          id: 'sample-topo-size',
+          createdAt: '2026-05-18T00:00:00.000Z',
+          source: 'export',
+          status: 'complete',
+          layer: 'topo',
+          bounds: null,
+          minZoom: 8,
+          maxZoom: 8,
+          expectedTileCount: cachedTileCount,
+          cachedTileCount,
+          tileUrlCount: cachedTileCount,
+          tileBytes: 262144,
+          provider: {
+            id: 'opentopomap',
+            name: 'OpenTopoMap',
+          },
+          tileUrls: Array.from(
+            { length: cachedTileCount },
+            (_, i) => `https://a.tile.opentopomap.org/8/214/${109 + i}.png`
+          ),
+        },
+      },
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  });
+}
+
 async function countCachedTiles(page) {
   return page.evaluate(async () => {
     const cache = await caches.open('mapping-elf-tiles');
@@ -249,10 +285,12 @@ test('map-pack tile estimate matches exported manifest tile count', async ({ pag
 
   await importFixture(page, shortGpx);
   await expectImportedRoute(page);
+  await seedOfflineTilePackSizeSample(page);
 
   const melmapPath = await downloadExport(page, testInfo, 'melmap', async () => {
     await expect(page.locator('#melmap-sub-options')).toBeVisible();
     await expect(page.locator('#mappack-inc-tiles')).toBeChecked();
+    await expect(page.locator('#mappack-tiles-info')).toContainText(/\b(KB|MB|GB)\b/);
     const estimatedTileCount = parseTileEstimate(await page.locator('#mappack-tiles-info').textContent());
     expect(estimatedTileCount).toBeGreaterThan(0);
     await page.evaluate((count) => {
@@ -341,12 +379,14 @@ test('map-pack tile import writes and clears one offline tile pack index entry',
       name: 'OpenTopoMap',
     },
   });
+  expect(packs[0].tileBytes).toBeGreaterThan(0);
   expect(packs[0].tileUrls.every((url) => url.includes('tile.opentopomap.org'))).toBe(true);
   expect(await countCachedTiles(page)).toBe(packs[0].tileUrlCount);
 
   await clickStable(page, '#file-management-toggle-header');
   await expect(page.locator('#offline-pack-list .offline-pack-item')).toHaveCount(1);
   await expect(page.locator('#offline-pack-list')).toContainText(/OpenTopoMap/);
+  await expect(page.locator('#offline-pack-list')).toContainText(/\b(B|KB|MB|GB)\b/);
   await page.locator('#offline-pack-list [data-delete-pack-id]').click();
   await expect.poll(async () => {
     const indexAfterDelete = await readOfflineTileIndex(page);

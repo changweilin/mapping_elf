@@ -22,13 +22,30 @@ function emptyIndex() {
   };
 }
 
+function toNonNegativeNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
 function normalizeIndex(value) {
   if (!value || typeof value !== 'object') return emptyIndex();
   const packs = value.packs && typeof value.packs === 'object' ? value.packs : {};
   return {
     version: OFFLINE_TILE_INDEX_VERSION,
     packs: Object.fromEntries(
-      Object.entries(packs).filter(([, pack]) => pack && typeof pack === 'object')
+      Object.entries(packs)
+        .filter(([, pack]) => pack && typeof pack === 'object')
+        .map(([id, pack]) => {
+          const tileUrls = uniqueUrls(pack.tileUrls);
+          return [id, {
+            ...pack,
+            expectedTileCount: toNonNegativeNumber(pack.expectedTileCount),
+            cachedTileCount: toNonNegativeNumber(pack.cachedTileCount),
+            tileUrlCount: toNonNegativeNumber(pack.tileUrlCount) || tileUrls.length,
+            tileBytes: toNonNegativeNumber(pack.tileBytes ?? pack.downloadedTileBytes),
+            tileUrls,
+          }];
+        })
     ),
   };
 }
@@ -92,6 +109,7 @@ export async function addOfflineTilePack(record = {}) {
     expectedTileCount: Number(record.expectedTileCount || 0),
     cachedTileCount: Number(record.cachedTileCount || 0),
     tileUrlCount: tileUrls.length,
+    tileBytes: toNonNegativeNumber(record.tileBytes ?? record.downloadedTileBytes),
     provider: record.provider || null,
     tileUrls,
   };
@@ -136,4 +154,62 @@ export async function deleteOfflineTilePack(packId) {
   delete index.packs[packId];
   await writeOfflineTileIndex(index);
   return { deleted, found: true };
+}
+
+function sameToken(a, b) {
+  return !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+}
+
+function summarizeByteSamples(packs, predicate, source) {
+  let totalBytes = 0;
+  let totalTiles = 0;
+  let samplePackCount = 0;
+
+  packs.forEach((pack) => {
+    if (!predicate(pack)) return;
+    const tileBytes = toNonNegativeNumber(pack.tileBytes ?? pack.downloadedTileBytes);
+    const cachedTileCount = toNonNegativeNumber(pack.cachedTileCount);
+    if (tileBytes <= 0 || cachedTileCount <= 0) return;
+    totalBytes += tileBytes;
+    totalTiles += cachedTileCount;
+    samplePackCount++;
+  });
+
+  if (totalBytes <= 0 || totalTiles <= 0) return null;
+  return {
+    source,
+    averageTileBytes: totalBytes / totalTiles,
+    sampleTileCount: totalTiles,
+    samplePackCount,
+  };
+}
+
+export async function estimateOfflineTilePackBytes({ layer, providerId, tileCount } = {}) {
+  const count = toNonNegativeNumber(tileCount);
+  if (count <= 0) return null;
+
+  const index = await readOfflineTileIndex();
+  const packs = Object.values(index.packs || {});
+  const providerEstimate = summarizeByteSamples(
+    packs,
+    (pack) => sameToken(pack.provider?.id, providerId),
+    'provider'
+  );
+  const layerEstimate = summarizeByteSamples(
+    packs,
+    (pack) => sameToken(pack.layer, layer),
+    'layer'
+  );
+  const fallbackEstimate = summarizeByteSamples(
+    packs,
+    () => true,
+    'all'
+  );
+  const sample = providerEstimate || layerEstimate || fallbackEstimate;
+  if (!sample) return null;
+
+  return {
+    ...sample,
+    estimatedBytes: Math.round(sample.averageTileBytes * count),
+  };
 }

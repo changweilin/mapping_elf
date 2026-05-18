@@ -12,7 +12,7 @@ This note turns the pre-app optimization offline-map item into an implementation
 - Tile exports use the route bounds padded by 5%, then enumerate zoom levels from `8` through `min(17, layerInfo.maxZoom)` until the 8000-tile cap is reached.
 - Exported tile files are stored as `tiles/{layer}/{z}/{x}/{y}.png`.
 - Import restores tiles into `mapping-elf-tiles` and expands subdomain/retina URL variants so Leaflet can hit the cache regardless of the chosen subdomain.
-- Imported/exported tile URLs are tracked in `mapping-elf-tile-index` so a future UI can remove one pack without guessing from the current route.
+- Imported/exported tile URLs and measured tile bytes are tracked in `mapping-elf-tile-index` so the UI can remove one pack and estimate future pack size without guessing from the current route.
 - The existing "clear cache" behavior deletes the whole `mapping-elf-tiles` cache and the tile pack index.
 - The file-management panel lists indexed offline tile packs and can delete one pack while preserving any tile URLs still referenced by other packs.
 
@@ -45,12 +45,10 @@ Implemented guard:
 - Tile exports record actual `manifest.downloadedTileCount` and `manifest.downloadedTileBytes`, and the export success message reports the final ZIP size.
 - Tile-enabled `.melmap` exports include optional `manifest.tileProvider` metadata with provider id, name, attribution, and homepage when available.
 - Provider allow-list metadata lives with the map layer definitions. Blocked providers disable only the tile checkbox, leaving route and state export available.
-- Tile import/export writes a local pack index in `mapping-elf-tile-index`. The index stores source, layer, bounds, zoom range, provider, status, tile counts, and concrete cache URLs; it is not embedded in `.melmap` and is not stored in `localStorage`.
-- The indexed packs render in the file-management panel with per-pack delete controls, and `test/import-export.spec.js` verifies deleting one imported pack removes its cached URLs and index entry.
-
-Future implementation guard:
-
-- For richer byte-size display, surface the measured `downloadedTileBytes` and `zipBlob.size` before or during export, not only in the completion message. Do not persist route coordinates for analytics.
+- Tile import/export writes a local pack index in `mapping-elf-tile-index`. The index stores source, layer, bounds, zoom range, provider, status, tile counts, measured tile bytes, and concrete cache URLs; it is not embedded in `.melmap` and is not stored in `localStorage`.
+- The export modal uses measured bytes from previous indexed packs to show a rough pre-export byte-size preview. It prefers same-provider samples, then same-layer samples, then all measured packs; if no measured sample exists it keeps the original tile-count-only estimate.
+- The indexed packs render in the file-management panel with byte size and per-pack delete controls, and `test/import-export.spec.js` verifies deleting one imported pack removes its cached URLs and index entry.
+- Byte-size estimates never persist route coordinates for analytics.
 
 ## Cleanup Model
 
@@ -69,6 +67,7 @@ Recommended index:
       "bounds": { "north": 0, "south": 0, "east": 0, "west": 0 },
       "minZoom": 8,
       "maxZoom": 15,
+      "tileBytes": 1048576,
       "tileUrls": ["https://.../{z}/{x}/{y}.png"]
     }
   }

@@ -180,6 +180,7 @@ export class MapPackExporter {
         maxZoom,
         expectedTileCount: totalTiles,
         cachedTileCount: downloadedTileCount,
+        tileBytes: downloadedTileBytes,
         provider: manifest.tileProvider,
         tileUrls: [...cachedTileUrls],
       });

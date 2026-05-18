@@ -121,6 +121,7 @@ export class MapPackImporter {
       const total = tileEntries.length;
       const cachedTileUrls = new Set();
       let restoredTileEntries = 0;
+      let restoredTileBytes = 0;
       let done = 0;
       onProgress(0, total, 'tiles');
 
@@ -139,6 +140,7 @@ export class MapPackImporter {
               cachedTileUrls.add(u);
             }));
             restoredTileEntries++;
+            restoredTileBytes += blob.size || 0;
           } catch (e) { console.warn('Tile restore failed', e); }
           done++;
           onProgress(done, total, 'tiles');
@@ -153,10 +155,12 @@ export class MapPackImporter {
         maxZoom: manifest.maxZoom ?? null,
         expectedTileCount: manifest.tileCount || total,
         cachedTileCount: restoredTileEntries,
+        tileBytes: restoredTileBytes || manifest.downloadedTileBytes || 0,
         provider: manifest.tileProvider || null,
         tileUrls: [...cachedTileUrls],
       });
       result.tileCount = total;
+      result.tileBytes = restoredTileBytes;
       result.layer = layer;
       result.tilePackId = pack?.id || null;
     }
