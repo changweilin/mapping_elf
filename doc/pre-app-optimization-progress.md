@@ -51,10 +51,14 @@ Source plan: `doc/pre-app-optimization-plan.md`
 - Added route-planning version guards so stale route alternatives are discarded before they redraw the map, elevation chart, stats, or weather table.
 - Added geocode run guards so late Nominatim/Overpass results do not relabel a newer waypoint set.
 - Split stale route-plan results from real route failures and added an offline-specific route error message.
+- Added `test/request-race.spec.js` for stale route-plan and stale geocode discard coverage.
+- Prevented pending route recalculation from restarting after an imported track replaces the route while planning is still in flight.
+- Added `test/long-route-performance.spec.js` with an in-memory 901-point GPX baseline import check.
+- Aligned GPX no-waypoint fallback sampling with KML so generated waypoint anchors always include the real final track point without duplicating it.
 
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
 2. Expand mobile viewport QA to waypoint touch flows, bottom panel, and import modal.
-3. Add targeted request-race tests for route/geocode stale-result discards.
+3. Broaden long-route performance coverage to dense waypoint lists and interval-heavy weather columns.
 4. Add offline tile strategy details for size estimation, per-route cleanup, and provider license notes.

@@ -851,6 +851,16 @@ function getRoutePlanningErrorMessage(err) {
   return '路徑計算失敗，請稍後再試';
 }
 
+function emitTestEvent(type, detail = {}) {
+  const hooks = typeof window !== 'undefined' ? window.__mappingElfTestHooks : null;
+  if (!hooks) return;
+  try {
+    const event = { type, detail };
+    if (Array.isArray(hooks.events)) hooks.events.push(event);
+    if (typeof hooks.onEvent === 'function') hooks.onEvent(event);
+  } catch (_) { /* test hooks must never affect app behavior */ }
+}
+
 // =========== Undo/Redo History ===========
 // Snapshot-based history for all route-planning actions:
 // waypoint add/remove/drag/reorder/clear, custom-name edits, nav-mode toggle, import.
@@ -2447,6 +2457,10 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
         : waypoints;
     const routeAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
     if (isRoutePlanSnapshotStale(routePlanSnapshot)) {
+      emitTestEvent('route-plan-stale-discard', {
+        waypointCount: mapManager.waypoints.length,
+        importedTrackMode,
+      });
       pendingUpdate = true;
     } else {
       allAlternatives = routeAlternatives;
@@ -2507,10 +2521,14 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   isProcessing = false;
   busyTask.set({ detail: '完成', progress: 100 });
 
-  if (pendingUpdate) {
+  const shouldRunPendingRoute = pendingUpdate
+    && !importedTrackMode
+    && mapManager.waypoints.length >= 2;
+  if (shouldRunPendingRoute) {
     busyTask.end();
     debouncedCalculateRoute(mapManager.waypoints);
   } else {
+    pendingUpdate = false;
     busyTask.end();
   }
 }, 500);
@@ -5063,12 +5081,18 @@ async function geocodeWaypoints(waypoints) {
     || waypointKey !== getWaypointSnapshotKey(mapManager.waypoints);
 
   for (let i = 0; i < waypoints.length; i++) {
-    if (isStale()) return;
+    if (isStale()) {
+      emitTestEvent('geocode-stale-discard', { index: i });
+      return;
+    }
     const [lat, lng] = waypoints[i];
     try {
       await enqueueGeocode(lat, lng);
     } catch (_) { /* swallow; next point still queues */ }
-    if (isStale()) return;
+    if (isStale()) {
+      emitTestEvent('geocode-stale-discard', { index: i });
+      return;
+    }
     _applyPlaceNameToDOM();
   }
 }

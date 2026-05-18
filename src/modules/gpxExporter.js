@@ -293,16 +293,15 @@ export class GpxExporter {
         });
       } else if (trackPoints.length > 0) {
         const step = Math.max(1, Math.floor(trackPoints.length / 10));
-        for (let i = 0; i < trackPoints.length; i += step) {
+        for (let i = 0; i < trackPoints.length - 1; i += step) {
           const pt = trackPoints[i];
           waypoints.push([pt.lat, pt.lon]);
           segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: pt.ele ?? null, cumDistM: null, fileOrder: i });
         }
-        if (trackPoints.length % step !== 0) {
-          const last = trackPoints[trackPoints.length - 1];
-          waypoints.push([last.lat, last.lon]);
-          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: last.ele ?? null, cumDistM: null, fileOrder: trackPoints.length });
-        }
+        const lastIndex = trackPoints.length - 1;
+        const last = trackPoints[lastIndex];
+        waypoints.push([last.lat, last.lon]);
+        segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: last.ele ?? null, cumDistM: null, fileOrder: lastIndex });
       }
     }
 
