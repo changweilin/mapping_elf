@@ -20,6 +20,7 @@ assets/promos-first-generated-after-plan/
 .vscode/*
 !.vscode/extensions.json
 .idea
+android/local.properties
 .DS_Store
 *.suo
 *.ntvs*

@@ -1,7 +1,7 @@
 # Pre-App Optimization Progress
 
 Created: 2026-05-18
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 Source plan: `doc/pre-app-optimization-plan.md`
 
 ## Execution Order
@@ -119,9 +119,40 @@ Source plan: `doc/pre-app-optimization-plan.md`
   - `@capacitor/share@8.0.1`
 - Normalized generated iOS Swift Package paths to forward slashes after Windows `cap sync`.
 - Added `scripts/normalize-capacitor-spm-paths.mjs` to keep future `cap:sync` runs from reintroducing Windows path separators in `Package.swift`.
+- Added App build helper scripts:
+  - `cap:sync:android`
+  - `cap:sync:ios`
+  - `android:build:debug`
+
+## Completed In Native Build Round
+
+- Added `android/local.properties` to `.gitignore` so local SDK paths stay out of version control.
+- Created a local Android SDK under `C:\tmp\android-sdk` with:
+  - Android SDK Platform 36
+  - Android SDK Build-Tools 35.0.0
+  - Android SDK Platform-Tools
+- Verified Android native debug build:
+  - command: `.\gradlew.bat assembleDebug`
+  - result: `BUILD SUCCESSFUL`
+  - artifact path: `android/app/build/outputs/apk/debug/app-debug.apk`
+- Verified Android build helper:
+  - command: `npm run android:build:debug`
+  - result: `BUILD SUCCESSFUL`
+- Native plugin compile coverage in the debug build included:
+  - `capacitor-app`
+  - `capacitor-browser`
+  - `capacitor-filesystem`
+  - `capacitor-geolocation`
+  - `capacitor-haptics`
+  - `capacitor-network`
+  - `capacitor-share`
+- Observed non-blocking build warnings:
+  - Gradle warns that `flatDir` should be avoided in generated Capacitor/Cordova config.
+  - `@capacitor/filesystem` warns that its `downloadFile` API is deprecated in favor of `@capacitor/file-transfer`; Mapping Elf currently uses `writeFile` + `Share`, not `downloadFile`.
+- Added `doc/native-app-qa.md` with Android/iOS native bridge and offline tile QA checks.
 
 ## Next Safe Steps
 
-1. Verify each native bridge on Android device/emulator and iOS simulator/device.
+1. Install `android/app/build/outputs/apk/debug/app-debug.apk` on an Android device/emulator and verify each native bridge.
 2. Continue native-readiness work around provider terms and real-device offline tile behavior.
-3. Profile native WebView behavior with real device builds now that the plugin shell is synced.
+3. Profile native WebView behavior with real device builds now that the debug APK compiles.
