@@ -8202,6 +8202,59 @@ function closeWeatherCard(colIdx, options = {}) {
   return prev;
 }
 
+function isVisibleOverlay(el) {
+  return !!el && !el.classList.contains('hidden');
+}
+
+function closeOpenWeatherCardsForBackButton() {
+  if (_wcStates.size === 0) return false;
+  const openIndices = Array.from(_wcStates.keys());
+  openIndices.forEach((idx) => closeWeatherCard(idx));
+  return true;
+}
+
+function handleNativeBackButton() {
+  if (isVisibleOverlay(exportModal)) {
+    closeExportModal();
+    return;
+  }
+  if (isVisibleOverlay(mappackImportModal)) {
+    _closeMappackImportModal();
+    return;
+  }
+  if (isVisibleOverlay(favoritesReplaceModal)) {
+    closeReplaceModal();
+    return;
+  }
+  if (isVisibleOverlay(favoritesModal)) {
+    closeFavoritesModal();
+    return;
+  }
+  if (closeOpenWeatherCardsForBackButton()) return;
+
+  const searchResults = document.getElementById('search-results');
+  if (searchResults && searchResults.style.display !== 'none') {
+    searchResults.style.display = 'none';
+    return;
+  }
+
+  if (sidePanel?.classList.contains('open')) {
+    sidePanel.classList.remove('open');
+    return;
+  }
+
+  if (isRouteWeatherBusy()) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
+
+  platform.exitApp?.();
+}
+
+if (platform.isNative && typeof platform.subscribeBackButton === 'function') {
+  platform.subscribeBackButton(handleNativeBackButton);
+}
+
 /** Set the card mode and re-render. */
 function setWeatherCardMode(colIdx, mode, options = {}) {
   if (mode === 'minimized') {

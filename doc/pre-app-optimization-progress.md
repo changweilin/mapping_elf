@@ -90,9 +90,38 @@ Source plan: `doc/pre-app-optimization-plan.md`
   - `webPlatform` now exposes `subscribeNetworkStatus()`;
   - the file-management offline status and route-planning offline error use `platform.getNetworkStatus()`;
   - future Capacitor Network plugin wiring can replace the adapter without changing route or UI flow code.
+- Expanded the Capacitor platform adapter with optional native plugin bridges:
+  - Browser external links;
+  - Filesystem + Share export/share flow;
+  - Geolocation;
+  - Haptics vibration;
+  - Network status subscription;
+  - App back-button/exit hooks;
+  - all paths keep Web fallbacks when plugins are unavailable.
+- Added a native-only Android back-button close order:
+  - export modal;
+  - `.melmap` import modal;
+  - favorites replace modal;
+  - favorites modal;
+  - open weather cards;
+  - search results;
+  - side panel;
+  - route/weather busy guard;
+  - app exit only when nothing else handled the back action.
+- Added Capacitor `appendUserAgent: "MappingElf/0.0.0"` so native WebView requests can identify the app consistently.
+- Installed and synced the chosen Capacitor native plugins:
+  - `@capacitor/app@8.1.0`
+  - `@capacitor/browser@8.0.3`
+  - `@capacitor/filesystem@8.1.2`
+  - `@capacitor/geolocation@8.2.0`
+  - `@capacitor/haptics@8.0.2`
+  - `@capacitor/network@8.0.1`
+  - `@capacitor/share@8.0.1`
+- Normalized generated iOS Swift Package paths to forward slashes after Windows `cap sync`.
+- Added `scripts/normalize-capacitor-spm-paths.mjs` to keep future `cap:sync` runs from reintroducing Windows path separators in `Package.swift`.
 
 ## Next Safe Steps
 
-1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Continue native-readiness work around provider terms, app request identity, and real-device offline tile behavior.
-3. Profile native WebView behavior with real device builds once the Capacitor shell and plugins are ready.
+1. Verify each native bridge on Android device/emulator and iOS simulator/device.
+2. Continue native-readiness work around provider terms and real-device offline tile behavior.
+3. Profile native WebView behavior with real device builds now that the plugin shell is synced.
