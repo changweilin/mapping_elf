@@ -54,11 +54,14 @@ Source plan: `doc/pre-app-optimization-plan.md`
 - Added `test/request-race.spec.js` for stale route-plan and stale geocode discard coverage.
 - Prevented pending route recalculation from restarting after an imported track replaces the route while planning is still in flight.
 - Added `test/long-route-performance.spec.js` with an in-memory 901-point GPX baseline import check.
+- Expanded long-route performance coverage with a dense imported GPX containing 720 track points, 24 waypoint anchors, and 48 interval markers, including weather-table column and locked interval input assertions.
 - Aligned GPX no-waypoint fallback sampling with KML so generated waypoint anchors always include the real final track point without duplicating it.
+- Expanded mobile viewport QA to cover `.melmap` import modal bounds and touch expansion of the bottom weather panel.
+- Expanded mobile viewport QA to cover touch long-press waypoint drag and delete flows in a small landscape viewport.
+- Added `doc/offline-tile-strategy.md` with tile-count sizing rules, per-route cache cleanup design, provider gating, and release-time license review notes.
 
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Expand mobile viewport QA to waypoint touch flows, bottom panel, and import modal.
-3. Broaden long-route performance coverage to dense waypoint lists and interval-heavy weather columns.
-4. Add offline tile strategy details for size estimation, per-route cleanup, and provider license notes.
+2. Convert the offline tile strategy into implementation after provider allow-list decisions: shared tile estimator, pack index cleanup, and disabled tile export for blocked providers.
+3. Profile native WebView behavior with real device builds once the Capacitor shell and plugins are ready.

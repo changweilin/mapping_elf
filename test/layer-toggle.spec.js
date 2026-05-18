@@ -332,6 +332,33 @@ async function topWaypointCenter(page, number) {
   return target;
 }
 
+async function waitForTopWaypointCenterStable(page, number) {
+  let previous = null;
+  await expect.poll(async () => {
+    const current = await page.evaluate((targetNumber) => {
+      const marker = Array.from(document.querySelectorAll('.leaflet-marker-pane .custom-waypoint-icon'))
+        .filter((el) => Number.parseInt(el.textContent.trim().replace(/^\D*/, ''), 10) === targetNumber)
+        .map((el) => ({
+          el,
+          z: Number.parseInt(getComputedStyle(el).zIndex, 10) || 0,
+        }))
+        .sort((a, b) => b.z - a.z)[0]?.el;
+      if (!marker) return null;
+      const rect = marker.getBoundingClientRect();
+      return {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      };
+    }, number);
+    if (!current) return false;
+    const stable = previous
+      ? Math.hypot(current.x - previous.x, current.y - previous.y) < 1
+      : false;
+    previous = current;
+    return stable;
+  }, { timeout: 2500, intervals: [100, 100, 150, 200, 250, 300] }).toBe(true);
+}
+
 async function clickTopWaypoint(page, number) {
   const target = await topWaypointCenter(page, number);
   await page.mouse.click(target.x, target.y);
@@ -1522,6 +1549,7 @@ test('round-trip mirrored waypoint pairs toggle except the turnaround endpoint',
 
     await page.mouse.click(target.x, target.y);
     await expect.poll(async () => (await selectedWaypointState(page, number)).selectedCount).toBe(1);
+    await waitForTopWaypointCenterStable(page, number);
     await clickTopWaypoint(page, number);
     await expect.poll(async () => {
       const pairs = await waypointPairState(page);
