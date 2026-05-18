@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({
-  base: '/mapping_elf/',
+export default defineConfig(({ mode }) => ({
+  base: mode === 'app' ? './' : '/mapping_elf/',
   build: {
     rolldownOptions: {
       output: {
@@ -32,4 +32,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

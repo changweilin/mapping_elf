@@ -11,6 +11,7 @@
  */
 import JSZip from 'jszip';
 import { MELMAP_STATE_KEYS } from './stateKeys.js';
+import { platform } from '../platform/index.js';
 
 const MELMAP_VERSION = 1;
 const MAX_TILES = 8000;
@@ -239,14 +240,11 @@ export class MapPackExporter {
   }
 
   static triggerDownload(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return platform.downloadFile({
+      filename,
+      mimeType: 'application/zip',
+      content: blob,
+    });
   }
 }
 

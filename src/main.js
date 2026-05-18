@@ -12,6 +12,7 @@ import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNot
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
+import { platform } from './platform/index.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -49,7 +50,7 @@ function getLocationPermissionHelpMessage() {
     ].join('\n');
   }
 
-  if (/Android/i.test(navigator.userAgent)) {
+  if (/Android/i.test(platform.getUserAgent())) {
     return [
       '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
       '',
@@ -62,7 +63,7 @@ function getLocationPermissionHelpMessage() {
     ].join('\n');
   }
 
-  if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+  if (/iPhone|iPad|iPod/i.test(platform.getUserAgent())) {
     return [
       '無法取得 GPS 位置，請開啟瀏覽器定位權限：',
       '',
@@ -1136,7 +1137,7 @@ mapManager.onMapCursorAction = (action, lat, lng) => {
   }
   if (action === 'windy') {
     const url = buildWindyUrl(lat, lng);
-    window.open(url, '_blank', 'noopener');
+    platform.openExternalUrl(url);
     return;
   }
   if (action === 'clear') {
@@ -1322,35 +1323,25 @@ function syncPaceCalibrationUI() {
   });
 }
 
-function parseCalibrationFile(file) {
-  return new Promise((resolve, reject) => {
-    const ext = file.name.split('.').pop().toLowerCase();
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const { GpxExporter, KmlExporter } = await ensureRouteExporters();
-        let result;
-        if (ext === 'gpx') result = GpxExporter.parse(evt.target.result);
-        else if (ext === 'kml') result = KmlExporter.parse(evt.target.result);
-        else throw new Error('Unsupported calibration file');
-        const summary = summarizeImportedTrackForCalibration(
-          result,
-          null,
-          speedActivity || 'hiking',
-          { ...paceParams, calibrationEnabled: false, calibrationFactor: 1 }
-        );
-        resolve({
-          id: `cal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-          name: file.name,
-          ...summary,
-        });
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.onerror = () => reject(reader.error || new Error('Read failed'));
-    reader.readAsText(file);
-  });
+async function parseCalibrationFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const text = await platform.readFileAsText(file);
+  const { GpxExporter, KmlExporter } = await ensureRouteExporters();
+  let result;
+  if (ext === 'gpx') result = GpxExporter.parse(text);
+  else if (ext === 'kml') result = KmlExporter.parse(text);
+  else throw new Error('Unsupported calibration file');
+  const summary = summarizeImportedTrackForCalibration(
+    result,
+    null,
+    speedActivity || 'hiking',
+    { ...paceParams, calibrationEnabled: false, calibrationFactor: 1 }
+  );
+  return {
+    id: `cal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    name: file.name,
+    ...summary,
+  };
 }
 
 async function loadPaceCalibrationFiles(files) {
@@ -1796,7 +1787,10 @@ btnMyLocation.addEventListener('click', async () => {
 });
 
 btnExportGpx.addEventListener('click', openExportModal);
-btnImportGpx.addEventListener('click', () => gpxFileInput.click());
+btnImportGpx.addEventListener('click', () => platform.pickFile({
+  accept: '.gpx,.kml,.melmap,.zip',
+  inputElement: gpxFileInput,
+}));
 btnResetDefaults?.addEventListener('click', () => {
   if (confirm('確定要全部回到預設值嗎？這將會清除目前的設置並重啟頁面。')) {
     resetToDefaults();
@@ -2056,7 +2050,11 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
         progressFill.style.width = `${pct}%`;
       },
     });
-    MapPackExporter.triggerDownload(blob, filename);
+    await platform.downloadFile({
+      filename,
+      mimeType: 'application/zip',
+      content: blob,
+    });
     const parts = [];
     if (includeRoute) parts.push('路線');
     if (includeTiles) parts.push(`${tileCount} 張圖磚`);
@@ -2688,7 +2686,7 @@ function updateWaypointList(waypoints) {
     lastDragClientY = clientY;
     item.classList.add('is-dragging');
     document.body.classList.add('route-list-dragging');
-    if (navigator.vibrate) navigator.vibrate(40);
+    platform.vibrate(40);
 
     // Create placeholder
     placeholder = document.createElement('div');
@@ -2798,7 +2796,7 @@ function updateWaypointList(waypoints) {
     if (cancelledByMultiTouch || isCancelDrop) {
       updateWaypointList(mapManager.waypoints);
     } else if (isOverTrash) {
-      if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+      platform.vibrate([20, 40, 20]);
       mapManager.removeWaypoint(dragIndex);
     } else {
       const items = Array.from(waypointList.children);
@@ -4017,12 +4015,12 @@ async function doExport(fmt) {
 
   if (fmt === 'gpx' || fmt === 'all') {
     const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName);
-    GpxExporter.download(gpx, `${filename}.gpx`);
+    await platform.downloadFile(GpxExporter.createDownloadPayload(gpx, `${filename}.gpx`));
   }
 
   if (fmt === 'kml' || fmt === 'all') {
     const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName);
-    KmlExporter.download(kml, `${filename}.kml`);
+    await platform.downloadFile(KmlExporter.createDownloadPayload(kml, `${filename}.kml`));
   }
 
   const label = fmt === 'all' ? 'GPX + KML' : fmt.toUpperCase();
@@ -4234,7 +4232,7 @@ async function _applyImportedResultCore(result) {
   autoFetchWeather({ force: false }); // Cache will still be checked, which is fine
 }
 
-function importFile(e) {
+async function importFile(e) {
   const file = e.target.files[0];
   if (!file) return;
 
@@ -4244,27 +4242,25 @@ function importFile(e) {
     gpxFileInput.value = '';
     return;
   }
-  const reader = new FileReader();
-  reader.onload = async (evt) => {
-    try {
-      const { GpxExporter, KmlExporter } = await ensureRouteExporters();
-      let result;
-      if (ext === 'gpx') {
-        result = GpxExporter.parse(evt.target.result);
-      } else if (ext === 'kml') {
-        result = KmlExporter.parse(evt.target.result);
-      } else {
-        showNotification('不支援的檔案格式', 'error');
-        return;
-      }
-      await applyImportedResult(result);
-    } catch (err) {
-      showNotification('檔案解析失敗', 'error');
-      console.error(err);
+  try {
+    const text = await platform.readFileAsText(file);
+    const { GpxExporter, KmlExporter } = await ensureRouteExporters();
+    let result;
+    if (ext === 'gpx') {
+      result = GpxExporter.parse(text);
+    } else if (ext === 'kml') {
+      result = KmlExporter.parse(text);
+    } else {
+      showNotification('不支援的檔案格式', 'error');
+      return;
     }
-  };
-  reader.readAsText(file);
-  gpxFileInput.value = '';
+    await applyImportedResult(result);
+  } catch (err) {
+    showNotification('檔案解析失敗', 'error');
+    console.error(err);
+  } finally {
+    gpxFileInput.value = '';
+  }
 }
 
 // =========== Windy URL Builder ===========
@@ -7279,7 +7275,7 @@ function bindWeatherTableColumnDrag(container) {
     }
 
     if (overTrash) {
-      if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+      platform.vibrate([20, 40, 20]);
       mapManager.removeWaypoint(_draggedWpIdx); // triggers full re-render
       return;
     }
@@ -7334,7 +7330,7 @@ function bindWeatherTableColumnDrag(container) {
     if (weatherTableCollapsed) {
       showAllWaypointNamePeeks(container, el);
     }
-    if (navigator.vibrate) navigator.vibrate(40);
+    platform.vibrate(40);
 
     // If it's a data cell, we use the corresponding header label as ghost
     const headerTh = container.querySelector(`.wt-header-row-label .wt-col-head[data-idx="${colIdx}"]`);
@@ -9404,15 +9400,18 @@ async function init() {
     mapManager.setWaypointsFromImport(savedWaypoints, savedWaypointIds.map(waypointId => ({ waypointId })));
     ensureWaypointIds(savedWaypointIds);
     skipAutoGeocode = false;
-  } else if (!trackRestored && !savedView && navigator.geolocation) {
+  } else if (!trackRestored && !savedView) {
     // No saved state at all — pan to user's location
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
+    platform.getCurrentPosition({
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    })
+      .then((pos) => {
         lastGpsLatLng = [pos.coords.latitude, pos.coords.longitude];
         mapManager.map.setView(lastGpsLatLng, 13);
-      },
-      () => { }
-    );
+      })
+      .catch(() => { });
   }
 
   // Keyword search (Nominatim forward-geocoding + direct lat,lng parser)

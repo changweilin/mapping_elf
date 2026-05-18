@@ -7,6 +7,7 @@
  *     weather: { key: { label, value } } }
  */
 import { orderWaypointsAlongTrack } from './utils.js';
+import { platform } from '../platform/index.js';
 
 export class KmlExporter {
   /**
@@ -300,16 +301,16 @@ ${extData}      <Point>
     return res;
   }
 
+  static createDownloadPayload(kmlString, filename = 'mapping_elf_track.kml') {
+    return {
+      filename,
+      mimeType: 'application/vnd.google-earth.kml+xml',
+      content: kmlString,
+    };
+  }
+
   static download(kmlString, filename = 'mapping_elf_track.kml') {
-    const blob = new Blob([kmlString], { type: 'application/vnd.google-earth.kml+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    return platform.downloadFile(this.createDownloadPayload(kmlString, filename));
   }
 
   static _esc(str) {

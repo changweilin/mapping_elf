@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const shouldStartWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER !== '1';
+
 export default defineConfig({
   testDir: './test',
   testMatch: /.*\.spec\.js/,
@@ -20,10 +22,10 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'npm.cmd run preview -- --host 127.0.0.1',
+  webServer: shouldStartWebServer ? {
+    command: 'node ./node_modules/vite/bin/vite.js preview --host 127.0.0.1',
     url: 'http://127.0.0.1:4173/mapping_elf/',
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
-  },
+  } : undefined,
 });
