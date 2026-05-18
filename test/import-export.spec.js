@@ -214,6 +214,38 @@ test('map-pack tile estimate matches exported manifest tile count', async ({ pag
   expect(manifest.layer).toBeTruthy();
   expect(manifest.tileCount).toBe(expectedTileCount);
   expect(manifest.minZoom).toBeLessThanOrEqual(manifest.maxZoom);
+  expect(manifest.tileProvider).toMatchObject({
+    id: 'opentopomap',
+    name: 'OpenTopoMap',
+  });
+  expect(manifest.tileProvider.attribution).toContain('OpenTopoMap');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('map-pack disables tile export for providers outside the allow-list', async ({ page }, testInfo) => {
+  await mockMapTiles(page);
+  const consoleErrors = await openApp(page);
+
+  await importFixture(page, shortGpx);
+  await expectImportedRoute(page);
+  await page.locator('#btn-layer-satellite').click();
+
+  const melmapPath = await downloadExport(page, testInfo, 'melmap', async () => {
+    await expect(page.locator('#melmap-sub-options')).toBeVisible();
+    await expect(page.locator('#mappack-inc-route')).toBeChecked();
+    await expect(page.locator('#mappack-inc-tiles')).toBeDisabled();
+    await expect(page.locator('#mappack-inc-tiles')).not.toBeChecked();
+    await expect(page.locator('#mappack-tiles-info')).toHaveAttribute('data-i18n', '此圖層暫不支援離線圖磚匯出');
+    await expect(page.locator('#mappack-tiles-info')).toContainText(/offline tile export|暫不支援/);
+  });
+
+  const { manifest, tileFiles } = await readMapPackManifest(melmapPath);
+  expect(manifest.includes.route).toBe(true);
+  expect(manifest.includes.tiles).toBe(false);
+  expect(manifest.tileCount).toBe(0);
+  expect(manifest.tileProvider).toBeNull();
+  expect(tileFiles).toHaveLength(0);
 
   expect(consoleErrors).toEqual([]);
 });

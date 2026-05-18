@@ -61,9 +61,15 @@ Source plan: `doc/pre-app-optimization-plan.md`
 - Added `doc/offline-tile-strategy.md` with tile-count sizing rules, per-route cache cleanup design, provider gating, and release-time license review notes.
 - Extracted `.melmap` tile-count estimation into `src/modules/tileEstimator.js` so export modal estimates and map-pack tile enumeration share the same zoom/cap rules, with numeric regression coverage.
 - Added import/export regression coverage that compares the `.melmap` export modal tile estimate with the exported `manifest.tileCount`.
+- Added optional `.melmap` `manifest.tileProvider` metadata sourced from map layer provider attribution when tiles are included.
+- Added a provider allow-list guard for `.melmap` tile export:
+  - blocked providers disable only the tile checkbox;
+  - route/state export remains available;
+  - exporter rejects blocked tile exports even if UI state is bypassed;
+  - import/export coverage verifies satellite-layer exports stay route-only.
 
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Convert the remaining offline tile strategy into implementation after provider allow-list decisions: pack index cleanup, disabled tile export for blocked providers, and manifest attribution metadata.
+2. Convert the remaining offline tile strategy into implementation: pack index cleanup and byte-size/downloaded-tile reporting.
 3. Profile native WebView behavior with real device builds once the Capacitor shell and plugins are ready.

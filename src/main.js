@@ -2041,6 +2041,19 @@ window.addEventListener('keydown', (e) => {
 
 // =========== Map Pack (.melmap) helpers ===========
 
+const OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE = '此圖層暫不支援離線圖磚匯出';
+
+function getOfflineTileExportPolicy(layerInfo = mapManager.getCurrentLayerInfo()) {
+  const policy = layerInfo?.provider?.offlineTileExport;
+  if (policy?.allowed === false) {
+    return {
+      allowed: false,
+      reason: policy.reason || OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE,
+    };
+  }
+  return { allowed: true, reason: '' };
+}
+
 function _estimateTileCountForMapPack() {
   if (currentRouteCoords.length < 2) return { count: 0, layer: null };
   const layerInfo = mapManager.getCurrentLayerInfo();
@@ -2050,10 +2063,60 @@ function _estimateTileCountForMapPack() {
   return { count: estimate.tileCount, layer: mapManager.currentLayerName };
 }
 
+function updateMapPackTileOptionState() {
+  const checkbox = document.getElementById('mappack-inc-tiles');
+  const info = document.getElementById('mappack-tiles-info');
+  const option = checkbox?.closest('.export-option');
+  const policy = getOfflineTileExportPolicy();
+
+  if (!checkbox) return policy;
+
+  if (!policy.allowed) {
+    const reason = policy.reason || OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE;
+    if (checkbox.dataset.providerDisabled !== '1') {
+      checkbox.dataset.providerPrevChecked = checkbox.checked ? '1' : '0';
+    }
+    checkbox.checked = false;
+    checkbox.disabled = true;
+    checkbox.dataset.providerDisabled = '1';
+    checkbox.title = translatePhrase(reason);
+    option?.classList.add('is-disabled');
+    if (info) {
+      info.textContent = translatePhrase(reason);
+      info.dataset.i18n = reason;
+    }
+    return policy;
+  }
+
+  checkbox.disabled = false;
+  checkbox.removeAttribute('title');
+  option?.classList.remove('is-disabled');
+  if (checkbox.dataset.providerDisabled === '1') {
+    checkbox.checked = checkbox.dataset.providerPrevChecked !== '0';
+  }
+  delete checkbox.dataset.providerDisabled;
+  delete checkbox.dataset.providerPrevChecked;
+
+  if (info) {
+    delete info.dataset.i18n;
+    const est = _estimateTileCountForMapPack();
+    info.textContent = est.count > 0 ? `(約 ${est.count} 張,${est.layer})` : '';
+  }
+  return policy;
+}
+
 async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
   const includeRoute = document.getElementById('mappack-inc-route').checked;
   const includeTiles = document.getElementById('mappack-inc-tiles').checked;
   const includeState = document.getElementById('mappack-inc-state').checked;
+  if (includeTiles) {
+    const tilePolicy = getOfflineTileExportPolicy();
+    if (!tilePolicy.allowed) {
+      showNotification(tilePolicy.reason || OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE, 'warning');
+      updateMapPackTileOptionState();
+      return;
+    }
+  }
   if (!includeRoute && !includeTiles && !includeState) {
     showNotification('請至少勾選一項離線地圖包內容', 'warning');
     return;
@@ -2258,6 +2321,8 @@ function applyLayerSelection(name) {
   mapManager.switchLayer(layerName);
   localStorage.setItem(LS_MAP_LAYER_KEY, layerName);
   layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === layerName));
+  const modal = document.getElementById('export-modal');
+  if (modal && !modal.classList.contains('hidden')) updateMapPackTileOptionState();
 }
 function cycleLayer(step) {
   const cur = mapManager.currentLayerName;
@@ -3455,12 +3520,7 @@ function openExportModal() {
     showNotification('請先建立路線', 'warning');
     return;
   }
-  // Refresh tile-count estimate whenever the modal is opened.
-  const info = document.getElementById('mappack-tiles-info');
-  if (info) {
-    const est = _estimateTileCountForMapPack();
-    info.textContent = est.count > 0 ? `(約 ${est.count} 張,${est.layer})` : '';
-  }
+  updateMapPackTileOptionState();
 
   // Pre-fill route name input
   const nameInput = document.getElementById('export-filename-input');
@@ -3480,6 +3540,7 @@ exportModal?.querySelectorAll('input[name="export-fmt"]').forEach((r) => {
     // Hide if a non-melmap radio is now checked.
     const checked = exportModal.querySelector('input[name="export-fmt"]:checked')?.value;
     if (sub) sub.style.display = checked === 'melmap' ? '' : 'none';
+    if (checked === 'melmap') updateMapPackTileOptionState();
   });
 });
 
@@ -3576,6 +3637,14 @@ btnExportConfirm?.addEventListener('click', async () => {
     const includeRoute = document.getElementById('mappack-inc-route').checked;
     const includeTiles = document.getElementById('mappack-inc-tiles').checked;
     const includeState = document.getElementById('mappack-inc-state').checked;
+    if (includeTiles) {
+      const tilePolicy = getOfflineTileExportPolicy();
+      if (!tilePolicy.allowed) {
+        showNotification(tilePolicy.reason || OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE, 'warning');
+        updateMapPackTileOptionState();
+        return;
+      }
+    }
     if (!includeRoute && !includeTiles && !includeState) {
       showNotification('請至少勾選一項離線地圖包內容', 'warning');
       return;

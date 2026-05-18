@@ -8,6 +8,7 @@ This note turns the pre-app optimization offline-map item into an implementation
 
 - Offline tiles live in the Cache API cache named `mapping-elf-tiles`.
 - `.melmap` export can include route GPX, allow-listed `localStorage` state, and raster tiles for the current map layer.
+- `.melmap` route/state export stays available for every map layer, but tile export is disabled when the current provider is outside the offline export allow-list.
 - Tile exports use the route bounds padded by 5%, then enumerate zoom levels from `8` through `min(17, layerInfo.maxZoom)` until the 8000-tile cap is reached.
 - Exported tile files are stored as `tiles/{layer}/{z}/{x}/{y}.png`.
 - Import restores tiles into `mapping-elf-tiles` and expands subdomain/retina URL variants so Leaflet can hit the cache regardless of the chosen subdomain.
@@ -18,6 +19,7 @@ Relevant code:
 - `src/modules/tileEstimator.js`: shared zoom range, 8000-tile cap, bounds-to-tile enumeration, and tile-count estimate.
 - `src/main.js`: `_estimateTileCountForMapPack()`, `doExportMapPack()`, `.melmap` import modal flow.
 - `src/modules/mapPackExporter.js`: manifest fields, shared tile enumeration, tile fetch/cache.
+- `src/modules/mapManager.js`: tile layer provider metadata used by `.melmap` manifests.
 - `src/modules/mapPackImporter.js`: manifest validation, tile restore, subdomain expansion.
 - `src/modules/offlineManager.js`: service worker registration, cache count display, full cache clearing.
 
@@ -37,6 +39,8 @@ Implemented guard:
 - Shared enumeration lives in `src/modules/tileEstimator.js` and is used by both `_estimateTileCountForMapPack()` and `MapPackExporter.export()`.
 - `test/numeric-regression.mjs` checks estimator/enumerator alignment and the 8000-tile cap.
 - `test/import-export.spec.js` checks that the export modal's tile estimate matches the exported `.melmap` `manifest.tileCount`.
+- Tile-enabled `.melmap` exports include optional `manifest.tileProvider` metadata with provider id, name, attribution, and homepage when available.
+- Provider allow-list metadata lives with the map layer definitions. Blocked providers disable only the tile checkbox, leaving route and state export available.
 
 Future implementation guard:
 
@@ -94,7 +98,7 @@ Current layer notes:
 | --- | --- | --- |
 | Streets | `basemaps.cartocdn.com` | Keep attribution visible; verify CARTO basemap/offline redistribution terms before enabling public app tile packs. |
 | Topo | `tile.opentopomap.org` | Attribution and CC-BY-SA handling are required; service status is changing toward vector tiles, so keep this layer swappable. |
-| Satellite | `server.arcgisonline.com` | Treat offline redistribution as blocked until Esri/ArcGIS licensing is confirmed for the app use case. |
+| Satellite | `server.arcgisonline.com` | Tile export disabled until Esri/ArcGIS licensing is confirmed for the app use case. |
 | OSMF Standard | `tile.openstreetmap.org` | Do not add offline download support; OSMF policy prohibits bulk/offline tile archives. |
 
 Source checks used for this note:
@@ -109,6 +113,6 @@ Source checks used for this note:
 
 - App tile requests should identify Mapping Elf with a stable app User-Agent or platform-provided app identifier where the provider requires it.
 - Export UI should show tile count, current layer, and a provider warning before downloading tiles.
-- `.melmap` manifest should include attribution/provider metadata when tiles are included.
-- If a provider is not allow-listed for offline export, keep route/state export enabled but disable the tile checkbox with a clear reason.
+- `.melmap` manifest includes attribution/provider metadata when tiles are included.
+- If a provider is not allow-listed for offline export, keep route/state export enabled but disable the tile checkbox with a clear reason. This is now implemented for the satellite layer.
 - Re-check provider terms before each store release that changes map layers or offline behavior.

@@ -27,6 +27,27 @@ const RETINA_SUFFIXES = ['', '@2x'];
 
 const LS_STATE_KEYS = MELMAP_STATE_KEYS;
 
+function buildTileProviderManifest(layerInfo) {
+  const provider = layerInfo?.provider || {};
+  return {
+    id: provider.id || layerInfo?.name || null,
+    name: provider.name || layerInfo?.name || null,
+    attribution: provider.attribution || layerInfo?.attribution || null,
+    homepage: provider.homepage || null,
+  };
+}
+
+function getOfflineTileExportPolicy(layerInfo) {
+  const policy = layerInfo?.provider?.offlineTileExport;
+  if (policy?.allowed === false) {
+    return {
+      allowed: false,
+      reason: policy.reason || '此圖層暫不支援離線圖磚匯出',
+    };
+  }
+  return { allowed: true, reason: '' };
+}
+
 export class MapPackExporter {
   /**
    * Build a .melmap Blob.
@@ -75,6 +96,7 @@ export class MapPackExporter {
       minZoom: null,
       maxZoom: null,
       tileCount: 0,
+      tileProvider: null,
     };
 
     // ---- route.gpx ----
@@ -96,6 +118,8 @@ export class MapPackExporter {
     // ---- tiles/ ----
     let totalTiles = 0;
     if (includeTiles) {
+      const tilePolicy = getOfflineTileExportPolicy(layerInfo);
+      if (!tilePolicy.allowed) throw new Error(tilePolicy.reason || '此圖層暫不支援離線圖磚匯出');
       if (!bounds || !layerInfo) throw new Error('匯出圖磚時需要 bounds 與 layerInfo');
       if (!routeCoords || routeCoords.length < 2) throw new Error('匯出圖磚時需先建立路線');
 
@@ -112,6 +136,7 @@ export class MapPackExporter {
       manifest.minZoom = minZoom;
       manifest.maxZoom = maxZoom;
       manifest.tileCount = totalTiles;
+      manifest.tileProvider = buildTileProviderManifest(layerInfo);
 
       const cache = 'caches' in self ? await caches.open('mapping-elf-tiles') : null;
       onProgress(0, totalTiles, 'tiles');
