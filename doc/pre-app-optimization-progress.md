@@ -11,7 +11,7 @@ Source plan: `doc/pre-app-optimization-plan.md`
 | Sprint 1 | Build mode, platform adapter, external platform calls, export channel split | Done | `npm run build:web`, `npm run build:app`, smoke/import-export tests |
 | Sprint 2 | Import/export round-trip tests, state contract, reset/import behavior | Done | `npm run test:import-export`, `npm run test:numeric` |
 | Sprint 3 | Error states, mobile UI QA, safe area, WebView differences | In progress | `npm run test:mobile`, browser mobile smoke checklist |
-| Sprint 4 | Long-route performance, request cancellation guards, offline strategy, privacy data flow | Pending | Long route fixture, request-race tests, privacy review |
+| Sprint 4 | Long-route performance, request cancellation guards, offline strategy, privacy data flow | In progress | Long route fixture, request-race tests, privacy review |
 
 ## Completed In This Pass
 
@@ -48,10 +48,13 @@ Source plan: `doc/pre-app-optimization-plan.md`
   - reset defaults clearing app state while preserving favorites
 - Added `test:mobile` and `test/mobile-app-qa.spec.js`.
 - Added modal safe-area padding and viewport-bounded scrolling for small/mobile landscape screens.
+- Added route-planning version guards so stale route alternatives are discarded before they redraw the map, elevation chart, stats, or weather table.
+- Added geocode run guards so late Nominatim/Overpass results do not relabel a newer waypoint set.
+- Split stale route-plan results from real route failures and added an offline-specific route error message.
 
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
 2. Expand mobile viewport QA to waypoint touch flows, bottom panel, and import modal.
-3. Add request version guards for route/weather/elevation updates before refactoring long-running calculations.
+3. Add targeted request-race tests for route/geocode stale-result discards.
 4. Add offline tile strategy details for size estimation, per-route cleanup, and provider license notes.

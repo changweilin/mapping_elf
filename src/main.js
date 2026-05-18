@@ -680,6 +680,8 @@ let routeVersion = 0;
 let waypointVersion = 0;
 let paceVersion = 0;
 let elevationVersion = 0;
+let routePlanRunSeq = 0;
+let geocodeRunSeq = 0;
 
 function bumpRouteVersion() {
   routeVersion += 1;
@@ -705,6 +707,17 @@ function setCurrentRouteData(coords = [], elevations = []) {
   currentRouteCoords = coords;
   currentElevations = elevations;
   bumpRouteVersion();
+}
+
+function getWaypointSnapshotKey(waypoints = []) {
+  return JSON.stringify((waypoints || []).map((wp) => {
+    const lat = Number(wp?.[0]);
+    const lng = Number(wp?.[1]);
+    return [
+      Number.isFinite(lat) ? lat.toFixed(6) : '',
+      Number.isFinite(lng) ? lng.toFixed(6) : '',
+    ];
+  }));
 }
 
 function computeRouteMetrics(coords, wps) {
@@ -803,6 +816,40 @@ mapManager.onWaypointDragEnd = () => {
   updateElevationMarkers();
   updateIntermediateMarkers();
 };
+
+function invalidateRoutePlanRun() {
+  routePlanRunSeq += 1;
+}
+
+function createRoutePlanSnapshot(waypoints) {
+  return {
+    runSeq: ++routePlanRunSeq,
+    waypointVersion,
+    waypointKey: getWaypointSnapshotKey(waypoints),
+    routeMode: routeEngine.mode,
+    roundTripMode,
+    oLoopMode,
+  };
+}
+
+function isRoutePlanSnapshotStale(snapshot) {
+  return !snapshot
+    || snapshot.runSeq !== routePlanRunSeq
+    || pendingUpdate
+    || snapshot.waypointVersion !== waypointVersion
+    || snapshot.waypointKey !== getWaypointSnapshotKey(mapManager.waypoints)
+    || snapshot.routeMode !== routeEngine.mode
+    || snapshot.roundTripMode !== roundTripMode
+    || snapshot.oLoopMode !== oLoopMode;
+}
+
+function getRoutePlanningErrorMessage(err) {
+  if (isAbortError(err)) return null;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return '目前離線，暫時無法重新規劃路線';
+  }
+  return '路徑計算失敗，請稍後再試';
+}
 
 // =========== Undo/Redo History ===========
 // Snapshot-based history for all route-planning actions:
@@ -2281,6 +2328,8 @@ async function onWaypointsChanged(waypoints) {
   cancelWeatherFetchForRouteReplan();
   ensureWaypointIds();
   bumpWaypointVersion();
+  invalidateRoutePlanRun();
+  geocodeRunSeq += 1;
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
   historyRecord();
 
@@ -2372,6 +2421,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   cancelWeatherFetchForRouteReplan();
   isProcessing = true;
   pendingUpdate = false;
+  const routePlanSnapshot = createRoutePlanSnapshot(waypoints);
   const busyTask = beginRouteWeatherBusyTask({
     title: '正在規劃路線',
     detail: '準備路線與高度資料...',
@@ -2395,10 +2445,15 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
       : (oLoopMode && !isLoop && waypoints.length >= 2)
         ? [...waypoints, waypoints[0]]
         : waypoints;
-    allAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
+    const routeAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
+    if (isRoutePlanSnapshotStale(routePlanSnapshot)) {
+      pendingUpdate = true;
+    } else {
+      allAlternatives = routeAlternatives;
+    }
     busyTask.set({ detail: '繪製路線與高度圖...', progress: 72 });
 
-    if (allAlternatives.length > 0) {
+    if (!isRoutePlanSnapshotStale(routePlanSnapshot) && allAlternatives.length > 0) {
       // Draw all routes on map with continuous gradient coloring.
       // For round-trip / O-loop, the calculated turnaround point marks the return-leg split.
       let turnaroundLatLng = null;
@@ -2423,19 +2478,30 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
       renderAlternatives(allAlternatives, 0);
 
       // Select the best route by default
-      await selectAlternative(0);
-      busyTask.set({ detail: '更新路線統計與天氣欄位...', progress: 94 });
+      const selected = await selectAlternative(0, {
+        isStale: () => isRoutePlanSnapshotStale(routePlanSnapshot),
+      });
+      if (!selected || isRoutePlanSnapshotStale(routePlanSnapshot)) {
+        pendingUpdate = true;
+      } else {
+        busyTask.set({ detail: '更新路線統計與天氣欄位...', progress: 94 });
 
-      const altMsg = allAlternatives.length > 1
-        ? `找到 ${allAlternatives.length} 組建議路徑`
-        : '已規劃最佳路徑';
-      showNotification(altMsg, 'success', 2000);
-    } else {
+        const altMsg = allAlternatives.length > 1
+          ? `找到 ${allAlternatives.length} 組建議路徑`
+          : '已規劃最佳路徑';
+        showNotification(altMsg, 'success', 2000);
+      }
+    } else if (!isRoutePlanSnapshotStale(routePlanSnapshot)) {
       showNotification('找不到合適路徑', 'warning');
     }
   } catch (err) {
-    console.error('Route processing error:', err);
-    showNotification('路徑計算失敗', 'error');
+    const message = getRoutePlanningErrorMessage(err);
+    if (!isRoutePlanSnapshotStale(routePlanSnapshot) && message) {
+      console.error('Route processing error:', err);
+      showNotification(message, 'error');
+    } else {
+      pendingUpdate = true;
+    }
   }
 
   isProcessing = false;
@@ -2452,11 +2518,18 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
 /**
  * Select a specific alternative route
  */
-async function selectAlternative(index) {
-  if (index >= allAlternatives.length) return;
+async function selectAlternative(index, options = {}) {
+  const isStale = typeof options.isStale === 'function' ? options.isStale : () => false;
+  if (index >= allAlternatives.length || isStale()) return false;
 
   selectedAltIndex = index;
   const route = allAlternatives[index];
+  if (isStale()) return false;
+
+  if (options.isStale) {
+    await elevationProfile.load();
+    if (isStale()) return false;
+  }
 
   setCurrentRouteData(route.coords, route.fullElevations || route.elevations);
 
@@ -2483,6 +2556,7 @@ async function selectAlternative(index) {
     }
   }
   await elevationProfile.updateWithData(route.sampledCoords, route.elevations, roundTripMode, turnaroundLL);
+  if (isStale()) return false;
 
   // Update stats from pre-calculated route data
   const epStats = elevationProfile._calcStats();
@@ -2503,6 +2577,7 @@ async function selectAlternative(index) {
   // return waypoints, and intermediate points) get weather info if missing.
   autoFetchWeather({ force: false });
   pendingNewWaypointIndex = null;
+  return true;
 }
 
 /**
@@ -4980,11 +5055,20 @@ function enqueueGeocode(lat, lng) {
 
 /** Geocode waypoints in background; update column labels as results arrive. */
 async function geocodeWaypoints(waypoints) {
+  const runSeq = ++geocodeRunSeq;
+  const runWaypointVersion = waypointVersion;
+  const waypointKey = getWaypointSnapshotKey(waypoints);
+  const isStale = () => runSeq !== geocodeRunSeq
+    || runWaypointVersion !== waypointVersion
+    || waypointKey !== getWaypointSnapshotKey(mapManager.waypoints);
+
   for (let i = 0; i < waypoints.length; i++) {
+    if (isStale()) return;
     const [lat, lng] = waypoints[i];
     try {
       await enqueueGeocode(lat, lng);
     } catch (_) { /* swallow; next point still queues */ }
+    if (isStale()) return;
     _applyPlaceNameToDOM();
   }
 }
