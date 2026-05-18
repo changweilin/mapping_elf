@@ -41,13 +41,14 @@ Implemented guard:
 - Shared enumeration lives in `src/modules/tileEstimator.js` and is used by both `_estimateTileCountForMapPack()` and `MapPackExporter.export()`.
 - `test/numeric-regression.mjs` checks estimator/enumerator alignment and the 8000-tile cap.
 - `test/import-export.spec.js` checks that the export modal's tile estimate matches the exported `.melmap` `manifest.tileCount`.
+- Tile exports record actual `manifest.downloadedTileCount` and `manifest.downloadedTileBytes`, and the export success message reports the final ZIP size.
 - Tile-enabled `.melmap` exports include optional `manifest.tileProvider` metadata with provider id, name, attribution, and homepage when available.
 - Provider allow-list metadata lives with the map layer definitions. Blocked providers disable only the tile checkbox, leaving route and state export available.
 - Tile import/export writes a local pack index in `mapping-elf-tile-index`. The index stores source, layer, bounds, zoom range, provider, status, tile counts, and concrete cache URLs; it is not embedded in `.melmap` and is not stored in `localStorage`.
 
 Future implementation guard:
 
-- For byte-size display, calculate actual downloaded byte totals during export and report `tileCount`, `downloadedTileCount`, and `zipBlob.size`. Do not persist route coordinates for analytics.
+- For richer byte-size display, surface the measured `downloadedTileBytes` and `zipBlob.size` before or during export, not only in the completion message. Do not persist route coordinates for analytics.
 
 ## Cleanup Model
 

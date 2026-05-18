@@ -265,6 +265,9 @@ test('map-pack tile estimate matches exported manifest tile count', async ({ pag
   expect(manifest.includes.tiles).toBe(true);
   expect(manifest.layer).toBeTruthy();
   expect(manifest.tileCount).toBe(expectedTileCount);
+  expect(manifest.downloadedTileCount).toBeGreaterThanOrEqual(0);
+  expect(manifest.downloadedTileCount).toBeLessThanOrEqual(manifest.tileCount);
+  expect(manifest.downloadedTileBytes).toBeGreaterThanOrEqual(0);
   expect(manifest.minZoom).toBeLessThanOrEqual(manifest.maxZoom);
   expect(manifest.tileProvider).toMatchObject({
     id: 'opentopomap',
@@ -296,6 +299,8 @@ test('map-pack disables tile export for providers outside the allow-list', async
   expect(manifest.includes.route).toBe(true);
   expect(manifest.includes.tiles).toBe(false);
   expect(manifest.tileCount).toBe(0);
+  expect(manifest.downloadedTileCount).toBe(0);
+  expect(manifest.downloadedTileBytes).toBe(0);
   expect(manifest.tileProvider).toBeNull();
   expect(tileFiles).toHaveLength(0);
 

@@ -66,7 +66,7 @@ export class MapPackExporter {
    * @param {string}   opts.gpxXml           Pre-built GPX (required if includeRoute)
    * @param {string}   opts.filenameBase
    * @param {Function} opts.onProgress       (current, total, phase) → void
-   * @returns {Promise<{blob: Blob, filename: string, tileCount: number}>}
+   * @returns {Promise<{blob: Blob, filename: string, tileCount: number, downloadedTileCount: number, downloadedTileBytes: number, zipBytes: number}>}
    */
   static async export({
     bounds,
@@ -100,6 +100,8 @@ export class MapPackExporter {
       minZoom: null,
       maxZoom: null,
       tileCount: 0,
+      downloadedTileCount: 0,
+      downloadedTileBytes: 0,
       tileProvider: null,
     };
 
@@ -121,6 +123,8 @@ export class MapPackExporter {
 
     // ---- tiles/ ----
     let totalTiles = 0;
+    let downloadedTileCount = 0;
+    let downloadedTileBytes = 0;
     if (includeTiles) {
       const tilePolicy = getOfflineTileExportPolicy(layerInfo);
       if (!tilePolicy.allowed) throw new Error(tilePolicy.reason || '此圖層暫不支援離線圖磚匯出');
@@ -144,7 +148,6 @@ export class MapPackExporter {
 
       const cache = 'caches' in self ? await caches.open(OFFLINE_TILE_CACHE_NAME) : null;
       const cachedTileUrls = new Set();
-      let downloadedTileCount = 0;
       onProgress(0, totalTiles, 'tiles');
 
       const chunkSize = 10;
@@ -157,6 +160,7 @@ export class MapPackExporter {
             if (result?.blob) {
               zip.file(`tiles/${layerInfo.name}/${z}/${x}/${y}.png`, result.blob);
               downloadedTileCount++;
+              downloadedTileBytes += result.blob.size || 0;
               (result.cacheUrls || []).forEach((url) => cachedTileUrls.add(url));
             }
             done++;
@@ -164,6 +168,8 @@ export class MapPackExporter {
           })
         );
       }
+      manifest.downloadedTileCount = downloadedTileCount;
+      manifest.downloadedTileBytes = downloadedTileBytes;
 
       await addOfflineTilePack({
         source: 'export',
@@ -187,11 +193,15 @@ export class MapPackExporter {
       (meta) => onProgress(Math.round(meta.percent), 100, 'zip')
     );
     onProgress(1, 1, 'zip');
+    const zipBytes = blob.size || 0;
 
     return {
       blob,
       filename: `${filenameBase}.melmap`,
       tileCount: totalTiles,
+      downloadedTileCount,
+      downloadedTileBytes,
+      zipBytes,
     };
   }
 

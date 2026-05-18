@@ -2105,6 +2105,20 @@ function updateMapPackTileOptionState() {
   return policy;
 }
 
+function formatByteSize(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  const digits = unitIndex === 0 || size >= 10 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
 async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
   const includeRoute = document.getElementById('mappack-inc-route').checked;
   const includeTiles = document.getElementById('mappack-inc-tiles').checked;
@@ -2137,7 +2151,14 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
 
   try {
     const { MapPackExporter } = await ensureMapPackModules();
-    const { blob, filename, tileCount } = await MapPackExporter.export({
+    const {
+      blob,
+      filename,
+      tileCount,
+      downloadedTileCount,
+      downloadedTileBytes,
+      zipBytes,
+    } = await MapPackExporter.export({
       bounds,
       routeCoords: currentRouteCoords,
       layerInfo: layerInfo && { ...layerInfo, name: mapManager.currentLayerName },
@@ -2161,9 +2182,16 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
     });
     const parts = [];
     if (includeRoute) parts.push('路線');
-    if (includeTiles) parts.push(`${tileCount} 張圖磚`);
+    if (includeTiles) {
+      const tilePart = downloadedTileCount === tileCount
+        ? `${tileCount} 張圖磚`
+        : `${downloadedTileCount}/${tileCount} 張圖磚`;
+      const tileSize = downloadedTileBytes > 0 ? `圖磚 ${formatByteSize(downloadedTileBytes)}` : '';
+      parts.push(tileSize ? `${tilePart} · ${tileSize}` : tilePart);
+    }
     if (includeState) parts.push('個人偏好');
-    showNotification(`離線地圖包已匯出 (${parts.join('、')})`, 'success');
+    const zipSize = zipBytes > 0 ? `，檔案 ${formatByteSize(zipBytes)}` : '';
+    showNotification(`離線地圖包已匯出 (${parts.join('、')}${zipSize})`, 'success');
   } catch (err) {
     showNotification(err.message || '匯出失敗', 'error');
     console.error(err);
