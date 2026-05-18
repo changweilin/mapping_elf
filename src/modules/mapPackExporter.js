@@ -11,10 +11,13 @@
  */
 import JSZip from 'jszip';
 import { MELMAP_STATE_KEYS } from './stateKeys.js';
+import {
+  enumerateMapPackTiles,
+  tilesForBoundsZoom,
+} from './tileEstimator.js';
 import { platform } from '../platform/index.js';
 
 const MELMAP_VERSION = 1;
-const MAX_TILES = 8000;
 
 // CARTO/OpenTopoMap use {a,b,c} subdomains; Esri has no {s}. When writing
 // tiles into Cache API on import we replicate the response under every
@@ -23,20 +26,6 @@ const SUBDOMAINS = ['a', 'b', 'c'];
 const RETINA_SUFFIXES = ['', '@2x'];
 
 const LS_STATE_KEYS = MELMAP_STATE_KEYS;
-
-function lng2tile(lon, zoom) {
-  return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
-}
-
-function lat2tile(lat, zoom) {
-  return Math.floor(
-    ((1 -
-      Math.log(
-        Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)
-      ) / Math.PI) / 2) *
-    Math.pow(2, zoom)
-  );
-}
 
 export class MapPackExporter {
   /**
@@ -110,7 +99,7 @@ export class MapPackExporter {
       if (!bounds || !layerInfo) throw new Error('匯出圖磚時需要 bounds 與 layerInfo');
       if (!routeCoords || routeCoords.length < 2) throw new Error('匯出圖磚時需先建立路線');
 
-      const { minZoom, maxZoom, tiles } = this._enumerateTiles(bounds, layerInfo);
+      const { minZoom, maxZoom, tiles } = enumerateMapPackTiles(bounds, layerInfo);
       totalTiles = tiles.length;
 
       manifest.layer = layerInfo.name;
@@ -161,41 +150,11 @@ export class MapPackExporter {
   }
 
   static _enumerateTiles(bounds, layerInfo) {
-    // Walk from rough overview (z=8) up to layer maxZoom, stop when count exceeds MAX_TILES.
-    const hardMin = 8;
-    const hardMax = Math.min(17, layerInfo.maxZoom);   // cap at 17 to control size; adjust per layer below
-    const tiles = [];
-    let pickedMin = hardMin;
-    let pickedMax = hardMin;
-
-    for (let z = hardMin; z <= hardMax; z++) {
-      const zTiles = this._tilesForZoom(bounds, z);
-      if (tiles.length + zTiles.length > MAX_TILES) {
-        // Too many at this zoom — stop adding.
-        break;
-      }
-      tiles.push(...zTiles);
-      pickedMax = z;
-    }
-
-    return { minZoom: pickedMin, maxZoom: pickedMax, tiles };
+    return enumerateMapPackTiles(bounds, layerInfo);
   }
 
   static _tilesForZoom(bounds, z) {
-    let xMin = lng2tile(bounds.getWest(), z);
-    let xMax = lng2tile(bounds.getEast(), z);
-    let yMin = lat2tile(bounds.getNorth(), z);
-    let yMax = lat2tile(bounds.getSouth(), z);
-    if (xMin > xMax) [xMin, xMax] = [xMax, xMin];
-    if (yMin > yMax) [yMin, yMax] = [yMax, yMin];
-
-    const out = [];
-    for (let x = xMin; x <= xMax; x++) {
-      for (let y = yMin; y <= yMax; y++) {
-        out.push({ z, x, y });
-      }
-    }
-    return out;
+    return tilesForBoundsZoom(bounds, z);
   }
 
   static async _fetchTile(urlTemplate, z, x, y, cache) {

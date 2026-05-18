@@ -59,9 +59,11 @@ Source plan: `doc/pre-app-optimization-plan.md`
 - Expanded mobile viewport QA to cover `.melmap` import modal bounds and touch expansion of the bottom weather panel.
 - Expanded mobile viewport QA to cover touch long-press waypoint drag and delete flows in a small landscape viewport.
 - Added `doc/offline-tile-strategy.md` with tile-count sizing rules, per-route cache cleanup design, provider gating, and release-time license review notes.
+- Extracted `.melmap` tile-count estimation into `src/modules/tileEstimator.js` so export modal estimates and map-pack tile enumeration share the same zoom/cap rules, with numeric regression coverage.
+- Added import/export regression coverage that compares the `.melmap` export modal tile estimate with the exported `manifest.tileCount`.
 
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Convert the offline tile strategy into implementation after provider allow-list decisions: shared tile estimator, pack index cleanup, and disabled tile export for blocked providers.
+2. Convert the remaining offline tile strategy into implementation after provider allow-list decisions: pack index cleanup, disabled tile export for blocked providers, and manifest attribution metadata.
 3. Profile native WebView behavior with real device builds once the Capacitor shell and plugins are ready.

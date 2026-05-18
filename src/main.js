@@ -12,6 +12,7 @@ import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNot
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeHourlyPoints, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, interpolateTimeAtDist, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
+import { estimateMapPackTiles } from './modules/tileEstimator.js';
 import { platform } from './platform/index.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
@@ -2045,25 +2046,8 @@ function _estimateTileCountForMapPack() {
   const layerInfo = mapManager.getCurrentLayerInfo();
   if (!layerInfo) return { count: 0, layer: null };
   const bounds = L.latLngBounds(currentRouteCoords).pad(0.05);
-
-  let total = 0;
-  const hardMin = 8;
-  const hardMax = Math.min(17, layerInfo.maxZoom);
-  const MAX = 8000;
-  for (let z = hardMin; z <= hardMax; z++) {
-    let xMin = Math.floor(((bounds.getWest() + 180) / 360) * Math.pow(2, z));
-    let xMax = Math.floor(((bounds.getEast() + 180) / 360) * Math.pow(2, z));
-    const latRadN = (bounds.getNorth() * Math.PI) / 180;
-    const latRadS = (bounds.getSouth() * Math.PI) / 180;
-    let yMin = Math.floor(((1 - Math.log(Math.tan(latRadN) + 1 / Math.cos(latRadN)) / Math.PI) / 2) * Math.pow(2, z));
-    let yMax = Math.floor(((1 - Math.log(Math.tan(latRadS) + 1 / Math.cos(latRadS)) / Math.PI) / 2) * Math.pow(2, z));
-    if (xMin > xMax) [xMin, xMax] = [xMax, xMin];
-    if (yMin > yMax) [yMin, yMax] = [yMax, yMin];
-    const count = (xMax - xMin + 1) * (yMax - yMin + 1);
-    if (total + count > MAX) break;
-    total += count;
-  }
-  return { count: total, layer: mapManager.currentLayerName };
+  const estimate = estimateMapPackTiles(bounds, layerInfo);
+  return { count: estimate.tileCount, layer: mapManager.currentLayerName };
 }
 
 async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {

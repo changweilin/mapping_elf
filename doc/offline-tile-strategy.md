@@ -15,8 +15,9 @@ This note turns the pre-app optimization offline-map item into an implementation
 
 Relevant code:
 
+- `src/modules/tileEstimator.js`: shared zoom range, 8000-tile cap, bounds-to-tile enumeration, and tile-count estimate.
 - `src/main.js`: `_estimateTileCountForMapPack()`, `doExportMapPack()`, `.melmap` import modal flow.
-- `src/modules/mapPackExporter.js`: `MAX_TILES = 8000`, manifest fields, tile enumeration, tile fetch/cache.
+- `src/modules/mapPackExporter.js`: manifest fields, shared tile enumeration, tile fetch/cache.
 - `src/modules/mapPackImporter.js`: manifest validation, tile restore, subdomain expansion.
 - `src/modules/offlineManager.js`: service worker registration, cache count display, full cache clearing.
 
@@ -31,10 +32,14 @@ The tile-count formula must stay aligned between the UI and exporter:
 3. Count `(xMax - xMin + 1) * (yMax - yMin + 1)`.
 4. Stop before adding a zoom level that would exceed `8000` total tiles.
 
+Implemented guard:
+
+- Shared enumeration lives in `src/modules/tileEstimator.js` and is used by both `_estimateTileCountForMapPack()` and `MapPackExporter.export()`.
+- `test/numeric-regression.mjs` checks estimator/enumerator alignment and the 8000-tile cap.
+- `test/import-export.spec.js` checks that the export modal's tile estimate matches the exported `.melmap` `manifest.tileCount`.
+
 Future implementation guard:
 
-- Extract this enumeration into one shared helper used by both `_estimateTileCountForMapPack()` and `MapPackExporter.export()`.
-- Add a regression test that compares the modal estimate with the exported `manifest.tileCount`.
 - For byte-size display, calculate actual downloaded byte totals during export and report `tileCount`, `downloadedTileCount`, and `zipBlob.size`. Do not persist route coordinates for analytics.
 
 ## Cleanup Model

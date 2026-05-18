@@ -10,6 +10,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const sampleKml = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.kml');
 const shortGpx = path.join(repoRoot, 'data', 'app-test-routes', 'short-zh-weather.gpx');
+const transparentPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'base64',
+);
 
 function isExpectedExternalResourceNoise(text) {
   return text.includes('Failed to load resource')
@@ -40,6 +44,17 @@ async function openApp(page) {
 
 async function importFixture(page, filePath) {
   await page.locator('#gpx-file-input').setInputFiles(filePath);
+}
+
+async function mockMapTiles(page) {
+  await page.route(/basemaps\.cartocdn\.com|tile\.opentopomap\.org|server\.arcgisonline\.com/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: transparentPng,
+    });
+  });
 }
 
 async function expectImportedRoute(page) {
@@ -101,6 +116,21 @@ async function writeStateOnlyMapPack(filePath, state) {
   await fs.writeFile(filePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
 }
 
+async function readMapPackManifest(filePath) {
+  const zip = await JSZip.loadAsync(await fs.readFile(filePath));
+  const manifest = JSON.parse(await zip.file('manifest.json').async('string'));
+  const tileFiles = Object.keys(zip.files).filter((name) =>
+    /^tiles\/[^/]+\/\d+\/\d+\/\d+\.(png|jpg|jpeg)$/i.test(name)
+  );
+  return { manifest, tileFiles };
+}
+
+function parseTileEstimate(text) {
+  const match = String(text || '').match(/\d+/);
+  expect(match, `tile estimate should contain a count: ${text}`).toBeTruthy();
+  return Number(match[0]);
+}
+
 async function downloadExport(page, testInfo, fmt, configure = async () => {}) {
   await clickStable(page, '#btn-export-gpx');
   await expect(page.locator('#export-modal')).toBeVisible();
@@ -157,6 +187,33 @@ test('round-trips GPX, KML, and route-only .melmap exports', async ({ page }, te
   expect(afterMelmap.waypointCount).toBeGreaterThan(0);
   expectSameEndpoint(afterMelmap.first, baseline.first, '.melmap first');
   expectSameEndpoint(afterMelmap.last, baseline.last, '.melmap last');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('map-pack tile estimate matches exported manifest tile count', async ({ page }, testInfo) => {
+  await mockMapTiles(page);
+  const consoleErrors = await openApp(page);
+
+  await importFixture(page, shortGpx);
+  await expectImportedRoute(page);
+
+  const melmapPath = await downloadExport(page, testInfo, 'melmap', async () => {
+    await expect(page.locator('#melmap-sub-options')).toBeVisible();
+    await expect(page.locator('#mappack-inc-tiles')).toBeChecked();
+    const estimatedTileCount = parseTileEstimate(await page.locator('#mappack-tiles-info').textContent());
+    expect(estimatedTileCount).toBeGreaterThan(0);
+    await page.evaluate((count) => {
+      window.__mappingElfExpectedTileCount = count;
+    }, estimatedTileCount);
+  });
+
+  const expectedTileCount = await page.evaluate(() => window.__mappingElfExpectedTileCount);
+  const { manifest } = await readMapPackManifest(melmapPath);
+  expect(manifest.includes.tiles).toBe(true);
+  expect(manifest.layer).toBeTruthy();
+  expect(manifest.tileCount).toBe(expectedTileCount);
+  expect(manifest.minZoom).toBeLessThanOrEqual(manifest.maxZoom);
 
   expect(consoleErrors).toEqual([]);
 });
