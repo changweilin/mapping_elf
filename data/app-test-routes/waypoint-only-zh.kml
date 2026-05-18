@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>中文航點測試</name>
+    <Style id="routeLine">
+      <LineStyle><color>ffff5500</color><width>4</width></LineStyle>
+      <PolyStyle><fill>0</fill></PolyStyle>
+    </Style>
+    <Style id="wpGoing">
+      <IconStyle><scale>1.1</scale><Icon><href>https://maps.google.com/mapfiles/kml/paddle/red-circle.png</href></Icon></IconStyle>
+    </Style>
+    <Style id="wpInterval">
+      <IconStyle><scale>0.7</scale><Icon><href>https://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle>
+    </Style>
+    <Placemark>
+      <name>起點 茶亭</name>
+      <description><![CDATA[<table><tr><td>日期</td><td>2026-05-21</td></tr><tr><td>時間</td><td>06:30</td></tr><tr><td>氣溫</td><td>19 C</td></tr></table>]]></description>
+      <styleUrl>#wpGoing</styleUrl>
+      <ExtendedData>
+        <Data name="cumDistM"><value>0.0</value></Data>
+        <Data name="ele"><value>18.0</value></Data>
+      </ExtendedData>
+      <Point><coordinates>121.565000,25.035000,18.0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>*_休息點</name>
+      <description><![CDATA[<table><tr><td>日期</td><td>2026-05-21</td></tr><tr><td>時間</td><td>07:00</td></tr></table>]]></description>
+      <styleUrl>#wpInterval</styleUrl>
+      <ExtendedData>
+        <Data name="cumDistM"><value>900.0</value></Data>
+        <Data name="ele"><value>65.0</value></Data>
+      </ExtendedData>
+      <Point><coordinates>121.571000,25.041000,65.0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>終點 展望台</name>
+      <description><![CDATA[<table><tr><td>日期</td><td>2026-05-21</td></tr><tr><td>時間</td><td>07:45</td></tr><tr><td>風速</td><td>10 km/h</td></tr></table>]]></description>
+      <styleUrl>#wpGoing</styleUrl>
+      <ExtendedData>
+        <Data name="cumDistM"><value>1800.0</value></Data>
+        <Data name="ele"><value>40.0</value></Data>
+      </ExtendedData>
+      <Point><coordinates>121.577000,25.047000,40.0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>中文航點測試</name>
+      <styleUrl>#routeLine</styleUrl>
+      <LineString>
+        <altitudeMode>clampToGround</altitudeMode>
+        <coordinates>
+          121.565000,25.035000,18.0
+          121.568000,25.038000,38.0
+          121.571000,25.041000,65.0
+          121.574000,25.044000,56.0
+          121.577000,25.047000,40.0
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>

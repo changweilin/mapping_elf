@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Mapping Elf Test"
+  xmlns="http://www.topografix.com/GPX/1/1"
+  xmlns:mel="https://mapping-elf.app/gpx/1/0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name>短測試路線-天氣</name>
+    <time>2026-05-18T00:00:00.000Z</time>
+  </metadata>
+  <wpt lat="25.034000" lon="121.564000">
+    <name>起點 松山</name>
+    <ele>12.0</ele>
+    <extensions>
+      <mel:cumDistM>0.0</mel:cumDistM>
+      <mel:date>2026-05-20</mel:date>
+      <mel:time>07:00</mel:time>
+      <mel:temp>22 C</mel:temp>
+      <mel:windSpeed>8 km/h</mel:windSpeed>
+    </extensions>
+  </wpt>
+  <wpt lat="25.039000" lon="121.569000">
+    <name>*_補給點</name>
+    <ele>42.0</ele>
+    <type>mel:interval</type>
+    <extensions>
+      <mel:cumDistM>750.0</mel:cumDistM>
+      <mel:date>2026-05-20</mel:date>
+      <mel:time>07:25</mel:time>
+      <mel:temp>21 C</mel:temp>
+    </extensions>
+  </wpt>
+  <wpt lat="25.044000" lon="121.574000">
+    <name>中途 觀景台</name>
+    <ele>86.0</ele>
+    <extensions>
+      <mel:cumDistM>1500.0</mel:cumDistM>
+      <mel:date>2026-05-20</mel:date>
+      <mel:time>07:50</mel:time>
+      <mel:temp>20 C</mel:temp>
+      <mel:precipitation>0 mm</mel:precipitation>
+    </extensions>
+  </wpt>
+  <wpt lat="25.054000" lon="121.584000">
+    <name>終點 象山</name>
+    <ele>34.0</ele>
+    <extensions>
+      <mel:cumDistM>3000.0</mel:cumDistM>
+      <mel:date>2026-05-20</mel:date>
+      <mel:time>08:40</mel:time>
+      <mel:temp>23 C</mel:temp>
+      <mel:windSpeed>11 km/h</mel:windSpeed>
+    </extensions>
+  </wpt>
+  <trk>
+    <name>短測試路線-天氣</name>
+    <trkseg>
+      <trkpt lat="25.034000" lon="121.564000"><ele>12.0</ele><time>2026-05-20T07:00:00Z</time></trkpt>
+      <trkpt lat="25.036000" lon="121.566000"><ele>24.0</ele><time>2026-05-20T07:10:00Z</time></trkpt>
+      <trkpt lat="25.039000" lon="121.569000"><ele>42.0</ele><time>2026-05-20T07:25:00Z</time></trkpt>
+      <trkpt lat="25.041000" lon="121.571000"><ele>60.0</ele><time>2026-05-20T07:35:00Z</time></trkpt>
+      <trkpt lat="25.044000" lon="121.574000"><ele>86.0</ele><time>2026-05-20T07:50:00Z</time></trkpt>
+      <trkpt lat="25.049000" lon="121.579000"><ele>58.0</ele><time>2026-05-20T08:15:00Z</time></trkpt>
+      <trkpt lat="25.054000" lon="121.584000"><ele>34.0</ele><time>2026-05-20T08:40:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

@@ -13,7 +13,8 @@
     "test:smoke": "node test/run-playwright-with-preview.mjs",
     "test:chunks": "node test/chunk-output.mjs",
     "test:numeric": "node test/numeric-regression.mjs",
-    "test:import-export": "node test/run-playwright-with-preview.mjs test/import-export.spec.js"
+    "test:import-export": "node test/run-playwright-with-preview.mjs test/import-export.spec.js",
+    "test:mobile": "node test/run-playwright-with-preview.mjs test/mobile-app-qa.spec.js"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

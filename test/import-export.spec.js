@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import fs from 'node:fs/promises';
+import JSZip from 'jszip';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +9,7 @@ test.use({ acceptDownloads: true });
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const sampleKml = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.kml');
+const shortGpx = path.join(repoRoot, 'data', 'app-test-routes', 'short-zh-weather.gpx');
 
 function isExpectedExternalResourceNoise(text) {
   return text.includes('Failed to load resource')
@@ -71,10 +74,31 @@ async function routeSnapshot(page) {
   });
 }
 
+async function importedTrackState(page) {
+  return page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_importedTrack') || 'null'));
+}
+
 function expectSameEndpoint(actual, expected, label) {
   expect(actual, `${label} endpoint should exist`).toBeTruthy();
   expect(Math.abs(actual[0] - expected[0]), `${label} latitude`).toBeLessThan(0.00001);
   expect(Math.abs(actual[1] - expected[1]), `${label} longitude`).toBeLessThan(0.00001);
+}
+
+async function writeStateOnlyMapPack(filePath, state) {
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify({
+    version: 1,
+    generator: 'Mapping Elf Test',
+    createdAt: '2026-05-18T00:00:00.000Z',
+    includes: { route: false, tiles: false, state: true },
+    layer: null,
+    bounds: null,
+    minZoom: null,
+    maxZoom: null,
+    tileCount: 0,
+  }, null, 2));
+  zip.file('state.json', JSON.stringify(state, null, 2));
+  await fs.writeFile(filePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
 }
 
 async function downloadExport(page, testInfo, fmt, configure = async () => {}) {
@@ -133,6 +157,113 @@ test('round-trips GPX, KML, and route-only .melmap exports', async ({ page }, te
   expect(afterMelmap.waypointCount).toBeGreaterThan(0);
   expectSameEndpoint(afterMelmap.first, baseline.first, '.melmap first');
   expectSameEndpoint(afterMelmap.last, baseline.last, '.melmap last');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('imports app fixture with Chinese names, weather metadata, and interval points', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+
+  await importFixture(page, shortGpx);
+  await expectImportedRoute(page);
+
+  const state = await importedTrackState(page);
+  expect(state.coords.length).toBe(7);
+  expect(state.waypoints.length).toBe(3);
+  expect(state.waypointMeta.map((m) => m.label)).toEqual([
+    '起點 松山',
+    '中途 觀景台',
+    '終點 象山',
+  ]);
+  expect(state.waypointMeta[0].date).toBe('2026-05-20');
+  expect(state.waypointMeta[0].time).toBe('07:00');
+  expect(state.waypointMeta[0].weather.temp).toBe('22 C');
+  expect(state.intermediates).toHaveLength(1);
+  expect(state.intermediates[0].label).toBe('補給點');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('melmap state restore uses allow-list and preserves user collections/session keys', async ({ page }, testInfo) => {
+  const consoleErrors = await openApp(page);
+  const originalFavorites = [{ id: 'fav-local', name: '保留的最愛', savedAt: '2026-05-18T00:00:00.000Z' }];
+  const originalWaypoints = [[25.03, 121.56], [25.04, 121.57]];
+  await page.evaluate(({ originalFavorites, originalWaypoints }) => {
+    localStorage.setItem('mappingElf_theme', 'dark');
+    localStorage.setItem('mappingElf_favorites', JSON.stringify(originalFavorites));
+    localStorage.setItem('mappingElf_waypoints', JSON.stringify(originalWaypoints));
+    localStorage.setItem('mappingElf_importedTrack', JSON.stringify({ coords: [[1, 2], [3, 4]] }));
+  }, { originalFavorites, originalWaypoints });
+
+  const packPath = testInfo.outputPath('state-allow-list.melmap');
+  await writeStateOnlyMapPack(packPath, {
+    mappingElf_theme: 'light',
+    mappingElf_favorites: JSON.stringify([{ id: 'fav-evil', name: '不應覆蓋' }]),
+    mappingElf_waypoints: JSON.stringify([[0, 0], [1, 1]]),
+    mappingElf_importedTrack: JSON.stringify({ coords: [[9, 9], [8, 8]] }),
+  });
+
+  await importFixture(page, packPath);
+  await expect(page.locator('#mappack-import-modal')).toBeVisible();
+  await expect(page.locator('#mappack-restore-state')).toBeChecked();
+  await page.locator('#btn-mappack-import-confirm').click();
+  await expect(page.locator('#mappack-import-modal')).toHaveClass(/hidden/);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mappingElf_theme'))).toBe('light');
+
+  const stored = await page.evaluate(() => ({
+    theme: localStorage.getItem('mappingElf_theme'),
+    favorites: JSON.parse(localStorage.getItem('mappingElf_favorites') || '[]'),
+    waypoints: JSON.parse(localStorage.getItem('mappingElf_waypoints') || '[]'),
+    importedTrack: JSON.parse(localStorage.getItem('mappingElf_importedTrack') || 'null'),
+  }));
+  expect(stored.theme).toBe('light');
+  expect(stored.favorites).toEqual(originalFavorites);
+  expect(stored.waypoints).toEqual(originalWaypoints);
+  expect(stored.importedTrack).toEqual({ coords: [[1, 2], [3, 4]] });
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('reset defaults clears app state but keeps favorites', async ({ page }) => {
+  const originalFavorites = [{ id: 'fav-reset', name: '重置後保留', savedAt: '2026-05-18T00:00:00.000Z' }];
+  const consoleErrors = [];
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (!isExpectedExternalResourceNoise(text)) consoleErrors.push(text);
+  });
+  page.on('pageerror', (err) => consoleErrors.push(err.message));
+  await page.addInitScript((favorites) => {
+    if (sessionStorage.getItem('__mappingElfResetSeeded') === '1') return;
+    sessionStorage.setItem('__mappingElfResetSeeded', '1');
+    localStorage.clear();
+    localStorage.setItem('mappingElf_theme', 'light');
+    localStorage.setItem('mappingElf_routeMode', 'driving');
+    localStorage.setItem('mappingElf_waypoints', JSON.stringify([[25.03, 121.56], [25.04, 121.57]]));
+    localStorage.setItem('mappingElf_pendingGpx', '<gpx></gpx>');
+    localStorage.setItem('mappingElf_favorites', JSON.stringify(favorites));
+  }, originalFavorites);
+  await page.goto('/');
+  await expect(page.locator('#map')).toBeVisible();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await clickStable(page, '#btn-reset-defaults');
+  await page.waitForLoadState('domcontentloaded');
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+
+  const stored = await page.evaluate(() => ({
+    theme: localStorage.getItem('mappingElf_theme'),
+    routeMode: localStorage.getItem('mappingElf_routeMode'),
+    waypoints: localStorage.getItem('mappingElf_waypoints'),
+    pendingGpx: localStorage.getItem('mappingElf_pendingGpx'),
+    favorites: JSON.parse(localStorage.getItem('mappingElf_favorites') || '[]'),
+  }));
+  expect(stored.theme).toBeNull();
+  expect(stored.routeMode).toBeNull();
+  expect(stored.waypoints).toBeNull();
+  expect(stored.pendingGpx).toBeNull();
+  expect(stored.favorites).toEqual(originalFavorites);
 
   expect(consoleErrors).toEqual([]);
 });

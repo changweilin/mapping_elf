@@ -1,15 +1,16 @@
 # Pre-App Optimization Progress
 
 Created: 2026-05-18
+Last updated: 2026-05-18
 Source plan: `doc/pre-app-optimization-plan.md`
 
 ## Execution Order
 
 | Sprint | Scope | Status | Verification |
 | --- | --- | --- | --- |
-| Sprint 1 | Build mode, platform adapter, external platform calls, export channel split | In progress | `npm run build:web`, `npm run build:app`, smoke/import-export tests |
-| Sprint 2 | Import/export round-trip tests, state contract, reset/import behavior | In progress | `npm run test:import-export`, `npm run test:numeric` |
-| Sprint 3 | Error states, mobile UI QA, safe area, WebView differences | Pending | Browser mobile smoke checklist |
+| Sprint 1 | Build mode, platform adapter, external platform calls, export channel split | Done | `npm run build:web`, `npm run build:app`, smoke/import-export tests |
+| Sprint 2 | Import/export round-trip tests, state contract, reset/import behavior | Done | `npm run test:import-export`, `npm run test:numeric` |
+| Sprint 3 | Error states, mobile UI QA, safe area, WebView differences | In progress | `npm run test:mobile`, browser mobile smoke checklist |
 | Sprint 4 | Long-route performance, request cancellation guards, offline strategy, privacy data flow | Pending | Long route fixture, request-race tests, privacy review |
 
 ## Completed In This Pass
@@ -34,9 +35,23 @@ Source plan: `doc/pre-app-optimization-plan.md`
 - Added `doc/state-contract.md`.
 - Added `doc/privacy-data-flow.md`.
 
+## Completed In Next Round
+
+- Added App-focused test fixtures under `data/app-test-routes/`:
+  - short GPX with Chinese names, elevation, date/time, weather extensions, and an interval point
+  - compact KML with Chinese names, weather description rows, and a route line
+- Expanded `test:import-export` to cover:
+  - Chinese GPX fixture import
+  - embedded weather/date/time metadata
+  - interval-point preservation
+  - `.melmap` state restore allow-list behavior
+  - reset defaults clearing app state while preserving favorites
+- Added `test:mobile` and `test/mobile-app-qa.spec.js`.
+- Added modal safe-area padding and viewport-bounded scrolling for small/mobile landscape screens.
+
 ## Next Safe Steps
 
 1. Expand platform adapter native implementations once Capacitor plugins are chosen.
-2. Add mobile viewport QA cases for export/import modal, waypoint touch flows, bottom panel, and safe-area spacing.
+2. Expand mobile viewport QA to waypoint touch flows, bottom panel, and import modal.
 3. Add request version guards for route/weather/elevation updates before refactoring long-running calculations.
 4. Add offline tile strategy details for size estimation, per-route cleanup, and provider license notes.

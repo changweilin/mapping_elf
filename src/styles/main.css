@@ -4946,6 +4946,12 @@ html.light-theme .wt-date-input {
 .modal-overlay {
   position: fixed;
   inset: 0;
+  box-sizing: border-box;
+  padding:
+    calc(env(safe-area-inset-top, 0px) + 16px)
+    calc(env(safe-area-inset-right, 0px) + 16px)
+    calc(env(safe-area-inset-bottom, 0px) + 16px)
+    calc(env(safe-area-inset-left, 0px) + 16px);
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -4971,13 +4977,17 @@ body.modal-open {
 }
 
 .modal-box {
+  box-sizing: border-box;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 24px;
   min-width: 280px;
   max-width: 360px;
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 32px);
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 32px);
   width: 90%;
+  overflow-y: auto;
   box-shadow: var(--shadow-lg);
 }
 
