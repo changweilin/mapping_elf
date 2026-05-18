@@ -5,6 +5,7 @@
 
 import { translatePhrase } from './i18n.js';
 import { showNotification as rawShowNotification } from './utils.js';
+import { platform } from '../platform/index.js';
 import {
   OFFLINE_TILE_CACHE_NAME,
   addOfflineTilePack,
@@ -15,15 +16,16 @@ import {
 
 export class OfflineManager {
   constructor() {
-    this.isOnline = navigator.onLine;
+    this.isOnline = platform.getNetworkStatus().connected;
     this._statusDot = document.querySelector('.status-dot');
     this._statusText = document.querySelector('.offline-status span:last-child');
     this._cacheInfo = document.getElementById('cache-info');
     this._packList = document.getElementById('offline-pack-list');
     this._clearCacheBtn = document.getElementById('btn-clear-offline-cache');
 
-    window.addEventListener('online', () => this._updateStatus(true));
-    window.addEventListener('offline', () => this._updateStatus(false));
+    this._unsubscribeNetworkStatus = platform.subscribeNetworkStatus?.((status) => {
+      this._updateStatus(status.connected);
+    }) || null;
     this._packList?.addEventListener('click', (event) => this._handlePackListClick(event));
     this._clearCacheBtn?.addEventListener('click', () => this._handleClearAllClick());
 
@@ -84,6 +86,11 @@ export class OfflineManager {
 
   _notify(message, type = 'info', duration = 3000) {
     rawShowNotification(translatePhrase(message), type, duration);
+  }
+
+  destroy() {
+    this._unsubscribeNetworkStatus?.();
+    this._unsubscribeNetworkStatus = null;
   }
 
   async _handlePackListClick(event) {

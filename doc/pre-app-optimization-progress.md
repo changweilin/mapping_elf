@@ -86,6 +86,10 @@ Source plan: `doc/pre-app-optimization-plan.md`
   - tile import/export writes measured `tileBytes` into the local pack index;
   - the export modal estimates byte size from previous same-provider/same-layer samples when available;
   - the offline pack list shows measured byte size alongside tile and URL counts.
+- Centralized remaining online/offline checks behind the platform adapter:
+  - `webPlatform` now exposes `subscribeNetworkStatus()`;
+  - the file-management offline status and route-planning offline error use `platform.getNetworkStatus()`;
+  - future Capacitor Network plugin wiring can replace the adapter without changing route or UI flow code.
 
 ## Next Safe Steps
 

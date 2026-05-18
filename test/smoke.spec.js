@@ -59,6 +59,16 @@ test('app shell loads without console errors', async ({ page }) => {
   await expect(page.locator('#side-panel')).toBeAttached();
   await expect(page.locator('#elevation-chart-container')).toBeVisible();
   await expect(page.locator('#chart-empty')).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    window.dispatchEvent(new Event('offline'));
+  });
+  await expect(page.locator('.offline-status span:last-child')).toContainText(/Offline|離線/);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    window.dispatchEvent(new Event('online'));
+  });
+  await expect(page.locator('.offline-status span:last-child')).toContainText(/Online|線上/);
   expect(consoleErrors).toEqual([]);
 });
 

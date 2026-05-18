@@ -78,6 +78,26 @@ function getCurrentPosition(options) {
   });
 }
 
+function getNetworkStatus() {
+  const nav = typeof navigator !== 'undefined' ? navigator : null;
+  return {
+    connected: nav ? nav.onLine !== false : true,
+    connectionType: nav?.connection?.effectiveType || 'unknown',
+  };
+}
+
+function subscribeNetworkStatus(callback) {
+  if (typeof window === 'undefined' || typeof callback !== 'function') return () => {};
+
+  const emit = () => callback(getNetworkStatus());
+  window.addEventListener('online', emit);
+  window.addEventListener('offline', emit);
+  return () => {
+    window.removeEventListener('online', emit);
+    window.removeEventListener('offline', emit);
+  };
+}
+
 export const webPlatform = {
   name: 'web',
   isNative: false,
@@ -97,12 +117,8 @@ export const webPlatform = {
   vibrate(pattern) {
     if (navigator.vibrate) navigator.vibrate(pattern);
   },
-  getNetworkStatus() {
-    return {
-      connected: navigator.onLine,
-      connectionType: navigator.connection?.effectiveType || 'unknown',
-    };
-  },
+  getNetworkStatus,
+  subscribeNetworkStatus,
   getUserAgent() {
     return navigator.userAgent || '';
   },

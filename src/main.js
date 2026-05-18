@@ -852,7 +852,7 @@ function isRoutePlanSnapshotStale(snapshot) {
 
 function getRoutePlanningErrorMessage(err) {
   if (isAbortError(err)) return null;
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+  if (platform.getNetworkStatus().connected === false) {
     return '目前離線，暫時無法重新規劃路線';
   }
   return '路徑計算失敗，請稍後再試';
