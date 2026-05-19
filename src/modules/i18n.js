@@ -288,6 +288,7 @@ const PHRASES = {
   '進度': { en: 'Progress', ja: '進捗', ko: '진행률', fr: 'Progression', de: 'Fortschritt', es: 'Progreso', it: 'Avanzamento' },
   '我愛星空至深，無懼黑夜。': STRINGS['quote.translation'],
   '問題回報': { en: 'Feedback', ja: 'フィードバック', ko: '피드백', fr: 'Retour', de: 'Feedback', es: 'Comentarios', it: 'Feedback' },
+  '隱私政策': { en: 'Privacy policy', ja: 'プライバシーポリシー', ko: '개인정보 처리방침', fr: 'Politique de confidentialité', de: 'Datenschutzerklärung', es: 'Política de privacidad', it: 'Informativa privacy' },
   '使用人數': { en: 'Visitors', ja: '利用者数', ko: '사용자 수', fr: 'Visiteurs', de: 'Nutzende', es: 'Visitantes', it: 'Visitatori' },
   '匯入離線地圖包': { en: 'Import offline map pack', ja: 'オフライン地図パックをインポート', ko: '오프라인 지도 팩 가져오기', fr: 'Importer un pack de cartes hors ligne', de: 'Offline-Kartenpaket importieren', es: 'Importar paquete de mapas offline', it: 'Importa pacchetto mappe offline' },
   '我的最愛': { en: 'Favorites', ja: 'お気に入り', ko: '즐겨찾기', fr: 'Favoris', de: 'Favoriten', es: 'Favoritos', it: 'Preferiti' },

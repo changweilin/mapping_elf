@@ -6098,7 +6098,15 @@ html.light-theme .wc-time-select {
   text-decoration: none;
 }
 
-.feedback-link span {
+.privacy-link {
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.feedback-link span,
+.privacy-link span {
   line-height: 1;
 }
 
@@ -6159,6 +6167,10 @@ html.light-theme .wc-time-select {
 
 .demo-link:hover {
   color: #14b8a6 !important;
+}
+
+.privacy-link:hover {
+  color: #38bdf8 !important;
 }
 
 html.light-theme .github-link {

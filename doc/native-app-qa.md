@@ -18,6 +18,7 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 | App launch | Install and open the debug APK | App opens without a blank screen; map and panels render. |
 | Android back | Open export modal, `.melmap` import modal, favorites modal, search results, side panel | Back closes the top active UI first; app exits only after no UI layer remains. |
 | External browser | Open Windy from a weather point or map cursor | Windy opens in the system browser, not trapped in the WebView. |
+| External links | Open GitHub, feedback, and privacy policy links from the About section | Links open in the system browser; returning to Mapping Elf keeps the current route/map state. |
 | File export/share | Export GPX, KML, and `.melmap` | Android share sheet opens with the generated file. |
 | File import | Import GPX, KML, and `.melmap` from device storage | Route/state/tile restore behavior matches Web tests. |
 | Location | Tap current-location button | Runtime location permission appears; accepted permission centers the map; denied permission shows a useful message. |
@@ -30,4 +31,5 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 - iOS simulator/device build still needs validation on a Mac/Xcode environment.
 - Provider offline tile terms must be rechecked before any public app release.
 - Store privacy forms need to be completed from `doc/privacy-data-flow.md`.
+- Store disclosure draft exists at `doc/app-store-disclosure-draft.md`; re-check it against the live store forms before release.
 - `npm audit` currently reports dependency findings; review before release instead of applying automatic broad upgrades.

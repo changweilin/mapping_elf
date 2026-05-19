@@ -115,21 +115,23 @@ npm run test:chunks
 先建立 Web 版本，再同步到 Capacitor 原生專案：
 
 ```bash
-npm run build
-npx cap sync
+npm run cap:sync
 ```
 
-開啟 Android 專案：
+只同步 Android 或 iOS：
 
 ```bash
-npx cap open android
+npm run cap:sync:android
+npm run cap:sync:ios
 ```
 
-開啟 iOS 專案：
+建立 Android debug APK：
 
 ```bash
-npx cap open ios
+npm run android:build:debug
 ```
+
+原生真機測試請依照 `doc/native-app-qa.md` 檢查 App 啟動、返回鍵、外部瀏覽器、檔案分享、定位權限、網路狀態、震動與離線圖磚。
 
 ## 專案架構說明
 

@@ -19,6 +19,32 @@ function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
 }
 
+function installNativeExternalLinkHandler() {
+  if (!platform.isNative || typeof document === 'undefined') return;
+
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const anchor = target?.closest?.('a[href]');
+    if (!anchor) return;
+
+    const href = anchor.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+
+    let url;
+    try {
+      url = new URL(anchor.href, window.location.href);
+    } catch {
+      return;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+
+    event.preventDefault();
+    platform.openExternalUrl(url.href);
+  }, true);
+}
+
+installNativeExternalLinkHandler();
+
 function getLocationPermissionHelpMessage() {
   const capacitor = window.Capacitor;
   const platform = capacitor?.getPlatform?.() || 'web';

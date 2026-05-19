@@ -57,6 +57,10 @@ test('app shell loads without console errors', async ({ page }) => {
   const consoleErrors = await openApp(page);
 
   await expect(page.locator('#side-panel')).toBeAttached();
+  await expect(page.locator('.privacy-link')).toHaveAttribute(
+    'href',
+    'https://changweilin.github.io/mapping_elf/privacy.html',
+  );
   await expect(page.locator('#elevation-chart-container')).toBeVisible();
   await expect(page.locator('#chart-empty')).toBeVisible();
   await page.evaluate(() => {
@@ -70,6 +74,12 @@ test('app shell loads without console errors', async ({ page }) => {
   });
   await expect(page.locator('.offline-status span:last-child')).toContainText(/Online|線上/);
   expect(consoleErrors).toEqual([]);
+});
+
+test('privacy policy page is available in the release build', async ({ page }) => {
+  await page.goto('privacy.html');
+  await expect(page.locator('h1')).toContainText('Mapping Elf');
+  await expect(page.locator('body')).toContainText('定位權限');
 });
 
 test('imports sample KML and keeps route UI functional', async ({ page }) => {
