@@ -16,6 +16,12 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 - Current verified result: `BUILD SUCCESSFUL` on 2026-05-19
 - Local build note: this Windows workspace uses an ignored `android/local.properties` with `sdk.dir=C:\tmp\android-sdk`.
 
+## Local Device Availability Check
+
+- 2026-05-19: `adb devices` returned no connected Android device.
+- 2026-05-19: local AVD profile files were present for `Medium_Phone` and `Pixel_7`, but no usable `emulator.exe` was found in the checked Android SDK or Android Studio paths.
+- Result: native bridge checks still need a physical Android device or a repaired Android Emulator installation.
+
 ## Native Bridge Checks
 
 | Area | Action | Expected result |
@@ -34,8 +40,10 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 
 ## Release Readiness Gaps
 
+- Android native bridge QA is still blocked locally until a device or emulator is available.
 - iOS simulator/device build still needs validation on a Mac/Xcode environment.
 - Provider offline tile terms must be rechecked before any public app release.
 - Store privacy forms need to be completed from `doc/privacy-data-flow.md`.
 - Store disclosure draft exists at `doc/app-store-disclosure-draft.md`; re-check it against the live store forms before release.
+- Store listing and asset draft exists at `doc/store-listing-draft.md`; final phone screenshots must be captured from a tested native build.
 - `npm audit` currently reports dependency findings; review before release instead of applying automatic broad upgrades.
