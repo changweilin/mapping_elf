@@ -98,6 +98,14 @@ function subscribeNetworkStatus(callback) {
   };
 }
 
+async function getLaunchUrl() {
+  return null;
+}
+
+function subscribeOpenUrl() {
+  return () => {};
+}
+
 export const webPlatform = {
   name: 'web',
   isNative: false,
@@ -119,6 +127,8 @@ export const webPlatform = {
   },
   getNetworkStatus,
   subscribeNetworkStatus,
+  getLaunchUrl,
+  subscribeOpenUrl,
   getUserAgent() {
     return navigator.userAgent || '';
   },

@@ -18,13 +18,13 @@ Source plan: `doc/pre-app-optimization-plan.md`
 
 Completed details have been cleaned out of this progress file. High-level completed coverage now includes:
 
-- Web/App build split and Capacitor sync helpers.
+- Web/App build split, Capacitor sync helpers, Android APK/AAB build helper scripts, and an ignored optional Android release-signing config.
 - Platform adapter plus native plugin bridges for browser, files/share, location, haptics, network status, and Android back handling.
 - Import/export round-trip coverage for GPX, KML, and `.melmap`.
 - State contract, privacy inventory, offline tile strategy, provider guard, tile-pack index, and offline pack management.
 - Mobile UI, request-race, stale-result, long-route, numeric, chunk, and smoke regression coverage.
-- Android debug build verification with `android/app/build/outputs/apk/debug/app-debug.apk`.
-- In-app privacy policy entry, bundled `public/privacy.html`, native external-link routing, and `doc/app-store-disclosure-draft.md`.
+- Android debug APK, debug AAB, and release AAB build verification.
+- In-app privacy policy entry, bundled `public/privacy.html`, native external-link routing, OS file-open declarations for GPX/KML/`.melmap`, and `doc/app-store-disclosure-draft.md`.
 
 ## Remaining Work
 

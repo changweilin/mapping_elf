@@ -21,6 +21,9 @@ assets/promos-first-generated-after-plan/
 !.vscode/extensions.json
 .idea
 android/local.properties
+android/keystore.properties
+android/*.jks
+android/*.keystore
 .DS_Store
 *.suo
 *.ntvs*

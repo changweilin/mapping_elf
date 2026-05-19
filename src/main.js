@@ -118,6 +118,9 @@ function showLocationPermissionHelp() {
 
 const IMPORTED_TRACK_EDIT_NOTICE = '匯入的軌跡無法編輯，需要規劃路線請點擊「重新規劃」。';
 let importedTrackEditNoticeAt = 0;
+const NATIVE_IMPORT_URL_SCHEMES = new Set(['content:', 'file:']);
+const handledNativeImportUrls = new Set();
+let nativeFileOpenHandlersInstalled = false;
 
 function showImportedTrackEditNotice(duration = 3200) {
   const now = Date.now();
@@ -4504,19 +4507,43 @@ async function importFile(e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  const ext = file.name.split('.').pop().toLowerCase();
-  if (ext === 'melmap' || ext === 'zip') {
+  await handleImportFile(file);
+  gpxFileInput.value = '';
+}
+
+function extensionFromFilename(filename) {
+  const match = String(filename || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match?.[1] || '';
+}
+
+async function detectImportFileKind(file) {
+  const ext = extensionFromFilename(file?.name);
+  if (ext === 'gpx' || ext === 'kml' || ext === 'melmap' || ext === 'zip') return ext;
+
+  const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  if (head[0] === 0x50 && head[1] === 0x4b) return 'melmap';
+
+  try {
+    const text = await file.slice(0, 4096).text();
+    if (/<gpx[\s>]/i.test(text)) return 'gpx';
+    if (/<kml[\s>]/i.test(text)) return 'kml';
+  } catch (_) {}
+  return '';
+}
+
+async function handleImportFile(file) {
+  const kind = await detectImportFileKind(file);
+  if (kind === 'melmap' || kind === 'zip') {
     openMappackImportModal(file);
-    gpxFileInput.value = '';
     return;
   }
   try {
     const text = await platform.readFileAsText(file);
     const { GpxExporter, KmlExporter } = await ensureRouteExporters();
     let result;
-    if (ext === 'gpx') {
+    if (kind === 'gpx') {
       result = GpxExporter.parse(text);
-    } else if (ext === 'kml') {
+    } else if (kind === 'kml') {
       result = KmlExporter.parse(text);
     } else {
       showNotification('不支援的檔案格式', 'error');
@@ -4526,9 +4553,49 @@ async function importFile(e) {
   } catch (err) {
     showNotification('檔案解析失敗', 'error');
     console.error(err);
-  } finally {
-    gpxFileInput.value = '';
   }
+}
+
+function isNativeImportUrl(url) {
+  try {
+    return NATIVE_IMPORT_URL_SCHEMES.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
+function nativeImportFilenameHint(url) {
+  try {
+    const decoded = decodeURIComponent(new URL(url).pathname || '');
+    return decoded.split(/[\\/]/).filter(Boolean).pop() || 'mapping-elf-import';
+  } catch {
+    return 'mapping-elf-import';
+  }
+}
+
+async function handleNativeImportUrl(url) {
+  if (!platform.isNative || !url || !isNativeImportUrl(url) || handledNativeImportUrls.has(url)) return;
+  handledNativeImportUrls.add(url);
+  try {
+    showNotification('正在載入外部檔案...', 'info', 1600);
+    const file = await platform.readUrlAsFile(url, { filename: nativeImportFilenameHint(url) });
+    await handleImportFile(file);
+  } catch (err) {
+    console.error('Native file import failed:', err);
+    showNotification('檔案解析失敗', 'error');
+  }
+}
+
+async function installNativeFileOpenHandlers() {
+  if (!platform.isNative || nativeFileOpenHandlersInstalled) return;
+  nativeFileOpenHandlersInstalled = true;
+
+  platform.subscribeOpenUrl?.((event) => {
+    handleNativeImportUrl(event?.url).catch((err) => console.error('Native file open event failed:', err));
+  });
+
+  const launchUrl = await platform.getLaunchUrl?.();
+  if (launchUrl) await handleNativeImportUrl(launchUrl);
 }
 
 // =========== Windy URL Builder ===========
@@ -9749,6 +9816,8 @@ async function init() {
       })
       .catch(() => { });
   }
+
+  await installNativeFileOpenHandlers();
 
   // Keyword search (Nominatim forward-geocoding + direct lat,lng parser)
   initKeywordSearch();

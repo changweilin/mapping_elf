@@ -7,7 +7,12 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 ## Android Debug Build
 
 - Build command: `npm run android:build:debug`
+- Debug AAB command: `npm run android:bundle:debug`
+- Release AAB command: `npm run android:bundle:release` after release signing is configured.
+- Release signing: copy `android/keystore.properties.example` to ignored `android/keystore.properties` and provide a local upload key before Google Play upload.
 - Current verified artifact: `android/app/build/outputs/apk/debug/app-debug.apk`
+- Current verified debug AAB: `android/app/build/outputs/bundle/debug/app-debug.aab`
+- Current verified release AAB: `android/app/build/outputs/bundle/release/app-release.aab`
 - Current verified result: `BUILD SUCCESSFUL` on 2026-05-19
 - Local build note: this Windows workspace uses an ignored `android/local.properties` with `sdk.dir=C:\tmp\android-sdk`.
 
@@ -21,6 +26,7 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 | External links | Open GitHub, feedback, and privacy policy links from the About section | Links open in the system browser; returning to Mapping Elf keeps the current route/map state. |
 | File export/share | Export GPX, KML, and `.melmap` | Android share sheet opens with the generated file. |
 | File import | Import GPX, KML, and `.melmap` from device storage | Route/state/tile restore behavior matches Web tests. |
+| File association | From the OS file manager, open GPX, KML, and `.melmap` with Mapping Elf | Mapping Elf launches or resumes and imports through the same restore modal/route flow as the in-app import button. |
 | Location | Tap current-location button | Runtime location permission appears; accepted permission centers the map; denied permission shows a useful message. |
 | Network status | Toggle device airplane mode or network | File-management status updates online/offline. |
 | Haptics | Long-press or drag waypoint interactions | Device vibration happens where supported; no error where unsupported. |

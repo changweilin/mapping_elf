@@ -26,6 +26,22 @@ function asBlob(content, mimeType = 'application/octet-stream') {
   return new Blob([content ?? ''], { type: mimeType });
 }
 
+function base64ToBlob(base64, mimeType = 'application/octet-stream') {
+  const clean = String(base64 || '').includes(',')
+    ? String(base64).split(',').pop()
+    : String(base64 || '');
+  const chunks = [];
+  for (let i = 0; i < clean.length; i += 8192) {
+    const binary = atob(clean.slice(i, i + 8192));
+    const bytes = new Uint8Array(binary.length);
+    for (let j = 0; j < binary.length; j++) {
+      bytes[j] = binary.charCodeAt(j);
+    }
+    chunks.push(bytes);
+  }
+  return new Blob(chunks, { type: mimeType });
+}
+
 function readBlobAsDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -45,6 +61,36 @@ function safeNativeFilename(filename) {
     .replace(/[\\/:*?"<>|]+/g, '_')
     .replace(/\s+/g, ' ')
     .trim() || `mapping-elf-${Date.now()}`;
+}
+
+function filenameFromUrl(url, fallback = `mapping-elf-import-${Date.now()}`) {
+  try {
+    const parsed = new URL(url);
+    const pathPart = decodeURIComponent(parsed.pathname || '')
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .pop();
+    return safeNativeFilename(pathPart || fallback);
+  } catch {
+    return safeNativeFilename(fallback);
+  }
+}
+
+function mimeTypeForFilename(filename) {
+  const lower = String(filename || '').toLowerCase();
+  if (lower.endsWith('.gpx')) return 'application/gpx+xml';
+  if (lower.endsWith('.kml')) return 'application/vnd.google-earth.kml+xml';
+  if (lower.endsWith('.melmap')) return 'application/vnd.mappingelf.melmap+zip';
+  if (lower.endsWith('.zip')) return 'application/zip';
+  return 'application/octet-stream';
+}
+
+function makeFile(blob, filename, mimeType) {
+  if (typeof File !== 'undefined') {
+    return new File([blob], filename, { type: mimeType || blob.type || 'application/octet-stream' });
+  }
+  blob.name = filename;
+  return blob;
 }
 
 async function writeNativeCacheFile({ filename, mimeType, content }) {
@@ -152,6 +198,18 @@ export const capacitorPlatform = {
     }
     return nativePlugins.Geolocation.getCurrentPosition(options || {});
   },
+  async readUrlAsFile(url, { filename = null, mimeType = null } = {}) {
+    if (!canUsePlugin('Filesystem')) {
+      throw new Error('Native file URL import is not available');
+    }
+    const safeName = safeNativeFilename(filename || filenameFromUrl(url));
+    const type = mimeType || mimeTypeForFilename(safeName);
+    const result = await nativePlugins.Filesystem.readFile({ path: url });
+    const blob = result?.data instanceof Blob
+      ? result.data
+      : base64ToBlob(result?.data, type);
+    return makeFile(blob, safeName, type);
+  },
   vibrate(pattern) {
     if (!canUsePlugin('Haptics')) {
       return webPlatform.vibrate(pattern);
@@ -190,6 +248,18 @@ export const capacitorPlatform = {
   subscribeBackButton(callback) {
     if (!canUsePlugin('App') || typeof callback !== 'function') return () => {};
     const handlePromise = nativePlugins.App.addListener('backButton', callback);
+    return () => {
+      handlePromise.then((handle) => handle?.remove?.()).catch(() => {});
+    };
+  },
+  async getLaunchUrl() {
+    if (!canUsePlugin('App')) return null;
+    const result = await nativePlugins.App.getLaunchUrl();
+    return result?.url || null;
+  },
+  subscribeOpenUrl(callback) {
+    if (!canUsePlugin('App') || typeof callback !== 'function') return () => {};
+    const handlePromise = nativePlugins.App.addListener('appUrlOpen', callback);
     return () => {
       handlePromise.then((handle) => handle?.remove?.()).catch(() => {});
     };

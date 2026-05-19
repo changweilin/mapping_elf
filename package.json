@@ -12,6 +12,8 @@
     "cap:sync:android": "npm run build:app && npx cap sync android && node scripts/normalize-capacitor-spm-paths.mjs",
     "cap:sync:ios": "npm run build:app && npx cap sync ios && node scripts/normalize-capacitor-spm-paths.mjs",
     "android:build:debug": "npm run cap:sync:android && cd android && gradlew.bat assembleDebug",
+    "android:bundle:debug": "npm run cap:sync:android && cd android && gradlew.bat bundleDebug",
+    "android:bundle:release": "npm run cap:sync:android && cd android && gradlew.bat bundleRelease",
     "preview": "vite preview",
     "test:smoke": "node test/run-playwright-with-preview.mjs",
     "test:chunks": "node test/chunk-output.mjs",

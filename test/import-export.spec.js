@@ -46,6 +46,14 @@ async function importFixture(page, filePath) {
   await page.locator('#gpx-file-input').setInputFiles(filePath);
 }
 
+async function importFixtureWithName(page, filePath, name, mimeType) {
+  await page.locator('#gpx-file-input').setInputFiles({
+    name,
+    mimeType,
+    buffer: await fs.readFile(filePath),
+  });
+}
+
 async function mockMapTiles(page) {
   await page.route(/basemaps\.cartocdn\.com|tile\.opentopomap\.org|server\.arcgisonline\.com/, async (route) => {
     await route.fulfill({
@@ -417,6 +425,18 @@ test('imports app fixture with Chinese names, weather metadata, and interval poi
   expect(state.waypointMeta[0].weather.temp).toBe('22 C');
   expect(state.intermediates).toHaveLength(1);
   expect(state.intermediates[0].label).toBe('補給點');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('detects imported files without relying on filename extensions', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+
+  await importFixtureWithName(page, shortGpx, 'shared-route', 'application/octet-stream');
+  await expectImportedRoute(page);
+
+  await importFixtureWithName(page, sampleKml, 'shared-kml', 'application/octet-stream');
+  await expectImportedRoute(page);
 
   expect(consoleErrors).toEqual([]);
 });

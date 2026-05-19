@@ -131,6 +131,16 @@ npm run cap:sync:ios
 npm run android:build:debug
 ```
 
+建立 Android debug AAB 或 release AAB：
+
+```bash
+npm run android:bundle:debug
+npm run android:bundle:release
+```
+
+`android:bundle:release` 仍需要在 Android 專案設定正式簽章後，才適合上傳到 Google Play。
+可複製 `android/keystore.properties.example` 為 `android/keystore.properties`，填入本機 keystore 設定；實際 keystore 與密碼檔已由 `.gitignore` 排除。
+
 原生真機測試請依照 `doc/native-app-qa.md` 檢查 App 啟動、返回鍵、外部瀏覽器、檔案分享、定位權限、網路狀態、震動與離線圖磚。
 
 ## 專案架構說明
