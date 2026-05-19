@@ -2,5 +2,5 @@
   "appId": "com.mappingelf.app",
   "appName": "Mapping Elf",
   "webDir": "dist",
-  "appendUserAgent": "MappingElf/0.0.0"
+  "appendUserAgent": "MappingElf/1.0.0"
 }

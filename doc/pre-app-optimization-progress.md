@@ -11,7 +11,7 @@ Source plan: `doc/pre-app-optimization-plan.md`
 | Sprint 1 | Build mode, platform adapter, external platform calls, export channel split | Complete | Keep covered by regular build and smoke/import-export tests. |
 | Sprint 2 | Import/export round-trip tests, state contract, reset/import behavior | Complete | Keep covered by import/export and numeric regression tests. |
 | Sprint 3 | Error states, mobile UI QA, safe area, WebView differences | Needs device QA | Android device/emulator bridge checks; iOS Mac/Xcode validation. |
-| Sprint 4 | Long-route performance, request cancellation guards, offline strategy, privacy data flow | Needs release-readiness review | Provider terms, real-device offline tiles, privacy/store review, dependency audit. |
+| Sprint 4 | Long-route performance, request cancellation guards, offline strategy, privacy data flow | Needs release-readiness review | Provider terms, real-device offline tiles, privacy/store review, dev-tool audit follow-up. |
 | App deployment Phase 6 prep | Privacy policy entry, store disclosure draft, Google Play image drafts, and store listing draft | Complete for local draft stage | Final store-form review, native screenshots, upload key, and published GitHub Pages verification. |
 
 ## Completed Scope Summary
@@ -25,6 +25,8 @@ Completed details have been cleaned out of this progress file. High-level comple
 - Mobile UI, request-race, stale-result, long-route, numeric, chunk, and smoke regression coverage.
 - Android debug APK, debug AAB, and release AAB build verification.
 - In-app privacy policy entry, bundled `public/privacy.html`, native external-link routing, OS file-open declarations for GPX/KML/`.melmap`, `doc/app-store-disclosure-draft.md`, `doc/store-listing-draft.md`, and Google Play draft image assets in `assets/store/`.
+- App version metadata aligned to `1.0.0`, and Android OS backup disabled for local route/cache privacy.
+- Native config regression script added as `npm run test:native-config`; Vite patched to `8.0.13`, and `npm audit --omit=dev` reports 0 production/runtime vulnerabilities.
 - Local Android environment check found no connected ADB device and no usable local emulator executable; device QA remains an external blocker.
 
 ## Remaining Work
@@ -37,7 +39,7 @@ Completed details have been cleaned out of this progress file. High-level comple
 6. Configure the real Android upload keystore in ignored `android/keystore.properties`, rebuild `npm run android:bundle:release`, and upload that rebuilt AAB to Google Play internal testing.
 7. Capture final phone screenshots from the tested native build and reconcile `doc/store-listing-draft.md` with the live Google Play/App Store forms.
 8. Verify the published privacy policy URL after GitHub Pages deployment and reconcile `doc/app-store-disclosure-draft.md` with the live Google Play/App Store privacy forms.
-9. Review `npm audit` findings manually before release; avoid automatic broad upgrades unless the impact is understood.
+9. Review remaining full `npm audit` dev-tool findings before release; current remaining alerts are transitive to `@capacitor/assets`/asset-generation tooling, while production/runtime audit is clean.
 
 ## Reference Docs
 

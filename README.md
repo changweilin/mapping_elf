@@ -80,6 +80,8 @@ npm run preview
 npm run test:smoke
 npm run test:numeric
 npm run test:chunks
+npm run test:mobile
+npm run test:native-config
 ```
 
 `test:smoke` 會啟動 Playwright 測試並使用 `npm.cmd run preview -- --host 127.0.0.1` 作為本機預覽伺服器。

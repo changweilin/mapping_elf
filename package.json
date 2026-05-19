@@ -1,6 +1,6 @@
 {
   "name": "mapping_elf",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,13 +19,14 @@
     "test:chunks": "node test/chunk-output.mjs",
     "test:numeric": "node test/numeric-regression.mjs",
     "test:import-export": "node test/run-playwright-with-preview.mjs test/import-export.spec.js",
-    "test:mobile": "node test/run-playwright-with-preview.mjs test/mobile-app-qa.spec.js"
+    "test:mobile": "node test/run-playwright-with-preview.mjs test/mobile-app-qa.spec.js",
+    "test:native-config": "node test/native-config.mjs"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.3.0",
     "@playwright/test": "^1.59.1",
-    "vite": "^8.0.4"
+    "vite": "^8.0.13"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

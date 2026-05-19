@@ -13,6 +13,7 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 - Current verified artifact: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Current verified debug AAB: `android/app/build/outputs/bundle/debug/app-debug.aab`
 - Current verified release AAB: `android/app/build/outputs/bundle/release/app-release.aab`
+- Current app version: `1.0.0` (`versionCode 1`)
 - Current verified result: `BUILD SUCCESSFUL` on 2026-05-19
 - Local build note: this Windows workspace uses an ignored `android/local.properties` with `sdk.dir=C:\tmp\android-sdk`.
 
@@ -37,6 +38,7 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 | Network status | Toggle device airplane mode or network | File-management status updates online/offline. |
 | Haptics | Long-press or drag waypoint interactions | Device vibration happens where supported; no error where unsupported. |
 | Offline tiles | Export/import tile-enabled `.melmap`, then disable network | Cached tiles remain usable for the exported area; tile pack delete and clear-all work. |
+| OS backup | Check Android app backup settings where visible | Mapping Elf should not offer OS cloud backup for local route/cache data. |
 
 ## Release Readiness Gaps
 
@@ -46,4 +48,4 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 - Store privacy forms need to be completed from `doc/privacy-data-flow.md`.
 - Store disclosure draft exists at `doc/app-store-disclosure-draft.md`; re-check it against the live store forms before release.
 - Store listing and asset draft exists at `doc/store-listing-draft.md`; final phone screenshots must be captured from a tested native build.
-- `npm audit` currently reports dependency findings; review before release instead of applying automatic broad upgrades.
+- `npm audit --omit=dev` currently reports 0 production/runtime vulnerabilities; full `npm audit` still reports dev-tool findings under asset-generation tooling, so review before release instead of applying broad automatic upgrades.

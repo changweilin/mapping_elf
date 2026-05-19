@@ -9,7 +9,7 @@ This draft prepares Mapping Elf for Google Play internal testing and later App S
 
 - App name: Mapping Elf
 - Android package: `com.mappingelf.app`
-- Android version: `versionCode 1`, `versionName "1.0"`
+- Android version: `versionCode 1`, `versionName "1.0.0"`
 - Privacy policy URL: `https://changweilin.github.io/mapping_elf/privacy.html`
 - Support/contact entry: in-app feedback link in the About section
 
@@ -91,6 +91,7 @@ Current blocker: no connected Android device was visible through ADB on 2026-05-
 - Bundled privacy page: `public/privacy.html`
 - No account, advertising SDK, analytics SDK, crash-reporting SDK, or payment flow is currently wired in source.
 - Third-party requests are part of explicit app functionality: route calculation, elevation, weather, geocoding, Windy links, map tiles, and feedback/about links.
+- Android cloud backup is disabled in the manifest so local route/preferences data is not automatically backed up by the OS.
 
 ## Submission Checklist
 
