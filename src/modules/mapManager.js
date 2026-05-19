@@ -1754,6 +1754,21 @@ export class MapManager {
     this._emitWaypointChange();
   }
 
+  reverseWaypoints() {
+    if (this.waypoints.length < 2) return;
+
+    this.waypoints.reverse();
+    this.waypointMarkers.reverse();
+    this.waypointWeather.reverse();
+    this.waypointColors.reverse();
+    this.waypointLabels.reverse();
+    this.waypointMetadata.reverse();
+    this.waypointLayerSwapped.reverse();
+    this.clearWaypointHighlight();
+    this._updateMarkerIcons();
+    this._emitWaypointChange();
+  }
+
   clearWaypoints() {
     this.waypointMarkers.forEach((m) => this.map.removeLayer(m));
     this.waypoints = [];

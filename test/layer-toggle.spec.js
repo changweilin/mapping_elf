@@ -715,6 +715,35 @@ test('route replanning cancels in-flight weather fetch and restarts after route 
     .toBeGreaterThan(weatherRequestsDuringReplan);
 });
 
+test('reverse replan button reverses waypoint order and recalculates once', async ({ page }) => {
+  const routeEvents = [];
+  await openLayerTestApp(page, {
+    roundTrip: '0',
+    routeEvents,
+  });
+
+  await addWaypointsAtFractions(page, [
+    [0.40, 0.50],
+    [0.50, 0.45],
+    [0.58, 0.50],
+  ]);
+  await expect.poll(() => page.locator(VISIBLE_ROUTE_PATH_SELECTOR).count()).toBeGreaterThan(0);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 5000 });
+  await expect(page.locator('#btn-reverse-replan-route')).toBeEnabled();
+
+  const original = await page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_waypoints') || '[]'));
+  const startsBefore = routeEvents.filter((event) => event.type === 'start').length;
+
+  await page.locator('#btn-reverse-replan-route').click();
+
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_waypoints') || '[]')))
+    .toEqual(original.slice().reverse());
+  await expect.poll(
+    () => routeEvents.filter((event) => event.type === 'start').length,
+    { timeout: 3000 },
+  ).toBe(startsBefore + 1);
+});
+
 test('opening a restored track shows weather loading progress', async ({ page }) => {
   await openLayerTestApp(page, {
     roundTrip: '0',

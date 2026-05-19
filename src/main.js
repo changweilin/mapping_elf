@@ -103,6 +103,7 @@ function showImportedTrackEditNotice(duration = 3200) {
 const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
   '#btn-clear-route',
   '#btn-replan-route',
+  '#btn-reverse-replan-route',
   '#btn-undo',
   '#btn-redo',
   '.search-result-add',
@@ -111,6 +112,7 @@ const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
 const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
   '#btn-clear-route',
   '#btn-replan-route',
+  '#btn-reverse-replan-route',
   '#btn-undo',
   '#btn-redo',
   '#btn-fit-route',
@@ -1238,6 +1240,7 @@ const btnPanelNarrow = document.getElementById('btn-panel-narrow');
 const btnPanelWiden = document.getElementById('btn-panel-widen');
 const btnClearRoute = document.getElementById('btn-clear-route');
 const btnReplanRoute = document.getElementById('btn-replan-route');
+const btnReverseReplanRoute = document.getElementById('btn-reverse-replan-route');
 const btnUndo = document.getElementById('btn-undo');
 const btnRedo = document.getElementById('btn-redo');
 const btnResetDefaults = document.getElementById('btn-reset-defaults');
@@ -1862,14 +1865,62 @@ btnResetDefaults?.addEventListener('click', () => {
 });
 gpxFileInput.addEventListener('change', importFile);
 
-/** Show/hide the re-plan button based on whether we are in imported-track mode. */
-function syncTrackModeUI() {
+function syncRouteHeaderButtons() {
   const busy = isRouteWeatherBusy();
   if (btnReplanRoute) {
     btnReplanRoute.disabled = busy || !importedTrackMode;
   }
+  if (btnReverseReplanRoute) {
+    btnReverseReplanRoute.disabled = busy || mapManager.waypoints.length < 2;
+  }
+}
 
-  // Freeze route and pace parameter inputs when in imported track mode (except replan/clear)
+function prepareImportedTrackForRouteReplan() {
+  if (!importedTrackMode) return;
+
+  const toRemove = [];
+  for (let i = 0; i < mapManager.waypoints.length; i++) {
+    const meta = importedWaypointMeta[i];
+    const label = meta?.label || "";
+    if (/\s*[↺↻↩]$|\s*\(回程\)$/.test(label)) {
+      toRemove.push(i);
+    }
+  }
+
+  importedTrackMode = false;
+  importedIntermediatePoints = [];
+  importedWaypointMeta = [];
+  clearImportedTrackSession();
+  syncTrackModeUI();
+  mapManager.clearRoute();
+
+  const cb = mapManager.onWaypointChange;
+  mapManager.onWaypointChange = () => { };
+  try {
+    for (let i = toRemove.length - 1; i >= 0; i--) {
+      mapManager.removeWaypoint(toRemove[i]);
+    }
+  } finally {
+    mapManager.onWaypointChange = cb;
+  }
+
+  for (let i = 0; i < mapManager.waypoints.length; i++) {
+    const [lat, lng] = mapManager.waypoints[i];
+    const key = _geocodeKey(lat, lng);
+    if (waypointCustomNames[key]) {
+      const old = waypointCustomNames[key];
+      waypointCustomNames[key] = old.replace(/\s*[↺↻↩]$/, '').trim();
+    }
+  }
+  try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+}
+
+/** Sync route header controls for imported-track and route-busy state. */
+function syncTrackModeUI() {
+  const busy = isRouteWeatherBusy();
+  syncRouteHeaderButtons();
+
+  // Freeze route and pace parameter inputs when in imported track mode (except replan/reverse/clear)
   const freezeSelectors = [
     '.nav-mode-row input',
     '.segment-interval-row input',
@@ -1915,44 +1966,24 @@ btnReplanRoute?.addEventListener('click', () => {
     showRouteWeatherBusyNotice();
     return;
   }
-  const toRemove = [];
-  if (importedTrackMode) {
-    for (let i = 0; i < mapManager.waypoints.length; i++) {
-      const meta = importedWaypointMeta[i];
-      const label = meta?.label || "";
-      if (/\s*[↺↻↩]$|\s*\(回程\)$/.test(label)) {
-        toRemove.push(i);
-      }
-    }
-  }
-
-  importedTrackMode = false;
-  importedIntermediatePoints = [];
-  importedWaypointMeta = [];
-  clearImportedTrackSession();
-  syncTrackModeUI();
-  // Clear the imported track polyline but keep waypoint markers
-  mapManager.clearRoute();
-
-  // Remove identified return waypoints backwards
-  for (let i = toRemove.length - 1; i >= 0; i--) {
-    mapManager.removeWaypoint(toRemove[i]);
-  }
-
-  // Clean remaining waypoint names (backward-compat or manual renames)
-  for (let i = 0; i < mapManager.waypoints.length; i++) {
-    const [lat, lng] = mapManager.waypoints[i];
-    const key = _geocodeKey(lat, lng);
-    if (waypointCustomNames[key]) {
-      const old = waypointCustomNames[key];
-      waypointCustomNames[key] = old.replace(/\s*[↺↻↩]$/, '').trim();
-    }
-  }
-  try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
-
-  // Trigger normal routing with the retained waypoints
+  prepareImportedTrackForRouteReplan();
   onWaypointsChanged(mapManager.waypoints);
   showNotification('重新規劃路線中…', 'info', 1500);
+});
+
+btnReverseReplanRoute?.addEventListener('click', () => {
+  if (isRouteWeatherBusy()) {
+    showRouteWeatherBusyNotice();
+    return;
+  }
+  prepareImportedTrackForRouteReplan();
+  if (mapManager.waypoints.length < 2) {
+    onWaypointsChanged(mapManager.waypoints);
+    showNotification('至少需 2 個航點才能反向重新規劃', 'warning');
+    return;
+  }
+  mapManager.reverseWaypoints();
+  showNotification('航點已反向排序，重新規劃路線中…', 'info', 1500);
 });
 
 btnClearRoute.addEventListener('click', () => {
@@ -2455,6 +2486,7 @@ async function onWaypointsChanged(waypoints) {
   geocodeRunSeq += 1;
   // Record this state change for undo/redo (no-op if suppressed or unchanged).
   historyRecord();
+  syncRouteHeaderButtons();
 
   // Detect if exactly one waypoint was added (not moved or removed)
   if (waypoints.length === lastWaypoints.length + 1) {
