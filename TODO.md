@@ -35,7 +35,7 @@ Last updated: 2026-05-20
 | A3 | 完成 | 回歸測試補強 | round-trip、O-loop、per-segment、imported track、weather persistence、i18n dynamic DOM | 2026-05-20 完成；新增 weather regression spec、imported-track column ordering 斷言、dynamic DOM i18n smoke case；`test:gui` 60 passed。 |
 | A4 | 完成 | 效能基線 | sample KML 匯入、chart visible、export modal open timing | 2026-05-20 完成；新增 `test:perf` 與 sample KML timing 輸出；`test:gui` 61 passed。 |
 | A5 | 完成 | Versioned caches | `routeVersion`、`waypointVersion`、`paceVersion`、`elevationVersion` cache key；route/pace cache 測試 hook | 2026-05-20 完成；新增 cache-versioning spec 保護 route/pace cache hit 與版本失效；`test:gui` 62 passed。 |
-| A6 | 待辦 | Weather point generation extraction | `buildWeatherPoints()` 純邏輯拆分、one-way/round-trip/O-loop/interval/imported-track 測試 | 輸出 shape 不變；return `_elapsedH` 仍相對旅程起點；generated interval times 不持久化。 |
+| A6 | 完成 | Weather point generation extraction | `buildWeatherPoints()` 純邏輯拆分、one-way/round-trip/O-loop/interval/imported-track 測試 | 2026-05-20 完成；抽出純 weather point builder，保留 adapter 回寫 `waypointCumDistM`；新增純測試覆蓋單程、回程、O-loop、interval 與 imported track。 |
 
 ### 發布門檻主線
 
@@ -57,6 +57,13 @@ Last updated: 2026-05-20
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-05-20 A6 Update
+
+- 狀態變更：`A6 Weather point generation extraction` 完成。
+- 影響範圍：新增 `src/modules/weatherPointBuilder.js`，把 weather point 生成、interval 插點、回程/O-loop 合成、imported track cumDist 排序與 label 去重移出 `src/main.js`；`main.js` 保留 UI/app state adapter 與 `waypointCumDistM` 回寫。
+- 契約確認：輸出欄位 shape 維持既有語意；round-trip return `_elapsedH` 仍相對旅程起點；imported track 強制單程並保留匯入 weather/windy 欄位；generated interval points 不帶 persistent weather/time 欄位。
+- 驗證：`npm.cmd run test:weather-points`、`npm.cmd run build`、`npm.cmd run test:numeric`、`npm.cmd run test:chunks`、`node test/run-playwright-with-preview.mjs test/weather-regression.spec.js test/import-export.spec.js`、`npm.cmd run test:gui`（62 passed）。
 
 ### 2026-05-20 A5 Update
 

@@ -19,6 +19,7 @@
     "test:smoke": "node test/run-playwright-with-preview.mjs",
     "test:chunks": "node test/chunk-output.mjs",
     "test:numeric": "node test/numeric-regression.mjs",
+    "test:weather-points": "node test/weather-point-builder.mjs",
     "test:import-export": "node test/run-playwright-with-preview.mjs test/import-export.spec.js",
     "test:layer-toggle": "node test/run-playwright-with-preview.mjs test/layer-toggle.spec.js",
     "test:perf": "node test/run-playwright-with-preview.mjs test/long-route-performance.spec.js",
