@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const LONG_TRACK_POINTS = 901;
 const LONG_IMPORT_LIMIT_MS = 15_000;
@@ -6,6 +8,12 @@ const DENSE_TRACK_POINTS = 720;
 const DENSE_WAYPOINT_COUNT = 24;
 const DENSE_INTERVAL_COUNT = 48;
 const DENSE_IMPORT_LIMIT_MS = 15_000;
+const SAMPLE_KML_BASELINE_LIMIT_MS = 10_000;
+const EXPORT_MODAL_OPEN_LIMIT_MS = 2_000;
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '..');
+const sampleKml = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.kml');
 
 async function openLongRouteApp(page) {
   await page.addInitScript(() => {
@@ -168,6 +176,60 @@ ${trackPoints}
   </trk>
 </gpx>`;
 }
+
+async function clickStable(page, selector) {
+  const locator = page.locator(selector);
+  await expect(locator).toBeAttached();
+  await locator.scrollIntoViewIfNeeded();
+  await locator.evaluate((el) => el.click());
+}
+
+async function attachPerfTiming(testInfo, name, timings) {
+  const rounded = Object.fromEntries(
+    Object.entries(timings).map(([key, value]) => [key, Math.round(value)]),
+  );
+  console.info(`[perf] ${name}: ${Object.entries(rounded).map(([key, value]) => `${key}=${value}ms`).join(', ')}`);
+  await testInfo.attach(`perf-${name}.json`, {
+    body: JSON.stringify(rounded, null, 2),
+    contentType: 'application/json',
+  });
+}
+
+test('imports sample KML and opens export modal within the app baseline budget', async ({ page }, testInfo) => {
+  await openLongRouteApp(page);
+
+  const startedAt = Date.now();
+  await page.locator('#gpx-file-input').setInputFiles(sampleKml);
+
+  await expect(page.locator('#waypoint-list .waypoint-item').first())
+    .toBeVisible({ timeout: SAMPLE_KML_BASELINE_LIMIT_MS });
+  const firstWaypointVisibleMs = Date.now() - startedAt;
+
+  await expect(page.locator('#chart-empty'))
+    .toHaveClass(/hidden/, { timeout: SAMPLE_KML_BASELINE_LIMIT_MS });
+  const chartVisibleMs = Date.now() - startedAt;
+
+  await expect(page.locator('#stat-distance')).not.toHaveText(/^[-\s]*$/);
+  const importSettledMs = Date.now() - startedAt;
+
+  const exportStartedAt = Date.now();
+  await clickStable(page, '#btn-export-gpx');
+  await expect(page.locator('#export-modal'))
+    .toBeVisible({ timeout: EXPORT_MODAL_OPEN_LIMIT_MS });
+  const exportModalOpenMs = Date.now() - exportStartedAt;
+
+  await attachPerfTiming(testInfo, 'sample-kml', {
+    firstWaypointVisibleMs,
+    chartVisibleMs,
+    importSettledMs,
+    exportModalOpenMs,
+  });
+
+  expect(firstWaypointVisibleMs).toBeLessThan(SAMPLE_KML_BASELINE_LIMIT_MS);
+  expect(chartVisibleMs).toBeLessThan(SAMPLE_KML_BASELINE_LIMIT_MS);
+  expect(importSettledMs).toBeLessThan(SAMPLE_KML_BASELINE_LIMIT_MS);
+  expect(exportModalOpenMs).toBeLessThan(EXPORT_MODAL_OPEN_LIMIT_MS);
+});
 
 test('imports a long recorded track within the app baseline budget', async ({ page }) => {
   await openLongRouteApp(page);

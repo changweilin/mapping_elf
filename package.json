@@ -21,6 +21,7 @@
     "test:numeric": "node test/numeric-regression.mjs",
     "test:import-export": "node test/run-playwright-with-preview.mjs test/import-export.spec.js",
     "test:layer-toggle": "node test/run-playwright-with-preview.mjs test/layer-toggle.spec.js",
+    "test:perf": "node test/run-playwright-with-preview.mjs test/long-route-performance.spec.js",
     "test:mobile": "node test/run-playwright-with-preview.mjs test/mobile-app-qa.spec.js",
     "test:native-config": "node test/native-config.mjs"
   },
