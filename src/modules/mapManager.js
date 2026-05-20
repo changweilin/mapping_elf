@@ -15,7 +15,10 @@ const TILE_LAYERS = {
       name: 'CARTO Voyager',
       attribution: '(c) OpenStreetMap contributors, (c) CARTO',
       homepage: 'https://carto.com/attribution/',
-      offlineTileExport: { allowed: true },
+      offlineTileExport: {
+        allowed: false,
+        reason: '此圖層暫不支援離線圖磚匯出',
+      },
     },
     options: {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
@@ -31,7 +34,10 @@ const TILE_LAYERS = {
       name: 'OpenTopoMap',
       attribution: '(c) OpenTopoMap contributors',
       homepage: 'https://opentopomap.org/about',
-      offlineTileExport: { allowed: true },
+      offlineTileExport: {
+        allowed: false,
+        reason: '此圖層暫不支援離線圖磚匯出',
+      },
     },
     options: {
       attribution: '&copy; OpenTopoMap',

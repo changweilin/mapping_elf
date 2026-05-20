@@ -42,8 +42,8 @@ Last updated: 2026-05-20
 | 序 | 狀態 | 工作包 | 已整合項目 | 完成條件 |
 | --- | --- | --- | --- | --- |
 | R1 | 阻塞 | Native device validation | Android native bridge QA、iOS simulator/device validation | Android 完成 `doc/native-app-qa.md`；iOS 在 Mac/Xcode 驗證 safe area、檔案匯入匯出、外部連結與 TestFlight readiness。 |
-| R2 | 待辦 | Android signing 與 internal testing artifact | upload keystore、release AAB rebuild、Google Play internal testing upload | 設定 ignored `android/keystore.properties`，重跑 `npm.cmd run android:bundle:release`，用重建 AAB 上傳 internal testing。 |
-| R3 | 待辦 | 商店與合規收斂 | privacy URL、native screenshots、Google Play Data safety、Apple App Privacy、provider terms、dev-tool audit | 發布前核對 live store forms；重新確認離線圖磚 provider terms；擷取 tested native build 手機截圖；複查 full `npm audit` dev-tool findings。 |
+| R2 | 阻塞 | Android signing 與 internal testing artifact | upload keystore、release AAB rebuild、Google Play internal testing upload | 2026-05-20 重建 `android/app/build/outputs/bundle/release/app-release.aab` 成功但未簽章；需提供 ignored `android/keystore.properties` 與 upload key 後重建，才能上傳 internal testing。 |
+| R3 | 待辦 | 商店與合規收斂 | privacy URL、native screenshots、Google Play Data safety、Apple App Privacy、provider terms、dev-tool audit | 2026-05-20 已複查 audit 與 provider terms；bundled public raster providers 已禁用 tile export。仍需 live store forms、native screenshots、dev-tool findings 決策。 |
 
 ## 已完成基線
 
@@ -57,6 +57,13 @@ Last updated: 2026-05-20
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-05-20 R2/R3 Update
+
+- 狀態變更：`R2 Android signing 與 internal testing artifact` 改為阻塞，因為本機沒有 upload keystore；`R3 商店與合規收斂` 保持待辦。
+- 影響範圍：確認 `android/keystore.properties` 已被 `.gitignore` 忽略，`android/keystore.properties.example` 已存在；執行 release bundle 重建，產出 `android/app/build/outputs/bundle/release/app-release.aab`，大小約 8.2 MB。複查 CARTO、OpenTopoMap、OSMF、Esri provider terms 後，將 bundled public raster providers 的離線圖磚匯出改為 disabled-by-default，保留路線/狀態 `.melmap` 匯出與既有 tile pack 匯入。
+- 阻塞原因：`android/keystore.properties` 與 `android/release-upload-key.jks` 不存在，`jarsigner` 驗證結果為 unsigned，因此目前 AAB 不是 Google Play upload-ready artifact。
+- 驗證：`npm.cmd run android:bundle:release`（需設定 `JAVA_HOME=C:\Program Files\Android\Android Studio\jbr`）、`jarsigner -verify -verbose -certs android/app/build/outputs/bundle/release/app-release.aab`、`npm.cmd audit --omit=dev`（0 vulnerabilities）、`npm.cmd audit`（9 dev-tool vulnerabilities，主要在 `@capacitor/assets`/asset-generation tooling transitive dependencies）、`npm.cmd run build`、`npm.cmd run test:numeric`、`npm.cmd run test:chunks`、`node test/run-playwright-with-preview.mjs test/import-export.spec.js`、`npm.cmd run test:gui`（62 passed）。Provider terms sources 已同步到 `doc/offline-tile-strategy.md`。
 
 ### 2026-05-20 A6 Update
 

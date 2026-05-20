@@ -1,6 +1,7 @@
 # Mapping Elf Privacy Data Flow
 
 Created: 2026-05-18
+Reviewed: 2026-05-20
 
 > Management note: privacy data-flow facts stay here, but release status, disclosure blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
 
@@ -26,7 +27,8 @@ This is a pre-app privacy inventory for future privacy policy, Google Play Data 
 | Overpass lookup | Coordinate area query | Overpass API `https://overpass-api.de/api/interpreter` | Nearby feature/name lookup | Used as geocoding fallback/enrichment. |
 | Keyword search | Search query text and optional country code | Nominatim | Search results | Query text may include user-entered place names or coordinates. |
 | Windy link open | Coordinate, date/hour/layer/model in URL | Windy `https://www.windy.com` | External weather view | User explicitly opens the link. |
-| Offline tile download | Tile coordinates/URLs for selected layer | CARTO, OpenTopoMap, or Esri tile servers | Cache map tiles | Tile URLs imply map area and zoom range. |
+| Map tile display | Viewport tile coordinates/URLs for selected layer | CARTO, OpenTopoMap, or Esri tile servers | Show the selected map layer | Tile URLs imply viewed map area and zoom level. |
+| Offline tile download | Tile coordinates/URLs for selected layer | Provider tile servers, only if an allow-listed provider is enabled | Cache map tiles into `.melmap` packs | Disabled for bundled public raster providers as of 2026-05-20 pending provider approval. Tile URLs imply map area and zoom range. |
 | External profile/about links | Browser request metadata | GitHub, LinkedIn, demo site, Google Forms | About/contact links | User explicitly opens external links. |
 
 ## Data Stored Locally
@@ -44,7 +46,7 @@ This is a pre-app privacy inventory for future privacy policy, Google Play Data 
 
 ## App Store Disclosure Draft Basis
 
-- Approximate/precise location may be processed for route planning, map display, weather, elevation, search, and offline tiles.
+- Approximate/precise location may be processed for route planning, map display, weather, elevation, and search. Offline tile export can also reveal an area/zoom range if a provider is explicitly allow-listed in the future.
 - User content may include saved routes, waypoint names, exported files, and favorites.
 - No tracking should be disclosed unless analytics, advertising, cross-app identifiers, or third-party tracking SDKs are added later.
 - Data is not linked to an account because the app currently has no account identity.

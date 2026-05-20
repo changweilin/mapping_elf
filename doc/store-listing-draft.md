@@ -25,28 +25,28 @@ This draft prepares Mapping Elf for Google Play internal testing and later App S
 ## Google Play Listing Draft
 
 - App category: Maps & Navigation
-- Tags to consider: maps, navigation, weather, hiking, cycling, route planning, offline maps
-- Short description: Plan GPX/KML routes with weather, elevation, and offline map packs.
+- Tags to consider: maps, navigation, weather, hiking, cycling, route planning, map packs
+- Short description: Plan GPX/KML routes with weather, elevation, and local map packs.
 
 ### Full Description
 
 Mapping Elf helps hikers, cyclists, and trip planners turn routes into practical field plans. Build routes from waypoints, import GPX/KML tracks, compare elevation and pace, and check weather along the route before you go.
 
-Use map layers, weather cards, Windy links, and offline `.melmap` packs to keep route context together. Routes, preferences, favorites, and map packs stay on the device unless you export or share them.
+Use map layers, weather cards, Windy links, and `.melmap` packs to keep route context together. Routes, preferences, favorites, and map packs stay on the device unless you export or share them.
 
 Core features:
 
 - Import and export GPX, KML, and `.melmap` route packs.
 - Plan walking, cycling, driving, and hiking routes with elevation and pace estimates.
 - Review route weather by waypoint and time.
-- Save map tiles into route packs for offline reference.
+- Export and import `.melmap` route/state packs; tile export remains provider-gated until offline redistribution approval is confirmed.
 - Open external weather and support links in the system browser.
 
 ### Traditional Chinese Description
 
 Mapping Elf 是給登山、騎行與行程規劃使用的路線工具。你可以用地圖點選 waypoint、匯入 GPX/KML 軌跡、查看高度與配速，並在出發前檢查沿途天氣。
 
-App 保留手機 Web 版的操作邏輯，並加上原生 App 的檔案匯入匯出、分享、定位、外部瀏覽器與 Android 返回鍵支援。`.melmap` 可以把路線、偏好與離線圖磚打包保存，方便日後還原。
+App 保留手機 Web 版的操作邏輯，並加上原生 App 的檔案匯入匯出、分享、定位、外部瀏覽器與 Android 返回鍵支援。`.melmap` 可以把路線與偏好打包保存，方便日後還原；圖磚匯出需等 provider 離線授權確認後才開放。
 
 主要功能：
 
@@ -54,13 +54,13 @@ App 保留手機 Web 版的操作邏輯，並加上原生 App 的檔案匯入匯
 - 規劃步行、騎行、開車與登山路線。
 - 查看高度剖面、時間、配速與熱量估算。
 - 依 waypoint 與時間檢查天氣資訊。
-- 匯出含離線圖磚的地圖包。
+- 匯出/匯入 `.melmap` 路線與偏好地圖包；離線圖磚匯出採 provider gate。
 
 ## App Store Listing Draft
 
 - Primary category: Navigation
 - Secondary category to consider: Travel
-- Keywords draft: route planner,GPX,KML,hiking,cycling,weather,elevation,offline maps,map pack
+- Keywords draft: route planner,GPX,KML,hiking,cycling,weather,elevation,map pack
 - Subtitle draft: Route weather and GPX planning
 
 ## Asset Inventory
@@ -102,7 +102,7 @@ Current blocker: no connected Android device was visible through ADB on 2026-05-
 3. Install the app on a real Android device or emulator and complete `doc/native-app-qa.md`.
 4. Capture final phone screenshots from the tested build.
 5. Verify the published privacy policy URL after GitHub Pages deployment.
-6. Re-check offline tile provider terms before public release.
+6. Re-check offline tile provider terms before enabling any public tile export provider.
 7. Complete Apple iOS build and screenshots on a Mac/Xcode environment before TestFlight.
 
 ## Official References Checked

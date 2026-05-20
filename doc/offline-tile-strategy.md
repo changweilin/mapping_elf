@@ -1,6 +1,6 @@
 # Offline Tile Strategy
 
-Reviewed: 2026-05-18
+Reviewed: 2026-05-20
 
 > Management note: technical boundaries stay here, but release status, provider-term blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
 
@@ -9,7 +9,7 @@ This note turns the pre-app optimization offline-map item into an implementation
 ## Current Behavior
 
 - Offline tiles live in the Cache API cache named `mapping-elf-tiles`.
-- `.melmap` export can include route GPX, allow-listed `localStorage` state, and raster tiles for the current map layer.
+- `.melmap` export can include route GPX and allow-listed `localStorage` state. Raster tile export is implemented, but the bundled public providers are currently disabled for public release until offline redistribution permission is confirmed.
 - `.melmap` route/state export stays available for every map layer, but tile export is disabled when the current provider is outside the offline export allow-list.
 - Tile exports use the route bounds padded by 5%, then enumerate zoom levels from `8` through `min(17, layerInfo.maxZoom)` until the 8000-tile cap is reached.
 - Exported tile files are stored as `tiles/{layer}/{z}/{x}/{y}.png`.
@@ -43,10 +43,10 @@ Implemented guard:
 
 - Shared enumeration lives in `src/modules/tileEstimator.js` and is used by both `_estimateTileCountForMapPack()` and `MapPackExporter.export()`.
 - `test/numeric-regression.mjs` checks estimator/enumerator alignment and the 8000-tile cap.
-- `test/import-export.spec.js` checks that the export modal's tile estimate matches the exported `.melmap` `manifest.tileCount`.
-- Tile exports record actual `manifest.downloadedTileCount` and `manifest.downloadedTileBytes`, and the export success message reports the final ZIP size.
+- `test/import-export.spec.js` checks that provider-gated layers disable the tile checkbox while leaving route/state `.melmap` export available, and that imported tile packs still write and clear the offline tile index.
+- When a provider is explicitly allow-listed, tile exports record actual `manifest.downloadedTileCount` and `manifest.downloadedTileBytes`, and the export success message reports the final ZIP size.
 - Tile-enabled `.melmap` exports include optional `manifest.tileProvider` metadata with provider id, name, attribution, and homepage when available.
-- Provider allow-list metadata lives with the map layer definitions. Blocked providers disable only the tile checkbox, leaving route and state export available.
+- Provider allow-list metadata lives with the map layer definitions. Blocked providers disable only the tile checkbox, leaving route and state export available. As of the 2026-05-20 release review, all bundled public raster providers are blocked for tile export by default.
 - Tile import/export writes a local pack index in `mapping-elf-tile-index`. The index stores source, layer, bounds, zoom range, provider, status, tile counts, measured tile bytes, and concrete cache URLs; it is not embedded in `.melmap` and is not stored in `localStorage`.
 - The export modal uses measured bytes from previous indexed packs to show a rough pre-export byte-size preview. It prefers same-provider samples, then same-layer samples, then all measured packs; if no measured sample exists it keeps the original tile-count-only estimate.
 - The indexed packs render in the file-management panel with byte size and per-pack delete controls, and `test/import-export.spec.js` verifies deleting one imported pack removes its cached URLs and index entry.
@@ -104,16 +104,18 @@ Current layer notes:
 
 | Layer | URL host | Release posture |
 | --- | --- | --- |
-| Streets | `basemaps.cartocdn.com` | Keep attribution visible; verify CARTO basemap/offline redistribution terms before enabling public app tile packs. |
-| Topo | `tile.opentopomap.org` | Attribution and CC-BY-SA handling are required; service status is changing toward vector tiles, so keep this layer swappable. |
+| Streets | `basemaps.cartocdn.com` | Tile export disabled. CARTO docs now state commercial use requires an Enterprise license; offline redistribution still needs explicit confirmation before enabling app tile packs. |
+| Topo | `tile.opentopomap.org` | Tile export disabled. Attribution and CC-BY-SA handling are required; raster tiles are deprecated and the service is moving toward vector tiles, so keep this layer swappable. |
 | Satellite | `server.arcgisonline.com` | Tile export disabled until Esri/ArcGIS licensing is confirmed for the app use case. |
 | OSMF Standard | `tile.openstreetmap.org` | Do not add offline download support; OSMF policy prohibits bulk/offline tile archives. |
 
 Source checks used for this note:
 
 - CARTO attribution: https://carto.com/attribution/
+- CARTO basemap license/pricing FAQ: https://docs.carto.com/faqs/carto-basemaps
 - OpenTopoMap usage/about: https://services.opentopomap.org/about
 - OSMF tile usage policy: https://operations.osmfoundation.org/policies/tiles/
+- Esri offline data guide: https://developers.arcgis.com/documentation/offline-mapping-apps/partially-offline-apps/offline-data/
 - Esri basemap attribution guidance: https://support.esri.com/en-us/knowledge-base/what-is-the-correct-way-to-cite-an-arcgis-online-basema-000012040
 - Esri website terms, third-party imagery and attribution sections: https://www.esri.com/content/dam/esrisites/en-us/media/legal/terms-and-conditions/website-terms.pdf
 
@@ -122,5 +124,5 @@ Source checks used for this note:
 - App tile requests should identify Mapping Elf with a stable app User-Agent or platform-provided app identifier where the provider requires it.
 - Export UI should show tile count, current layer, and a provider warning before downloading tiles.
 - `.melmap` manifest includes attribution/provider metadata when tiles are included.
-- If a provider is not allow-listed for offline export, keep route/state export enabled but disable the tile checkbox with a clear reason. This is now implemented for the satellite layer.
+- If a provider is not allow-listed for offline export, keep route/state export enabled but disable the tile checkbox with a clear reason. This is now implemented for the bundled streets, topo, and satellite layers.
 - Re-check provider terms before each store release that changes map layers or offline behavior.

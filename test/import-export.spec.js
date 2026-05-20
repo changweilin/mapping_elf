@@ -148,12 +148,6 @@ async function readMapPackManifest(filePath) {
   return { manifest, tileFiles };
 }
 
-function parseTileEstimate(text) {
-  const match = String(text || '').match(/\d+/);
-  expect(match, `tile estimate should contain a count: ${text}`).toBeTruthy();
-  return Number(match[0]);
-}
-
 async function clearOfflineTileCaches(page) {
   await page.evaluate(async () => {
     if (!('caches' in window)) return;
@@ -167,42 +161,6 @@ async function readOfflineTileIndex(page) {
     const cache = await caches.open('mapping-elf-tile-index');
     const response = await cache.match('https://mapping-elf.local/offline-tile-index.json');
     return response ? response.json() : null;
-  });
-}
-
-async function seedOfflineTilePackSizeSample(page) {
-  await page.evaluate(async () => {
-    const cachedTileCount = 4;
-    const cache = await caches.open('mapping-elf-tile-index');
-    await cache.put('https://mapping-elf.local/offline-tile-index.json', new Response(JSON.stringify({
-      version: 1,
-      packs: {
-        'sample-topo-size': {
-          id: 'sample-topo-size',
-          createdAt: '2026-05-18T00:00:00.000Z',
-          source: 'export',
-          status: 'complete',
-          layer: 'topo',
-          bounds: null,
-          minZoom: 8,
-          maxZoom: 8,
-          expectedTileCount: cachedTileCount,
-          cachedTileCount,
-          tileUrlCount: cachedTileCount,
-          tileBytes: 262144,
-          provider: {
-            id: 'opentopomap',
-            name: 'OpenTopoMap',
-          },
-          tileUrls: Array.from(
-            { length: cachedTileCount },
-            (_, i) => `https://a.tile.opentopomap.org/8/214/${109 + i}.png`
-          ),
-        },
-      },
-    }), {
-      headers: { 'Content-Type': 'application/json' },
-    }));
   });
 }
 
@@ -273,39 +231,29 @@ test('round-trips GPX, KML, and route-only .melmap exports', async ({ page }, te
   expect(consoleErrors).toEqual([]);
 });
 
-test('map-pack tile estimate matches exported manifest tile count', async ({ page }, testInfo) => {
+test('map-pack keeps route export available when the default topo provider blocks tile export', async ({ page }, testInfo) => {
   await mockMapTiles(page);
   const consoleErrors = await openApp(page);
 
   await importFixture(page, shortGpx);
   await expectImportedRoute(page);
-  await seedOfflineTilePackSizeSample(page);
 
   const melmapPath = await downloadExport(page, testInfo, 'melmap', async () => {
     await expect(page.locator('#melmap-sub-options')).toBeVisible();
-    await expect(page.locator('#mappack-inc-tiles')).toBeChecked();
-    await expect(page.locator('#mappack-tiles-info')).toContainText(/\b(KB|MB|GB)\b/);
-    const estimatedTileCount = parseTileEstimate(await page.locator('#mappack-tiles-info').textContent());
-    expect(estimatedTileCount).toBeGreaterThan(0);
-    await page.evaluate((count) => {
-      window.__mappingElfExpectedTileCount = count;
-    }, estimatedTileCount);
+    await expect(page.locator('#mappack-inc-route')).toBeChecked();
+    await expect(page.locator('#mappack-inc-tiles')).toBeDisabled();
+    await expect(page.locator('#mappack-inc-tiles')).not.toBeChecked();
+    await expect(page.locator('#mappack-tiles-info')).toHaveAttribute('data-i18n', '此圖層暫不支援離線圖磚匯出');
   });
 
-  const expectedTileCount = await page.evaluate(() => window.__mappingElfExpectedTileCount);
-  const { manifest } = await readMapPackManifest(melmapPath);
-  expect(manifest.includes.tiles).toBe(true);
-  expect(manifest.layer).toBeTruthy();
-  expect(manifest.tileCount).toBe(expectedTileCount);
-  expect(manifest.downloadedTileCount).toBeGreaterThanOrEqual(0);
-  expect(manifest.downloadedTileCount).toBeLessThanOrEqual(manifest.tileCount);
-  expect(manifest.downloadedTileBytes).toBeGreaterThanOrEqual(0);
-  expect(manifest.minZoom).toBeLessThanOrEqual(manifest.maxZoom);
-  expect(manifest.tileProvider).toMatchObject({
-    id: 'opentopomap',
-    name: 'OpenTopoMap',
-  });
-  expect(manifest.tileProvider.attribution).toContain('OpenTopoMap');
+  const { manifest, tileFiles } = await readMapPackManifest(melmapPath);
+  expect(manifest.includes.route).toBe(true);
+  expect(manifest.includes.tiles).toBe(false);
+  expect(manifest.tileCount).toBe(0);
+  expect(manifest.downloadedTileCount).toBe(0);
+  expect(manifest.downloadedTileBytes).toBe(0);
+  expect(manifest.tileProvider).toBeNull();
+  expect(tileFiles).toHaveLength(0);
 
   expect(consoleErrors).toEqual([]);
 });
