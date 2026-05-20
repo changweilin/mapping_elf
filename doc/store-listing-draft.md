@@ -3,6 +3,8 @@
 Created: 2026-05-19
 Last updated: 2026-05-19
 
+> Management note: listing copy and asset details stay here, but submission status, blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
+
 This draft prepares Mapping Elf for Google Play internal testing and later App Store review. Re-check the live store forms before submission because store asset rules can change.
 
 ## App Identity
@@ -93,7 +95,7 @@ Current blocker: no connected Android device was visible through ADB on 2026-05-
 - Third-party requests are part of explicit app functionality: route calculation, elevation, weather, geocoding, Windy links, map tiles, and feedback/about links.
 - Android cloud backup is disabled in the manifest so local route/preferences data is not automatically backed up by the OS.
 
-## Submission Checklist
+## Submission Checklist Inputs
 
 1. Configure the real Android upload keystore in ignored `android/keystore.properties`.
 2. Rebuild `npm run android:bundle:release` and upload the rebuilt AAB to Google Play internal testing.

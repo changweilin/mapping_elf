@@ -4,7 +4,9 @@ Created: 2026-05-18
 Last updated: 2026-05-19
 Source plan: `doc/pre-app-optimization-plan.md`
 
-## Execution Order
+> Management note: active status, release blockers, and next actions are now centralized in [`../TODO.md`](../TODO.md). This file is retained as the historical pre-app optimization progress record.
+
+## Historical Execution Order
 
 | Sprint | Scope | Status | Remaining verification |
 | --- | --- | --- | --- |
@@ -29,7 +31,7 @@ Completed details have been cleaned out of this progress file. High-level comple
 - Native config regression script added as `npm run test:native-config`; Vite patched to `8.0.13`, and `npm audit --omit=dev` reports 0 production/runtime vulnerabilities.
 - Local Android environment check found no connected ADB device and no usable local emulator executable; device QA remains an external blocker.
 
-## Remaining Work
+## Remaining Work Mirrored In TODO.md
 
 1. Install `android/app/build/outputs/apk/debug/app-debug.apk` on an Android device or emulator and run the native bridge checklist in `doc/native-app-qa.md`.
 2. Validate Android real-device behavior for app launch, back button, external browser, file export/share, file import, location permission, network status, haptics, and offline tiles.

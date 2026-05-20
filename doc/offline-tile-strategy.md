@@ -2,6 +2,8 @@
 
 Reviewed: 2026-05-18
 
+> Management note: technical boundaries stay here, but release status, provider-term blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
+
 This note turns the pre-app optimization offline-map item into an implementation boundary. It documents the current `.melmap` tile behavior, the sizing model, the cleanup plan, and the provider-license checks that must happen before a public app release.
 
 ## Current Behavior

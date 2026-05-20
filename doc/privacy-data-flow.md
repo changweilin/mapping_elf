@@ -2,6 +2,8 @@
 
 Created: 2026-05-18
 
+> Management note: privacy data-flow facts stay here, but release status, disclosure blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
+
 This is a pre-app privacy inventory for future privacy policy, Google Play Data safety, and Apple App Privacy disclosures. It describes current app behavior; update it whenever a new external service, persistent key, analytics SDK, or crash-reporting SDK is added.
 
 ## Current Position

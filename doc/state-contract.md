@@ -2,6 +2,8 @@
 
 Created: 2026-05-18
 
+> Management note: state-contract facts stay here, but project status, blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
+
 This document records the durable browser state used by Mapping Elf before the Android/iOS app expansion. Keep it in sync with `src/modules/stateKeys.js` and the `LS_*_KEY` constants in `src/main.js`.
 
 ## Principles

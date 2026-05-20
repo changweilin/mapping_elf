@@ -6938,6 +6938,270 @@ function refreshWeatherDateDisplays(root = document) {
   });
 }
 
+function buildWeatherCollapseButton() {
+  const label = weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊';
+  const path = weatherTableCollapsed
+    ? 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z'
+    : 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z';
+  return `<button class="wt-ctrl-collapse" data-action="toggle-weather-table" title="${label}" aria-label="${label}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}" fill="currentColor"/></svg>
+  </button>`;
+}
+
+function buildWeatherColumnClassNames(pt, colIdx, firstReturnIdx, baseClass) {
+  let classNames = baseClass;
+  if (pt.isReturn) classNames += ' wt-return-col';
+  if (!pt.isWaypoint) classNames += ' wt-interval-col';
+  if (colIdx === firstReturnIdx) classNames += ' wt-return-start';
+  return classNames;
+}
+
+function buildWeatherDataColumnClassNames(pt, colIdx, firstReturnIdx, baseClass) {
+  let classNames = baseClass;
+  if (pt.isReturn) classNames += ' wt-return-col';
+  if (colIdx === firstReturnIdx) classNames += ' wt-return-start';
+  return classNames;
+}
+
+function buildWeatherColgroupHtml(labelW, colWidths) {
+  let html = `<colgroup><col style="width:${labelW}px">`;
+  colWidths.forEach(w => { html += `<col style="width:${Math.round(w)}px">`; });
+  return `${html}</colgroup>`;
+}
+
+function buildWeatherTableControlHeaderHtml() {
+  return `<th class="wt-label-cell wt-th">
+      ${buildWeatherCollapseButton()}
+      <button class="wt-ctrl-fetch" data-action="fetch" title="更新天氣">
+        <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg>
+        <span>更新天氣</span>
+      </button>
+    </th>`;
+}
+
+function buildWeatherDateBulkControlHtml() {
+  return `<th class="wt-label-cell wt-th">
+      <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
+        <button class="wt-ctrl-adj" data-action="day-minus">−</button>
+        <button class="wt-ctrl-now" data-action="day-now" title="將目前選取欄位設為今日,其他欄位同步對齊">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z" fill="currentColor"/></svg>
+        </button>
+        <button class="wt-ctrl-adj" data-action="day-plus">+</button>
+      </div>
+    </th>`;
+}
+
+function buildWeatherTimeBulkControlHtml() {
+  return `<th class="wt-label-cell wt-th">
+      <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
+        <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
+        <button class="wt-ctrl-now" data-action="hour-now" title="將目前選取欄位設為現在時刻,其他欄位同步對齊">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z" fill="currentColor"/><path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="currentColor"/></svg>
+        </button>
+        <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
+      </div>
+    </th>`;
+}
+
+function buildWeatherElapsedBadgeHtml(pt, colIdx) {
+  let displayElapsedH = pt._elapsedH || 0;
+  if (perSegmentMode && displayElapsedH > 0) {
+    let prevWpElapsed = 0;
+    for (let j = colIdx - 1; j >= 0; j--) {
+      if (weatherPoints[j]?.isWaypoint) {
+        prevWpElapsed = weatherPoints[j]._elapsedH || 0;
+        break;
+      }
+    }
+    displayElapsedH -= prevWpElapsed;
+  }
+  return (speedIntervalMode || segmentIntervalKm > 0) && displayElapsedH > 0
+    ? `<span class="wt-elapsed-badge">${formatDurationHHMM(displayElapsedH)}</span>`
+    : '';
+}
+
+function buildWeatherLabelHeaderCellHtml(pt, colIdx, visiblePos, firstReturnIdx) {
+  const gradColor = _weatherPointGradColor(pt);
+  const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
+  const thClass = buildWeatherColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-col-head wt-th');
+  const labelStyle = pt.isWaypoint
+    ? `style="color:${gradColor}; font-weight: bold;"`
+    : `style="color:${rgba(0.7)};"`;
+  const thStyle = pt.isWaypoint
+    ? `style="border-top: 3px solid ${rgba(0.8)}; background-color: var(--bg-tertiary); background-image: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
+    : `style="border-top: 2px solid ${rgba(0.2)};"`;
+  const displayLabel = weatherTableCollapsed ? getWeatherPointShortLabel(pt, visiblePos) : pt.label;
+  const safeDisplayLabel = _escapeHtml(displayLabel);
+  const safeTitle = _escapeHtml(pt.label || displayLabel || '');
+  const titleAttr = weatherTableCollapsed ? ` title="${safeTitle}"` : '';
+  const elapsedBadge = buildWeatherElapsedBadgeHtml(pt, colIdx);
+
+  return `<th class="${thClass}" data-idx="${colIdx}" ${thStyle}${titleAttr}>
+      <div class="wt-col-label" ${labelStyle}${titleAttr}>${safeDisplayLabel}${weatherTableCollapsed ? '' : elapsedBadge}</div>
+    </th>`;
+}
+
+function buildWeatherLabelHeaderRowHtml(visibleIndices, firstReturnIdx) {
+  let html = `<tr class="wt-header-row wt-header-row-label">
+    ${buildWeatherTableControlHeaderHtml()}`;
+  visibleIndices.forEach((colIdx, visiblePos) => {
+    html += buildWeatherLabelHeaderCellHtml(weatherPoints[colIdx], colIdx, visiblePos, firstReturnIdx);
+  });
+  return `${html}</tr>`;
+}
+
+function getWeatherDateHeaderState(pt, colIdx, saved, todayStr) {
+  const sv = getSavedCol(pt, colIdx, saved);
+  const date = sv?.date || todayStr;
+  const locked = !pt.isWaypoint;
+  let minAttr = '';
+  let canMinus = !locked;
+  let canPlus = !locked;
+
+  if (strictLinearMode && colIdx > 0) {
+    const prevIdx = findAdjacentWaypointIndex(colIdx, -1);
+    const prevVal = prevIdx >= 0 ? (getSavedCol(weatherPoints[prevIdx], prevIdx, saved)?.date || todayStr) : '';
+    if (prevVal) minAttr = ` min="${prevVal}"`;
+  }
+
+  if (strictLinearMode && !locked && colIdx > 0) {
+    const prevIdx = findAdjacentWaypointIndex(colIdx, -1);
+    const prevSv = prevIdx >= 0 ? getSavedCol(weatherPoints[prevIdx], prevIdx, saved) : null;
+    const curDateMs = new Date(date + 'T00:00:00').getTime();
+    const prevDateMs = new Date((prevSv?.date || todayStr) + 'T00:00:00').getTime();
+    if (curDateMs - 86400000 < prevDateMs) canMinus = false;
+  }
+
+  return { date, locked, minAttr, canMinus, canPlus };
+}
+
+function buildWeatherDateHeaderCellHtml(pt, colIdx, firstReturnIdx, saved, todayStr) {
+  const { date, locked, minAttr, canMinus, canPlus } = getWeatherDateHeaderState(pt, colIdx, saved, todayStr);
+  const thClass = buildWeatherColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-col-head wt-th wt-th-date');
+
+  return {
+    date,
+    html: `<th class="${thClass}" data-idx="${colIdx}" title="${_escapeHtml(pt.label || '')}">
+      <div class="wt-adj-wrap">
+        <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
+        <span class="wt-picker-icon wt-date-picker has-day-first" title="選擇日期">
+          ${buildDayFirstDateHtml(date)}
+          <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
+        </span>
+        <button class="wt-adj-btn wt-adj-day-plus" title="後一天"${canPlus ? '' : ' disabled'}>+</button>
+      </div>
+    </th>`,
+  };
+}
+
+function buildWeatherDateHeaderRowHtml(visibleIndices, firstReturnIdx, saved, todayStr, colTimes) {
+  let html = `<tr class="wt-header-row wt-header-row-date">
+    ${buildWeatherDateBulkControlHtml()}`;
+  visibleIndices.forEach((colIdx) => {
+    const cell = buildWeatherDateHeaderCellHtml(weatherPoints[colIdx], colIdx, firstReturnIdx, saved, todayStr);
+    colTimes[colIdx] = { date: cell.date };
+    html += cell.html;
+  });
+  return `${html}</tr>`;
+}
+
+function buildWeatherTimeHeaderCellHtml(pt, colIdx, firstReturnIdx, saved, nowHour) {
+  const sv = getSavedCol(pt, colIdx, saved);
+  const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
+  const locked = !pt.isWaypoint;
+  const thClass = buildWeatherColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-col-head wt-th wt-th-time');
+
+  return {
+    hour,
+    html: `<th class="${thClass}" data-idx="${colIdx}" title="${_escapeHtml(pt.label || '')}">
+      <div class="wt-time-row">
+        <button class="wt-adj-btn wt-adj-hour-minus" title="前一小時"${locked ? ' disabled' : ''}>−</button>
+        <span class="wt-picker-icon wt-time-picker" title="選擇時間">
+          <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
+        </span>
+        <button class="wt-adj-btn wt-adj-hour-plus" title="後一小時"${locked ? ' disabled' : ''}>+</button>
+      </div>
+    </th>`,
+  };
+}
+
+function buildWeatherTimeHeaderRowHtml(visibleIndices, firstReturnIdx, saved, nowHour, colTimes) {
+  let html = `<tr class="wt-header-row wt-header-row-time">
+    ${buildWeatherTimeBulkControlHtml()}`;
+  visibleIndices.forEach((colIdx) => {
+    const cell = buildWeatherTimeHeaderCellHtml(weatherPoints[colIdx], colIdx, firstReturnIdx, saved, nowHour);
+    if (!colTimes[colIdx]) colTimes[colIdx] = {};
+    colTimes[colIdx].hour = cell.hour;
+    html += cell.html;
+  });
+  return `${html}</tr>`;
+}
+
+function buildWeatherDataCellHtml(row, pt, colIdx, firstReturnIdx, colTimes) {
+  const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
+  const tdClass = buildWeatherDataColumnClassNames(
+    pt,
+    colIdx,
+    firstReturnIdx,
+    `wt-data-cell wt-td${layerForRow ? ' wt-cell-with-icon' : ''}`,
+  );
+  const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
+  const colTime = colTimes[colIdx] || {};
+  const iconHtml = layerForRow
+    ? buildRowWindyIconHtml(
+        layerForRow,
+        buildWindyUrl(pt.lat, pt.lng, colTime.date, colTime.hour, layerForRow),
+        12,
+      )
+    : '';
+  const coordText = row.key === 'coords' ? formatCoords(pt.lat, pt.lng) : '';
+  const initialVal = getCellValue(null, row.key, pt);
+  const cellInner = row.key === 'coords'
+    ? `<span class="wt-cell-value clickable-coords" data-coords="${coordText}" title="點擊複製座標">${coordText}</span>`
+    : layerForRow
+      ? `${iconHtml}<span class="wt-cell-value">—</span>`
+      : `<span class="wt-cell-value">${formatWeatherTableValueHtml(row.key, initialVal)}</span>`;
+
+  return `<td class="${tdClass}" data-col="${colIdx}" data-key="${row.key}"${cellStyle}>${cellInner}</td>`;
+}
+
+function buildWeatherDataRowHtml(row, visibleIndices, firstReturnIdx, colTimes) {
+  let html = `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
+  visibleIndices.forEach((colIdx) => {
+    html += buildWeatherDataCellHtml(row, weatherPoints[colIdx], colIdx, firstReturnIdx, colTimes);
+  });
+  return `${html}</tr>`;
+}
+
+function buildWeatherWindyRowHtml(visibleIndices, firstReturnIdx, colTimes) {
+  let html = '<tr class="wt-windy-row"><td class="wt-label-cell wt-td">Windy</td>';
+  visibleIndices.forEach((colIdx) => {
+    const pt = weatherPoints[colIdx];
+    const tdClass = buildWeatherDataColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-data-cell wt-td wt-windy-cell');
+    const colTime = colTimes[colIdx] || {};
+    html += `<td class="${tdClass}" data-col="${colIdx}">` +
+      `<a class="wt-windy-link" href="${buildWindyUrl(pt.lat, pt.lng, colTime.date, colTime.hour)}" target="_blank" rel="noopener" title="在 Windy 開啟">` +
+      `<img src="https://www.windy.com/favicon.ico" width="13" height="13" alt="Windy" class="windy-favicon">` +
+      `</a></td>`;
+  });
+  return `${html}</tr>`;
+}
+
+function buildWeatherTableHtml({ labelW, colWidths, visibleIndices, firstReturnIdx, saved, todayStr, nowHour }) {
+  const colTimes = [];
+  let html = buildWeatherCollapseButton();
+  html += `<table class="weather-table${weatherTableCollapsed ? ' is-collapsed' : ''}">`;
+  html += buildWeatherColgroupHtml(labelW, colWidths);
+  html += '<thead>';
+  html += buildWeatherLabelHeaderRowHtml(visibleIndices, firstReturnIdx);
+  html += buildWeatherDateHeaderRowHtml(visibleIndices, firstReturnIdx, saved, todayStr, colTimes);
+  html += buildWeatherTimeHeaderRowHtml(visibleIndices, firstReturnIdx, saved, nowHour, colTimes);
+  html += '</thead><tbody>';
+  WEATHER_ROWS.forEach(row => { html += buildWeatherDataRowHtml(row, visibleIndices, firstReturnIdx, colTimes); });
+  html += buildWeatherWindyRowHtml(visibleIndices, firstReturnIdx, colTimes);
+  return `${html}</tbody></table>`;
+}
+
 function renderWeatherPanel() {
   const previousWeatherPoints = weatherPoints;
   const previousCardStates = new Map();
@@ -7015,7 +7279,6 @@ function renderWeatherPanel() {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const nowHour = now.getHours();
-  const N = weatherPoints.length;
 
   // Proportional column widths aligned with elevation chart X axis
   const positions = computeWeatherPointPositions();
@@ -7035,231 +7298,16 @@ function renderWeatherPanel() {
     : Math.max(panelW - labelW, visibleN * minColW);
   const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
 
-  let html = `<button class="wt-ctrl-collapse" data-action="toggle-weather-table" title="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}" aria-label="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${weatherTableCollapsed ? 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z' : 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z'}" fill="currentColor"/></svg>
-  </button>`;
-  html += `<table class="weather-table${weatherTableCollapsed ? ' is-collapsed' : ''}"><colgroup><col style="width:${labelW}px">`;
-  colWidths.forEach(w => html += `<col style="width:${Math.round(w)}px">`);
-  html += `</colgroup><thead>`;
-
   const firstReturnIdx = weatherPoints.findIndex(pt => pt.isReturn);
-
-  // Track colTimes for Windy links later
-  const colTimes = [];
-
-  // --- Row 1: labels / fetch ---
-  html += `<tr class="wt-header-row wt-header-row-label">
-    <th class="wt-label-cell wt-th">
-      <button class="wt-ctrl-collapse" data-action="toggle-weather-table" title="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}" aria-label="${weatherTableCollapsed ? '展開天氣資訊' : '收縮天氣資訊'}">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${weatherTableCollapsed ? 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z' : 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z'}" fill="currentColor"/></svg>
-      </button>
-      <button class="wt-ctrl-fetch" data-action="fetch" title="更新天氣">
-        <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg>
-        <span>更新天氣</span>
-      </button>
-    </th>`;
-
-  visibleIndices.forEach((i, visiblePos) => {
-    const pt = weatherPoints[i];
-    const gradColor = _weatherPointGradColor(pt);
-    const rgba = (alpha) => gradColor.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
-
-    let thClass = 'wt-col-head wt-th';
-    if (pt.isReturn) thClass += ' wt-return-col';
-    if (!pt.isWaypoint) thClass += ' wt-interval-col';
-    if (i === firstReturnIdx) thClass += ' wt-return-start';
-
-    const labelStyle = pt.isWaypoint
-      ? `style="color:${gradColor}; font-weight: bold;"`
-      : `style="color:${rgba(0.7)};"`;
-
-    const thStyle = pt.isWaypoint
-      ? `style="border-top: 3px solid ${rgba(0.8)}; background-color: var(--bg-tertiary); background-image: linear-gradient(to bottom, ${rgba(0.1)}, transparent);"`
-      : `style="border-top: 2px solid ${rgba(0.2)};"`;
-
-    let displayElapsedH = pt._elapsedH || 0;
-    if (perSegmentMode && displayElapsedH > 0) {
-      let prevWpElapsed = 0;
-      for (let j = i - 1; j >= 0; j--) {
-        if (weatherPoints[j]?.isWaypoint) {
-          prevWpElapsed = weatherPoints[j]._elapsedH || 0;
-          break;
-        }
-      }
-      displayElapsedH = displayElapsedH - prevWpElapsed;
-    }
-    const elapsedBadge = (speedIntervalMode || segmentIntervalKm > 0) && displayElapsedH > 0
-      ? `<span class="wt-elapsed-badge">${formatDurationHHMM(displayElapsedH)}</span>`
-      : '';
-
-    const displayLabel = weatherTableCollapsed ? getWeatherPointShortLabel(pt, visiblePos) : pt.label;
-    const safeDisplayLabel = _escapeHtml(displayLabel);
-    const safeTitle = _escapeHtml(pt.label || displayLabel || '');
-    const titleAttr = weatherTableCollapsed ? ` title="${safeTitle}"` : '';
-
-    html += `<th class="${thClass}" data-idx="${i}" ${thStyle}${titleAttr}>
-      <div class="wt-col-label" ${labelStyle}${titleAttr}>${safeDisplayLabel}${weatherTableCollapsed ? '' : elapsedBadge}</div>
-    </th>`;
+  const html = buildWeatherTableHtml({
+    labelW,
+    colWidths,
+    visibleIndices,
+    firstReturnIdx,
+    saved,
+    todayStr,
+    nowHour,
   });
-  html += `</tr>`;
-
-  // --- Row 2: date / day-adj ---
-  html += `<tr class="wt-header-row wt-header-row-date">
-    <th class="wt-label-cell wt-th">
-      <div class="wt-ctrl-adj-row" title="所有日期 ±1 天">
-        <button class="wt-ctrl-adj" data-action="day-minus">−</button>
-        <button class="wt-ctrl-now" data-action="day-now" title="將目前選取欄位設為今日,其他欄位同步對齊">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z" fill="currentColor"/></svg>
-        </button>
-        <button class="wt-ctrl-adj" data-action="day-plus">+</button>
-      </div>
-    </th>`;
-
-  visibleIndices.forEach((i) => {
-    const pt = weatherPoints[i];
-    const sv = getSavedCol(pt, i, saved);
-    const date = sv?.date || todayStr;
-    const locked = !pt.isWaypoint;
-
-    let thClass = 'wt-col-head wt-th wt-th-date';
-    if (pt.isReturn) thClass += ' wt-return-col';
-    if (!pt.isWaypoint) thClass += ' wt-interval-col';
-    if (i === firstReturnIdx) thClass += ' wt-return-start';
-
-    let minAttr = '';
-    if (strictLinearMode && i > 0) {
-      const prevIdx = findAdjacentWaypointIndex(i, -1);
-      const prevVal = prevIdx >= 0 ? (getSavedCol(weatherPoints[prevIdx], prevIdx, saved)?.date || todayStr) : '';
-      if (prevVal) minAttr = ` min="${prevVal}"`;
-    }
-
-    let canMinus = !locked;
-    let canPlus = !locked;
-    if (strictLinearMode && !locked && i > 0) {
-      const prevIdx = findAdjacentWaypointIndex(i, -1);
-      const prevSv = prevIdx >= 0 ? getSavedCol(weatherPoints[prevIdx], prevIdx, saved) : null;
-      const curDateMs = new Date(date + 'T00:00:00').getTime();
-      const prevDateMs = new Date((prevSv?.date || todayStr) + 'T00:00:00').getTime();
-      if (curDateMs - 86400000 < prevDateMs) canMinus = false;
-    }
-
-    html += `<th class="${thClass}" data-idx="${i}" title="${_escapeHtml(pt.label || '')}">
-      <div class="wt-adj-wrap">
-        <button class="wt-adj-btn wt-adj-day-minus" title="前一天"${canMinus ? '' : ' disabled'}>−</button>
-        <span class="wt-picker-icon wt-date-picker has-day-first" title="選擇日期">
-          ${buildDayFirstDateHtml(date)}
-          <input type="date" class="wt-date-input" value="${date}"${locked ? ' disabled' : ''}${minAttr}>
-        </span>
-        <button class="wt-adj-btn wt-adj-day-plus" title="後一天"${canPlus ? '' : ' disabled'}>+</button>
-      </div>
-    </th>`;
-
-    // Initialize colTimes for later use in Windy links
-    colTimes[i] = { date };
-  });
-  html += `</tr>`;
-
-  // --- Row 3: time / hour-adj ---
-  html += `<tr class="wt-header-row wt-header-row-time">
-    <th class="wt-label-cell wt-th">
-      <div class="wt-ctrl-adj-row" title="所有時間 ±1 小時">
-        <button class="wt-ctrl-adj" data-action="hour-minus">−</button>
-        <button class="wt-ctrl-now" data-action="hour-now" title="將目前選取欄位設為現在時刻,其他欄位同步對齊">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z" fill="currentColor"/><path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="currentColor"/></svg>
-        </button>
-        <button class="wt-ctrl-adj" data-action="hour-plus">+</button>
-      </div>
-    </th>`;
-
-  visibleIndices.forEach((i) => {
-    const pt = weatherPoints[i];
-    const sv = getSavedCol(pt, i, saved);
-    const hour = sv?.hour != null ? parseInt(sv.hour) : nowHour;
-    const locked = !pt.isWaypoint;
-
-    let thClass = 'wt-col-head wt-th wt-th-time';
-    if (pt.isReturn) thClass += ' wt-return-col';
-    if (!pt.isWaypoint) thClass += ' wt-interval-col';
-    if (i === firstReturnIdx) thClass += ' wt-return-start';
-
-    let canMinus = !locked;
-    let canPlus = !locked;
-    if (strictLinearMode && !locked) {
-      const curMs = new Date((sv?.date || todayStr) + 'T00:00:00').getTime() + hour * 3600000;
-      if (i > 0) {
-        const prevIdx = findAdjacentWaypointIndex(i, -1);
-        const prevPt = prevIdx >= 0 ? weatherPoints[prevIdx] : null;
-        const prevSv = prevIdx >= 0 ? getSavedCol(prevPt, prevIdx, saved) : null;
-        const prevMs = new Date((prevSv?.date || todayStr) + 'T00:00:00').getTime() + (prevSv?.hour != null ? parseInt(prevSv.hour) : nowHour) * 3600000;
-        if (curMs - 86400000 < prevMs) canMinus = false;
-      }
-      if (i < N - 1) {
-        const nextIdx = findAdjacentWaypointIndex(i, 1);
-        if (nextIdx >= 0) {
-          const nextPt = weatherPoints[nextIdx];
-          const nextSv = getSavedCol(nextPt, nextIdx, saved);
-          const nextMs = new Date((nextSv?.date || todayStr) + 'T00:00:00').getTime() + (nextSv?.hour != null ? parseInt(nextSv.hour) : nowHour) * 3600000;
-          if (curMs + 86400000 > nextMs) canPlus = false;
-        }
-      }
-    }
-
-    html += `<th class="${thClass}" data-idx="${i}" title="${_escapeHtml(pt.label || '')}">
-      <div class="wt-time-row">
-        <button class="wt-adj-btn wt-adj-hour-minus" title="前一小時"${locked ? ' disabled' : ''}>−</button>
-        <span class="wt-picker-icon wt-time-picker" title="選擇時間">
-          <select class="wt-time-select"${locked ? ' disabled' : ''}>${timeOpts(hour)}</select>
-        </span>
-        <button class="wt-adj-btn wt-adj-hour-plus" title="後一小時"${locked ? ' disabled' : ''}>+</button>
-      </div>
-    </th>`;
-
-    // Finalize colTimes with hour
-    colTimes[i].hour = hour;
-  });
-  html += `</tr></thead><tbody>`;
-
-  WEATHER_ROWS.forEach(row => {
-    const layerForRow = ROW_KEY_TO_WINDY_LAYER[row.key];
-    html += `<tr><td class="wt-label-cell wt-td">${row.label}</td>`;
-    visibleIndices.forEach((i) => {
-      const pt = weatherPoints[i];
-      const returnClass = pt.isReturn ? ' wt-return-col' : '';
-      const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
-      const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
-      const iconHtml = layerForRow
-        ? buildRowWindyIconHtml(
-            layerForRow,
-            buildWindyUrl(pt.lat, pt.lng, colTimes[i].date, colTimes[i].hour, layerForRow),
-            12,
-          )
-        : '';
-      const coordText = row.key === 'coords' ? formatCoords(pt.lat, pt.lng) : '';
-      const initialVal = getCellValue(null, row.key, pt);
-      const cellInner = row.key === 'coords'
-        ? `<span class="wt-cell-value clickable-coords" data-coords="${coordText}" title="點擊複製座標">${coordText}</span>`
-        : layerForRow
-          ? `${iconHtml}<span class="wt-cell-value">—</span>`
-          : `<span class="wt-cell-value">${formatWeatherTableValueHtml(row.key, initialVal)}</span>`;
-      html += `<td class="wt-data-cell wt-td${returnClass}${startClass}${layerForRow ? ' wt-cell-with-icon' : ''}" data-col="${i}" data-key="${row.key}"${cellStyle}>${cellInner}</td>`;
-    });
-    html += '</tr>';
-  });
-
-  // Windy link row (bottom)
-  html += '<tr class="wt-windy-row"><td class="wt-label-cell wt-td">Windy</td>';
-  visibleIndices.forEach((i) => {
-    const pt = weatherPoints[i];
-    const returnClass = pt.isReturn ? ' wt-return-col' : '';
-    const startClass = i === firstReturnIdx ? ' wt-return-start' : '';
-    html += `<td class="wt-data-cell wt-td wt-windy-cell${returnClass}${startClass}" data-col="${i}">` +
-      `<a class="wt-windy-link" href="${buildWindyUrl(pt.lat, pt.lng, colTimes[i].date, colTimes[i].hour)}" target="_blank" rel="noopener" title="在 Windy 開啟">` +
-      `<img src="https://www.windy.com/favicon.ico" width="13" height="13" alt="Windy" class="windy-favicon">` +
-      `</a></td>`;
-  });
-  html += '</tr>';
-
-  html += '</tbody></table>';
   container.innerHTML = html;
 
   // Re-bind controls directly to ensure responsiveness regardless of delegation status

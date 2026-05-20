@@ -2,6 +2,8 @@
 
 Created: 2026-05-19
 
+> Management note: execution details stay here, but QA status, blockers, and release priority are centralized in [`../TODO.md`](../TODO.md).
+
 Use this checklist after `npm run android:build:debug` or an iOS simulator/device build. It focuses on native bridge behavior that cannot be fully validated by Web Playwright tests.
 
 ## Android Debug Build
@@ -40,7 +42,7 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 | Offline tiles | Export/import tile-enabled `.melmap`, then disable network | Cached tiles remain usable for the exported area; tile pack delete and clear-all work. |
 | OS backup | Check Android app backup settings where visible | Mapping Elf should not offer OS cloud backup for local route/cache data. |
 
-## Release Readiness Gaps
+## Release Readiness Gaps Mirrored In TODO.md
 
 - Android native bridge QA is still blocked locally until a device or emulator is available.
 - iOS simulator/device build still needs validation on a Mac/Xcode environment.

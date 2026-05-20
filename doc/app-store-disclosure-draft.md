@@ -3,6 +3,8 @@
 Created: 2026-05-19
 Source: `doc/privacy-data-flow.md`
 
+> Management note: disclosure basis stays here, but live-store review status, blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
+
 This draft maps the current Mapping Elf behavior to app-store privacy review inputs. Re-check store forms and provider policies before a public release.
 
 ## Privacy Policy URL
