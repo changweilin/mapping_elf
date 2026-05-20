@@ -30,7 +30,7 @@ Last updated: 2026-05-20
 
 | 序 | 狀態 | 工作包 | 已整合項目 | 完成條件 |
 | --- | --- | --- | --- | --- |
-| A1 | 待辦 | 配速 placeholder 格式化集中化 | `updateFlatPlaceholder()`、活動切換 placeholder、`kmh`/`minkm`/`shanhe` 顯示一致性 | 三種單位顯示與現況一致；跑過 `test:numeric`、`test:chunks`、`build`。 |
+| A1 | 完成 | 配速 placeholder 格式化集中化 | `updateFlatPlaceholder()`、活動切換 placeholder、`kmh`/`minkm`/`shanhe` 顯示一致性 | 2026-05-20 完成；新增 smoke case 覆蓋三種單位與活動切換；跑過 `test:numeric`、`test:chunks`、`build`、`test:smoke`。 |
 | A2 | 待辦 | GUI/Playwright 測試可靠度整理 | GUI 啟動腳本化、smoke 外部資源錯誤判讀、layer-toggle helper、可行時還原 `locator.click()` | 有可重複 GUI 驗證命令；不白名單化真正的 `console error`/`pageerror`；4 層重疊長按測試仍通過。 |
 | A3 | 待辦 | 回歸測試補強 | round-trip、O-loop、per-segment、imported track、weather persistence、i18n dynamic DOM | 新測試能保護 return timing、interval persistence、imported-track ordering 與動態翻譯。 |
 | A4 | 待辦 | 效能基線 | sample KML 匯入、chart visible、export modal open timing | 本地可重複輸出 timing，門檻先寬鬆，後續 refactor 可比較前後。 |
@@ -50,13 +50,20 @@ Last updated: 2026-05-20
 以下項目已清出執行看板，只作為後續驗證背景：
 
 - GUI 與 smoke 護欄已建立，包含 4 層重疊路徑長按逐層切換、雙擊、匯入、匯出與地圖圖層基本流程。
-- 第一輪低風險精簡已完成，包含配速單位轉換 helper、天氣表 `timeOpts` 去重與天氣表 HTML helper 拆分。
+- 第一輪低風險精簡已完成，包含配速單位轉換 helper、配速 placeholder 格式化集中化、天氣表 `timeOpts` 去重與天氣表 HTML helper 拆分。
 - Web/App build split、platform adapter、Capacitor sync helpers、Android APK/AAB build scripts 已建立。
 - GPX/KML/`.melmap` round-trip、state contract、reset/import behavior 已有測試與文件基準。
 - Privacy inventory、store disclosure draft、store listing draft、Google Play draft images 與 bundled privacy page 已建立。
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-05-20 Update
+
+- 狀態變更：`A1 配速 placeholder 格式化集中化` 完成。
+- 影響範圍：`src/main.js` 配速 placeholder/constraint helper、活動切換時的 placeholder 更新路徑、`test/smoke.spec.js` 回歸測試。
+- 驗證：`npm.cmd run build`、`npm.cmd run test:numeric`、`npm.cmd run test:chunks`、`npm.cmd run test:smoke`（57 passed，含 4 層重疊路徑護欄）。
+- 仍需追蹤：下一步回到 `A2 GUI/Playwright 測試可靠度整理`。
 
 - Android native bridge QA 與 iOS validation 合併為 `R1 Native device validation`。
 - Upload keystore、release AAB 與 internal testing upload 合併為 `R2 Android signing 與 internal testing artifact`。

@@ -76,6 +76,30 @@ test('app shell loads without console errors', async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 });
 
+test('pace flat placeholder follows unit and activity changes', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+  const flatInput = page.locator('#pace-flat-input');
+  const unitSelect = page.locator('#pace-unit-select');
+  const activitySelect = page.locator('#speed-activity-select');
+
+  await unitSelect.selectOption('minkm');
+  await expect(flatInput).toHaveAttribute('placeholder', '15.0');
+  await activitySelect.selectOption('walking');
+  await expect(flatInput).toHaveAttribute('placeholder', '17.1');
+
+  await unitSelect.selectOption('shanhe');
+  await expect(flatInput).toHaveAttribute('placeholder', '0.86');
+  await activitySelect.selectOption('hiking');
+  await expect(flatInput).toHaveAttribute('placeholder', '0.75');
+
+  await unitSelect.selectOption('kmh');
+  await expect(flatInput).toHaveAttribute('placeholder', '4.0');
+  await activitySelect.selectOption('walking');
+  await expect(flatInput).toHaveAttribute('placeholder', '3.5');
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test('privacy policy page is available in the release build', async ({ page }) => {
   await page.goto('privacy.html');
   await expect(page.locator('h1')).toContainText('Mapping Elf');

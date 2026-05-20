@@ -1343,6 +1343,51 @@ function formatKmhForUnit(v, unit = paceUnit) {
 const kmhToDisplay = (v) => kmhToDisplayForUnit(v);
 const displayToKmh = (v) => displayToKmhForUnit(v);
 
+const PACE_UNIT_INPUT_SETTINGS = {
+  kmh: {
+    min: '0.5',
+    max: '80',
+    step: '0.5',
+    formatPlaceholder: (speedKmh) => speedKmh.toFixed(1),
+  },
+  minkm: {
+    min: '1',
+    max: '120',
+    step: '0.5',
+    formatPlaceholder: (speedKmh) => (60 / speedKmh).toFixed(1),
+  },
+  shanhe: {
+    min: '0.1',
+    max: '10',
+    step: '0.05',
+    formatPlaceholder: (speedKmh) => (SHANHE_BASE / speedKmh).toFixed(2),
+  },
+};
+
+function getPaceUnitInputSettings(unit = paceUnit) {
+  return PACE_UNIT_INPUT_SETTINGS[unit] || PACE_UNIT_INPUT_SETTINGS.kmh;
+}
+
+function formatFlatPacePlaceholder(speedKmh, unit = paceUnit) {
+  const speed = Number(speedKmh);
+  if (!Number.isFinite(speed) || speed <= 0) return '—';
+  return getPaceUnitInputSettings(unit).formatPlaceholder(speed);
+}
+
+function applyFlatPaceInputConstraints(input = paceFlatInput, unit = paceUnit) {
+  if (!input) return;
+  const settings = getPaceUnitInputSettings(unit);
+  input.min = settings.min;
+  input.max = settings.max;
+  input.step = settings.step;
+}
+
+function setDynamicPlaceholder(input, placeholder) {
+  if (!input) return;
+  input.setAttribute('data-i18n-originalplaceholder', placeholder);
+  input.placeholder = placeholder;
+}
+
 function syncCalibrationIntoPaceParams() {
   paceParams = {
     ...DEFAULT_PACE_PARAMS,
@@ -1494,22 +1539,8 @@ function updateFlatPlaceholder() {
   const body = parseFloat(paceBodyWeight?.value) || 70;
   const pack = parseFloat(pacePackWeight?.value) || 0;
   const spdKmh = defaultSpeed(speedActivity, body, pack);
-  if (paceUnit === 'shanhe') {
-    paceFlatInput.min = '0.1';
-    paceFlatInput.max = '10';
-    paceFlatInput.step = '0.05';
-    paceFlatInput.placeholder = (SHANHE_BASE / spdKmh).toFixed(2);
-  } else if (paceUnit === 'minkm') {
-    paceFlatInput.min = '1';
-    paceFlatInput.max = '120';
-    paceFlatInput.step = '0.5';
-    paceFlatInput.placeholder = (60 / spdKmh).toFixed(1);
-  } else {
-    paceFlatInput.min = '0.5';
-    paceFlatInput.max = '80';
-    paceFlatInput.step = '0.5';
-    paceFlatInput.placeholder = spdKmh.toFixed(1);
-  }
+  applyFlatPaceInputConstraints(paceFlatInput, paceUnit);
+  setDynamicPlaceholder(paceFlatInput, formatFlatPacePlaceholder(spdKmh, paceUnit));
 }
 
 // =========== Waypoint Settings ===========
@@ -9551,16 +9582,7 @@ async function init() {
       if (statKcalCard) statKcalCard.style.display = active ? '' : 'none';
       if (statIntakeCard) statIntakeCard.style.display = active ? '' : 'none';
 
-      // Update flat-pace placeholder for new activity (in current unit)
-      const flatEl = document.getElementById('pace-flat-input');
-      const bodyEl = document.getElementById('pace-body-weight');
-      const packEl = document.getElementById('pace-pack-weight');
-      if (flatEl) {
-        const spd = defaultSpeed(speedActivity, parseFloat(bodyEl?.value) || 70, parseFloat(packEl?.value) || 0);
-        flatEl.placeholder = paceUnit === 'shanhe'
-          ? (SHANHE_BASE / spd).toFixed(2)
-          : spd.toFixed(1);
-      }
+      updateFlatPlaceholder();
 
       localStorage.setItem(LS_SEGMENT_KEY, String(segmentIntervalKm));
       localStorage.setItem(LS_SPEED_MODE_KEY, speedIntervalMode ? '1' : '0');
