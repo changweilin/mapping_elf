@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import JSZip from 'jszip';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectUnexpectedConsoleErrors } from './helpers/consoleErrors.js';
 
 test.use({ acceptDownloads: true });
 
@@ -15,23 +16,8 @@ const transparentPng = Buffer.from(
   'base64',
 );
 
-function isExpectedExternalResourceNoise(text) {
-  return text.includes('Failed to load resource')
-    && (
-      text.includes('net::ERR_NETWORK_ACCESS_DENIED')
-      || text.includes('net::ERR_NO_BUFFER_SPACE')
-      || text.includes('the server responded with a status of 404 (Offline)')
-    );
-}
-
 async function openApp(page) {
-  const consoleErrors = [];
-  page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
-    const text = msg.text();
-    if (!isExpectedExternalResourceNoise(text)) consoleErrors.push(text);
-  });
-  page.on('pageerror', (err) => consoleErrors.push(err.message));
+  const consoleErrors = collectUnexpectedConsoleErrors(page);
 
   await page.addInitScript(() => localStorage.clear());
   await page.goto('/');
@@ -424,6 +410,30 @@ test('imports app fixture with Chinese names, weather metadata, and interval poi
   expect(state.waypointMeta[0].time).toBe('07:00');
   expect(state.waypointMeta[0].weather.temp).toBe('22 C');
   expect(state.intermediates).toHaveLength(1);
+  await expect(page.locator('#weather-table-container .wt-header-row-label .wt-col-head')).toHaveCount(4);
+  const weatherColumns = await page.locator('#weather-table-container .wt-header-row-label .wt-col-head').evaluateAll((heads) => (
+    heads.map((th) => {
+      const labelEl = th.querySelector('.wt-col-label');
+      const label = Array.from(labelEl?.childNodes || [])
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent || '')
+        .join('')
+        .trim();
+      return {
+        label,
+        isInterval: th.classList.contains('wt-interval-col'),
+        isReturn: th.classList.contains('wt-return-col'),
+      };
+    })
+  ));
+  expect(weatherColumns.map((column) => column.isInterval)).toEqual([false, true, false, false]);
+  expect(weatherColumns.map((column) => column.isReturn)).toEqual([false, false, false, false]);
+  expect(weatherColumns.map((column) => column.label)).toEqual([
+    state.waypointMeta[0].label,
+    state.intermediates[0].label,
+    state.waypointMeta[1].label,
+    state.waypointMeta[2].label,
+  ]);
   expect(state.intermediates[0].label).toBe('補給點');
 
   expect(consoleErrors).toEqual([]);
@@ -483,13 +493,7 @@ test('melmap state restore uses allow-list and preserves user collections/sessio
 
 test('reset defaults clears app state but keeps favorites', async ({ page }) => {
   const originalFavorites = [{ id: 'fav-reset', name: '重置後保留', savedAt: '2026-05-18T00:00:00.000Z' }];
-  const consoleErrors = [];
-  page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
-    const text = msg.text();
-    if (!isExpectedExternalResourceNoise(text)) consoleErrors.push(text);
-  });
-  page.on('pageerror', (err) => consoleErrors.push(err.message));
+  const consoleErrors = collectUnexpectedConsoleErrors(page);
   await page.addInitScript((favorites) => {
     if (sessionStorage.getItem('__mappingElfResetSeeded') === '1') return;
     sessionStorage.setItem('__mappingElfResetSeeded', '1');

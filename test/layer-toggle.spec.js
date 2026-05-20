@@ -199,6 +199,17 @@ async function routeOverlapState(page) {
   }, VISIBLE_ROUTE_PATH_SELECTOR);
 }
 
+async function topVisibleRoutePoint(page, xFraction = 0.25) {
+  const point = await page.evaluate(({ selector, xFraction }) => {
+    const path = Array.from(document.querySelectorAll(selector)).at(-1);
+    if (!path) return null;
+    const rect = path.getBoundingClientRect();
+    return { x: rect.x + rect.width * xFraction, y: rect.y + rect.height / 2 };
+  }, { selector: VISIBLE_ROUTE_PATH_SELECTOR, xFraction });
+  expect(point).not.toBeNull();
+  return point;
+}
+
 async function doubleClickRouteOverlap(page) {
   const state = await routeOverlapState(page);
   expect(state.point).not.toBeNull();
@@ -1446,13 +1457,7 @@ test('double-clicking an overlapped route marker cycles visible layer order', as
   ).toBe(true);
 
   const before = await layerState(page);
-  const routePoint = await page.evaluate(() => {
-    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
-    if (!path) return null;
-    const rect = path.getBoundingClientRect();
-    return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
-  });
-  expect(routePoint).not.toBeNull();
+  const routePoint = await topVisibleRoutePoint(page);
 
   await page.mouse.dblclick(routePoint.x, routePoint.y);
   await expect.poll(async () => {
@@ -1474,13 +1479,7 @@ test('route layer cycling moves an already highlighted waypoint to the switched-
     (await waypointPairState(page)).find((pair) => pair.number === 1)?.hasReturn ?? false
   ).toBe(true);
 
-  const firstRoutePoint = await page.evaluate(() => {
-    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
-    if (!path) return null;
-    const rect = path.getBoundingClientRect();
-    return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
-  });
-  expect(firstRoutePoint).not.toBeNull();
+  const firstRoutePoint = await topVisibleRoutePoint(page);
 
   await page.mouse.dblclick(firstRoutePoint.x, firstRoutePoint.y);
   await expect.poll(async () => (await layerState(page)).returnAboveOutbound).toBe(true);
@@ -1493,13 +1492,7 @@ test('route layer cycling moves an already highlighted waypoint to the switched-
   });
 
   const before = await layerState(page);
-  const routePoint = await page.evaluate(() => {
-    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
-    if (!path) return null;
-    const rect = path.getBoundingClientRect();
-    return { x: rect.x + rect.width * 0.25, y: rect.y + rect.height / 2 };
-  });
-  expect(routePoint).not.toBeNull();
+  const routePoint = await topVisibleRoutePoint(page);
 
   await page.mouse.dblclick(routePoint.x, routePoint.y);
   await expect.poll(async () => {
@@ -1523,13 +1516,7 @@ test('clicking the selected route hit layer still inserts a waypoint', async ({ 
   await openLayerTestApp(page);
   await addRoundTripWaypoints(page);
 
-  const routePoint = await page.evaluate(() => {
-    const path = Array.from(document.querySelectorAll('.leaflet-overlay-pane path:not(.route-hit-line)')).at(-1);
-    if (!path) return null;
-    const rect = path.getBoundingClientRect();
-    return { x: rect.x + rect.width * 0.5, y: rect.y + rect.height / 2 };
-  });
-  expect(routePoint).not.toBeNull();
+  const routePoint = await topVisibleRoutePoint(page, 0.5);
 
   await page.mouse.click(routePoint.x, routePoint.y);
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);

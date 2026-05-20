@@ -15,10 +15,12 @@
     "android:bundle:debug": "npm run cap:sync:android && cd android && gradlew.bat bundleDebug",
     "android:bundle:release": "npm run cap:sync:android && cd android && gradlew.bat bundleRelease",
     "preview": "vite preview",
+    "test:gui": "node test/run-playwright-with-preview.mjs",
     "test:smoke": "node test/run-playwright-with-preview.mjs",
     "test:chunks": "node test/chunk-output.mjs",
     "test:numeric": "node test/numeric-regression.mjs",
     "test:import-export": "node test/run-playwright-with-preview.mjs test/import-export.spec.js",
+    "test:layer-toggle": "node test/run-playwright-with-preview.mjs test/layer-toggle.spec.js",
     "test:mobile": "node test/run-playwright-with-preview.mjs test/mobile-app-qa.spec.js",
     "test:native-config": "node test/native-config.mjs"
   },

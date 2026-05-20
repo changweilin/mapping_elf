@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectUnexpectedConsoleErrors } from './helpers/consoleErrors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -13,23 +14,8 @@ const sampleMelmap = path.join(
 );
 const LONG_PRESS_MS = 650;
 
-function isExpectedExternalResourceNoise(text) {
-  return text.includes('Failed to load resource')
-    && (
-      text.includes('net::ERR_NETWORK_ACCESS_DENIED')
-      || text.includes('net::ERR_NO_BUFFER_SPACE')
-      || text.includes('the server responded with a status of 404 (Offline)')
-    );
-}
-
 async function openApp(page) {
-  const consoleErrors = [];
-  page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
-    const text = msg.text();
-    if (!isExpectedExternalResourceNoise(text)) consoleErrors.push(text);
-  });
-  page.on('pageerror', (err) => consoleErrors.push(err.message));
+  const consoleErrors = collectUnexpectedConsoleErrors(page);
 
   await mockRouteServices(page);
   await mockWeather(page);

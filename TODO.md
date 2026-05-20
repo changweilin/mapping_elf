@@ -31,8 +31,8 @@ Last updated: 2026-05-20
 | 序 | 狀態 | 工作包 | 已整合項目 | 完成條件 |
 | --- | --- | --- | --- | --- |
 | A1 | 完成 | 配速 placeholder 格式化集中化 | `updateFlatPlaceholder()`、活動切換 placeholder、`kmh`/`minkm`/`shanhe` 顯示一致性 | 2026-05-20 完成；新增 smoke case 覆蓋三種單位與活動切換；跑過 `test:numeric`、`test:chunks`、`build`、`test:smoke`。 |
-| A2 | 待辦 | GUI/Playwright 測試可靠度整理 | GUI 啟動腳本化、smoke 外部資源錯誤判讀、layer-toggle helper、可行時還原 `locator.click()` | 有可重複 GUI 驗證命令；不白名單化真正的 `console error`/`pageerror`；4 層重疊長按測試仍通過。 |
-| A3 | 待辦 | 回歸測試補強 | round-trip、O-loop、per-segment、imported track、weather persistence、i18n dynamic DOM | 新測試能保護 return timing、interval persistence、imported-track ordering 與動態翻譯。 |
+| A2 | 完成 | GUI/Playwright 測試可靠度整理 | GUI 啟動腳本化、smoke 外部資源錯誤判讀、layer-toggle helper、可行時還原 `locator.click()` | 2026-05-20 完成；新增 `test:gui`/`test:layer-toggle`，共用 console error collector，整理 route-overlap helper，保留仍 offscreen 的 DOM click fallback；`test:gui` 57 passed。 |
+| A3 | 完成 | 回歸測試補強 | round-trip、O-loop、per-segment、imported track、weather persistence、i18n dynamic DOM | 2026-05-20 完成；新增 weather regression spec、imported-track column ordering 斷言、dynamic DOM i18n smoke case；`test:gui` 60 passed。 |
 | A4 | 待辦 | 效能基線 | sample KML 匯入、chart visible、export modal open timing | 本地可重複輸出 timing，門檻先寬鬆，後續 refactor 可比較前後。 |
 | A5 | 待辦 | Versioned caches | `routeVersion`、`paceVersion`、route/pace/elevation cache key 簡化 | numeric、smoke、import/export 行為不變；路線標籤、距離、天氣點順序與海拔 marker 不變。 |
 | A6 | 待辦 | Weather point generation extraction | `buildWeatherPoints()` 純邏輯拆分、one-way/round-trip/O-loop/interval/imported-track 測試 | 輸出 shape 不變；return `_elapsedH` 仍相對旅程起點；generated interval times 不持久化。 |
@@ -50,7 +50,7 @@ Last updated: 2026-05-20
 以下項目已清出執行看板，只作為後續驗證背景：
 
 - GUI 與 smoke 護欄已建立，包含 4 層重疊路徑長按逐層切換、雙擊、匯入、匯出與地圖圖層基本流程。
-- 第一輪低風險精簡已完成，包含配速單位轉換 helper、配速 placeholder 格式化集中化、天氣表 `timeOpts` 去重與天氣表 HTML helper 拆分。
+- 第一輪低風險精簡已完成，包含配速單位轉換 helper、配速 placeholder 格式化集中化、天氣表 `timeOpts` 去重、天氣表 HTML helper 拆分與 GUI/Playwright 可靠度整理。
 - Web/App build split、platform adapter、Capacitor sync helpers、Android APK/AAB build scripts 已建立。
 - GPX/KML/`.melmap` round-trip、state contract、reset/import behavior 已有測試與文件基準。
 - Privacy inventory、store disclosure draft、store listing draft、Google Play draft images 與 bundled privacy page 已建立。
@@ -58,7 +58,20 @@ Last updated: 2026-05-20
 
 ## 合併紀錄
 
-### 2026-05-20 Update
+### 2026-05-20 A3 Update
+
+- 狀態變更：`A3 回歸測試補強` 完成。
+- 影響範圍：新增 `test/weather-regression.spec.js`，覆蓋 round-trip/per-segment return timing、O-loop return-to-start column 與 generated interval persistence；補強 `test/import-export.spec.js` 的 imported-track weather column 順序；補強 `test/smoke.spec.js` 的 dynamic DOM 翻譯覆蓋。
+- 驗證：`node test/run-playwright-with-preview.mjs test/weather-regression.spec.js`、`node test/run-playwright-with-preview.mjs test/smoke.spec.js`、`node test/run-playwright-with-preview.mjs test/import-export.spec.js`、`npm.cmd run build`、`npm.cmd run test:numeric`、`npm.cmd run test:chunks`、`npm.cmd run test:gui`（60 passed）。
+
+### 2026-05-20 A2 Update
+
+- 狀態變更：`A2 GUI/Playwright 測試可靠度整理` 完成。
+- 影響範圍：`package.json` GUI 測試 scripts、`test/helpers/consoleErrors.js`、`smoke`/`import-export`/`mobile` console error collector、`smoke` 部分真實 click、`layer-toggle` route-overlap helper。
+- 驗證：`npm.cmd run build`、`npm.cmd run test:numeric`、`npm.cmd run test:chunks`、`npm.cmd run test:layer-toggle`（31 passed）、`npm.cmd run test:gui`（57 passed，含 4 層重疊路徑護欄）。
+- 仍需追蹤：`#btn-clear-route` 與 `#btn-export-gpx` 在匯入後仍會落在 viewport 外，測試保留 DOM click fallback；若要完全還原 Playwright actionability，需要後續 UI/layout 修正。
+
+### 2026-05-20 A1 Update
 
 - 狀態變更：`A1 配速 placeholder 格式化集中化` 完成。
 - 影響範圍：`src/main.js` 配速 placeholder/constraint helper、活動切換時的 placeholder 更新路徑、`test/smoke.spec.js` 回歸測試。
