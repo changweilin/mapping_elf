@@ -34,7 +34,7 @@ Last updated: 2026-05-20
 | A2 | 完成 | GUI/Playwright 測試可靠度整理 | GUI 啟動腳本化、smoke 外部資源錯誤判讀、layer-toggle helper、可行時還原 `locator.click()` | 2026-05-20 完成；新增 `test:gui`/`test:layer-toggle`，共用 console error collector，整理 route-overlap helper，保留仍 offscreen 的 DOM click fallback；`test:gui` 57 passed。 |
 | A3 | 完成 | 回歸測試補強 | round-trip、O-loop、per-segment、imported track、weather persistence、i18n dynamic DOM | 2026-05-20 完成；新增 weather regression spec、imported-track column ordering 斷言、dynamic DOM i18n smoke case；`test:gui` 60 passed。 |
 | A4 | 完成 | 效能基線 | sample KML 匯入、chart visible、export modal open timing | 2026-05-20 完成；新增 `test:perf` 與 sample KML timing 輸出；`test:gui` 61 passed。 |
-| A5 | 待辦 | Versioned caches | `routeVersion`、`paceVersion`、route/pace/elevation cache key 簡化 | numeric、smoke、import/export 行為不變；路線標籤、距離、天氣點順序與海拔 marker 不變。 |
+| A5 | 完成 | Versioned caches | `routeVersion`、`waypointVersion`、`paceVersion`、`elevationVersion` cache key；route/pace cache 測試 hook | 2026-05-20 完成；新增 cache-versioning spec 保護 route/pace cache hit 與版本失效；`test:gui` 62 passed。 |
 | A6 | 待辦 | Weather point generation extraction | `buildWeatherPoints()` 純邏輯拆分、one-way/round-trip/O-loop/interval/imported-track 測試 | 輸出 shape 不變；return `_elapsedH` 仍相對旅程起點；generated interval times 不持久化。 |
 
 ### 發布門檻主線
@@ -57,6 +57,12 @@ Last updated: 2026-05-20
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-05-20 A5 Update
+
+- 狀態變更：`A5 Versioned caches` 完成。
+- 影響範圍：`src/main.js` route metrics / pace computation cache 加入測試事件，確認 cache key 走 `routeVersion` + `waypointVersion` 與 `paceVersion` + `elevationVersion`；新增 `test/cache-versioning.spec.js` 覆蓋 cache hit、pace activity 失效與 route mode 失效。
+- 驗證：`node test/run-playwright-with-preview.mjs test/cache-versioning.spec.js`、`npm.cmd run build`、`npm.cmd run test:numeric`、`npm.cmd run test:chunks`、`npm.cmd run test:gui`（62 passed）。
 
 ### 2026-05-20 A4 Update
 

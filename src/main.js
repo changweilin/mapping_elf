@@ -799,11 +799,13 @@ function getRouteMetrics(coords = currentRouteCoords, wps = mapManager.waypoints
   if (isCurrentState
     && routeMetricsCache?.routeVersion === routeVersion
     && routeMetricsCache?.waypointVersion === waypointVersion) {
+    emitTestEvent('route-metrics-cache', { status: 'hit', routeVersion, waypointVersion });
     return routeMetricsCache;
   }
 
   const metrics = computeRouteMetrics(coords, wps);
   if (!isCurrentState) return metrics;
+  emitTestEvent('route-metrics-cache', { status: 'miss', routeVersion, waypointVersion });
   routeMetricsCache = { ...metrics, routeVersion, waypointVersion };
   return routeMetricsCache;
 }
@@ -816,12 +818,14 @@ function getPaceComputation(elevs, dists, activity = speedActivity, params = pac
   if (isCurrentState
     && paceComputationCache?.paceVersion === paceVersion
     && paceComputationCache?.elevationVersion === elevationVersion) {
+    emitTestEvent('pace-computation-cache', { status: 'hit', paceVersion, elevationVersion });
     return paceComputationCache;
   }
 
   const times = computeCumulativeTimes(elevs, dists, activity, params);
   const trip = computeTripStats(elevs, dists, activity, params);
   if (!isCurrentState) return { times, trip };
+  emitTestEvent('pace-computation-cache', { status: 'miss', paceVersion, elevationVersion });
   paceComputationCache = { paceVersion, elevationVersion, times, trip };
   return paceComputationCache;
 }
