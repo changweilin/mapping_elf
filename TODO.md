@@ -35,7 +35,7 @@ Last updated: 2026-05-24
 | 序 | 狀態 | 工作包 | 整併目標 | 完成條件 |
 | --- | --- | --- | --- | --- |
 | P1 | 完成 | 路線模式與配速活動整合 | 路線模式切換時帶出對應配速活動，並讓不適用的配速/熱量欄位在駕車模式下退場。 | 2026-05-24 完成；步行/山徑/自行車/駕車會同步配速活動，手動配速活動覆寫仍可用，完整 GUI suite 維持綠燈。 |
-| P2 | 待辦 | 保存與分享整併 | 將 GPX/KML 匯入匯出、`.melmap`、離線圖磚與我的最愛收斂成「路線庫 / 保存與分享」流程。 | 使用者能從單一入口完成保存、匯入、匯出、備份、離線帶走；既有 `.melmap` 與 favorites 相容。 |
+| P2 | 完成 | 保存與分享整併 | 將 GPX/KML 匯入匯出、`.melmap`、離線圖磚與我的最愛收斂成「路線庫 / 保存與分享」流程。 | 2026-05-24 完成第一階段；單一入口可保存、匯入、保存與分享、管理離線包；既有 `.melmap` 與 favorites 契約維持相容。 |
 | P3 | 待辦 | 天氣中心整併 | 將天氣表、天氣卡、Windy 連結與天氣快取收斂成「取得、調整、查看、比對」的任務流。 | 更新天氣、調整時間、Windy 比對與快取設定入口清楚；不改變 weather column persistence 邊界。 |
 | P4 | 待辦 | 航點顯示與批次操作整併 | 將中繼點生成、天氣圖示顯示、天氣卡批次收合與航點置中拆成更清楚的顯示/航點設定。 | 航點/中繼點與地圖顯示設定分組明確；現有集體操作與 weather card 行為維持。 |
 | P5 | 待辦 | 搜尋工具輕量化 | 將搜尋從側欄完整面板調整為更靠近地圖操作的工具入口，側欄保留結果與加入航點流程。 | 關鍵字與座標搜尋仍可用；新增航點流程更短；手機與桌面 layout 不遮擋核心控制。 |
@@ -61,12 +61,19 @@ Last updated: 2026-05-24
 
 ## 合併紀錄
 
+### 2026-05-24 P2 Update
+
+- 狀態變更：`P2 保存與分享整併` 完成第一階段；`P3-P5` 留在產品體驗整併主線。
+- 影響範圍：側欄「檔案管理」改為「路線庫」，新增目前路線摘要、保存/匯入/保存與分享三個主操作、已保存/離線包/匯入選項分頁，並把我的最愛清單做成路線庫內的 inline 管理。匯出 modal 改名為「保存與分享」，GPX/KML 與 `.melmap` 文案改成使用情境導向。
+- 契約確認：本輪沒有新增 durable key，也沒有改 `.melmap`、favorites、離線包或 GPX/KML 的資料格式；離線包匯入後會自動切到「離線包」分頁，原本 reset/import/export 測試流程保留。
+- 驗證：`npm.cmd run build`、`npm.cmd run test:chunks`、`node test/run-playwright-with-preview.mjs test/smoke.spec.js`、`npm.cmd run test:import-export`、`npm.cmd run test:smoke`（63 passed）。視覺瀏覽器工具未暴露；直接 Playwright 截圖受 sandbox `EPERM` 阻擋，但自動化 GUI suite 通過。
+
 ### 2026-05-24 P1 Update
 
 - 狀態變更：`P1 路線模式與配速活動整合` 完成；`P2-P5` 已加入產品體驗整併主線。
 - 影響範圍：路線模式現在會同步預設配速活動，包含 walking→walking、hiking→hiking、cycling→cycling、driving→driving；保留配速活動 select 的手動覆寫。駕車活動下隱藏熱量/補給統計與體重、負重、疲勞、休息等不適用配速欄位。舊收藏若沒有 speedActivity，會依 routeMode 補預設活動。
 - 驗證：`npm.cmd run test:numeric`、`npm.cmd run build`、`npm.cmd run test:chunks`、`node test/run-playwright-with-preview.mjs test/smoke.spec.js`、`npm.cmd run test:smoke`（63 passed）。
-- 仍需追蹤：`P2 保存與分享整併`、`P3 天氣中心整併`、`P4 航點顯示與批次操作整併`、`P5 搜尋工具輕量化`。
+- 仍需追蹤：`P3 天氣中心整併`、`P4 航點顯示與批次操作整併`、`P5 搜尋工具輕量化`。
 
 ### 2026-05-20 R2/R3 Update
 

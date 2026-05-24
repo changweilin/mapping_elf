@@ -2011,11 +2011,49 @@ btnMyLocation.addEventListener('click', async () => {
   }
 });
 
+function pickRouteFile() {
+  return platform.pickFile({
+    accept: '.gpx,.kml,.melmap,.zip',
+    inputElement: gpxFileInput,
+  });
+}
+
+function setRouteLibraryTab(name = 'saved') {
+  const tabName = ['saved', 'offline', 'import'].includes(name) ? name : 'saved';
+  document.querySelectorAll('[data-route-library-tab]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.routeLibraryTab === tabName);
+  });
+  document.querySelectorAll('.route-library-tab-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `route-library-tab-${tabName}`);
+  });
+}
+
+function openRouteLibrary(tabName = 'saved') {
+  if (!sidePanel.classList.contains('open')) sidePanel.classList.add('open');
+  const section = document.getElementById('file-management-section');
+  const header = document.getElementById('file-management-toggle-header');
+  const body = document.getElementById('file-management-body');
+  body?.classList.remove('collapsed');
+  header?.classList.remove('collapsed');
+  section?.scrollIntoView({ block: 'nearest' });
+  setRouteLibraryTab(tabName);
+  updateRouteLibraryCurrent();
+  renderFavoritesList();
+}
+
+document.querySelectorAll('[data-route-library-tab]').forEach((btn) => {
+  btn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setRouteLibraryTab(btn.dataset.routeLibraryTab);
+  });
+});
+
 btnExportGpx.addEventListener('click', openExportModal);
-btnImportGpx.addEventListener('click', () => platform.pickFile({
-  accept: '.gpx,.kml,.melmap,.zip',
-  inputElement: gpxFileInput,
-}));
+btnImportGpx.addEventListener('click', pickRouteFile);
+document.getElementById('btn-route-library-save')?.addEventListener('click', handleAddFavorite);
+document.getElementById('btn-route-library-save-main')?.addEventListener('click', handleAddFavorite);
+document.getElementById('btn-route-library-import-main')?.addEventListener('click', pickRouteFile);
+document.getElementById('btn-route-library-export-main')?.addEventListener('click', openExportModal);
 btnResetDefaults?.addEventListener('click', () => {
   if (confirm('確定要全部回到預設值嗎？這將會清除目前的設置並重啟頁面。')) {
     resetToDefaults();
@@ -2031,6 +2069,7 @@ function syncRouteHeaderButtons() {
   if (btnReverseReplanRoute) {
     btnReverseReplanRoute.disabled = busy || mapManager.waypoints.length < 2;
   }
+  updateRouteLibraryCurrent();
 }
 
 function prepareImportedTrackForRouteReplan() {
@@ -2520,6 +2559,7 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
       localStorage.setItem(LS_MAP_LAYER_KEY, applied.layer);
       layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === applied.layer));
       offlineManager.updateCacheInfo();
+      setRouteLibraryTab('offline');
     }
 
     if (applied.stateApplied) {
@@ -2944,6 +2984,7 @@ function hideAlternatives() {
 }
 
 function updateWaypointList(waypoints) {
+  updateRouteLibraryCurrent();
   const frozen = !!importedTrackMode || isRouteWeatherBusy();
   if (waypoints.length === 0) {
     waypointList.innerHTML = `
@@ -3344,6 +3385,7 @@ function resetStats() {
   if (statTime) statTime.textContent = '—';
   if (statKcal) statKcal.textContent = '—';
   if (statIntake) statIntake.textContent = '—';
+  updateRouteLibraryCurrent();
 }
 
 /** Update the elevation stats in the side panel grid */
@@ -3384,6 +3426,7 @@ function updateTimeStat() {
     statTime.textContent = '—';
     if (statKcal) statKcal.textContent = '—';
     if (statIntake) statIntake.textContent = '—';
+    updateRouteLibraryCurrent();
     return;
   }
   const pace = getPaceComputation(elevs, dists);
@@ -3395,6 +3438,7 @@ function updateTimeStat() {
     if (statKcal) statKcal.textContent = '—';
     if (statIntake) statIntake.textContent = '—';
     syncPaceActivityApplicabilityUi();
+    updateRouteLibraryCurrent();
     return;
   }
 
@@ -3402,6 +3446,7 @@ function updateTimeStat() {
   if (statKcal) statKcal.textContent = `${trip.kcalExpended.toLocaleString()} kcal`;
   if (statIntake) statIntake.textContent = `${trip.kcalSuggested.toLocaleString()} kcal`;
   syncPaceActivityApplicabilityUi();
+  updateRouteLibraryCurrent();
 }
 
 /** Convert a column header's current date+hour to milliseconds (local time). */
@@ -3945,6 +3990,82 @@ function _escapeHtml(s) {
   ));
 }
 
+const ROUTE_MODE_LABELS = {
+  walking: '步行',
+  hiking: '山徑',
+  cycling: '自行車',
+  driving: '駕車',
+};
+
+const SPEED_ACTIVITY_LABELS = {
+  walking: '步行',
+  hiking: '健行',
+  'trail-run': '越野跑',
+  running: '跑步',
+  cycling: '自行車',
+  driving: '駕車',
+};
+
+function routeDistanceForLibrary() {
+  if (elevationProfile?.distances?.length > 0) {
+    return elevationProfile.distances[elevationProfile.distances.length - 1] || 0;
+  }
+  let total = 0;
+  for (let i = 1; i < currentRouteCoords.length; i++) {
+    total += haversineDistance(currentRouteCoords[i - 1], currentRouteCoords[i]);
+  }
+  return total;
+}
+
+function waypointsMatch(a = [], b = []) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  return a.every((wp, idx) => (
+    Math.abs((wp?.[0] ?? NaN) - (b[idx]?.[0] ?? NaN)) < 1e-6
+    && Math.abs((wp?.[1] ?? NaN) - (b[idx]?.[1] ?? NaN)) < 1e-6
+  ));
+}
+
+function findSavedCurrentRoute() {
+  if (mapManager.waypoints.length < 2) return null;
+  return favorites.find((fav) => waypointsMatch(fav.waypoints, mapManager.waypoints)) || null;
+}
+
+function updateRouteLibraryCurrent() {
+  const nameEl = document.getElementById('route-library-current-name');
+  const metaEl = document.getElementById('route-library-current-meta');
+  const stateEl = document.getElementById('route-library-current-state');
+  const saveButtons = [
+    document.getElementById('btn-route-library-save'),
+    document.getElementById('btn-route-library-save-main'),
+  ].filter(Boolean);
+  const exportButton = document.getElementById('btn-route-library-export-main');
+  const hasRoute = mapManager.waypoints.length >= 2 || currentRouteCoords.length >= 2;
+  const canSaveRoute = mapManager.waypoints.length >= 2;
+  const saved = findSavedCurrentRoute();
+
+  if (nameEl) nameEl.textContent = hasRoute ? (buildDefaultRouteName() || '目前路線') : '目前路線';
+  if (metaEl) {
+    if (!hasRoute) {
+      metaEl.textContent = '尚未建立路線';
+    } else {
+      const wpCount = mapManager.waypoints.length;
+      const distance = routeDistanceForLibrary();
+      const routeLabel = ROUTE_MODE_LABELS[routeEngine.mode] || routeEngine.mode || '路線';
+      const activityLabel = SPEED_ACTIVITY_LABELS[speedActivity] || speedActivity || '配速';
+      metaEl.textContent = `${wpCount} 航點 · ${formatDistance(distance)} · ${routeLabel}/${activityLabel}`;
+    }
+  }
+  if (stateEl) {
+    stateEl.textContent = hasRoute ? (saved ? '已保存' : '未保存') : '空白';
+    stateEl.classList.toggle('saved', !!saved);
+  }
+  saveButtons.forEach((btn) => {
+    btn.disabled = !canSaveRoute;
+    btn.title = canSaveRoute ? (saved ? '已保存目前路線' : '保存目前路線') : '至少需 2 個航點才能保存';
+  });
+  if (exportButton) exportButton.disabled = !hasRoute;
+}
+
 function persistFavorites() {
   try { localStorage.setItem(LS_FAVORITES_KEY, JSON.stringify(favorites)); } catch (_) { }
 }
@@ -4048,7 +4169,7 @@ function _syncExtraSettingsUI() {
 
 function loadFavorite(fav) {
   if (!fav || !Array.isArray(fav.waypoints) || fav.waypoints.length < 2) {
-    showNotification('最愛資料無效', 'error');
+    showNotification('保存路線資料無效', 'error');
     return;
   }
   history.suppressed = true;
@@ -4119,6 +4240,7 @@ function loadFavorite(fav) {
   finally { skipAutoGeocode = false; }
   mapManager.fitToRoute();
   _updateHistoryButtons();
+  updateRouteLibraryCurrent();
   showNotification(`已載入「${fav.name}」`, 'success');
 }
 
@@ -4128,7 +4250,7 @@ function deleteFavorite(id) {
   if (favorites.length !== n) {
     persistFavorites();
     renderFavoritesList();
-    showNotification('已刪除', 'info', 1200);
+    showNotification('已刪除保存路線', 'info', 1200);
   }
 }
 
@@ -4150,11 +4272,12 @@ function closeReplaceModal() {
   favoritesReplaceModal.classList.add('hidden');
 }
 
-function renderFavoritesList() {
-  const container = document.getElementById('favorites-list');
+function renderFavoritesContainer(container, { inline = false } = {}) {
   if (!container) return;
   if (favorites.length === 0) {
-    container.innerHTML = '<div class="empty-hint">尚未加入任何最愛</div>';
+    container.innerHTML = inline
+      ? '<div class="route-library-empty">尚未保存路線</div>'
+      : '<div class="empty-hint">尚未保存路線</div>';
     return;
   }
   container.innerHTML = favorites.map(f => {
@@ -4168,13 +4291,54 @@ function renderFavoritesList() {
           <div class="fav-name">${_escapeHtml(f.name || '未命名路線')}</div>
           <div class="fav-meta">${count} 個航點 · ${_escapeHtml(dateStr)}</div>
         </div>
+        ${inline ? `
+          <div class="route-library-inline-actions">
+            <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-load="${_escapeHtml(f.id)}">載入</button>
+            <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-delete="${_escapeHtml(f.id)}">刪除</button>
+          </div>` : ''}
       </div>`;
   }).join('');
-  _bindFavoriteItemInteractions(container);
+  _bindFavoriteItemInteractions(container, { inline });
+}
+
+function renderFavoritesList() {
+  renderFavoritesContainer(document.getElementById('favorites-list'));
+  renderFavoritesContainer(document.getElementById('route-library-list'), { inline: true });
+  updateRouteLibraryCurrent();
 }
 
 // Whole favorite item = click to load; long-press + drag outside modal box = delete.
-function _bindFavoriteItemInteractions(container) {
+function _bindFavoriteItemInteractions(container, { inline = false } = {}) {
+  if (inline) {
+    container.querySelectorAll('[data-favorite-load]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fav = favorites.find(f => f.id === btn.dataset.favoriteLoad);
+        if (fav) loadFavorite(fav);
+      });
+    });
+    container.querySelectorAll('[data-favorite-delete]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (btn.dataset.favoriteDelete) deleteFavorite(btn.dataset.favoriteDelete);
+      });
+    });
+    container.querySelectorAll('.favorite-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        const fav = favorites.find(f => f.id === item.dataset.id);
+        if (fav) loadFavorite(fav);
+      });
+      item.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        const fav = favorites.find(f => f.id === item.dataset.id);
+        if (fav) loadFavorite(fav);
+      });
+    });
+    return;
+  }
+
   const modalBox = favoritesModal?.querySelector('.modal-box');
   if (!modalBox) return;
 
@@ -4288,7 +4452,8 @@ function handleAddFavorite() {
   favorites.unshift(captureFavorite(name));
   persistFavorites();
   renderFavoritesList();
-  showNotification('已加入我的最愛', 'success');
+  openRouteLibrary('saved');
+  showNotification('已保存到路線庫', 'success');
 }
 
 function openReplaceFlow(pendingName) {
@@ -4307,13 +4472,13 @@ function openReplaceFlow(pendingName) {
     persistFavorites();
     renderFavoritesList();
     closeReplaceModal();
-    showNotification('已取代最愛', 'success');
+    showNotification('已取代保存路線', 'success');
   }));
   favoritesReplaceModal.classList.remove('hidden');
 }
 
 document.getElementById('btn-favorite-add')?.addEventListener('click', handleAddFavorite);
-document.getElementById('btn-favorite-open')?.addEventListener('click', openFavoritesModal);
+document.getElementById('btn-favorite-open')?.addEventListener('click', () => openRouteLibrary('saved'));
 document.getElementById('btn-favorites-close')?.addEventListener('click', closeFavoritesModal);
 document.getElementById('btn-favorites-replace-cancel')?.addEventListener('click', closeReplaceModal);
 document.getElementById('btn-pace-reset')?.addEventListener('click', resetPaceToAnchor);
@@ -9488,6 +9653,8 @@ async function init() {
 
   // Map action buttons
   document.getElementById('btn-fit-route')?.addEventListener('click', () => mapManager.fitToRoute());
+  renderFavoritesList();
+  updateRouteLibraryCurrent();
 
   setTimeout(() => {
     loadingScreen.classList.add('hidden');

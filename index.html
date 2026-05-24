@@ -268,14 +268,14 @@
                 fill="currentColor" />
             </svg>
           </button>
-          <button class="icon-btn" id="btn-favorite-add" title="加入我的最愛">
+          <button class="icon-btn" id="btn-favorite-add" title="保存到路線庫">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
                 d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"
                 fill="currentColor" />
             </svg>
           </button>
-          <button class="icon-btn" id="btn-favorite-open" title="打開我的最愛清單">
+          <button class="icon-btn" id="btn-favorite-open" title="打開路線庫">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
                 fill="currentColor" />
@@ -560,7 +560,7 @@
       </div>
     </section>
 
-    <!-- File Management -->
+    <!-- Route Library -->
     <section class="panel-section collapsible" id="file-management-section">
       <div class="section-header collapsible-header collapsed" id="file-management-toggle-header">
         <h3>
@@ -569,9 +569,14 @@
               d="M10 4l2 2h8c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2L2.01 6c0-1.1.89-2 1.99-2h6z"
               fill="currentColor" />
           </svg>
-          <span class="h3-label">檔案管理</span>
+          <span class="h3-label">路線庫</span>
         </h3>
         <div class="section-actions file-header-actions" onclick="event.stopPropagation()">
+          <button class="icon-btn file-header-btn" id="btn-route-library-save" title="保存目前路線" aria-label="保存目前路線">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24z" fill="currentColor" />
+            </svg>
+          </button>
           <button class="icon-btn file-header-btn" id="btn-import-gpx" title="匯入路線（GPX / KML）" aria-label="匯入路線">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
@@ -598,38 +603,65 @@
         </svg>
       </div>
       <div class="collapsible-body collapsed" id="file-management-body">
-        <div class="pace-checks-row file-import-options">
-          <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
-            <input type="checkbox" id="import-auto-sort-enable">
-            <span>匯入自動排序</span>
-          </label>
-          <label class="pace-check-opt" title="匯入時,為沒有名稱的航點自動命名">
-            <input type="checkbox" id="import-auto-name-enable">
-            <span>匯入自動命名</span>
-          </label>
+        <div class="route-library-current">
+          <div class="route-library-current-main">
+            <div class="route-library-current-name" id="route-library-current-name">目前路線</div>
+            <div class="route-library-current-meta" id="route-library-current-meta">尚未建立路線</div>
+          </div>
+          <span class="route-library-state" id="route-library-current-state">空白</span>
         </div>
-        <div class="settings-divider file-management-divider"></div>
-        <div class="offline-pack-panel">
-          <div class="settings-group-label">離線圖磚</div>
-          <div class="offline-controls">
-            <div class="offline-status">
-              <span class="status-dot online"></span>
-              <span>線上模式</span>
+        <div class="route-library-actions">
+          <button type="button" class="btn-secondary route-library-action" id="btn-route-library-save-main">保存</button>
+          <button type="button" class="btn-secondary route-library-action" id="btn-route-library-import-main">匯入</button>
+          <button type="button" class="btn-primary route-library-action" id="btn-route-library-export-main">保存與分享</button>
+        </div>
+
+        <div class="route-library-tabs" role="tablist" aria-label="路線庫分類">
+          <button type="button" class="route-library-tab active" data-route-library-tab="saved">已保存</button>
+          <button type="button" class="route-library-tab" data-route-library-tab="offline">離線包</button>
+          <button type="button" class="route-library-tab" data-route-library-tab="import">匯入選項</button>
+        </div>
+
+        <div class="route-library-tab-panel active" id="route-library-tab-saved">
+          <div class="favorites-list route-library-list" id="route-library-list"></div>
+        </div>
+
+        <div class="route-library-tab-panel" id="route-library-tab-offline">
+          <div class="offline-pack-panel">
+            <div class="offline-controls">
+              <div class="offline-status">
+                <span class="status-dot online"></span>
+                <span>線上模式</span>
+              </div>
+              <div class="cache-info" id="cache-info"><span>快取瓦片：0 個</span></div>
             </div>
-            <div class="cache-info" id="cache-info"><span>快取瓦片：0 個</span></div>
-          </div>
-          <div class="offline-pack-list" id="offline-pack-list" aria-live="polite">
-            <div class="offline-pack-empty">尚無離線圖磚包</div>
-          </div>
-          <div class="settings-actions-btn-row offline-pack-actions">
-            <button class="btn-secondary file-action-btn" id="btn-clear-offline-cache" title="清除全部離線圖磚">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor" />
-              </svg>
-              <span>清除全部圖磚</span>
-            </button>
+            <div class="offline-pack-list" id="offline-pack-list" aria-live="polite">
+              <div class="offline-pack-empty">尚無離線圖磚包</div>
+            </div>
+            <div class="settings-actions-btn-row offline-pack-actions">
+              <button class="btn-secondary file-action-btn" id="btn-clear-offline-cache" title="清除全部離線圖磚">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor" />
+                </svg>
+                <span>清除全部圖磚</span>
+              </button>
+            </div>
           </div>
         </div>
+
+        <div class="route-library-tab-panel" id="route-library-tab-import">
+          <div class="pace-checks-row file-import-options">
+            <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
+              <input type="checkbox" id="import-auto-sort-enable">
+              <span>匯入自動排序</span>
+            </label>
+            <label class="pace-check-opt" title="匯入時,為沒有名稱的航點自動命名">
+              <input type="checkbox" id="import-auto-name-enable">
+              <span>匯入自動命名</span>
+            </label>
+          </div>
+        </div>
+
         <div class="settings-actions-btn-row file-management-actions file-management-footer">
           <button class="btn-secondary file-action-btn" id="btn-reset-defaults" title="全部回到預設">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -1092,14 +1124,14 @@
     </section>
   </aside>
 
-  <!-- Export Format Modal -->
+  <!-- Save / Share Modal -->
   <div id="export-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 class="modal-title">匯出路線</h3>
+      <h3 class="modal-title">保存與分享</h3>
       <div class="export-options">
         <label class="export-option">
           <input type="radio" name="export-fmt" value="gpx" checked>
-          <span>GPX <small>（通用格式，含天氣資訊）</small></span>
+          <span>GPX <small>（GPS / 戶外 App，含天氣資訊）</small></span>
         </label>
         <label class="export-option">
           <input type="radio" name="export-fmt" value="kml">
@@ -1111,7 +1143,7 @@
         </label>
         <label class="export-option">
           <input type="radio" name="export-fmt" value="melmap">
-          <span>.melmap 離線地圖包 <small>（含路線、圖磚、偏好）</small></span>
+          <span>.melmap 完整包 <small>（Mapping Elf 專用）</small></span>
         </label>
       </div>
       <div class="export-name-entry" style="margin-top: 16px; padding: 0 4px;">
@@ -1124,15 +1156,15 @@
         style="display:none; margin-left: 24px; border-left: 2px solid var(--border, #ccc); padding-left: 12px;">
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-route" checked>
-          <span>路線與航點 <small>（GPX,含高度與天氣）</small></span>
+          <span>路線與航點 <small>（含高度與天氣）</small></span>
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-tiles" checked>
-          <span>當前圖層圖磚 <small id="mappack-tiles-info"></small></span>
+          <span>離線地圖 <small id="mappack-tiles-info"></small></span>
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-state">
-          <span>個人偏好 <small>（天氣快取、配速參數、UI 設定）</small></span>
+          <span>我的設定 <small>（天氣快取、配速參數、UI 設定）</small></span>
         </label>
       </div>
       <div class="modal-actions">
@@ -1171,7 +1203,7 @@
   <!-- Favorites Modal -->
   <div id="favorites-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 class="modal-title">我的最愛</h3>
+      <h3 class="modal-title">已保存路線</h3>
       <div id="favorites-list" class="favorites-list"></div>
       <div class="favorites-hint">點擊項目直接載入。長按並拖曳到框外可移除。最多 10 筆。</div>
       <div class="modal-actions">
@@ -1183,8 +1215,8 @@
   <!-- Favorites Replace Modal -->
   <div id="favorites-replace-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 class="modal-title">已達 10 筆上限</h3>
-      <p class="favorites-hint" style="margin: 0 0 12px;">請選擇要取代的最愛:</p>
+      <h3 class="modal-title">已保存路線達上限</h3>
+      <p class="favorites-hint" style="margin: 0 0 12px;">請選擇要取代的路線:</p>
       <div id="favorites-replace-list" class="favorites-replace-list"></div>
       <div class="modal-actions">
         <button class="btn-secondary" id="btn-favorites-replace-cancel">取消</button>
