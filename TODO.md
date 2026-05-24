@@ -1,6 +1,6 @@
 # Mapping Elf 專案控管中心
 
-Last updated: 2026-05-20
+Last updated: 2026-05-24
 
 本文件是 Mapping Elf 唯一的進度、優先序、阻塞與驗證控管入口。`doc/` 內的 roadmap、部署、QA、隱私與商店文件保留細節與背景，不再各自作為進度來源。
 
@@ -28,14 +28,17 @@ Last updated: 2026-05-20
 
 ### 本地可執行主線
 
-| 序 | 狀態 | 工作包 | 已整合項目 | 完成條件 |
+目前本地可執行項目改以產品體驗整併為主。A1-A6 已清出執行看板，摘要保留在「已完成基線」，詳細驗證保留在「合併紀錄」。
+
+### 產品體驗整併主線
+
+| 序 | 狀態 | 工作包 | 整併目標 | 完成條件 |
 | --- | --- | --- | --- | --- |
-| A1 | 完成 | 配速 placeholder 格式化集中化 | `updateFlatPlaceholder()`、活動切換 placeholder、`kmh`/`minkm`/`shanhe` 顯示一致性 | 2026-05-20 完成；新增 smoke case 覆蓋三種單位與活動切換；跑過 `test:numeric`、`test:chunks`、`build`、`test:smoke`。 |
-| A2 | 完成 | GUI/Playwright 測試可靠度整理 | GUI 啟動腳本化、smoke 外部資源錯誤判讀、layer-toggle helper、可行時還原 `locator.click()` | 2026-05-20 完成；新增 `test:gui`/`test:layer-toggle`，共用 console error collector，整理 route-overlap helper，保留仍 offscreen 的 DOM click fallback；`test:gui` 57 passed。 |
-| A3 | 完成 | 回歸測試補強 | round-trip、O-loop、per-segment、imported track、weather persistence、i18n dynamic DOM | 2026-05-20 完成；新增 weather regression spec、imported-track column ordering 斷言、dynamic DOM i18n smoke case；`test:gui` 60 passed。 |
-| A4 | 完成 | 效能基線 | sample KML 匯入、chart visible、export modal open timing | 2026-05-20 完成；新增 `test:perf` 與 sample KML timing 輸出；`test:gui` 61 passed。 |
-| A5 | 完成 | Versioned caches | `routeVersion`、`waypointVersion`、`paceVersion`、`elevationVersion` cache key；route/pace cache 測試 hook | 2026-05-20 完成；新增 cache-versioning spec 保護 route/pace cache hit 與版本失效；`test:gui` 62 passed。 |
-| A6 | 完成 | Weather point generation extraction | `buildWeatherPoints()` 純邏輯拆分、one-way/round-trip/O-loop/interval/imported-track 測試 | 2026-05-20 完成；抽出純 weather point builder，保留 adapter 回寫 `waypointCumDistM`；新增純測試覆蓋單程、回程、O-loop、interval 與 imported track。 |
+| P1 | 完成 | 路線模式與配速活動整合 | 路線模式切換時帶出對應配速活動，並讓不適用的配速/熱量欄位在駕車模式下退場。 | 2026-05-24 完成；步行/山徑/自行車/駕車會同步配速活動，手動配速活動覆寫仍可用，完整 GUI suite 維持綠燈。 |
+| P2 | 待辦 | 保存與分享整併 | 將 GPX/KML 匯入匯出、`.melmap`、離線圖磚與我的最愛收斂成「路線庫 / 保存與分享」流程。 | 使用者能從單一入口完成保存、匯入、匯出、備份、離線帶走；既有 `.melmap` 與 favorites 相容。 |
+| P3 | 待辦 | 天氣中心整併 | 將天氣表、天氣卡、Windy 連結與天氣快取收斂成「取得、調整、查看、比對」的任務流。 | 更新天氣、調整時間、Windy 比對與快取設定入口清楚；不改變 weather column persistence 邊界。 |
+| P4 | 待辦 | 航點顯示與批次操作整併 | 將中繼點生成、天氣圖示顯示、天氣卡批次收合與航點置中拆成更清楚的顯示/航點設定。 | 航點/中繼點與地圖顯示設定分組明確；現有集體操作與 weather card 行為維持。 |
+| P5 | 待辦 | 搜尋工具輕量化 | 將搜尋從側欄完整面板調整為更靠近地圖操作的工具入口，側欄保留結果與加入航點流程。 | 關鍵字與座標搜尋仍可用；新增航點流程更短；手機與桌面 layout 不遮擋核心控制。 |
 
 ### 發布門檻主線
 
@@ -57,6 +60,13 @@ Last updated: 2026-05-20
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-05-24 P1 Update
+
+- 狀態變更：`P1 路線模式與配速活動整合` 完成；`P2-P5` 已加入產品體驗整併主線。
+- 影響範圍：路線模式現在會同步預設配速活動，包含 walking→walking、hiking→hiking、cycling→cycling、driving→driving；保留配速活動 select 的手動覆寫。駕車活動下隱藏熱量/補給統計與體重、負重、疲勞、休息等不適用配速欄位。舊收藏若沒有 speedActivity，會依 routeMode 補預設活動。
+- 驗證：`npm.cmd run test:numeric`、`npm.cmd run build`、`npm.cmd run test:chunks`、`node test/run-playwright-with-preview.mjs test/smoke.spec.js`、`npm.cmd run test:smoke`（63 passed）。
+- 仍需追蹤：`P2 保存與分享整併`、`P3 天氣中心整併`、`P4 航點顯示與批次操作整併`、`P5 搜尋工具輕量化`。
 
 ### 2026-05-20 R2/R3 Update
 

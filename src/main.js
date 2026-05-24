@@ -541,6 +541,21 @@ const LS_PANEL_WIDTH_KEY = 'mappingElf_panelWidth';
 const LS_THEME_KEY = 'mappingElf_theme';
 const LS_PENDING_GPX_KEY = 'mappingElf_pendingGpx';
 
+const ROUTE_MODE_DEFAULT_ACTIVITY = Object.freeze({
+  walking: 'walking',
+  hiking: 'hiking',
+  cycling: 'cycling',
+  driving: 'driving',
+});
+
+function defaultActivityForRouteMode(mode) {
+  return ROUTE_MODE_DEFAULT_ACTIVITY[mode] || 'hiking';
+}
+
+function normalizeSpeedActivity(activity) {
+  return ACTIVITY_PROFILES[activity] ? activity : 'hiking';
+}
+
 const WEATHER_CACHE_SCHEMA_VERSION = 2;
 const WEATHER_CACHE_DISTANCE_DEFAULT_M = 500;
 const WEATHER_CACHE_ELEVATION_DEFAULT_M = 100;
@@ -630,7 +645,10 @@ let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let oLoopMode = localStorage.getItem(LS_OLOOP_KEY) === '1';
 if (roundTripMode && oLoopMode) { oLoopMode = false; localStorage.setItem(LS_OLOOP_KEY, '0'); }
 let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) !== '0'; // default Pace ON (1 or null)
-let speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
+let speedActivity = normalizeSpeedActivity(
+  localStorage.getItem(LS_SPEED_ACTIVITY_KEY)
+  || defaultActivityForRouteMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking')
+);
 let perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1'; // default OFF
 let strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0'; // default ON
 let importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1'; // default OFF
@@ -1043,7 +1061,10 @@ function applySettingsFromStorage() {
   oLoopMode = localStorage.getItem(LS_OLOOP_KEY) === '1';
   if (roundTripMode && oLoopMode) { oLoopMode = false; localStorage.setItem(LS_OLOOP_KEY, '0'); }
   speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) !== '0';
-  speedActivity = localStorage.getItem(LS_SPEED_ACTIVITY_KEY) || 'hiking';
+  speedActivity = normalizeSpeedActivity(
+    localStorage.getItem(LS_SPEED_ACTIVITY_KEY)
+    || defaultActivityForRouteMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking')
+  );
   perSegmentMode = localStorage.getItem(LS_PER_SEGMENT_KEY) === '1';
   strictLinearMode = localStorage.getItem(LS_STRICT_LINEAR_KEY) !== '0';
   importAutoSortMode = localStorage.getItem(LS_IMPORT_AUTO_SORT_KEY) === '1';
@@ -1546,6 +1567,78 @@ function updateFlatPlaceholder() {
   const spdKmh = defaultSpeed(speedActivity, body, pack);
   applyFlatPaceInputConstraints(paceFlatInput, paceUnit);
   setDynamicPlaceholder(paceFlatInput, formatFlatPacePlaceholder(spdKmh, paceUnit));
+}
+
+function shouldShowEnergyStats() {
+  return speedActivity !== 'driving';
+}
+
+function syncPaceActivityApplicabilityUi() {
+  const showEnergy = shouldShowEnergyStats();
+  const active = speedIntervalMode || segmentIntervalKm > 0;
+  const paceLoadRow = document.getElementById('pace-load-row');
+  const paceFatigueField = document.getElementById('pace-fatigue-field');
+  if (paceLoadRow) paceLoadRow.style.display = showEnergy ? '' : 'none';
+  if (paceFatigueField) paceFatigueField.style.display = showEnergy ? '' : 'none';
+  if (paceRestRow) {
+    paceRestRow.style.display = showEnergy && paceFatigueLevelEl?.value !== 'none' ? '' : 'none';
+  }
+  if (statKcalCard) statKcalCard.style.display = active && showEnergy ? '' : 'none';
+  if (statIntakeCard) statIntakeCard.style.display = active && showEnergy ? '' : 'none';
+  if (!showEnergy) {
+    if (statKcal) statKcal.textContent = '—';
+    if (statIntake) statIntake.textContent = '—';
+  }
+}
+
+function applySpeedActivity(nextActivity, options = {}) {
+  const {
+    convertFlatPace = true,
+    persist = true,
+    syncSelect = true,
+  } = options;
+  const normalized = normalizeSpeedActivity(nextActivity);
+  const previousActivity = normalizeSpeedActivity(speedActivity);
+  const changed = normalized !== previousActivity;
+
+  if (changed && convertFlatPace) {
+    const rawDisplay = parseFloat(paceFlatInput?.value);
+    if (paceFlatInput && !isNaN(rawDisplay) && paceFlatInput.value !== '') {
+      const currentKmh = displayToKmhForUnit(rawDisplay);
+      const body = parseFloat(paceBodyWeight?.value) || 70;
+      const pack = parseFloat(pacePackWeight?.value) || 0;
+      const prevDefault = defaultSpeed(previousActivity, body, pack);
+      const newDefault = defaultSpeed(normalized, body, pack);
+      if (prevDefault > 0) {
+        const newKmh = +(currentKmh / prevDefault * newDefault).toFixed(2);
+        paceFlatInput.value = formatKmhForUnit(newKmh);
+        paceParams = { ...paceParams, flatPaceKmH: newKmh };
+        localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+      }
+    }
+  }
+
+  speedActivity = normalized;
+  if (syncSelect) {
+    const speedActivityEl = document.getElementById('speed-activity-select');
+    if (speedActivityEl) speedActivityEl.value = speedActivity;
+  }
+  if (persist) localStorage.setItem(LS_SPEED_ACTIVITY_KEY, speedActivity);
+  if (changed) bumpPaceVersion();
+  updateFlatPlaceholder();
+  syncPaceActivityApplicabilityUi();
+  return changed;
+}
+
+function applyRouteMode(mode, options = {}) {
+  const { syncPaceActivity = true } = options;
+  const routeMode = ['walking', 'hiking', 'cycling', 'driving'].includes(mode) ? mode : 'hiking';
+  routeEngine.setMode(routeMode);
+  localStorage.setItem(LS_ROUTE_MODE_KEY, routeMode);
+  bumpRouteVersion();
+  if (syncPaceActivity) {
+    applySpeedActivity(defaultActivityForRouteMode(routeMode));
+  }
 }
 
 // =========== Waypoint Settings ===========
@@ -2530,11 +2623,13 @@ if (layerSwitcherEl) {
 routeModeRadios.forEach((radio) => {
   radio.addEventListener('change', (e) => {
     runOrDeferBusySetting('route-mode', () => {
-      routeEngine.setMode(e.target.value);
-      localStorage.setItem(LS_ROUTE_MODE_KEY, e.target.value);
-      bumpRouteVersion();
+      applyRouteMode(e.target.value);
       if (mapManager.waypoints.length >= 2) {
         onWaypointsChanged(mapManager.waypoints);
+      } else {
+        updateTimeStat();
+        updateIntermediateMarkers();
+        renderWeatherPanel();
       }
     });
   });
@@ -3296,9 +3391,17 @@ function updateTimeStat() {
   const totalH = times[times.length - 1] || 0;
   statTime.textContent = formatDuration(totalH, getLanguage());
 
+  if (!shouldShowEnergyStats()) {
+    if (statKcal) statKcal.textContent = '—';
+    if (statIntake) statIntake.textContent = '—';
+    syncPaceActivityApplicabilityUi();
+    return;
+  }
+
   const trip = pace.trip;
   if (statKcal) statKcal.textContent = `${trip.kcalExpended.toLocaleString()} kcal`;
   if (statIntake) statIntake.textContent = `${trip.kcalSuggested.toLocaleString()} kcal`;
+  syncPaceActivityApplicabilityUi();
 }
 
 /** Convert a column header's current date+hour to milliseconds (local time). */
@@ -3936,9 +4039,10 @@ function _syncExtraSettingsUI() {
   if (paceRestM) paceRestM.value = paceParams.restMinutes ?? 10;
 
   const paceParamsPanel = document.getElementById('pace-params-panel');
-  if (paceParamsPanel) paceParamsPanel.style.display = speedIntervalMode ? '' : 'none';
+  if (paceParamsPanel) paceParamsPanel.style.display = (speedIntervalMode || segmentIntervalKm > 0) ? '' : 'none';
 
   if (typeof updateFlatPlaceholder === 'function') updateFlatPlaceholder();
+  if (typeof syncPaceActivityApplicabilityUi === 'function') syncPaceActivityApplicabilityUi();
   if (typeof syncPaceCalibrationUI === 'function') syncPaceCalibrationUI();
 }
 
@@ -3957,7 +4061,7 @@ function loadFavorite(fav) {
     localStorage.setItem(LS_ROUNDTRIP_KEY, rtMode ? '1' : '0');
     localStorage.setItem(LS_OLOOP_KEY, oLoop ? '1' : '0');
     localStorage.setItem(LS_SPEED_MODE_KEY, s.speedIntervalMode ? '1' : '0');
-    localStorage.setItem(LS_SPEED_ACTIVITY_KEY, s.speedActivity || 'hiking');
+    localStorage.setItem(LS_SPEED_ACTIVITY_KEY, normalizeSpeedActivity(s.speedActivity || defaultActivityForRouteMode(s.routeMode || 'hiking')));
     const mergedPace = { ...DEFAULT_PACE_PARAMS, ...(s.paceParams || {}) };
     localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(mergedPace));
     localStorage.setItem(LS_PACE_UNIT_KEY, s.paceUnit || 'kmh');
@@ -9040,10 +9144,7 @@ async function init() {
     if (activityRow) activityRow.style.display = anyActive ? '' : 'none';
     if (pacePanel) pacePanel.style.display = anyActive ? '' : 'none';
     if (statTimeCard) statTimeCard.style.display = anyActive ? '' : 'none';
-    if (statKcalCard) statKcalCard.style.display = anyActive ? '' : 'none';
-    if (statIntakeCard) statIntakeCard.style.display = anyActive ? '' : 'none';
-
-    let prevActivity = speedActivity;
+    syncPaceActivityApplicabilityUi();
 
     const applyIntervalMode = () => {
       if (isRouteWeatherBusy()) {
@@ -9053,34 +9154,9 @@ async function init() {
       const mode = Array.from(intervalModeEls).find(r => r.checked)?.value || 'off';
       const newActivity = speedActivityEl?.value || 'hiking';
 
-      // Convert custom flat pace proportionally on activity switch.
-      // Always work in km/h internally; convert display value to/from current unit.
-      if (newActivity !== prevActivity) {
-        const flatEl = document.getElementById('pace-flat-input');
-        const bodyEl = document.getElementById('pace-body-weight');
-        const packEl = document.getElementById('pace-pack-weight');
-        const rawDisplay = parseFloat(flatEl?.value);
-        if (flatEl && !isNaN(rawDisplay) && flatEl.value !== '') {
-          const currentKmh = displayToKmhForUnit(rawDisplay);
-          const body = parseFloat(bodyEl?.value) || 70;
-          const pack = parseFloat(packEl?.value) || 0;
-          const prevDefault = defaultSpeed(prevActivity, body, pack);
-          const newDefault = defaultSpeed(newActivity, body, pack);
-          if (prevDefault > 0) {
-            const newKmh = +(currentKmh / prevDefault * newDefault).toFixed(2);
-            const newDisplay = formatKmhForUnit(newKmh);
-            flatEl.value = newDisplay;
-            paceParams = { ...paceParams, flatPaceKmH: newKmh };
-            localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
-            bumpPaceVersion();
-          }
-        }
-        prevActivity = newActivity;
-      }
-
       // Update mode state
       speedIntervalMode = mode === 'pace';
-      speedActivity = newActivity;
+      const activityChanged = applySpeedActivity(newActivity);
 
       if (mode === 'distance') {
         const v = Math.min(100, Math.max(1, parseInt(segmentInputEl?.value) || 5));
@@ -9089,7 +9165,7 @@ async function init() {
       } else {
         segmentIntervalKm = 0;
       }
-      bumpPaceVersion();
+      if (!activityChanged) bumpPaceVersion();
 
       if (segmentInputEl) segmentInputEl.disabled = mode !== 'distance';
 
@@ -9097,8 +9173,7 @@ async function init() {
       if (activityRow) activityRow.style.display = active ? '' : 'none';
       if (pacePanel) pacePanel.style.display = active ? '' : 'none';
       if (statTimeCard) statTimeCard.style.display = active ? '' : 'none';
-      if (statKcalCard) statKcalCard.style.display = active ? '' : 'none';
-      if (statIntakeCard) statIntakeCard.style.display = active ? '' : 'none';
+      syncPaceActivityApplicabilityUi();
 
       updateFlatPlaceholder();
 
@@ -9136,12 +9211,13 @@ async function init() {
 
   // Show/hide pace-rest-row: hide only when fatigue is fully disabled
   const applyFatigueToggle = () => {
-    if (paceRestRow) paceRestRow.style.display = (paceFatigueLevelEl?.value === 'none') ? 'none' : '';
+    syncPaceActivityApplicabilityUi();
   };
   applyFatigueToggle();
 
   // Show/hide panel based on current speed mode state
-  if (paceParamsPanel) paceParamsPanel.style.display = speedIntervalMode ? '' : 'none';
+  if (paceParamsPanel) paceParamsPanel.style.display = (speedIntervalMode || segmentIntervalKm > 0) ? '' : 'none';
+  syncPaceActivityApplicabilityUi();
 
   // Read all pace inputs → paceParams (always in km/h internally) → save → recalc
   const onPaceParamChange = () => {

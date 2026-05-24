@@ -93,6 +93,40 @@ test('pace flat placeholder follows unit and activity changes', async ({ page })
   expect(consoleErrors).toEqual([]);
 });
 
+test('route mode syncs the default pace activity and keeps manual overrides available', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+  const activitySelect = page.locator('#speed-activity-select');
+  const flatInput = page.locator('#pace-flat-input');
+
+  const chooseRouteMode = async (mode) => {
+    await page.locator(`input[name="route-mode"][value="${mode}"]`).evaluate((input) => {
+      input.checked = true;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+
+  await chooseRouteMode('cycling');
+  await expect(activitySelect).toHaveValue('cycling');
+  await expect(flatInput).toHaveAttribute('placeholder', '15.0');
+
+  await activitySelect.selectOption('trail-run');
+  await expect(activitySelect).toHaveValue('trail-run');
+  await expect(flatInput).toHaveAttribute('placeholder', '8.0');
+
+  await chooseRouteMode('driving');
+  await expect(activitySelect).toHaveValue('driving');
+  await expect(flatInput).toHaveAttribute('placeholder', '40.0');
+  await expect(page.locator('#stat-kcal-card')).toHaveCSS('display', 'none');
+  await expect(page.locator('#pace-load-row')).toHaveCSS('display', 'none');
+
+  await chooseRouteMode('walking');
+  await expect(activitySelect).toHaveValue('walking');
+  await expect(flatInput).toHaveAttribute('placeholder', '3.5');
+  await expect(page.locator('#pace-load-row')).toHaveCSS('display', 'grid');
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test('dynamic DOM added after language switch is translated', async ({ page }) => {
   const consoleErrors = await openApp(page);
 
