@@ -101,6 +101,16 @@ async function clickStable(page, selector) {
   await locator.evaluate((el) => el.click());
 }
 
+async function openRouteLibrary(page) {
+  const body = page.locator('#file-management-body');
+  await expect(body).toBeAttached();
+  const className = await body.getAttribute('class');
+  if (className?.includes('collapsed')) {
+    await clickStable(page, '#file-management-toggle-header h3');
+  }
+  await expect(body).not.toHaveClass(/collapsed/);
+}
+
 async function elementBounds(page, selector) {
   return page.locator(selector).evaluate((el) => {
     const r = el.getBoundingClientRect();
@@ -300,6 +310,7 @@ test.describe('mobile app QA', () => {
     await page.locator('#gpx-file-input').setInputFiles(shortGpx);
     await expect(page.locator('#waypoint-list .waypoint-item').first()).toBeVisible();
 
+    await openRouteLibrary(page);
     await clickStable(page, '#btn-export-gpx');
     await expect(page.locator('#export-modal')).toBeVisible();
     await page.locator('input[name="export-fmt"][value="melmap"]').check();

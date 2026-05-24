@@ -2061,8 +2061,7 @@ body.route-list-dragging {
   min-width: 0;
 }
 
-.route-library-action:disabled,
-#btn-route-library-save:disabled {
+.route-library-action:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
@@ -5234,7 +5233,7 @@ body.modal-open {
   margin-top: 8px;
 }
 
-/* ======== Favorites Modal ======== */
+/* ======== Saved Routes ======== */
 .favorites-list {
   display: flex;
   flex-direction: column;
@@ -5263,20 +5262,6 @@ body.modal-open {
 .favorite-item:hover {
   background: var(--bg-glass-hover);
   border-color: var(--border-color-strong);
-}
-
-.favorite-item.dragging {
-  position: relative;
-  z-index: 1000;
-  opacity: 0.92;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
-  transition: none;
-  cursor: grabbing;
-}
-
-.favorite-item.drag-over-delete {
-  background: rgba(229, 72, 77, 0.22);
-  border-color: rgba(229, 72, 77, 0.7);
 }
 
 .fav-info {

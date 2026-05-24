@@ -13,7 +13,7 @@ async function openApp(page) {
 
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
-  await expect(page.locator('#btn-export-gpx')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
   return consoleErrors;
@@ -37,6 +37,16 @@ async function clickStable(page, selector) {
   await locator.evaluate((el) => el.click());
 }
 
+async function openRouteLibrary(page) {
+  const body = page.locator('#file-management-body');
+  await expect(body).toBeAttached();
+  const className = await body.getAttribute('class');
+  if (className?.includes('collapsed')) {
+    await clickStable(page, '#file-management-toggle-header h3');
+  }
+  await expect(body).not.toHaveClass(/collapsed/);
+}
+
 async function expectImportedRoute(page) {
   const waypointItems = page.locator('#waypoint-list .waypoint-item');
   await expect(waypointItems.first()).toBeVisible();
@@ -54,6 +64,11 @@ test('app shell loads without console errors', async ({ page }) => {
     'href',
     'https://changweilin.github.io/mapping_elf/privacy.html',
   );
+  await expect(page.locator('#route-toggle-header #btn-favorite-add')).toHaveCount(0);
+  await expect(page.locator('#route-toggle-header #btn-export-gpx')).toHaveCount(0);
+  await openRouteLibrary(page);
+  await expect(page.locator('#file-management-body #btn-favorite-add')).toBeVisible();
+  await expect(page.locator('#file-management-body #btn-export-gpx')).toBeVisible();
   await expect(page.locator('#elevation-chart-container')).toBeVisible();
   await expect(page.locator('#chart-empty')).toBeVisible();
   await page.evaluate(() => {
@@ -176,6 +191,7 @@ test('opens export modal and reveals map-pack options', async ({ page }) => {
   await importFixture(page, sampleKml);
   await expectImportedRoute(page);
 
+  await openRouteLibrary(page);
   await clickStable(page, '#btn-export-gpx');
   await expect(page.locator('#export-modal')).toBeVisible();
   await expect(page.locator('input[name="export-fmt"][value="gpx"]')).toBeChecked();

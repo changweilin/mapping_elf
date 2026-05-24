@@ -22,7 +22,7 @@ async function openApp(page) {
   await page.addInitScript(() => localStorage.clear());
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
-  await expect(page.locator('#btn-export-gpx')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
   return consoleErrors;
@@ -64,6 +64,16 @@ async function clickStable(page, selector) {
   await expect(locator).toBeAttached();
   await locator.scrollIntoViewIfNeeded();
   await locator.evaluate((el) => el.click());
+}
+
+async function openRouteLibrary(page) {
+  const body = page.locator('#file-management-body');
+  await expect(body).toBeAttached();
+  const className = await body.getAttribute('class');
+  if (className?.includes('collapsed')) {
+    await clickStable(page, '#file-management-toggle-header h3');
+  }
+  await expect(body).not.toHaveClass(/collapsed/);
 }
 
 async function routeSnapshot(page) {
@@ -172,6 +182,7 @@ async function countCachedTiles(page) {
 }
 
 async function downloadExport(page, testInfo, fmt, configure = async () => {}) {
+  await openRouteLibrary(page);
   await clickStable(page, '#btn-export-gpx');
   await expect(page.locator('#export-modal')).toBeVisible();
   await page.locator(`input[name="export-fmt"][value="${fmt}"]`).check();
@@ -325,7 +336,7 @@ test('map-pack tile import writes and clears one offline tile pack index entry',
   expect(packs[0].tileUrls.every((url) => url.includes('tile.opentopomap.org'))).toBe(true);
   expect(await countCachedTiles(page)).toBe(packs[0].tileUrlCount);
 
-  await clickStable(page, '#file-management-toggle-header');
+  await openRouteLibrary(page);
   await expect(page.locator('#offline-pack-list .offline-pack-item')).toHaveCount(1);
   await expect(page.locator('#offline-pack-list')).toContainText(/OpenTopoMap/);
   await expect(page.locator('#offline-pack-list')).toContainText(/\b(B|KB|MB|GB)\b/);

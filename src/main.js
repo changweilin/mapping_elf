@@ -2050,10 +2050,6 @@ document.querySelectorAll('[data-route-library-tab]').forEach((btn) => {
 
 btnExportGpx.addEventListener('click', openExportModal);
 btnImportGpx.addEventListener('click', pickRouteFile);
-document.getElementById('btn-route-library-save')?.addEventListener('click', handleAddFavorite);
-document.getElementById('btn-route-library-save-main')?.addEventListener('click', handleAddFavorite);
-document.getElementById('btn-route-library-import-main')?.addEventListener('click', pickRouteFile);
-document.getElementById('btn-route-library-export-main')?.addEventListener('click', openExportModal);
 btnResetDefaults?.addEventListener('click', () => {
   if (confirm('確定要全部回到預設值嗎？這將會清除目前的設置並重啟頁面。')) {
     resetToDefaults();
@@ -3981,7 +3977,6 @@ btnExportConfirm?.addEventListener('click', async () => {
 
 // =========== Favorites ===========
 
-const favoritesModal = document.getElementById('favorites-modal');
 const favoritesReplaceModal = document.getElementById('favorites-replace-modal');
 
 function _escapeHtml(s) {
@@ -4035,10 +4030,9 @@ function updateRouteLibraryCurrent() {
   const metaEl = document.getElementById('route-library-current-meta');
   const stateEl = document.getElementById('route-library-current-state');
   const saveButtons = [
-    document.getElementById('btn-route-library-save'),
-    document.getElementById('btn-route-library-save-main'),
+    document.getElementById('btn-favorite-add'),
   ].filter(Boolean);
-  const exportButton = document.getElementById('btn-route-library-export-main');
+  const exportButton = document.getElementById('btn-export-gpx');
   const hasRoute = mapManager.waypoints.length >= 2 || currentRouteCoords.length >= 2;
   const canSaveRoute = mapManager.waypoints.length >= 2;
   const saved = findSavedCurrentRoute();
@@ -4254,30 +4248,15 @@ function deleteFavorite(id) {
   }
 }
 
-function openFavoritesModal() {
-  if (!favoritesModal) return;
-  renderFavoritesList();
-  document.body.classList.add('modal-open');
-  favoritesModal.classList.remove('hidden');
-}
-
-function closeFavoritesModal() {
-  if (!favoritesModal) return;
-  document.body.classList.remove('modal-open');
-  favoritesModal.classList.add('hidden');
-}
-
 function closeReplaceModal() {
   if (!favoritesReplaceModal) return;
   favoritesReplaceModal.classList.add('hidden');
 }
 
-function renderFavoritesContainer(container, { inline = false } = {}) {
+function renderFavoritesContainer(container) {
   if (!container) return;
   if (favorites.length === 0) {
-    container.innerHTML = inline
-      ? '<div class="route-library-empty">尚未保存路線</div>'
-      : '<div class="empty-hint">尚未保存路線</div>';
+    container.innerHTML = '<div class="route-library-empty">尚未保存路線</div>';
     return;
   }
   container.innerHTML = favorites.map(f => {
@@ -4291,150 +4270,45 @@ function renderFavoritesContainer(container, { inline = false } = {}) {
           <div class="fav-name">${_escapeHtml(f.name || '未命名路線')}</div>
           <div class="fav-meta">${count} 個航點 · ${_escapeHtml(dateStr)}</div>
         </div>
-        ${inline ? `
-          <div class="route-library-inline-actions">
-            <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-load="${_escapeHtml(f.id)}">載入</button>
-            <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-delete="${_escapeHtml(f.id)}">刪除</button>
-          </div>` : ''}
+        <div class="route-library-inline-actions">
+          <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-load="${_escapeHtml(f.id)}">載入</button>
+          <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-delete="${_escapeHtml(f.id)}">刪除</button>
+        </div>
       </div>`;
   }).join('');
-  _bindFavoriteItemInteractions(container, { inline });
+  _bindFavoriteItemInteractions(container);
 }
 
 function renderFavoritesList() {
-  renderFavoritesContainer(document.getElementById('favorites-list'));
-  renderFavoritesContainer(document.getElementById('route-library-list'), { inline: true });
+  renderFavoritesContainer(document.getElementById('route-library-list'));
   updateRouteLibraryCurrent();
 }
 
-// Whole favorite item = click to load; long-press + drag outside modal box = delete.
-function _bindFavoriteItemInteractions(container, { inline = false } = {}) {
-  if (inline) {
-    container.querySelectorAll('[data-favorite-load]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const fav = favorites.find(f => f.id === btn.dataset.favoriteLoad);
-        if (fav) loadFavorite(fav);
-      });
+function _bindFavoriteItemInteractions(container) {
+  container.querySelectorAll('[data-favorite-load]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fav = favorites.find(f => f.id === btn.dataset.favoriteLoad);
+      if (fav) loadFavorite(fav);
     });
-    container.querySelectorAll('[data-favorite-delete]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (btn.dataset.favoriteDelete) deleteFavorite(btn.dataset.favoriteDelete);
-      });
+  });
+  container.querySelectorAll('[data-favorite-delete]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (btn.dataset.favoriteDelete) deleteFavorite(btn.dataset.favoriteDelete);
     });
-    container.querySelectorAll('.favorite-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        if (e.target.closest('button')) return;
-        const fav = favorites.find(f => f.id === item.dataset.id);
-        if (fav) loadFavorite(fav);
-      });
-      item.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        e.preventDefault();
-        const fav = favorites.find(f => f.id === item.dataset.id);
-        if (fav) loadFavorite(fav);
-      });
-    });
-    return;
-  }
-
-  const modalBox = favoritesModal?.querySelector('.modal-box');
-  if (!modalBox) return;
-
+  });
   container.querySelectorAll('.favorite-item').forEach(item => {
-    let pressTimer = null;
-    let dragging = false;
-    let longPressed = false;
-    let startX = 0, startY = 0;
-    let capturedPointer = null;
-
-    const resetVisual = () => {
-      item.classList.remove('dragging', 'drag-over-delete');
-      item.style.transform = '';
-    };
-    const cancelPress = () => {
-      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-    };
-    const releaseCapture = () => {
-      if (capturedPointer != null) {
-        try { item.releasePointerCapture(capturedPointer); } catch (_) { }
-        capturedPointer = null;
-      }
-    };
-    const isOutsideBox = (x, y) => {
-      const r = modalBox.getBoundingClientRect();
-      return x < r.left || x > r.right || y < r.top || y > r.bottom;
-    };
-
-    item.addEventListener('pointerdown', (e) => {
-      if (e.button !== undefined && e.button > 0) return;
-      startX = e.clientX;
-      startY = e.clientY;
-      longPressed = false;
-      dragging = false;
-      cancelPress();
-      pressTimer = setTimeout(() => {
-        pressTimer = null;
-        longPressed = true;
-        dragging = true;
-        item.classList.add('dragging');
-        try { item.setPointerCapture(e.pointerId); capturedPointer = e.pointerId; } catch (_) { }
-      }, 450);
-    });
-
-    item.addEventListener('pointermove', (e) => {
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (!dragging) {
-        // Movement before long-press triggers: cancel (user is scrolling or tap-drifting).
-        if (pressTimer && Math.hypot(dx, dy) > 10) cancelPress();
-        return;
-      }
-      item.style.transform = `translate(${dx}px, ${dy}px)`;
-      item.classList.toggle('drag-over-delete', isOutsideBox(e.clientX, e.clientY));
-    });
-
-    const endPointer = (e) => {
-      cancelPress();
-      const wasDragging = dragging;
-      dragging = false;
-      releaseCapture();
-      if (wasDragging) {
-        if (isOutsideBox(e.clientX, e.clientY)) {
-          const id = item.dataset.id;
-          resetVisual();
-          if (id) deleteFavorite(id);
-          return;
-        }
-      }
-      resetVisual();
-    };
-    item.addEventListener('pointerup', endPointer);
-    item.addEventListener('pointercancel', () => { cancelPress(); dragging = false; releaseCapture(); resetVisual(); });
-
     item.addEventListener('click', (e) => {
-      if (longPressed) {
-        longPressed = false;
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      const id = item.dataset.id;
-      const fav = favorites.find(f => f.id === id);
-      if (fav) {
-        closeFavoritesModal();
-        loadFavorite(fav);
-      }
+      if (e.target.closest('button')) return;
+      const fav = favorites.find(f => f.id === item.dataset.id);
+      if (fav) loadFavorite(fav);
     });
-
     item.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const id = item.dataset.id;
-        const fav = favorites.find(f => f.id === id);
-        if (fav) { closeFavoritesModal(); loadFavorite(fav); }
-      }
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      const fav = favorites.find(f => f.id === item.dataset.id);
+      if (fav) loadFavorite(fav);
     });
   });
 }
@@ -4478,8 +4352,6 @@ function openReplaceFlow(pendingName) {
 }
 
 document.getElementById('btn-favorite-add')?.addEventListener('click', handleAddFavorite);
-document.getElementById('btn-favorite-open')?.addEventListener('click', () => openRouteLibrary('saved'));
-document.getElementById('btn-favorites-close')?.addEventListener('click', closeFavoritesModal);
 document.getElementById('btn-favorites-replace-cancel')?.addEventListener('click', closeReplaceModal);
 document.getElementById('btn-pace-reset')?.addEventListener('click', resetPaceToAnchor);
 
@@ -8215,10 +8087,6 @@ function handleNativeBackButton() {
   }
   if (isVisibleOverlay(favoritesReplaceModal)) {
     closeReplaceModal();
-    return;
-  }
-  if (isVisibleOverlay(favoritesModal)) {
-    closeFavoritesModal();
     return;
   }
   if (closeOpenWeatherCardsForBackButton()) return;

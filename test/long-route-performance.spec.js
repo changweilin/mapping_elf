@@ -184,6 +184,16 @@ async function clickStable(page, selector) {
   await locator.evaluate((el) => el.click());
 }
 
+async function openRouteLibrary(page) {
+  const body = page.locator('#file-management-body');
+  await expect(body).toBeAttached();
+  const className = await body.getAttribute('class');
+  if (className?.includes('collapsed')) {
+    await clickStable(page, '#file-management-toggle-header h3');
+  }
+  await expect(body).not.toHaveClass(/collapsed/);
+}
+
 async function attachPerfTiming(testInfo, name, timings) {
   const rounded = Object.fromEntries(
     Object.entries(timings).map(([key, value]) => [key, Math.round(value)]),
@@ -213,6 +223,7 @@ test('imports sample KML and opens export modal within the app baseline budget',
   const importSettledMs = Date.now() - startedAt;
 
   const exportStartedAt = Date.now();
+  await openRouteLibrary(page);
   await clickStable(page, '#btn-export-gpx');
   await expect(page.locator('#export-modal'))
     .toBeVisible({ timeout: EXPORT_MODAL_OPEN_LIMIT_MS });

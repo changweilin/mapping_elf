@@ -268,19 +268,6 @@
                 fill="currentColor" />
             </svg>
           </button>
-          <button class="icon-btn" id="btn-favorite-add" title="保存到路線庫">
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path
-                d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"
-                fill="currentColor" />
-            </svg>
-          </button>
-          <button class="icon-btn" id="btn-favorite-open" title="打開路線庫">
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
-                fill="currentColor" />
-            </svg>
-          </button>
           <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
@@ -572,21 +559,6 @@
           <span class="h3-label">路線庫</span>
         </h3>
         <div class="section-actions file-header-actions" onclick="event.stopPropagation()">
-          <button class="icon-btn file-header-btn" id="btn-route-library-save" title="保存目前路線" aria-label="保存目前路線">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24z" fill="currentColor" />
-            </svg>
-          </button>
-          <button class="icon-btn file-header-btn" id="btn-import-gpx" title="匯入路線（GPX / KML）" aria-label="匯入路線">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
-            </svg>
-          </button>
-          <button class="icon-btn file-header-btn accent" id="btn-export-gpx" title="匯出路線" aria-label="匯出路線">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
-            </svg>
-          </button>
           <button class="icon-btn file-header-btn panel-width-btn" id="btn-panel-narrow" title="縮窄側欄" aria-label="縮窄側欄">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path d="M4 12l6-6v4h10v4H10v4l-6-6z" fill="currentColor" />
@@ -611,9 +583,9 @@
           <span class="route-library-state" id="route-library-current-state">空白</span>
         </div>
         <div class="route-library-actions">
-          <button type="button" class="btn-secondary route-library-action" id="btn-route-library-save-main">保存</button>
-          <button type="button" class="btn-secondary route-library-action" id="btn-route-library-import-main">匯入</button>
-          <button type="button" class="btn-primary route-library-action" id="btn-route-library-export-main">保存與分享</button>
+          <button type="button" class="btn-secondary route-library-action" id="btn-favorite-add" title="保存目前路線">保存路線</button>
+          <button type="button" class="btn-secondary route-library-action" id="btn-import-gpx" title="匯入 GPX / KML / .melmap">匯入路線</button>
+          <button type="button" class="btn-primary route-library-action" id="btn-export-gpx" title="保存與分享目前路線">保存與分享</button>
         </div>
 
         <div class="route-library-tabs" role="tablist" aria-label="路線庫分類">
@@ -1196,18 +1168,6 @@
       <div class="modal-actions">
         <button class="btn-secondary" id="btn-mappack-import-cancel">取消</button>
         <button class="btn-primary" id="btn-mappack-import-confirm">套用</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Favorites Modal -->
-  <div id="favorites-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-    <div class="modal-box">
-      <h3 class="modal-title">已保存路線</h3>
-      <div id="favorites-list" class="favorites-list"></div>
-      <div class="favorites-hint">點擊項目直接載入。長按並拖曳到框外可移除。最多 10 筆。</div>
-      <div class="modal-actions">
-        <button class="btn-secondary" id="btn-favorites-close">關閉</button>
       </div>
     </div>
   </div>
