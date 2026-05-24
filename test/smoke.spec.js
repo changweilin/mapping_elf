@@ -66,9 +66,14 @@ test('app shell loads without console errors', async ({ page }) => {
   );
   await expect(page.locator('#route-toggle-header #btn-favorite-add')).toHaveCount(0);
   await expect(page.locator('#route-toggle-header #btn-export-gpx')).toHaveCount(0);
+  await expect(page.locator('#file-management-toggle-header #btn-panel-narrow')).toHaveCount(0);
+  await expect(page.locator('#instructions-toggle-header #btn-panel-narrow')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header #btn-favorite-add')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header #btn-import-gpx')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header #btn-export-gpx')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header #btn-favorite-add')).toHaveAttribute('aria-label', '加到最愛');
+  await expect(page.locator('#file-management-toggle-header #btn-export-gpx')).toHaveAttribute('aria-label', /匯出|Export/);
   await openRouteLibrary(page);
-  await expect(page.locator('#file-management-body #btn-favorite-add')).toBeVisible();
-  await expect(page.locator('#file-management-body #btn-export-gpx')).toBeVisible();
   await expect(page.locator('#elevation-chart-container')).toBeVisible();
   await expect(page.locator('#chart-empty')).toBeVisible();
   await page.evaluate(() => {
@@ -194,6 +199,7 @@ test('opens export modal and reveals map-pack options', async ({ page }) => {
   await openRouteLibrary(page);
   await clickStable(page, '#btn-export-gpx');
   await expect(page.locator('#export-modal')).toBeVisible();
+  await expect(page.locator('#export-modal .modal-title')).toHaveText(/匯出|Export/);
   await expect(page.locator('input[name="export-fmt"][value="gpx"]')).toBeChecked();
   await page.locator('input[name="export-fmt"][value="kml"]').check();
   await expect(page.locator('#melmap-sub-options')).not.toBeVisible();

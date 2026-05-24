@@ -559,14 +559,19 @@
           <span class="h3-label">路線庫</span>
         </h3>
         <div class="section-actions file-header-actions" onclick="event.stopPropagation()">
-          <button class="icon-btn file-header-btn panel-width-btn" id="btn-panel-narrow" title="縮窄側欄" aria-label="縮窄側欄">
+          <button class="icon-btn file-header-btn route-library-header-btn" id="btn-favorite-add" title="加到最愛" aria-label="加到最愛">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M4 12l6-6v4h10v4H10v4l-6-6z" fill="currentColor" />
+              <path d="M22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24z" fill="currentColor" />
             </svg>
           </button>
-          <button class="icon-btn file-header-btn panel-width-btn" id="btn-panel-widen" title="加寬側欄" aria-label="加寬側欄">
+          <button class="icon-btn file-header-btn route-library-header-btn" id="btn-import-gpx" title="匯入 GPX / KML / .melmap" aria-label="匯入路線">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M20 12l-6 6v-4H4v-4h10V6l6 6z" fill="currentColor" />
+              <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn file-header-btn route-library-header-btn accent" id="btn-export-gpx" title="匯出" aria-label="匯出">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
             </svg>
           </button>
         </div>
@@ -582,12 +587,6 @@
           </div>
           <span class="route-library-state" id="route-library-current-state">空白</span>
         </div>
-        <div class="route-library-actions">
-          <button type="button" class="btn-secondary route-library-action" id="btn-favorite-add" title="保存目前路線">保存路線</button>
-          <button type="button" class="btn-secondary route-library-action" id="btn-import-gpx" title="匯入 GPX / KML / .melmap">匯入路線</button>
-          <button type="button" class="btn-primary route-library-action" id="btn-export-gpx" title="保存與分享目前路線">保存與分享</button>
-        </div>
-
         <div class="route-library-tabs" role="tablist" aria-label="路線庫分類">
           <button type="button" class="route-library-tab active" data-route-library-tab="saved">已保存</button>
           <button type="button" class="route-library-tab" data-route-library-tab="offline">離線包</button>
@@ -897,6 +896,18 @@
           </svg>
           操作說明
         </h3>
+        <div class="section-actions instructions-header-actions" onclick="event.stopPropagation()">
+          <button class="icon-btn panel-width-btn side-panel-width-btn" id="btn-panel-narrow" title="縮窄側欄" aria-label="縮窄側欄">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M4 12l6-6v4h10v4H10v4l-6-6z" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn panel-width-btn side-panel-width-btn" id="btn-panel-widen" title="加寬側欄" aria-label="加寬側欄">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M20 12l-6 6v-4H4v-4h10V6l6 6z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
         <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
           <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
         </svg>
@@ -1099,7 +1110,7 @@
   <!-- Save / Share Modal -->
   <div id="export-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 class="modal-title">保存與分享</h3>
+      <h3 class="modal-title">匯出</h3>
       <div class="export-options">
         <label class="export-option">
           <input type="radio" name="export-fmt" value="gpx" checked>
@@ -1175,7 +1186,7 @@
   <!-- Favorites Replace Modal -->
   <div id="favorites-replace-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 class="modal-title">已保存路線達上限</h3>
+      <h3 class="modal-title">最愛路線達上限</h3>
       <p class="favorites-hint" style="margin: 0 0 12px;">請選擇要取代的路線:</p>
       <div id="favorites-replace-list" class="favorites-replace-list"></div>
       <div class="modal-actions">

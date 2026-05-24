@@ -4055,7 +4055,7 @@ function updateRouteLibraryCurrent() {
   }
   saveButtons.forEach((btn) => {
     btn.disabled = !canSaveRoute;
-    btn.title = canSaveRoute ? (saved ? '已保存目前路線' : '保存目前路線') : '至少需 2 個航點才能保存';
+    btn.title = canSaveRoute ? (saved ? '已加入最愛' : '加到最愛') : '至少需 2 個航點才能加到最愛';
   });
   if (exportButton) exportButton.disabled = !hasRoute;
 }
@@ -4163,7 +4163,7 @@ function _syncExtraSettingsUI() {
 
 function loadFavorite(fav) {
   if (!fav || !Array.isArray(fav.waypoints) || fav.waypoints.length < 2) {
-    showNotification('保存路線資料無效', 'error');
+    showNotification('最愛路線資料無效', 'error');
     return;
   }
   history.suppressed = true;
@@ -4244,7 +4244,7 @@ function deleteFavorite(id) {
   if (favorites.length !== n) {
     persistFavorites();
     renderFavoritesList();
-    showNotification('已刪除保存路線', 'info', 1200);
+    showNotification('已從最愛移除', 'info', 1200);
   }
 }
 
@@ -4256,7 +4256,7 @@ function closeReplaceModal() {
 function renderFavoritesContainer(container) {
   if (!container) return;
   if (favorites.length === 0) {
-    container.innerHTML = '<div class="route-library-empty">尚未保存路線</div>';
+    container.innerHTML = '<div class="route-library-empty">尚未加入最愛</div>';
     return;
   }
   container.innerHTML = favorites.map(f => {
@@ -4327,7 +4327,7 @@ function handleAddFavorite() {
   persistFavorites();
   renderFavoritesList();
   openRouteLibrary('saved');
-  showNotification('已保存到路線庫', 'success');
+  showNotification('已加到最愛', 'success');
 }
 
 function openReplaceFlow(pendingName) {
@@ -4346,7 +4346,7 @@ function openReplaceFlow(pendingName) {
     persistFavorites();
     renderFavoritesList();
     closeReplaceModal();
-    showNotification('已取代保存路線', 'success');
+    showNotification('已取代最愛路線', 'success');
   }));
   favoritesReplaceModal.classList.remove('hidden');
 }
