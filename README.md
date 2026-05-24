@@ -80,6 +80,8 @@ npm run preview
 npm run test:smoke
 npm run test:numeric
 npm run test:chunks
+npm run test:mobile
+npm run test:native-config
 ```
 
 `test:smoke` 會啟動 Playwright 測試並使用 `npm.cmd run preview -- --host 127.0.0.1` 作為本機預覽伺服器。
@@ -115,21 +117,33 @@ npm run test:chunks
 先建立 Web 版本，再同步到 Capacitor 原生專案：
 
 ```bash
-npm run build
-npx cap sync
+npm run cap:sync
 ```
 
-開啟 Android 專案：
+只同步 Android 或 iOS：
 
 ```bash
-npx cap open android
+npm run cap:sync:android
+npm run cap:sync:ios
 ```
 
-開啟 iOS 專案：
+建立 Android debug APK：
 
 ```bash
-npx cap open ios
+npm run android:build:debug
 ```
+
+建立 Android debug AAB 或 release AAB：
+
+```bash
+npm run android:bundle:debug
+npm run android:bundle:release
+```
+
+`android:bundle:release` 仍需要在 Android 專案設定正式簽章後，才適合上傳到 Google Play。
+可複製 `android/keystore.properties.example` 為 `android/keystore.properties`，填入本機 keystore 設定；實際 keystore 與密碼檔已由 `.gitignore` 排除。
+
+原生真機測試請依照 `doc/native-app-qa.md` 檢查 App 啟動、返回鍵、外部瀏覽器、檔案分享、定位權限、網路狀態、震動與離線圖磚。
 
 ## 專案架構說明
 

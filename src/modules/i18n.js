@@ -76,6 +76,7 @@ const PHRASES = {
   '取消復原 (Ctrl+Shift+Z)': { en: 'Redo (Ctrl+Shift+Z)', ja: 'やり直す (Ctrl+Shift+Z)', ko: '다시 실행 (Ctrl+Shift+Z)', fr: 'Rétablir (Ctrl+Shift+Z)', de: 'Wiederholen (Ctrl+Shift+Z)', es: 'Rehacer (Ctrl+Shift+Z)', it: 'Ripeti (Ctrl+Shift+Z)' },
   '復原': { en: 'undo', ja: '元に戻す', ko: '실행 취소', fr: 'annuler', de: 'rückgängig', es: 'deshacer', it: 'annulla' },
   '重新規劃路線': { en: 'Replan route', ja: 'ルートを再計算', ko: '루트 다시 계획', fr: 'Replanifier l’itinéraire', de: 'Route neu planen', es: 'Replanificar ruta', it: 'Ricalcola percorso' },
+  '航點反向排序後重新規劃': { en: 'Reverse waypoints and replan', ja: 'ウェイポイントを逆順にして再計算', ko: '웨이포인트 역순 후 다시 계획', fr: 'Inverser les waypoints et replanifier', de: 'Wegpunkte umkehren und neu planen', es: 'Invertir waypoints y replanificar', it: 'Inverti waypoint e ricalcola' },
   '加入我的最愛': { en: 'Add to favorites', ja: 'お気に入りに追加', ko: '즐겨찾기에 추가', fr: 'Ajouter aux favoris', de: 'Zu Favoriten hinzufügen', es: 'Añadir a favoritos', it: 'Aggiungi ai preferiti' },
   '打開我的最愛清單': { en: 'Open favorites', ja: 'お気に入りを開く', ko: '즐겨찾기 열기', fr: 'Ouvrir les favoris', de: 'Favoriten öffnen', es: 'Abrir favoritos', it: 'Apri preferiti' },
   '清除路線': { en: 'Clear route', ja: 'ルートを消去', ko: '루트 지우기', fr: 'Effacer l’itinéraire', de: 'Route löschen', es: 'Borrar ruta', it: 'Cancella percorso' },
@@ -287,6 +288,7 @@ const PHRASES = {
   '進度': { en: 'Progress', ja: '進捗', ko: '진행률', fr: 'Progression', de: 'Fortschritt', es: 'Progreso', it: 'Avanzamento' },
   '我愛星空至深，無懼黑夜。': STRINGS['quote.translation'],
   '問題回報': { en: 'Feedback', ja: 'フィードバック', ko: '피드백', fr: 'Retour', de: 'Feedback', es: 'Comentarios', it: 'Feedback' },
+  '隱私政策': { en: 'Privacy policy', ja: 'プライバシーポリシー', ko: '개인정보 처리방침', fr: 'Politique de confidentialité', de: 'Datenschutzerklärung', es: 'Política de privacidad', it: 'Informativa privacy' },
   '使用人數': { en: 'Visitors', ja: '利用者数', ko: '사용자 수', fr: 'Visiteurs', de: 'Nutzende', es: 'Visitantes', it: 'Visitatori' },
   '匯入離線地圖包': { en: 'Import offline map pack', ja: 'オフライン地図パックをインポート', ko: '오프라인 지도 팩 가져오기', fr: 'Importer un pack de cartes hors ligne', de: 'Offline-Kartenpaket importieren', es: 'Importar paquete de mapas offline', it: 'Importa pacchetto mappe offline' },
   '我的最愛': { en: 'Favorites', ja: 'お気に入り', ko: '즐겨찾기', fr: 'Favoris', de: 'Favoriten', es: 'Favoritos', it: 'Preferiti' },
@@ -312,6 +314,22 @@ const PHRASES = {
   '拖曳至此刪除': { en: 'Drag here to delete', ja: 'ここへドラッグして削除', ko: '여기로 끌어 삭제', fr: 'Glisser ici pour supprimer', de: 'Zum Löschen hierher ziehen', es: 'Arrastra aquí para borrar', it: 'Trascina qui per eliminare' },
   '線上模式': { en: 'Online mode', ja: 'オンラインモード', ko: '온라인 모드', fr: 'Mode en ligne', de: 'Online-Modus', es: 'Modo en línea', it: 'Modalità online' },
   '離線模式': { en: 'Offline mode', ja: 'オフラインモード', ko: '오프라인 모드', fr: 'Mode hors ligne', de: 'Offline-Modus', es: 'Modo sin conexión', it: 'Modalità offline' },
+  '離線圖磚': { en: 'Offline tiles', ja: 'オフラインタイル', ko: '오프라인 타일', fr: 'Tuiles hors ligne', de: 'Offline-Kacheln', es: 'Teselas offline', it: 'Tile offline' },
+  '離線圖磚包': { en: 'Offline tile pack', ja: 'オフラインタイルパック', ko: '오프라인 타일 팩', fr: 'Pack de tuiles hors ligne', de: 'Offline-Kachelpaket', es: 'Paquete de teselas offline', it: 'Pacchetto tile offline' },
+  '尚無離線圖磚包': { en: 'No offline tile packs yet', ja: 'オフラインタイルパックはまだありません', ko: '아직 오프라인 타일 팩이 없습니다', fr: 'Aucun pack de tuiles hors ligne', de: 'Noch keine Offline-Kachelpakete', es: 'Aún no hay paquetes de teselas offline', it: 'Nessun pacchetto tile offline' },
+  '離線快取不支援': { en: 'Offline cache is not supported', ja: 'オフラインキャッシュは非対応です', ko: '오프라인 캐시가 지원되지 않습니다', fr: 'Le cache hors ligne n’est pas pris en charge', de: 'Offline-Cache wird nicht unterstützt', es: 'La caché offline no es compatible', it: 'Cache offline non supportata' },
+  '清除全部圖磚': { en: 'Clear all tiles', ja: 'すべてのタイルを消去', ko: '모든 타일 지우기', fr: 'Effacer toutes les tuiles', de: 'Alle Kacheln löschen', es: 'Borrar todas las teselas', it: 'Cancella tutte le tile' },
+  '清除全部離線圖磚': { en: 'Clear all offline tiles', ja: 'すべてのオフラインタイルを消去', ko: '모든 오프라인 타일 지우기', fr: 'Effacer toutes les tuiles hors ligne', de: 'Alle Offline-Kacheln löschen', es: 'Borrar todas las teselas offline', it: 'Cancella tutte le tile offline' },
+  '刪除此圖磚包': { en: 'Delete this tile pack', ja: 'このタイルパックを削除', ko: '이 타일 팩 삭제', fr: 'Supprimer ce pack de tuiles', de: 'Dieses Kachelpaket löschen', es: 'Eliminar este paquete de teselas', it: 'Elimina questo pacchetto tile' },
+  '張圖磚': { en: 'tiles', ja: 'タイル', ko: '타일', fr: 'tuiles', de: 'Kacheln', es: 'teselas', it: 'tile' },
+  '未知圖層': { en: 'Unknown layer', ja: '不明なレイヤー', ko: '알 수 없는 레이어', fr: 'Couche inconnue', de: 'Unbekannter Layer', es: 'Capa desconocida', it: 'Layer sconosciuto' },
+  '未知時間': { en: 'Unknown time', ja: '不明な時刻', ko: '알 수 없는 시간', fr: 'Heure inconnue', de: 'Unbekannte Zeit', es: 'Hora desconocida', it: 'Ora sconosciuta' },
+  '不完整': { en: 'Incomplete', ja: '未完了', ko: '미완료', fr: 'Incomplet', de: 'Unvollständig', es: 'Incompleto', it: 'Incompleto' },
+  '路線快取': { en: 'Route cache', ja: 'ルートキャッシュ', ko: '루트 캐시', fr: 'Cache itinéraire', de: 'Routen-Cache', es: 'Caché de ruta', it: 'Cache percorso' },
+  '範圍快取': { en: 'Area cache', ja: '範囲キャッシュ', ko: '범위 캐시', fr: 'Cache de zone', de: 'Bereichs-Cache', es: 'Caché de área', it: 'Cache area' },
+  '已清除全部離線圖磚': { en: 'All offline tiles cleared', ja: 'すべてのオフラインタイルを消去しました', ko: '모든 오프라인 타일을 지웠습니다', fr: 'Toutes les tuiles hors ligne ont été effacées', de: 'Alle Offline-Kacheln gelöscht', es: 'Todas las teselas offline se borraron', it: 'Tutte le tile offline sono state cancellate' },
+  '刪除圖磚包失敗': { en: 'Tile pack delete failed', ja: 'タイルパックの削除に失敗しました', ko: '타일 팩 삭제 실패', fr: 'Échec de la suppression du pack de tuiles', de: 'Kachelpaket konnte nicht gelöscht werden', es: 'Error al eliminar paquete de teselas', it: 'Eliminazione pacchetto tile non riuscita' },
+  '清除全部圖磚失敗': { en: 'Clear all tiles failed', ja: 'すべてのタイルの消去に失敗しました', ko: '모든 타일 지우기 실패', fr: 'Échec de l’effacement des tuiles', de: 'Alle Kacheln löschen fehlgeschlagen', es: 'Error al borrar todas las teselas', it: 'Cancellazione di tutte le tile non riuscita' },
   '快取瓦片：不支援': { en: 'Cached tiles: not supported', ja: 'キャッシュタイル：非対応', ko: '캐시 타일: 지원 안 됨', fr: 'Tuiles en cache : non pris en charge', de: 'Gecachte Kacheln: nicht unterstützt', es: 'Teselas en caché: no compatible', it: 'Tile in cache: non supportato' },
   '快取瓦片：0 個': { en: 'Cached tiles: 0', ja: 'キャッシュタイル：0', ko: '캐시 타일: 0개', fr: 'Tuiles en cache : 0', de: 'Gecachte Kacheln: 0', es: 'Teselas en caché: 0', it: 'Tile in cache: 0' },
   '查無結果': { en: 'No results', ja: '結果がありません', ko: '결과 없음', fr: 'Aucun résultat', de: 'Keine Ergebnisse', es: 'Sin resultados', it: 'Nessun risultato' },
@@ -355,9 +373,12 @@ const PHRASES = {
   '未選取任何操作目標 (標示點 / 中繼點)': { en: 'No targets selected (marked / intermediate points)', ja: '対象が選択されていません（マーク点 / 中間点）', ko: '선택된 대상이 없습니다 (표시 지점 / 중간 지점)', fr: 'Aucune cible sélectionnée (points marqués / intermédiaires)', de: 'Keine Ziele ausgewählt (markierte / Zwischenpunkte)', es: 'No hay objetivos seleccionados (marcados / intermedios)', it: 'Nessun obiettivo selezionato (marcati / intermedi)' },
   '未選取任何操作目標': { en: 'No targets selected', ja: '対象が選択されていません', ko: '선택된 대상이 없습니다', fr: 'Aucune cible sélectionnée', de: 'Keine Ziele ausgewählt', es: 'No hay objetivos seleccionados', it: 'Nessun obiettivo selezionato' },
   '正在定位...': { en: 'Locating...', ja: '現在地を取得中...', ko: '위치 확인 중...', fr: 'Localisation...', de: 'Standort wird ermittelt...', es: 'Localizando...', it: 'Localizzazione...' },
+  '正在載入外部檔案...': { en: 'Loading external file...', ja: '外部ファイルを読み込み中...', ko: '외부 파일을 불러오는 중...', fr: 'Chargement du fichier externe...', de: 'Externe Datei wird geladen...', es: 'Cargando archivo externo...', it: 'Caricamento file esterno...' },
   '重新規劃路線中…': { en: 'Replanning route…', ja: 'ルートを再計算中…', ko: '루트 다시 계획 중…', fr: 'Replanification de l’itinéraire…', de: 'Route wird neu geplant…', es: 'Replanificando ruta…', it: 'Ricalcolo percorso…' },
+  '航點已反向排序，重新規劃路線中…': { en: 'Waypoints reversed. Replanning route…', ja: 'ウェイポイントを逆順にしました。ルートを再計算中…', ko: '웨이포인트를 역순으로 정렬했습니다. 경로를 다시 계획 중…', fr: 'Waypoints inversés. Replanification…', de: 'Wegpunkte umgekehrt. Route wird neu geplant…', es: 'Waypoints invertidos. Replanificando ruta…', it: 'Waypoint invertiti. Ricalcolo percorso…' },
   '請至少勾選一項離線地圖包內容': { en: 'Select at least one map pack item', ja: '地図パック内容を少なくとも1つ選択してください', ko: '지도 팩 항목을 하나 이상 선택하세요', fr: 'Sélectionnez au moins un élément du pack', de: 'Mindestens einen Kartenpaket-Inhalt wählen', es: 'Selecciona al menos un elemento del paquete', it: 'Seleziona almeno un elemento del pacchetto' },
   '至少需勾選一項': { en: 'Select at least one item', ja: '少なくとも1つ選択してください', ko: '하나 이상 선택하세요', fr: 'Sélectionnez au moins un élément', de: 'Mindestens ein Element wählen', es: 'Selecciona al menos un elemento', it: 'Seleziona almeno un elemento' },
+  '此圖層暫不支援離線圖磚匯出': { en: 'This layer does not currently support offline tile export', ja: 'このレイヤーは現在オフラインタイルの書き出しに対応していません', ko: '이 레이어는 현재 오프라인 타일 내보내기를 지원하지 않습니다', fr: 'Cette couche ne prend pas encore en charge l’export de tuiles hors ligne', de: 'Dieser Layer unterstützt derzeit keinen Offline-Kachelexport', es: 'Esta capa aún no admite la exportación de teselas offline', it: 'Questo layer al momento non supporta l’esportazione di tile offline' },
   '匯出失敗': { en: 'Export failed', ja: '書き出しに失敗しました', ko: '내보내기 실패', fr: 'Échec de l’export', de: 'Export fehlgeschlagen', es: 'Error al exportar', it: 'Esportazione non riuscita' },
   '檔案解析失敗': { en: 'File parsing failed', ja: 'ファイル解析に失敗しました', ko: '파일 파싱 실패', fr: 'Échec de l’analyse du fichier', de: 'Datei konnte nicht gelesen werden', es: 'Error al analizar el archivo', it: 'Analisi file non riuscita' },
   '路線還原失敗': { en: 'Route restore failed', ja: 'ルート復元に失敗しました', ko: '루트 복원 실패', fr: 'Échec de la restauration', de: 'Route konnte nicht wiederhergestellt werden', es: 'Error al restaurar la ruta', it: 'Ripristino percorso non riuscito' },
@@ -366,6 +387,7 @@ const PHRASES = {
   '最愛資料無效': { en: 'Favorite data is invalid', ja: 'お気に入りデータが無効です', ko: '즐겨찾기 데이터가 유효하지 않습니다', fr: 'Favori invalide', de: 'Favoritendaten ungültig', es: 'Datos de favorito no válidos', it: 'Dati preferito non validi' },
   '已刪除': { en: 'Deleted', ja: '削除しました', ko: '삭제됨', fr: 'Supprimé', de: 'Gelöscht', es: 'Eliminado', it: 'Eliminato' },
   '至少需 2 個航點才能加入最愛': { en: 'At least 2 waypoints are required to add a favorite', ja: 'お気に入りに追加するには少なくとも2つのウェイポイントが必要です', ko: '즐겨찾기에 추가하려면 웨이포인트가 최소 2개 필요합니다', fr: 'Au moins 2 waypoints sont nécessaires pour ajouter un favori', de: 'Mindestens 2 Wegpunkte zum Favorisieren erforderlich', es: 'Se necesitan al menos 2 waypoints para añadir a favoritos', it: 'Servono almeno 2 waypoint per aggiungere ai preferiti' },
+  '至少需 2 個航點才能反向重新規劃': { en: 'At least 2 waypoints are required to reverse and replan', ja: '逆順で再計算するには少なくとも2つのウェイポイントが必要です', ko: '역순 재계획에는 웨이포인트가 최소 2개 필요합니다', fr: 'Au moins 2 waypoints sont nécessaires pour inverser et replanifier', de: 'Mindestens 2 Wegpunkte zum Umkehren und Neuplanen erforderlich', es: 'Se necesitan al menos 2 waypoints para invertir y replanificar', it: 'Servono almeno 2 waypoint per invertire e ricalcolare' },
   '已加入我的最愛': { en: 'Added to favorites', ja: 'お気に入りに追加しました', ko: '즐겨찾기에 추가됨', fr: 'Ajouté aux favoris', de: 'Zu Favoriten hinzugefügt', es: 'Añadido a favoritos', it: 'Aggiunto ai preferiti' },
   '已取代最愛': { en: 'Favorite replaced', ja: 'お気に入りを置き換えました', ko: '즐겨찾기 교체됨', fr: 'Favori remplacé', de: 'Favorit ersetzt', es: 'Favorito reemplazado', it: 'Preferito sostituito' },
   '不支援的檔案格式': { en: 'Unsupported file format', ja: '未対応のファイル形式', ko: '지원되지 않는 파일 형식', fr: 'Format de fichier non pris en charge', de: 'Nicht unterstütztes Dateiformat', es: 'Formato de archivo no compatible', it: 'Formato file non supportato' },
@@ -887,6 +909,8 @@ function translatePattern(text) {
   if (m) return withNum('{n} waypoints', '{n}ウェイポイント', '{n}개 웨이포인트', '{n} waypoints', '{n} Wegpunkte', '{n} waypoints', '{n} waypoint', m[1]);
   m = text.match(/^快取瓦片：(\d+) 個$/);
   if (m) return withNum('Cached tiles: {n}', 'キャッシュタイル：{n}', '캐시 타일: {n}개', 'Tuiles en cache : {n}', 'Gecachte Kacheln: {n}', 'Teselas en caché: {n}', 'Tile in cache: {n}', m[1]);
+  m = text.match(/^已刪除 (\d+) 張圖磚$/);
+  if (m) return withNum('Deleted {n} tiles', '{n}タイルを削除しました', '{n}개 타일 삭제됨', '{n} tuiles supprimées', '{n} Kacheln gelöscht', '{n} teselas eliminadas', '{n} tile eliminate', m[1]);
   m = text.match(/^已複製座標 (.+)$/);
   if (m) return phraseWithText('Copied coordinates {x}', '座標をコピーしました {x}', '좌표 복사됨 {x}', 'Coordonnées copiées {x}', 'Koordinaten kopiert {x}', 'Coordenadas copiadas {x}', 'Coordinate copiate {x}', m[1]);
   m = text.match(/^已載入 (\d+) 條校正軌跡$/);

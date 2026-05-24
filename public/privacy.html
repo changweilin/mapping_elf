@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mapping Elf 隱私政策</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, "Noto Sans TC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e5edf7;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(20, 184, 166, 0.18), transparent 280px),
+        #0f172a;
+    }
+
+    main {
+      width: min(920px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: clamp(28px, 5vw, 44px);
+    }
+
+    h2 {
+      margin-top: 32px;
+      font-size: 20px;
+      color: #67e8f9;
+    }
+
+    p,
+    li {
+      line-height: 1.75;
+      color: #cbd5e1;
+    }
+
+    a {
+      color: #5eead4;
+    }
+
+    .meta {
+      margin: 12px 0 28px;
+      color: #94a3b8;
+      font-size: 14px;
+    }
+
+    .panel {
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 8px;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.72);
+      box-shadow: 0 24px 60px rgba(2, 6, 23, 0.32);
+    }
+
+    ul {
+      padding-left: 22px;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        background: #f8fafc;
+        color: #0f172a;
+      }
+
+      body {
+        background:
+          linear-gradient(180deg, rgba(20, 184, 166, 0.16), transparent 280px),
+          #f8fafc;
+      }
+
+      .panel {
+        background: rgba(255, 255, 255, 0.9);
+        border-color: rgba(15, 23, 42, 0.12);
+        box-shadow: 0 20px 44px rgba(15, 23, 42, 0.1);
+      }
+
+      h2 {
+        color: #0f766e;
+      }
+
+      p,
+      li {
+        color: #334155;
+      }
+
+      .meta {
+        color: #64748b;
+      }
+
+      a {
+        color: #0f766e;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Mapping Elf 隱私政策</h1>
+    <p class="meta">最後更新：2026-05-19</p>
+
+    <section class="panel">
+      <p>Mapping Elf 是一套路線規劃與戶外天氣輔助工具。本政策說明 App 與網頁版如何處理定位、路線、天氣查詢、匯入匯出檔案與離線地圖資料。</p>
+
+      <h2>我們不收集的資料</h2>
+      <ul>
+        <li>目前沒有帳號系統、付款流程、廣告 SDK、分析 SDK 或第三方追蹤 SDK。</li>
+        <li>目前不會把你的路線資料上傳到 Mapping Elf 自有伺服器。</li>
+      </ul>
+
+      <h2>儲存在裝置上的資料</h2>
+      <ul>
+        <li>路線航點、地圖視角、主題、配速、天氣快取、收藏路線與版面設定可能儲存在瀏覽器或 App WebView 的本機儲存空間。</li>
+        <li>離線圖磚會儲存在 Cache Storage，方便你在網路不穩定時查看已快取的地圖範圍。</li>
+        <li>`.melmap`、GPX、KML 匯出檔由你自行保存或分享，內容可能包含座標、航點名稱、日期時間、天氣欄位與偏好設定。</li>
+      </ul>
+
+      <h2>送往第三方服務的資料</h2>
+      <p>當你使用特定功能時，Mapping Elf 會向第三方服務發出查詢。這些服務可能收到座標、路線點、搜尋字詞或天氣查詢條件。</p>
+      <ul>
+        <li>BRouter 或 OSRM：用於路線規劃。</li>
+        <li>Open-Meteo：用於天氣與高度資料。</li>
+        <li>Nominatim 或 Overpass：用於地名搜尋與反查。</li>
+        <li>Windy：只有在你主動開啟 Windy 連結時，相關座標與天氣檢視參數才會送出。</li>
+        <li>地圖圖磚供應商：用於線上地圖顯示與你主動建立的離線圖磚快取。</li>
+      </ul>
+
+      <h2>定位權限</h2>
+      <p>定位功能只在你按下目前位置按鈕或允許瀏覽器/App 使用定位時啟用，用於把地圖移到你的所在位置或協助路線規劃。Mapping Elf 不會持續背景追蹤你的定位。</p>
+
+      <h2>資料刪除</h2>
+      <p>你可以在 App 內清除路線、刪除離線圖磚包、重置設定，或透過瀏覽器/App 系統設定清除 Mapping Elf 的網站資料。匯出的 GPX、KML、`.melmap` 檔案由你自行管理。</p>
+
+      <h2>聯絡方式</h2>
+      <p>如有隱私或資料處理問題，可透過 App 內「問題回報」連結聯絡開發者。</p>
+    </section>
+  </main>
+</body>
+</html>

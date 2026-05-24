@@ -1,5 +1,7 @@
 # Mapping Elf Follow-up Refactor Roadmap
 
+> Management note: current priority, status, blockers, and next actions are centralized in [`../TODO.md`](../TODO.md). Keep this file as the detailed refactor intent and acceptance-criteria reference.
+
 This roadmap captures the next safe refactor steps after the first memory/speed cleanup pass. The goal is to keep UI behavior, route numerics, weather timing, and import/export compatibility unchanged while making the code easier to test and faster on large routes.
 
 ## Current Baseline

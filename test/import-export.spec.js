@@ -1,0 +1,489 @@
+import { expect, test } from '@playwright/test';
+import fs from 'node:fs/promises';
+import JSZip from 'jszip';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { collectUnexpectedConsoleErrors } from './helpers/consoleErrors.js';
+
+test.use({ acceptDownloads: true });
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '..');
+const sampleKml = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.kml');
+const shortGpx = path.join(repoRoot, 'data', 'app-test-routes', 'short-zh-weather.gpx');
+const transparentPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function openApp(page) {
+  const consoleErrors = collectUnexpectedConsoleErrors(page);
+
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/');
+  await expect(page.locator('#map')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header')).toBeVisible();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+
+  return consoleErrors;
+}
+
+async function importFixture(page, filePath) {
+  await page.locator('#gpx-file-input').setInputFiles(filePath);
+}
+
+async function importFixtureWithName(page, filePath, name, mimeType) {
+  await page.locator('#gpx-file-input').setInputFiles({
+    name,
+    mimeType,
+    buffer: await fs.readFile(filePath),
+  });
+}
+
+async function mockMapTiles(page) {
+  await page.route(/basemaps\.cartocdn\.com|tile\.opentopomap\.org|server\.arcgisonline\.com/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: transparentPng,
+    });
+  });
+}
+
+async function expectImportedRoute(page) {
+  const waypointItems = page.locator('#waypoint-list .waypoint-item');
+  await expect(waypointItems.first()).toBeVisible();
+  expect(await waypointItems.count()).toBeGreaterThan(0);
+  await expect(page.locator('#chart-empty')).toHaveClass(/hidden/);
+  await expect(page.locator('#stat-distance')).not.toHaveText(/^[-\s]*$/);
+}
+
+async function clickStable(page, selector) {
+  const locator = page.locator(selector);
+  await expect(locator).toBeAttached();
+  await locator.scrollIntoViewIfNeeded();
+  await locator.evaluate((el) => el.click());
+}
+
+async function openRouteLibrary(page) {
+  const body = page.locator('#file-management-body');
+  await expect(body).toBeAttached();
+  const className = await body.getAttribute('class');
+  if (className?.includes('collapsed')) {
+    await clickStable(page, '#file-management-toggle-header h3');
+  }
+  await expect(body).not.toHaveClass(/collapsed/);
+}
+
+async function routeSnapshot(page) {
+  return page.evaluate(() => {
+    const session = JSON.parse(localStorage.getItem('mappingElf_importedTrack') || 'null');
+    const coords = session?.coords || [];
+    const waypoints = session?.waypoints || JSON.parse(localStorage.getItem('mappingElf_waypoints') || '[]');
+    const first = coords[0] || null;
+    const last = coords[coords.length - 1] || null;
+    return {
+      trackPointCount: coords.length,
+      waypointCount: waypoints.length,
+      first,
+      last,
+      distance: document.querySelector('#stat-distance')?.textContent?.trim() || '',
+    };
+  });
+}
+
+async function importedTrackState(page) {
+  return page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_importedTrack') || 'null'));
+}
+
+function expectSameEndpoint(actual, expected, label) {
+  expect(actual, `${label} endpoint should exist`).toBeTruthy();
+  expect(Math.abs(actual[0] - expected[0]), `${label} latitude`).toBeLessThan(0.00001);
+  expect(Math.abs(actual[1] - expected[1]), `${label} longitude`).toBeLessThan(0.00001);
+}
+
+async function writeStateOnlyMapPack(filePath, state) {
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify({
+    version: 1,
+    generator: 'Mapping Elf Test',
+    createdAt: '2026-05-18T00:00:00.000Z',
+    includes: { route: false, tiles: false, state: true },
+    layer: null,
+    bounds: null,
+    minZoom: null,
+    maxZoom: null,
+    tileCount: 0,
+  }, null, 2));
+  zip.file('state.json', JSON.stringify(state, null, 2));
+  await fs.writeFile(filePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
+}
+
+async function writeTilesOnlyMapPack(filePath) {
+  const zip = new JSZip();
+  const tiles = [
+    { z: 8, x: 214, y: 109 },
+    { z: 8, x: 215, y: 109 },
+  ];
+  zip.file('manifest.json', JSON.stringify({
+    version: 1,
+    generator: 'Mapping Elf Test',
+    createdAt: '2026-05-18T00:00:00.000Z',
+    includes: { route: false, tiles: true, state: false },
+    layer: 'topo',
+    bounds: { north: 24.3, south: 24.2, east: 121.5, west: 121.4 },
+    minZoom: 8,
+    maxZoom: 8,
+    tileCount: tiles.length,
+    tileProvider: {
+      id: 'opentopomap',
+      name: 'OpenTopoMap',
+      attribution: '(c) OpenTopoMap contributors',
+      homepage: 'https://opentopomap.org/about',
+    },
+  }, null, 2));
+  tiles.forEach(({ z, x, y }) => {
+    zip.file(`tiles/topo/${z}/${x}/${y}.png`, transparentPng);
+  });
+  await fs.writeFile(filePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
+}
+
+async function readMapPackManifest(filePath) {
+  const zip = await JSZip.loadAsync(await fs.readFile(filePath));
+  const manifest = JSON.parse(await zip.file('manifest.json').async('string'));
+  const tileFiles = Object.keys(zip.files).filter((name) =>
+    /^tiles\/[^/]+\/\d+\/\d+\/\d+\.(png|jpg|jpeg)$/i.test(name)
+  );
+  return { manifest, tileFiles };
+}
+
+async function clearOfflineTileCaches(page) {
+  await page.evaluate(async () => {
+    if (!('caches' in window)) return;
+    await caches.delete('mapping-elf-tiles');
+    await caches.delete('mapping-elf-tile-index');
+  });
+}
+
+async function readOfflineTileIndex(page) {
+  return page.evaluate(async () => {
+    const cache = await caches.open('mapping-elf-tile-index');
+    const response = await cache.match('https://mapping-elf.local/offline-tile-index.json');
+    return response ? response.json() : null;
+  });
+}
+
+async function countCachedTiles(page) {
+  return page.evaluate(async () => {
+    const cache = await caches.open('mapping-elf-tiles');
+    return (await cache.keys()).length;
+  });
+}
+
+async function downloadExport(page, testInfo, fmt, configure = async () => {}) {
+  await openRouteLibrary(page);
+  await clickStable(page, '#btn-export-gpx');
+  await expect(page.locator('#export-modal')).toBeVisible();
+  await page.locator(`input[name="export-fmt"][value="${fmt}"]`).check();
+  await configure();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#btn-export-confirm').click(),
+  ]);
+  const filePath = testInfo.outputPath(download.suggestedFilename());
+  await download.saveAs(filePath);
+  expect(filePath, `${fmt} download path`).toBeTruthy();
+  return filePath;
+}
+
+test('round-trips GPX, KML, and route-only .melmap exports', async ({ page }, testInfo) => {
+  const consoleErrors = await openApp(page);
+
+  await importFixture(page, sampleKml);
+  await expectImportedRoute(page);
+  const baseline = await routeSnapshot(page);
+  expect(baseline.trackPointCount).toBeGreaterThan(10);
+  expect(baseline.waypointCount).toBeGreaterThan(0);
+
+  const gpxPath = await downloadExport(page, testInfo, 'gpx');
+  await importFixture(page, gpxPath);
+  await expectImportedRoute(page);
+  const afterGpx = await routeSnapshot(page);
+  expect(afterGpx.trackPointCount).toBeGreaterThan(10);
+  expect(afterGpx.waypointCount).toBeGreaterThan(0);
+  expectSameEndpoint(afterGpx.first, baseline.first, 'GPX first');
+  expectSameEndpoint(afterGpx.last, baseline.last, 'GPX last');
+
+  const kmlPath = await downloadExport(page, testInfo, 'kml');
+  await importFixture(page, kmlPath);
+  await expectImportedRoute(page);
+  const afterKml = await routeSnapshot(page);
+  expect(afterKml.trackPointCount).toBeGreaterThan(10);
+  expect(afterKml.waypointCount).toBeGreaterThan(0);
+  expectSameEndpoint(afterKml.first, baseline.first, 'KML first');
+  expectSameEndpoint(afterKml.last, baseline.last, 'KML last');
+
+  const melmapPath = await downloadExport(page, testInfo, 'melmap', async () => {
+    await page.locator('#mappack-inc-tiles').uncheck();
+  });
+  await importFixture(page, melmapPath);
+  await expect(page.locator('#mappack-import-modal')).toBeVisible();
+  await expect(page.locator('#mappack-restore-route')).toBeChecked();
+  await page.locator('#btn-mappack-import-confirm').click();
+  await expect(page.locator('#mappack-import-modal')).toHaveClass(/hidden/);
+  await expectImportedRoute(page);
+  const afterMelmap = await routeSnapshot(page);
+  expect(afterMelmap.trackPointCount).toBeGreaterThan(10);
+  expect(afterMelmap.waypointCount).toBeGreaterThan(0);
+  expectSameEndpoint(afterMelmap.first, baseline.first, '.melmap first');
+  expectSameEndpoint(afterMelmap.last, baseline.last, '.melmap last');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('map-pack keeps route export available when the default topo provider blocks tile export', async ({ page }, testInfo) => {
+  await mockMapTiles(page);
+  const consoleErrors = await openApp(page);
+
+  await importFixture(page, shortGpx);
+  await expectImportedRoute(page);
+
+  const melmapPath = await downloadExport(page, testInfo, 'melmap', async () => {
+    await expect(page.locator('#melmap-sub-options')).toBeVisible();
+    await expect(page.locator('#mappack-inc-route')).toBeChecked();
+    await expect(page.locator('#mappack-inc-tiles')).toBeDisabled();
+    await expect(page.locator('#mappack-inc-tiles')).not.toBeChecked();
+    await expect(page.locator('#mappack-tiles-info')).toHaveAttribute('data-i18n', '此圖層暫不支援離線圖磚匯出');
+  });
+
+  const { manifest, tileFiles } = await readMapPackManifest(melmapPath);
+  expect(manifest.includes.route).toBe(true);
+  expect(manifest.includes.tiles).toBe(false);
+  expect(manifest.tileCount).toBe(0);
+  expect(manifest.downloadedTileCount).toBe(0);
+  expect(manifest.downloadedTileBytes).toBe(0);
+  expect(manifest.tileProvider).toBeNull();
+  expect(tileFiles).toHaveLength(0);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('map-pack disables tile export for providers outside the allow-list', async ({ page }, testInfo) => {
+  await mockMapTiles(page);
+  const consoleErrors = await openApp(page);
+
+  await importFixture(page, shortGpx);
+  await expectImportedRoute(page);
+  await page.locator('#btn-layer-satellite').click();
+
+  const melmapPath = await downloadExport(page, testInfo, 'melmap', async () => {
+    await expect(page.locator('#melmap-sub-options')).toBeVisible();
+    await expect(page.locator('#mappack-inc-route')).toBeChecked();
+    await expect(page.locator('#mappack-inc-tiles')).toBeDisabled();
+    await expect(page.locator('#mappack-inc-tiles')).not.toBeChecked();
+    await expect(page.locator('#mappack-tiles-info')).toHaveAttribute('data-i18n', '此圖層暫不支援離線圖磚匯出');
+    await expect(page.locator('#mappack-tiles-info')).toContainText(/offline tile export|暫不支援/);
+  });
+
+  const { manifest, tileFiles } = await readMapPackManifest(melmapPath);
+  expect(manifest.includes.route).toBe(true);
+  expect(manifest.includes.tiles).toBe(false);
+  expect(manifest.tileCount).toBe(0);
+  expect(manifest.downloadedTileCount).toBe(0);
+  expect(manifest.downloadedTileBytes).toBe(0);
+  expect(manifest.tileProvider).toBeNull();
+  expect(tileFiles).toHaveLength(0);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('map-pack tile import writes and clears one offline tile pack index entry', async ({ page }, testInfo) => {
+  const consoleErrors = await openApp(page);
+  await clearOfflineTileCaches(page);
+
+  const packPath = testInfo.outputPath('tile-index.melmap');
+  await writeTilesOnlyMapPack(packPath);
+
+  await importFixture(page, packPath);
+  await expect(page.locator('#mappack-import-modal')).toBeVisible();
+  await expect(page.locator('#mappack-restore-route')).toBeDisabled();
+  await expect(page.locator('#mappack-restore-tiles')).toBeChecked();
+  await page.locator('#btn-mappack-import-confirm').click();
+  await expect(page.locator('#mappack-import-modal')).toHaveClass(/hidden/);
+
+  await expect.poll(async () => {
+    const index = await readOfflineTileIndex(page);
+    return Object.keys(index?.packs || {}).length;
+  }).toBe(1);
+
+  const index = await readOfflineTileIndex(page);
+  const packs = Object.values(index.packs);
+  expect(packs).toHaveLength(1);
+  expect(packs[0]).toMatchObject({
+    source: 'import',
+    status: 'complete',
+    layer: 'topo',
+    expectedTileCount: 2,
+    cachedTileCount: 2,
+    tileUrlCount: 6,
+    provider: {
+      id: 'opentopomap',
+      name: 'OpenTopoMap',
+    },
+  });
+  expect(packs[0].tileBytes).toBeGreaterThan(0);
+  expect(packs[0].tileUrls.every((url) => url.includes('tile.opentopomap.org'))).toBe(true);
+  expect(await countCachedTiles(page)).toBe(packs[0].tileUrlCount);
+
+  await openRouteLibrary(page);
+  await expect(page.locator('#offline-pack-list .offline-pack-item')).toHaveCount(1);
+  await expect(page.locator('#offline-pack-list')).toContainText(/OpenTopoMap/);
+  await expect(page.locator('#offline-pack-list')).toContainText(/\b(B|KB|MB|GB)\b/);
+  await page.locator('#offline-pack-list [data-delete-pack-id]').click();
+  await expect.poll(async () => {
+    const indexAfterDelete = await readOfflineTileIndex(page);
+    return Object.keys(indexAfterDelete?.packs || {}).length;
+  }).toBe(0);
+  await expect.poll(() => countCachedTiles(page)).toBe(0);
+  await expect(page.locator('#offline-pack-list')).toContainText(/No offline tile packs yet|尚無離線圖磚包/);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('imports app fixture with Chinese names, weather metadata, and interval points', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+
+  await importFixture(page, shortGpx);
+  await expectImportedRoute(page);
+
+  const state = await importedTrackState(page);
+  expect(state.coords.length).toBe(7);
+  expect(state.waypoints.length).toBe(3);
+  expect(state.waypointMeta.map((m) => m.label)).toEqual([
+    '起點 松山',
+    '中途 觀景台',
+    '終點 象山',
+  ]);
+  expect(state.waypointMeta[0].date).toBe('2026-05-20');
+  expect(state.waypointMeta[0].time).toBe('07:00');
+  expect(state.waypointMeta[0].weather.temp).toBe('22 C');
+  expect(state.intermediates).toHaveLength(1);
+  await expect(page.locator('#weather-table-container .wt-header-row-label .wt-col-head')).toHaveCount(4);
+  const weatherColumns = await page.locator('#weather-table-container .wt-header-row-label .wt-col-head').evaluateAll((heads) => (
+    heads.map((th) => {
+      const labelEl = th.querySelector('.wt-col-label');
+      const label = Array.from(labelEl?.childNodes || [])
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent || '')
+        .join('')
+        .trim();
+      return {
+        label,
+        isInterval: th.classList.contains('wt-interval-col'),
+        isReturn: th.classList.contains('wt-return-col'),
+      };
+    })
+  ));
+  expect(weatherColumns.map((column) => column.isInterval)).toEqual([false, true, false, false]);
+  expect(weatherColumns.map((column) => column.isReturn)).toEqual([false, false, false, false]);
+  expect(weatherColumns.map((column) => column.label)).toEqual([
+    state.waypointMeta[0].label,
+    state.intermediates[0].label,
+    state.waypointMeta[1].label,
+    state.waypointMeta[2].label,
+  ]);
+  expect(state.intermediates[0].label).toBe('補給點');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('detects imported files without relying on filename extensions', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+
+  await importFixtureWithName(page, shortGpx, 'shared-route', 'application/octet-stream');
+  await expectImportedRoute(page);
+
+  await importFixtureWithName(page, sampleKml, 'shared-kml', 'application/octet-stream');
+  await expectImportedRoute(page);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('melmap state restore uses allow-list and preserves user collections/session keys', async ({ page }, testInfo) => {
+  const consoleErrors = await openApp(page);
+  const originalFavorites = [{ id: 'fav-local', name: '保留的最愛', savedAt: '2026-05-18T00:00:00.000Z' }];
+  const originalWaypoints = [[25.03, 121.56], [25.04, 121.57]];
+  await page.evaluate(({ originalFavorites, originalWaypoints }) => {
+    localStorage.setItem('mappingElf_theme', 'dark');
+    localStorage.setItem('mappingElf_favorites', JSON.stringify(originalFavorites));
+    localStorage.setItem('mappingElf_waypoints', JSON.stringify(originalWaypoints));
+    localStorage.setItem('mappingElf_importedTrack', JSON.stringify({ coords: [[1, 2], [3, 4]] }));
+  }, { originalFavorites, originalWaypoints });
+
+  const packPath = testInfo.outputPath('state-allow-list.melmap');
+  await writeStateOnlyMapPack(packPath, {
+    mappingElf_theme: 'light',
+    mappingElf_favorites: JSON.stringify([{ id: 'fav-evil', name: '不應覆蓋' }]),
+    mappingElf_waypoints: JSON.stringify([[0, 0], [1, 1]]),
+    mappingElf_importedTrack: JSON.stringify({ coords: [[9, 9], [8, 8]] }),
+  });
+
+  await importFixture(page, packPath);
+  await expect(page.locator('#mappack-import-modal')).toBeVisible();
+  await expect(page.locator('#mappack-restore-state')).toBeChecked();
+  await page.locator('#btn-mappack-import-confirm').click();
+  await expect(page.locator('#mappack-import-modal')).toHaveClass(/hidden/);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mappingElf_theme'))).toBe('light');
+
+  const stored = await page.evaluate(() => ({
+    theme: localStorage.getItem('mappingElf_theme'),
+    favorites: JSON.parse(localStorage.getItem('mappingElf_favorites') || '[]'),
+    waypoints: JSON.parse(localStorage.getItem('mappingElf_waypoints') || '[]'),
+    importedTrack: JSON.parse(localStorage.getItem('mappingElf_importedTrack') || 'null'),
+  }));
+  expect(stored.theme).toBe('light');
+  expect(stored.favorites).toEqual(originalFavorites);
+  expect(stored.waypoints).toEqual(originalWaypoints);
+  expect(stored.importedTrack).toEqual({ coords: [[1, 2], [3, 4]] });
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('reset defaults clears app state but keeps favorites', async ({ page }) => {
+  const originalFavorites = [{ id: 'fav-reset', name: '重置後保留', savedAt: '2026-05-18T00:00:00.000Z' }];
+  const consoleErrors = collectUnexpectedConsoleErrors(page);
+  await page.addInitScript((favorites) => {
+    if (sessionStorage.getItem('__mappingElfResetSeeded') === '1') return;
+    sessionStorage.setItem('__mappingElfResetSeeded', '1');
+    localStorage.clear();
+    localStorage.setItem('mappingElf_theme', 'light');
+    localStorage.setItem('mappingElf_routeMode', 'driving');
+    localStorage.setItem('mappingElf_waypoints', JSON.stringify([[25.03, 121.56], [25.04, 121.57]]));
+    localStorage.setItem('mappingElf_pendingGpx', '<gpx></gpx>');
+    localStorage.setItem('mappingElf_favorites', JSON.stringify(favorites));
+  }, originalFavorites);
+  await page.goto('/');
+  await expect(page.locator('#map')).toBeVisible();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await clickStable(page, '#btn-reset-defaults');
+  await page.waitForLoadState('domcontentloaded');
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+
+  const stored = await page.evaluate(() => ({
+    theme: localStorage.getItem('mappingElf_theme'),
+    routeMode: localStorage.getItem('mappingElf_routeMode'),
+    waypoints: localStorage.getItem('mappingElf_waypoints'),
+    pendingGpx: localStorage.getItem('mappingElf_pendingGpx'),
+    favorites: JSON.parse(localStorage.getItem('mappingElf_favorites') || '[]'),
+  }));
+  expect(stored.theme).toBeNull();
+  expect(stored.routeMode).toBeNull();
+  expect(stored.waypoints).toBeNull();
+  expect(stored.pendingGpx).toBeNull();
+  expect(stored.favorites).toEqual(originalFavorites);
+
+  expect(consoleErrors).toEqual([]);
+});

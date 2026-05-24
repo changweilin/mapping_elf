@@ -7,6 +7,7 @@
  */
 
 import { orderWaypointsAlongTrack } from './utils.js';
+import { platform } from '../platform/index.js';
 
 export class GpxExporter {
   /**
@@ -157,18 +158,22 @@ export class GpxExporter {
   }
 
   /**
-   * Download GPX file
+   * Build a platform-neutral file payload for GPX output.
+   */
+  static createDownloadPayload(gpxString, filename = 'mapping_elf_track.gpx') {
+    return {
+      filename,
+      mimeType: 'application/gpx+xml',
+      content: gpxString,
+    };
+  }
+
+  /**
+   * Download GPX file. Kept as a web-compatible legacy helper; new UI flows
+   * should route the payload through src/platform.
    */
   static download(gpxString, filename = 'mapping_elf_track.gpx') {
-    const blob = new Blob([gpxString], { type: 'application/gpx+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    return platform.downloadFile(this.createDownloadPayload(gpxString, filename));
   }
 
   /**
@@ -288,16 +293,15 @@ export class GpxExporter {
         });
       } else if (trackPoints.length > 0) {
         const step = Math.max(1, Math.floor(trackPoints.length / 10));
-        for (let i = 0; i < trackPoints.length; i += step) {
+        for (let i = 0; i < trackPoints.length - 1; i += step) {
           const pt = trackPoints[i];
           waypoints.push([pt.lat, pt.lon]);
           segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: pt.ele ?? null, cumDistM: null, fileOrder: i });
         }
-        if (trackPoints.length % step !== 0) {
-          const last = trackPoints[trackPoints.length - 1];
-          waypoints.push([last.lat, last.lon]);
-          segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: last.ele ?? null, cumDistM: null, fileOrder: trackPoints.length });
-        }
+        const lastIndex = trackPoints.length - 1;
+        const last = trackPoints[lastIndex];
+        waypoints.push([last.lat, last.lon]);
+        segmentDates.push({ date: null, time: null, weather: {}, windyUrl: null, ele: last.ele ?? null, cumDistM: null, fileOrder: lastIndex });
       }
     }
 

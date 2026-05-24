@@ -1,26 +1,48 @@
 {
   "name": "mapping_elf",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
+    "build:web": "vite build --mode web",
+    "build:app": "vite build --mode app",
+    "cap:sync": "npm run build:app && npx cap sync && node scripts/normalize-capacitor-spm-paths.mjs",
+    "cap:sync:android": "npm run build:app && npx cap sync android && node scripts/normalize-capacitor-spm-paths.mjs",
+    "cap:sync:ios": "npm run build:app && npx cap sync ios && node scripts/normalize-capacitor-spm-paths.mjs",
+    "android:build:debug": "npm run cap:sync:android && cd android && gradlew.bat assembleDebug",
+    "android:bundle:debug": "npm run cap:sync:android && cd android && gradlew.bat bundleDebug",
+    "android:bundle:release": "npm run cap:sync:android && cd android && gradlew.bat bundleRelease",
     "preview": "vite preview",
-    "test:smoke": "playwright test",
+    "test:gui": "node test/run-playwright-with-preview.mjs",
+    "test:smoke": "node test/run-playwright-with-preview.mjs",
     "test:chunks": "node test/chunk-output.mjs",
-    "test:numeric": "node test/numeric-regression.mjs"
+    "test:numeric": "node test/numeric-regression.mjs",
+    "test:weather-points": "node test/weather-point-builder.mjs",
+    "test:import-export": "node test/run-playwright-with-preview.mjs test/import-export.spec.js",
+    "test:layer-toggle": "node test/run-playwright-with-preview.mjs test/layer-toggle.spec.js",
+    "test:perf": "node test/run-playwright-with-preview.mjs test/long-route-performance.spec.js",
+    "test:mobile": "node test/run-playwright-with-preview.mjs test/mobile-app-qa.spec.js",
+    "test:native-config": "node test/native-config.mjs"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.3.0",
     "@playwright/test": "^1.59.1",
-    "vite": "^8.0.4"
+    "vite": "^8.0.13"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
     "@capacitor/core": "^8.3.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/geolocation": "^8.2.0",
+    "@capacitor/haptics": "^8.0.2",
     "@capacitor/ios": "^8.3.0",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/share": "^8.0.1",
     "chart.js": "^4.5.1",
     "jszip": "^3.10.1",
     "leaflet": "^1.9.4"

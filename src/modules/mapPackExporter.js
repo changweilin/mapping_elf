@@ -11,9 +11,17 @@
  */
 import JSZip from 'jszip';
 import { MELMAP_STATE_KEYS } from './stateKeys.js';
+import {
+  enumerateMapPackTiles,
+  tilesForBoundsZoom,
+} from './tileEstimator.js';
+import {
+  OFFLINE_TILE_CACHE_NAME,
+  addOfflineTilePack,
+} from './offlineTileIndex.js';
+import { platform } from '../platform/index.js';
 
 const MELMAP_VERSION = 1;
-const MAX_TILES = 8000;
 
 // CARTO/OpenTopoMap use {a,b,c} subdomains; Esri has no {s}. When writing
 // tiles into Cache API on import we replicate the response under every
@@ -23,18 +31,25 @@ const RETINA_SUFFIXES = ['', '@2x'];
 
 const LS_STATE_KEYS = MELMAP_STATE_KEYS;
 
-function lng2tile(lon, zoom) {
-  return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
+function buildTileProviderManifest(layerInfo) {
+  const provider = layerInfo?.provider || {};
+  return {
+    id: provider.id || layerInfo?.name || null,
+    name: provider.name || layerInfo?.name || null,
+    attribution: provider.attribution || layerInfo?.attribution || null,
+    homepage: provider.homepage || null,
+  };
 }
 
-function lat2tile(lat, zoom) {
-  return Math.floor(
-    ((1 -
-      Math.log(
-        Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)
-      ) / Math.PI) / 2) *
-    Math.pow(2, zoom)
-  );
+function getOfflineTileExportPolicy(layerInfo) {
+  const policy = layerInfo?.provider?.offlineTileExport;
+  if (policy?.allowed === false) {
+    return {
+      allowed: false,
+      reason: policy.reason || '此圖層暫不支援離線圖磚匯出',
+    };
+  }
+  return { allowed: true, reason: '' };
 }
 
 export class MapPackExporter {
@@ -51,7 +66,7 @@ export class MapPackExporter {
    * @param {string}   opts.gpxXml           Pre-built GPX (required if includeRoute)
    * @param {string}   opts.filenameBase
    * @param {Function} opts.onProgress       (current, total, phase) → void
-   * @returns {Promise<{blob: Blob, filename: string, tileCount: number}>}
+   * @returns {Promise<{blob: Blob, filename: string, tileCount: number, downloadedTileCount: number, downloadedTileBytes: number, zipBytes: number}>}
    */
   static async export({
     bounds,
@@ -85,6 +100,9 @@ export class MapPackExporter {
       minZoom: null,
       maxZoom: null,
       tileCount: 0,
+      downloadedTileCount: 0,
+      downloadedTileBytes: 0,
+      tileProvider: null,
     };
 
     // ---- route.gpx ----
@@ -105,11 +123,15 @@ export class MapPackExporter {
 
     // ---- tiles/ ----
     let totalTiles = 0;
+    let downloadedTileCount = 0;
+    let downloadedTileBytes = 0;
     if (includeTiles) {
+      const tilePolicy = getOfflineTileExportPolicy(layerInfo);
+      if (!tilePolicy.allowed) throw new Error(tilePolicy.reason || '此圖層暫不支援離線圖磚匯出');
       if (!bounds || !layerInfo) throw new Error('匯出圖磚時需要 bounds 與 layerInfo');
       if (!routeCoords || routeCoords.length < 2) throw new Error('匯出圖磚時需先建立路線');
 
-      const { minZoom, maxZoom, tiles } = this._enumerateTiles(bounds, layerInfo);
+      const { minZoom, maxZoom, tiles } = enumerateMapPackTiles(bounds, layerInfo);
       totalTiles = tiles.length;
 
       manifest.layer = layerInfo.name;
@@ -122,8 +144,10 @@ export class MapPackExporter {
       manifest.minZoom = minZoom;
       manifest.maxZoom = maxZoom;
       manifest.tileCount = totalTiles;
+      manifest.tileProvider = buildTileProviderManifest(layerInfo);
 
-      const cache = 'caches' in self ? await caches.open('mapping-elf-tiles') : null;
+      const cache = 'caches' in self ? await caches.open(OFFLINE_TILE_CACHE_NAME) : null;
+      const cachedTileUrls = new Set();
       onProgress(0, totalTiles, 'tiles');
 
       const chunkSize = 10;
@@ -132,15 +156,34 @@ export class MapPackExporter {
         const chunk = tiles.slice(i, i + chunkSize);
         await Promise.all(
           chunk.map(async ({ z, x, y }) => {
-            const blob = await this._fetchTile(layerInfo.urlTemplate, z, x, y, cache);
-            if (blob) {
-              zip.file(`tiles/${layerInfo.name}/${z}/${x}/${y}.png`, blob);
+            const result = await this._fetchTile(layerInfo.urlTemplate, z, x, y, cache);
+            if (result?.blob) {
+              zip.file(`tiles/${layerInfo.name}/${z}/${x}/${y}.png`, result.blob);
+              downloadedTileCount++;
+              downloadedTileBytes += result.blob.size || 0;
+              (result.cacheUrls || []).forEach((url) => cachedTileUrls.add(url));
             }
             done++;
             onProgress(done, totalTiles, 'tiles');
           })
         );
       }
+      manifest.downloadedTileCount = downloadedTileCount;
+      manifest.downloadedTileBytes = downloadedTileBytes;
+
+      await addOfflineTilePack({
+        source: 'export',
+        status: downloadedTileCount === totalTiles ? 'complete' : 'incomplete',
+        layer: layerInfo.name,
+        bounds: manifest.bounds,
+        minZoom,
+        maxZoom,
+        expectedTileCount: totalTiles,
+        cachedTileCount: downloadedTileCount,
+        tileBytes: downloadedTileBytes,
+        provider: manifest.tileProvider,
+        tileUrls: [...cachedTileUrls],
+      });
     }
 
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
@@ -151,50 +194,24 @@ export class MapPackExporter {
       (meta) => onProgress(Math.round(meta.percent), 100, 'zip')
     );
     onProgress(1, 1, 'zip');
+    const zipBytes = blob.size || 0;
 
     return {
       blob,
       filename: `${filenameBase}.melmap`,
       tileCount: totalTiles,
+      downloadedTileCount,
+      downloadedTileBytes,
+      zipBytes,
     };
   }
 
   static _enumerateTiles(bounds, layerInfo) {
-    // Walk from rough overview (z=8) up to layer maxZoom, stop when count exceeds MAX_TILES.
-    const hardMin = 8;
-    const hardMax = Math.min(17, layerInfo.maxZoom);   // cap at 17 to control size; adjust per layer below
-    const tiles = [];
-    let pickedMin = hardMin;
-    let pickedMax = hardMin;
-
-    for (let z = hardMin; z <= hardMax; z++) {
-      const zTiles = this._tilesForZoom(bounds, z);
-      if (tiles.length + zTiles.length > MAX_TILES) {
-        // Too many at this zoom — stop adding.
-        break;
-      }
-      tiles.push(...zTiles);
-      pickedMax = z;
-    }
-
-    return { minZoom: pickedMin, maxZoom: pickedMax, tiles };
+    return enumerateMapPackTiles(bounds, layerInfo);
   }
 
   static _tilesForZoom(bounds, z) {
-    let xMin = lng2tile(bounds.getWest(), z);
-    let xMax = lng2tile(bounds.getEast(), z);
-    let yMin = lat2tile(bounds.getNorth(), z);
-    let yMax = lat2tile(bounds.getSouth(), z);
-    if (xMin > xMax) [xMin, xMax] = [xMax, xMin];
-    if (yMin > yMax) [yMin, yMax] = [yMax, yMin];
-
-    const out = [];
-    for (let x = xMin; x <= xMax; x++) {
-      for (let y = yMin; y <= yMax; y++) {
-        out.push({ z, x, y });
-      }
-    }
-    return out;
+    return tilesForBoundsZoom(bounds, z);
   }
 
   static async _fetchTile(urlTemplate, z, x, y, cache) {
@@ -204,7 +221,7 @@ export class MapPackExporter {
       for (const url of candidates) {
         try {
           const hit = await cache.match(url);
-          if (hit) return await hit.blob();
+          if (hit) return { blob: await hit.blob(), cacheUrls: [url] };
         } catch (_) { /* fall through */ }
       }
     }
@@ -213,10 +230,14 @@ export class MapPackExporter {
         const resp = await fetch(url, { mode: 'cors' });
         if (resp.ok) {
           const blob = await resp.blob();
+          const cacheUrls = [];
           if (cache) {
-            try { await cache.put(url, new Response(blob, { headers: resp.headers })); } catch (_) {}
+            try {
+              await cache.put(url, new Response(blob, { headers: resp.headers }));
+              cacheUrls.push(url);
+            } catch (_) {}
           }
-          return blob;
+          return { blob, cacheUrls };
         }
       } catch (_) { /* try next */ }
     }
@@ -239,14 +260,11 @@ export class MapPackExporter {
   }
 
   static triggerDownload(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return platform.downloadFile({
+      filename,
+      mimeType: 'application/zip',
+      content: blob,
+    });
   }
 }
 

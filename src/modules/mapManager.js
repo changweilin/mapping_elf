@@ -4,11 +4,22 @@
  */
 import L from 'leaflet';
 import { interpolateRouteColor, interpolateReturnColor, cumulativeDistances } from './utils.js';
+import { platform } from '../platform/index.js';
 
 const TILE_LAYERS = {
   streets: {
     url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     cssClass: 'map-tiles-streets',
+    provider: {
+      id: 'carto-voyager',
+      name: 'CARTO Voyager',
+      attribution: '(c) OpenStreetMap contributors, (c) CARTO',
+      homepage: 'https://carto.com/attribution/',
+      offlineTileExport: {
+        allowed: false,
+        reason: '此圖層暫不支援離線圖磚匯出',
+      },
+    },
     options: {
       attribution: '&copy; OpenStreetMap &copy; CARTO',
       maxZoom: 19,
@@ -18,6 +29,16 @@ const TILE_LAYERS = {
   topo: {
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     cssClass: 'map-tiles-topo map-tiles-outdoor',
+    provider: {
+      id: 'opentopomap',
+      name: 'OpenTopoMap',
+      attribution: '(c) OpenTopoMap contributors',
+      homepage: 'https://opentopomap.org/about',
+      offlineTileExport: {
+        allowed: false,
+        reason: '此圖層暫不支援離線圖磚匯出',
+      },
+    },
     options: {
       attribution: '&copy; OpenTopoMap',
       maxZoom: 17,
@@ -26,6 +47,16 @@ const TILE_LAYERS = {
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     cssClass: 'map-tiles-satellite',
+    provider: {
+      id: 'esri-world-imagery',
+      name: 'Esri World Imagery',
+      attribution: '(c) Esri',
+      homepage: 'https://www.esri.com/',
+      offlineTileExport: {
+        allowed: false,
+        reason: '此圖層暫不支援離線圖磚匯出',
+      },
+    },
     options: {
       attribution: '&copy; Esri',
       maxZoom: 19,
@@ -719,7 +750,7 @@ export class MapManager {
         lpTimer = null;
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', cancel);
-        if (navigator.vibrate) navigator.vibrate(40);
+        platform.vibrate(40);
         this._openMapCursorMenu();
       }, 500);
       document.addEventListener('mousemove', onMove);
@@ -738,7 +769,7 @@ export class MapManager {
       touchStartY = t.clientY;
       lpTimer = setTimeout(() => {
         lpTimer = null;
-        if (navigator.vibrate) navigator.vibrate(40);
+        platform.vibrate(40);
         this._openMapCursorMenu();
       }, 500);
     });
@@ -944,7 +975,7 @@ export class MapManager {
       _dragModeActive = true;
       marker.dragging.enable();
       marker.getElement()?.classList.add('is-dragging');
-      if (navigator.vibrate) navigator.vibrate(40);
+      platform.vibrate(40);
     };
 
     const _disableDrag = () => {
@@ -1046,7 +1077,7 @@ export class MapManager {
         _dragModeActive = true;
         _justDragged = true; // Prevent subsequent click from triggering redundant highlight
         marker.getElement()?.classList.add('is-dragging');
-        if (navigator.vibrate) navigator.vibrate(40);
+        platform.vibrate(40);
         this.map.dragging.disable();
         this._beginWaypointDrag();
 
@@ -1089,7 +1120,7 @@ export class MapManager {
           try {
             if (idx >= 0) {
               if (dropAction === 'delete') {
-                if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+                platform.vibrate([20, 40, 20]);
                 this.removeWaypoint(idx);
               } else if (dropAction === 'cancel') {
                 marker.setLatLng(dragStartLatLng);
@@ -1228,7 +1259,7 @@ export class MapManager {
         _dragModeActive = true;
         _justDragged = true; // Prevent subsequent click from triggering redundant highlight
         marker.getElement()?.classList.add('is-dragging');
-        if (navigator.vibrate) navigator.vibrate(40);
+        platform.vibrate(40);
         this.map.dragging.disable();
         this._beginWaypointDrag();
 
@@ -1290,7 +1321,7 @@ export class MapManager {
           try {
             if (idx >= 0) {
               if (dropAction === 'delete') {
-                if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+                platform.vibrate([20, 40, 20]);
                 this.removeWaypoint(idx);
               } else if (dropAction === 'cancel' || !didTouchDragMove) {
                 marker.setLatLng(dragStartLatLng);
@@ -1628,7 +1659,7 @@ export class MapManager {
       try {
         if (idx >= 0) {
           if (dropAction === 'delete') {
-            if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+            platform.vibrate([20, 40, 20]);
             this.removeWaypoint(idx);
           } else if (dropAction === 'cancel') {
             if (_leafletDragStartLatLng) marker.setLatLng(_leafletDragStartLatLng);
@@ -1725,6 +1756,21 @@ export class MapManager {
     moveInArray(this.waypointMetadata);
     moveInArray(this.waypointLayerSwapped);
 
+    this._updateMarkerIcons();
+    this._emitWaypointChange();
+  }
+
+  reverseWaypoints() {
+    if (this.waypoints.length < 2) return;
+
+    this.waypoints.reverse();
+    this.waypointMarkers.reverse();
+    this.waypointWeather.reverse();
+    this.waypointColors.reverse();
+    this.waypointLabels.reverse();
+    this.waypointMetadata.reverse();
+    this.waypointLayerSwapped.reverse();
+    this.clearWaypointHighlight();
     this._updateMarkerIcons();
     this._emitWaypointChange();
   }
@@ -2207,7 +2253,7 @@ export class MapManager {
         startY = touch.clientY;
         lpTimer = setTimeout(() => {
           lpTimer = null;
-          if (navigator.vibrate) navigator.vibrate(40);
+          platform.vibrate(40);
           this._cycleOverlappingLayers(null, marker.getLatLng());
         }, 500);
       };
@@ -2501,7 +2547,7 @@ export class MapManager {
           try {
             if (idx < 0) return;
             if (dropAction === 'delete') {
-              if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+              platform.vibrate([20, 40, 20]);
               this.removeWaypoint(idx);
             } else if (dropAction === 'cancel') {
               pairedMarker.setLatLng(dragStartLatLng);
@@ -2605,7 +2651,7 @@ export class MapManager {
         _lpTimer = setTimeout(() => {
           _lpTimer = null;
           cleanupLPListeners();
-          if (navigator.vibrate) navigator.vibrate(40);
+          platform.vibrate(40);
           startManualReturnDrag(
             source,
             _pendingClientX,
@@ -2887,30 +2933,20 @@ export class MapManager {
   }
 
   goToMyLocation() {
-    if (!navigator.geolocation) {
-      return Promise.reject(new Error('Geolocation is not supported'));
-    }
-
-    return new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          this.map.invalidateSize({ animate: false });
-          this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14), { animate: true });
-          // Drop a map cursor at the GPS fix instead of adding a waypoint —
-          // user can long-press the cursor to set as waypoint / copy / show weather.
-          this.setMapCursor(lat, lng);
-          this.onGpsFix?.(lat, lng);
-          resolve({ lat, lng });
-        },
-        reject,
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        }
-      );
+    return platform.getCurrentPosition({
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    }).then((pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      this.map.invalidateSize({ animate: false });
+      this.map.setView([lat, lng], Math.max(this.map.getZoom(), 14), { animate: true });
+      // Drop a map cursor at the GPS fix instead of adding a waypoint —
+      // user can long-press the cursor to set as waypoint / copy / show weather.
+      this.setMapCursor(lat, lng);
+      this.onGpsFix?.(lat, lng);
+      return { lat, lng };
     });
   }
 
@@ -3168,7 +3204,7 @@ export class MapManager {
           this._notifyFrozenInteraction('route-edit');
           return;
         }
-        if (navigator.vibrate) navigator.vibrate(40);
+        platform.vibrate(40);
         startRouteInsertDrag(latlng, startSource);
       }, 500);
     };
@@ -3819,10 +3855,13 @@ export class MapManager {
 
   getCurrentLayerInfo() {
     const layer = this.tileLayers[this.currentLayerName];
+    const config = TILE_LAYERS[this.currentLayerName];
     if (layer) {
       return {
         urlTemplate: layer._url,
         maxZoom: layer.options.maxZoom || 18,
+        attribution: layer.options.attribution || config?.provider?.attribution || null,
+        provider: config?.provider ? { ...config.provider } : null,
       };
     }
     return null;

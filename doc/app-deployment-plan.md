@@ -2,6 +2,8 @@
 
 建立日期：2026-05-18
 
+> 管理註記：實際進度、阻塞、優先序與下一步已集中在 [`../TODO.md`](../TODO.md)。本文件保留部署策略、驗收背景與風險對策。
+
 ## 1. 目標
 
 將現有 Mapping Elf Web/PWA 擴充為 Android 與 iOS App 版本，採用 Capacitor 打包，不重寫核心功能。第一階段目標是完成 Android 內部測試版，再推進 iOS TestFlight 與正式上架。

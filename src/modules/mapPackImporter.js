@@ -8,6 +8,10 @@
  */
 
 import { LS_STATE_KEYS, MELMAP_VERSION, SUBDOMAINS } from './mapPackExporter.js';
+import {
+  OFFLINE_TILE_CACHE_NAME,
+  addOfflineTilePack,
+} from './offlineTileIndex.js';
 import JSZip from 'jszip';
 
 const RETINA_SUFFIXES = ['', '@2x'];
@@ -113,8 +117,11 @@ export class MapPackImporter {
         }
       });
 
-      const cache = await caches.open('mapping-elf-tiles');
+      const cache = await caches.open(OFFLINE_TILE_CACHE_NAME);
       const total = tileEntries.length;
+      const cachedTileUrls = new Set();
+      let restoredTileEntries = 0;
+      let restoredTileBytes = 0;
       let done = 0;
       onProgress(0, total, 'tiles');
 
@@ -126,16 +133,36 @@ export class MapPackImporter {
             const blob = await entry.async('blob');
             const urls = MapPackImporter._expandSubdomains(tmpl, z, x, y);
             // Replicate under every subdomain so Leaflet hash-picks hit.
-            await Promise.all(urls.map((u) => cache.put(u, new Response(blob, {
-              headers: { 'Content-Type': 'image/png' },
-            }))));
+            await Promise.all(urls.map(async (u) => {
+              await cache.put(u, new Response(blob, {
+                headers: { 'Content-Type': 'image/png' },
+              }));
+              cachedTileUrls.add(u);
+            }));
+            restoredTileEntries++;
+            restoredTileBytes += blob.size || 0;
           } catch (e) { console.warn('Tile restore failed', e); }
           done++;
           onProgress(done, total, 'tiles');
         }));
       }
+      const pack = await addOfflineTilePack({
+        source: 'import',
+        status: restoredTileEntries === total ? 'complete' : 'incomplete',
+        layer,
+        bounds: manifest.bounds || null,
+        minZoom: manifest.minZoom ?? null,
+        maxZoom: manifest.maxZoom ?? null,
+        expectedTileCount: manifest.tileCount || total,
+        cachedTileCount: restoredTileEntries,
+        tileBytes: restoredTileBytes || manifest.downloadedTileBytes || 0,
+        provider: manifest.tileProvider || null,
+        tileUrls: [...cachedTileUrls],
+      });
       result.tileCount = total;
+      result.tileBytes = restoredTileBytes;
       result.layer = layer;
+      result.tilePackId = pack?.id || null;
     }
 
     return result;

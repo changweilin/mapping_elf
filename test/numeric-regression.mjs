@@ -14,6 +14,12 @@ import {
   RESET_STATE_KEYS,
   STATE_KEY_GROUPS,
 } from '../src/modules/stateKeys.js';
+import {
+  MAP_PACK_TILE_LIMIT,
+  enumerateMapPackTiles,
+  estimateMapPackTiles,
+  tilesForBoundsZoom,
+} from '../src/modules/tileEstimator.js';
 
 const closeTo = (actual, expected, epsilon = 1e-6) => {
   assert.ok(
@@ -120,5 +126,26 @@ assert.deepEqual(
   Object.keys(STATE_KEY_GROUPS).sort(),
   ['layout', 'pace', 'preference', 'route', 'routeSession', 'session', 'userCollection', 'weather'].sort(),
 );
+
+const tileBounds = {
+  getWest: () => 121.4,
+  getEast: () => 121.5,
+  getNorth: () => 24.3,
+  getSouth: () => 24.2,
+};
+const tileLayerInfo = { maxZoom: 17 };
+const enumeratedTiles = enumerateMapPackTiles(tileBounds, tileLayerInfo);
+const estimatedTiles = estimateMapPackTiles(tileBounds, tileLayerInfo);
+assert.equal(estimatedTiles.tileCount, enumeratedTiles.tiles.length);
+assert.equal(estimatedTiles.minZoom, enumeratedTiles.minZoom);
+assert.equal(estimatedTiles.maxZoom, enumeratedTiles.maxZoom);
+assert.equal(enumeratedTiles.tileCount, enumeratedTiles.tiles.length);
+assert.ok(enumeratedTiles.tileCount > 0);
+assert.ok(enumeratedTiles.tileCount <= MAP_PACK_TILE_LIMIT);
+assert.deepEqual(tilesForBoundsZoom(tileBounds, 8), enumeratedTiles.tiles.filter((tile) => tile.z === 8));
+
+const cappedTiles = enumerateMapPackTiles(tileBounds, tileLayerInfo, { maxTiles: 20 });
+assert.ok(cappedTiles.tileCount <= 20);
+assert.ok(cappedTiles.maxZoom < enumeratedTiles.maxZoom);
 
 console.log('Numeric regression ok');

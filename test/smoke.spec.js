@@ -1,33 +1,19 @@
 import { expect, test } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectUnexpectedConsoleErrors } from './helpers/consoleErrors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const sampleKml = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.kml');
 const sampleMelmap = path.join(repoRoot, 'data', '820 林道_24.2133,121.3472_20260420_1510.melmap');
 
-function isExpectedExternalResourceNoise(text) {
-  return text.includes('Failed to load resource')
-    && (
-      text.includes('net::ERR_NETWORK_ACCESS_DENIED')
-      || text.includes('net::ERR_NO_BUFFER_SPACE')
-      || text.includes('the server responded with a status of 404 (Offline)')
-    );
-}
-
 async function openApp(page) {
-  const consoleErrors = [];
-  page.on('console', (msg) => {
-    if (msg.type() !== 'error') return;
-    const text = msg.text();
-    if (!isExpectedExternalResourceNoise(text)) consoleErrors.push(text);
-  });
-  page.on('pageerror', (err) => consoleErrors.push(err.message));
+  const consoleErrors = collectUnexpectedConsoleErrors(page);
 
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
-  await expect(page.locator('#btn-export-gpx')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
   return consoleErrors;
@@ -37,11 +23,28 @@ async function importFixture(page, filePath) {
   await page.locator('#gpx-file-input').setInputFiles(filePath);
 }
 
+async function clickActionable(page, selector) {
+  const locator = page.locator(selector);
+  await expect(locator).toBeAttached();
+  await locator.scrollIntoViewIfNeeded();
+  await locator.click();
+}
+
 async function clickStable(page, selector) {
   const locator = page.locator(selector);
   await expect(locator).toBeAttached();
   await locator.scrollIntoViewIfNeeded();
   await locator.evaluate((el) => el.click());
+}
+
+async function openRouteLibrary(page) {
+  const body = page.locator('#file-management-body');
+  await expect(body).toBeAttached();
+  const className = await body.getAttribute('class');
+  if (className?.includes('collapsed')) {
+    await clickStable(page, '#file-management-toggle-header h3');
+  }
+  await expect(body).not.toHaveClass(/collapsed/);
 }
 
 async function expectImportedRoute(page) {
@@ -57,9 +60,120 @@ test('app shell loads without console errors', async ({ page }) => {
   const consoleErrors = await openApp(page);
 
   await expect(page.locator('#side-panel')).toBeAttached();
+  await expect(page.locator('.privacy-link')).toHaveAttribute(
+    'href',
+    'https://changweilin.github.io/mapping_elf/privacy.html',
+  );
+  await expect(page.locator('#route-toggle-header #btn-favorite-add')).toHaveCount(0);
+  await expect(page.locator('#route-toggle-header #btn-export-gpx')).toHaveCount(0);
+  await expect(page.locator('#file-management-toggle-header #btn-panel-narrow')).toHaveCount(0);
+  await expect(page.locator('#instructions-toggle-header #btn-panel-narrow')).toBeVisible();
+  await expect(page.locator('#instructions-toggle-header .panel-width-btn').first()).toHaveAttribute('id', 'btn-panel-widen');
+  await expect(page.locator('#instructions-toggle-header .panel-width-btn').last()).toHaveAttribute('id', 'btn-panel-narrow');
+  await expect(page.locator('#file-management-toggle-header .h3-label')).toHaveText(/我的最愛|Favorites/);
+  await expect(page.locator('#file-management-toggle-header #btn-favorite-add')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header #btn-import-gpx')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header #btn-export-gpx')).toBeVisible();
+  await expect(page.locator('#file-management-toggle-header #btn-favorite-add')).toHaveAttribute('aria-label', '加到最愛');
+  await expect(page.locator('#file-management-toggle-header #btn-export-gpx')).toHaveAttribute('aria-label', /匯出|Export/);
+  await openRouteLibrary(page);
   await expect(page.locator('#elevation-chart-container')).toBeVisible();
   await expect(page.locator('#chart-empty')).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    window.dispatchEvent(new Event('offline'));
+  });
+  await expect(page.locator('.offline-status span:last-child')).toContainText(/Offline|離線/);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    window.dispatchEvent(new Event('online'));
+  });
+  await expect(page.locator('.offline-status span:last-child')).toContainText(/Online|線上/);
   expect(consoleErrors).toEqual([]);
+});
+
+test('pace flat placeholder follows unit and activity changes', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+  const flatInput = page.locator('#pace-flat-input');
+  const unitSelect = page.locator('#pace-unit-select');
+  const activitySelect = page.locator('#speed-activity-select');
+
+  await unitSelect.selectOption('minkm');
+  await expect(flatInput).toHaveAttribute('placeholder', '15.0');
+  await activitySelect.selectOption('walking');
+  await expect(flatInput).toHaveAttribute('placeholder', '17.1');
+
+  await unitSelect.selectOption('shanhe');
+  await expect(flatInput).toHaveAttribute('placeholder', '0.86');
+  await activitySelect.selectOption('hiking');
+  await expect(flatInput).toHaveAttribute('placeholder', '0.75');
+
+  await unitSelect.selectOption('kmh');
+  await expect(flatInput).toHaveAttribute('placeholder', '4.0');
+  await activitySelect.selectOption('walking');
+  await expect(flatInput).toHaveAttribute('placeholder', '3.5');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('route mode syncs the default pace activity and keeps manual overrides available', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+  const activitySelect = page.locator('#speed-activity-select');
+  const flatInput = page.locator('#pace-flat-input');
+
+  const chooseRouteMode = async (mode) => {
+    await page.locator(`input[name="route-mode"][value="${mode}"]`).evaluate((input) => {
+      input.checked = true;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+
+  await chooseRouteMode('cycling');
+  await expect(activitySelect).toHaveValue('cycling');
+  await expect(flatInput).toHaveAttribute('placeholder', '15.0');
+
+  await activitySelect.selectOption('trail-run');
+  await expect(activitySelect).toHaveValue('trail-run');
+  await expect(flatInput).toHaveAttribute('placeholder', '8.0');
+
+  await chooseRouteMode('driving');
+  await expect(activitySelect).toHaveValue('driving');
+  await expect(flatInput).toHaveAttribute('placeholder', '40.0');
+  await expect(page.locator('#stat-kcal-card')).toHaveCSS('display', 'none');
+  await expect(page.locator('#pace-load-row')).toHaveCSS('display', 'none');
+
+  await chooseRouteMode('walking');
+  await expect(activitySelect).toHaveValue('walking');
+  await expect(flatInput).toHaveAttribute('placeholder', '3.5');
+  await expect(page.locator('#pace-load-row')).toHaveCSS('display', 'grid');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('dynamic DOM added after language switch is translated', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+
+  await page.locator('#language-select').selectOption('en');
+  await page.evaluate(() => {
+    const probe = document.createElement('button');
+    probe.id = 'dynamic-i18n-probe';
+    probe.textContent = '更新天氣';
+    probe.title = '點擊複製座標';
+    probe.setAttribute('aria-label', '關閉天氣卡');
+    document.body.appendChild(probe);
+  });
+
+  const probe = page.locator('#dynamic-i18n-probe');
+  await expect(probe).toHaveText('Update weather');
+  await expect(probe).toHaveAttribute('title', 'Click to copy coordinates');
+  await expect(probe).toHaveAttribute('aria-label', 'close the weather card');
+  expect(consoleErrors).toEqual([]);
+});
+
+test('privacy policy page is available in the release build', async ({ page }) => {
+  await page.goto('privacy.html');
+  await expect(page.locator('h1')).toContainText('Mapping Elf');
+  await expect(page.locator('body')).toContainText('定位權限');
 });
 
 test('imports sample KML and keeps route UI functional', async ({ page }) => {
@@ -68,12 +182,12 @@ test('imports sample KML and keeps route UI functional', async ({ page }) => {
   await importFixture(page, sampleKml);
   await expectImportedRoute(page);
 
-  await clickStable(page, '#btn-toggle-elevation');
+  await clickActionable(page, '#btn-toggle-elevation');
   await expect(page.locator('#elevation-chart-container')).toHaveClass(/collapsed/);
-  await clickStable(page, '#btn-toggle-elevation');
+  await clickActionable(page, '#btn-toggle-elevation');
   await expect(page.locator('#elevation-chart-container')).not.toHaveClass(/collapsed/);
 
-  await clickStable(page, '#btn-fit-route');
+  await clickActionable(page, '#btn-fit-route');
   await clickStable(page, '#btn-clear-route');
   await expect(page.locator('#chart-empty')).toBeVisible();
   expect(consoleErrors).toEqual([]);
@@ -85,8 +199,10 @@ test('opens export modal and reveals map-pack options', async ({ page }) => {
   await importFixture(page, sampleKml);
   await expectImportedRoute(page);
 
+  await openRouteLibrary(page);
   await clickStable(page, '#btn-export-gpx');
   await expect(page.locator('#export-modal')).toBeVisible();
+  await expect(page.locator('#export-modal .modal-title')).toHaveText(/匯出|Export/);
   await expect(page.locator('input[name="export-fmt"][value="gpx"]')).toBeChecked();
   await page.locator('input[name="export-fmt"][value="kml"]').check();
   await expect(page.locator('#melmap-sub-options')).not.toBeVisible();
