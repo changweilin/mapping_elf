@@ -75,7 +75,8 @@ export class OfflineManager {
       const keys = await cache.keys();
       this._setCacheInfo(`快取瓦片：${keys.length} 個`);
       const index = await readOfflineTileIndex();
-      this._renderTilePacks(Object.values(index.packs || {}), { cachedTileEntries: keys.length });
+      const cachedUrls = new Set(keys.map((request) => request.url));
+      this._renderTilePacks(Object.values(index.packs || {}), { cachedTileEntries: keys.length, cachedUrls });
     } catch {
       this._setCacheInfo('快取瓦片：0 個');
       this._renderTilePacks([], { cachedTileEntries: 0 });
@@ -244,7 +245,7 @@ export class OfflineManager {
     }
   }
 
-  _renderTilePacks(packs, { unsupported = false, cachedTileEntries = 0 } = {}) {
+  _renderTilePacks(packs, { unsupported = false, cachedTileEntries = 0, cachedUrls = null } = {}) {
     if (!this._packList) return;
     this._packList.textContent = '';
     const sortedPacks = [...packs].sort((a, b) => {
@@ -267,7 +268,7 @@ export class OfflineManager {
       return;
     }
 
-    sortedPacks.forEach((pack) => this._packList.appendChild(this._createPackItem(pack)));
+    sortedPacks.forEach((pack) => this._packList.appendChild(this._createPackItem(pack, cachedUrls)));
   }
 
   _renderOfflineMapSources(sources, capabilities = {}) {
@@ -299,7 +300,7 @@ export class OfflineManager {
     return empty;
   }
 
-  _createPackItem(pack) {
+  _createPackItem(pack, cachedUrls = null) {
     const item = document.createElement('div');
     item.className = 'offline-pack-item';
     item.dataset.packId = pack.id || '';
@@ -313,7 +314,7 @@ export class OfflineManager {
 
     const meta = document.createElement('div');
     meta.className = 'offline-pack-meta';
-    meta.textContent = this._formatPackMeta(pack);
+    meta.textContent = this._formatPackMeta(pack, cachedUrls);
 
     content.append(title, meta);
     item.append(content, this._createDeleteButton(pack));
@@ -384,23 +385,34 @@ export class OfflineManager {
   }
 
   _formatPackTitle(pack) {
+    const routeName = pack.route?.name;
+    if (routeName) return `${routeName} · ${this._sourceLabel(pack.source)}`;
     const providerName = pack.provider?.name || pack.layer || translatePhrase('未知圖層');
     return `${providerName} · ${this._sourceLabel(pack.source)}`;
   }
 
-  _formatPackMeta(pack) {
+  _formatPackMeta(pack, cachedUrls = null) {
     const expected = Number(pack.expectedTileCount || 0);
     const cached = Number(pack.cachedTileCount || 0);
     const urlCount = Number(pack.tileUrlCount || pack.tileUrls?.length || 0);
     const tileSize = this._formatByteSize(pack.tileBytes);
     const createdAt = this._formatPackDate(pack.createdAt);
+    const providerName = pack.provider?.name || pack.layer || translatePhrase('未知圖層');
+    const routeDistance = this._formatDistance(pack.route?.distanceM);
+    const waypointCount = Number(pack.route?.waypointCount || 0);
+    const routeParts = [
+      routeDistance,
+      waypointCount > 0 ? `${waypointCount} ${translatePhrase('航點')}` : '',
+    ].filter(Boolean);
     const parts = [
+      providerName,
+      ...(routeParts.length ? [routeParts.join(' / ')] : []),
       `${cached}/${expected} ${translatePhrase('張圖磚')}`,
       ...(tileSize ? [tileSize] : []),
       `${urlCount} URL`,
       createdAt,
+      this._packAvailabilityLabel(pack, cachedUrls),
     ];
-    if (pack.status === 'incomplete') parts.push(translatePhrase('不完整'));
     return parts.join(' · ');
   }
 
@@ -408,7 +420,25 @@ export class OfflineManager {
     if (!value) return translatePhrase('未知時間');
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return translatePhrase('未知時間');
-    return date.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
+    return date.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  _packAvailabilityLabel(pack, cachedUrls = null) {
+    if (!cachedUrls || !Array.isArray(pack.tileUrls) || pack.tileUrls.length === 0) {
+      return translatePhrase(pack.status === 'incomplete' ? '部分可用' : '可用');
+    }
+    const total = pack.tileUrls.length;
+    const available = pack.tileUrls.filter((url) => cachedUrls.has(url)).length;
+    if (available <= 0) return translatePhrase('已遺失');
+    if (available < total || pack.status === 'incomplete') return translatePhrase('部分可用');
+    return translatePhrase('可用');
+  }
+
+  _formatDistance(meters) {
+    const value = Number(meters || 0);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} km`;
+    return `${Math.round(value)} m`;
   }
 
   _formatOfflineMapSourceMeta(source) {

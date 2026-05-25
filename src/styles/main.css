@@ -2120,6 +2120,7 @@ body.route-list-dragging {
 .route-library-inline-actions {
   display: flex;
   flex: 0 0 auto;
+  align-items: center;
   gap: 6px;
   pointer-events: auto;
 }
@@ -2128,6 +2129,24 @@ body.route-list-dragging {
   flex: 0 0 auto;
   min-width: 42px;
   padding: 5px 8px;
+}
+
+.btn-secondary.route-library-icon-action {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  flex: 0 0 30px;
+}
+
+.btn-secondary.route-library-icon-action svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.btn-secondary.route-library-icon-action.danger {
+  color: var(--danger);
 }
 
 .btn-secondary {
@@ -5223,7 +5242,7 @@ body.modal-open {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .export-option {
@@ -5235,15 +5254,97 @@ body.modal-open {
   font-size: 13px;
 }
 
-.export-option input[type="radio"] {
+.export-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.export-section-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  margin: 14px 0 8px;
+  text-transform: uppercase;
+}
+
+.export-format-options {
+  gap: 8px;
+}
+
+.export-option-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.export-option-card.compact {
+  padding: 8px 10px;
+}
+
+.export-option-card strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.export-option input[type="radio"],
+.export-option input[type="checkbox"] {
   margin-top: 2px;
   accent-color: var(--accent-primary);
   flex-shrink: 0;
 }
 
 .export-option small {
+  display: block;
   color: var(--text-muted);
   font-size: 11px;
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+.export-preset-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.export-preset {
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.export-preset input {
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.export-plan-summary {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+  padding: 9px 10px;
+}
+
+.melmap-detail-options {
+  border-left: 2px solid var(--border);
+  margin-left: 4px;
+  padding-left: 12px;
 }
 
 /* ======== Dynamic Layout Offsets ======== */

@@ -2379,10 +2379,11 @@ function formatByteSize(bytes) {
   return `${size.toFixed(digits)} ${units[unitIndex]}`;
 }
 
-async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
-  const includeRoute = document.getElementById('mappack-inc-route').checked;
-  const includeTiles = document.getElementById('mappack-inc-tiles').checked;
-  const includeState = document.getElementById('mappack-inc-state').checked;
+async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', plan = readExportPlan()) {
+  const includeRoute = plan.includeRoute;
+  const includeWeather = plan.includeWeather;
+  const includeTiles = plan.includeTiles;
+  const includeState = plan.includeState;
   if (includeTiles) {
     const tilePolicy = getOfflineTileExportPolicy();
     if (!tilePolicy.allowed) {
@@ -2404,8 +2405,15 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
   const { exportCoords, exportElevations } = getExportRouteData();
 
   const gpxXml = includeRoute
-    ? (await ensureRouteExporters()).GpxExporter.generate(collectExportData(), exportCoords, exportElevations, routeName)
+    ? (await ensureRouteExporters()).GpxExporter.generate(
+      collectExportData(),
+      exportCoords,
+      exportElevations,
+      routeName,
+      { includeWeather }
+    )
     : null;
+  const routeMeta = includeRoute ? buildExportRouteMeta(routeName, exportCoords) : null;
 
   progressContainer.classList.remove('hidden');
 
@@ -2423,8 +2431,11 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
       routeCoords: currentRouteCoords,
       layerInfo: layerInfo && { ...layerInfo, name: mapManager.currentLayerName },
       includeRoute,
+      includeWeather,
       includeTiles,
       includeState,
+      sharePreset: plan.preset,
+      routeMeta,
       gpxXml,
       filenameBase,
       onProgress: (cur, total, phase) => {
@@ -2435,13 +2446,14 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
         progressFill.style.width = `${pct}%`;
       },
     });
-    await platform.downloadFile({
+    await platform.shareFile({
       filename,
-      mimeType: 'application/zip',
+      mimeType: 'application/vnd.mappingelf.melmap+zip',
       content: blob,
     });
     const parts = [];
     if (includeRoute) parts.push('路線');
+    if (includeRoute && includeWeather) parts.push('天氣');
     if (includeTiles) {
       const tilePart = downloadedTileCount === tileCount
         ? `${tileCount} 張圖磚`
@@ -2449,9 +2461,9 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
       const tileSize = downloadedTileBytes > 0 ? `圖磚 ${formatByteSize(downloadedTileBytes)}` : '';
       parts.push(tileSize ? `${tilePart} · ${tileSize}` : tilePart);
     }
-    if (includeState) parts.push('個人偏好');
+    if (includeState) parts.push('設定');
     const zipSize = zipBytes > 0 ? `，檔案 ${formatByteSize(zipBytes)}` : '';
-    showNotification(`離線地圖包已匯出 (${parts.join('、')}${zipSize})`, 'success');
+    showNotification(`分享包已建立 (${parts.join('、')}${zipSize})`, 'success');
   } catch (err) {
     showNotification(err.message || '匯出失敗', 'error');
     console.error(err);
@@ -2476,6 +2488,41 @@ function _closeMappackImportModal() {
 // });
 document.getElementById('btn-mappack-import-cancel')?.addEventListener('click', _closeMappackImportModal);
 
+function exportPresetLabel(preset) {
+  return EXPORT_PRESET_CONFIG[preset]?.label || preset || '自訂內容';
+}
+
+function formatManifestTileSummary(manifest = {}) {
+  const providerName = manifest.tileProvider?.name || manifest.resources?.tiles?.provider?.name || manifest.layer || '未知圖層';
+  const expected = Number(manifest.tileCount || manifest.resources?.tiles?.expectedTileCount || 0);
+  const cached = Number(manifest.downloadedTileCount || manifest.resources?.tiles?.cachedTileCount || expected || 0);
+  const bytes = Number(manifest.downloadedTileBytes || manifest.resources?.tiles?.tileBytes || 0);
+  const size = bytes > 0 ? `，${formatByteSize(bytes)}` : '';
+  return `${providerName}，${cached}/${expected} 張${size}`;
+}
+
+function formatMappackImportMeta(parsed) {
+  const manifest = parsed?.manifest || {};
+  const createdAt = manifest.createdAt ? new Date(manifest.createdAt).toLocaleString() : '—';
+  const parts = [
+    `來源:${manifest.generator || '—'}`,
+    `建立:${createdAt}`,
+  ];
+  if (manifest.sharePreset) parts.push(`Preset:${exportPresetLabel(manifest.sharePreset)}`);
+  if (parsed.hasGpx) {
+    const routeBits = [manifest.route?.name || '路線'];
+    if (manifest.route?.distanceM) routeBits.push(formatDistance(manifest.route.distanceM));
+    if (manifest.includes?.weather) routeBits.push('含天氣');
+    parts.push(`路線:${routeBits.join(' / ')}`);
+  }
+  if (parsed.hasTiles) parts.push(`離線包:${formatManifestTileSummary(manifest)}`);
+  if (parsed.hasState) {
+    const keyCount = manifest.resources?.state?.keyCount;
+    parts.push(`設定:${Number.isFinite(Number(keyCount)) ? `${keyCount} 項` : '可還原'}`);
+  }
+  return parts.join(' · ');
+}
+
 async function openMappackImportModal(file) {
   try {
     const { MapPackImporter } = await ensureMapPackModules();
@@ -2497,13 +2544,12 @@ async function openMappackImportModal(file) {
 
     const tilesInfo = document.getElementById('mappack-import-tiles-info');
     if (tilesInfo) tilesInfo.textContent = parsed.hasTiles
-      ? `（圖層:${parsed.manifest.layer},${parsed.manifest.tileCount} 張)`
+      ? `（${formatManifestTileSummary(parsed.manifest)}）`
       : '';
 
     const meta = document.getElementById('mappack-import-meta');
     if (meta) {
-      const t = parsed.manifest.createdAt ? new Date(parsed.manifest.createdAt).toLocaleString() : '—';
-      meta.textContent = `來源:${parsed.manifest.generator || '—'} · 建立:${t}`;
+      meta.textContent = formatMappackImportMeta(parsed);
     }
 
     document.body.classList.add('modal-open');
@@ -2575,8 +2621,11 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
 
     const parts = [];
     if (applied.gpxXml) parts.push('路線');
-    if (applied.tileCount) parts.push(`${applied.tileCount} 張圖磚`);
-    if (applied.stateApplied) parts.push('個人偏好');
+    if (applied.tileCount) {
+      const tileSize = applied.tileBytes ? `，${formatByteSize(applied.tileBytes)}` : '';
+      parts.push(`${applied.layer || '離線包'} ${applied.tileCount} 張圖磚${tileSize}`);
+    }
+    if (applied.stateApplied) parts.push('設定');
     showNotification(`離線地圖包匯入完成 (${parts.join('、') || '無'})`, 'success');
   } catch (err) {
     showNotification(err.message || '匯入失敗', 'error');
@@ -3839,6 +3888,153 @@ const exportModal = document.getElementById('export-modal');
 const btnExportConfirm = document.getElementById('btn-export-confirm');
 const btnExportCancel = document.getElementById('btn-export-cancel');
 
+const EXPORT_PRESET_CONFIG = Object.freeze({
+  'route-only': {
+    label: '只分享路線',
+    includeRoute: true,
+    includeWeather: false,
+    includeState: false,
+    includeTiles: false,
+    requiresMelmap: false,
+  },
+  'with-weather': {
+    label: '含天氣',
+    includeRoute: true,
+    includeWeather: true,
+    includeState: false,
+    includeTiles: false,
+    requiresMelmap: false,
+  },
+  'with-settings': {
+    label: '含設定',
+    includeRoute: true,
+    includeWeather: true,
+    includeState: true,
+    includeTiles: false,
+    requiresMelmap: true,
+  },
+  'with-offline': {
+    label: '含離線包',
+    includeRoute: true,
+    includeWeather: true,
+    includeState: true,
+    includeTiles: true,
+    requiresMelmap: true,
+  },
+});
+
+const EXPORT_FORMAT_LABELS = Object.freeze({
+  gpx: 'GPX · 戶外 / GPS App',
+  kml: 'KML · 地圖工具',
+  all: 'GPX + KML · 通用格式',
+  melmap: '.melmap · Mapping Elf 完整還原',
+});
+
+function getCheckedExportValue(name, fallback) {
+  return exportModal?.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
+}
+
+function setCheckedExportValue(name, value) {
+  const input = exportModal?.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (input) input.checked = true;
+}
+
+function getSelectedExportPreset() {
+  return getCheckedExportValue('export-preset', 'with-weather');
+}
+
+function getSelectedExportFormat() {
+  return getCheckedExportValue('export-fmt', 'gpx');
+}
+
+function applyExportPresetToDetailControls(preset = getSelectedExportPreset()) {
+  const config = EXPORT_PRESET_CONFIG[preset] || EXPORT_PRESET_CONFIG['with-weather'];
+  const route = document.getElementById('mappack-inc-route');
+  const weather = document.getElementById('mappack-inc-weather');
+  const state = document.getElementById('mappack-inc-state');
+  const tiles = document.getElementById('mappack-inc-tiles');
+  if (route) route.checked = config.includeRoute;
+  if (weather) weather.checked = config.includeWeather;
+  if (state) state.checked = config.includeState;
+  if (tiles) tiles.checked = config.includeTiles;
+  syncMelmapWeatherOption();
+}
+
+function syncMelmapWeatherOption() {
+  const route = document.getElementById('mappack-inc-route');
+  const weather = document.getElementById('mappack-inc-weather');
+  const option = weather?.closest('.export-option');
+  if (!weather) return;
+  const hasRoute = route?.checked !== false;
+  weather.disabled = !hasRoute;
+  if (!hasRoute) weather.checked = false;
+  option?.classList.toggle('is-disabled', !hasRoute);
+}
+
+function syncExportModalState() {
+  let fmt = getSelectedExportFormat();
+  let preset = getSelectedExportPreset();
+  const presetConfig = EXPORT_PRESET_CONFIG[preset] || EXPORT_PRESET_CONFIG['with-weather'];
+
+  if (presetConfig.requiresMelmap && fmt !== 'melmap') {
+    fmt = 'melmap';
+    setCheckedExportValue('export-fmt', 'melmap');
+  }
+
+  if (fmt !== 'melmap' && presetConfig.requiresMelmap) {
+    preset = 'with-weather';
+    setCheckedExportValue('export-preset', preset);
+    applyExportPresetToDetailControls(preset);
+  }
+
+  const sub = document.getElementById('melmap-sub-options');
+  if (sub) sub.style.display = fmt === 'melmap' ? '' : 'none';
+
+  syncMelmapWeatherOption();
+  if (fmt === 'melmap') updateMapPackTileOptionState();
+  updateExportPlanSummary();
+}
+
+function readExportPlan() {
+  const fmt = getSelectedExportFormat();
+  const preset = getSelectedExportPreset();
+  const config = EXPORT_PRESET_CONFIG[preset] || EXPORT_PRESET_CONFIG['with-weather'];
+
+  if (fmt !== 'melmap') {
+    return {
+      format: fmt,
+      preset,
+      includeRoute: true,
+      includeWeather: config.includeWeather !== false,
+      includeState: false,
+      includeTiles: false,
+    };
+  }
+
+  const includeRoute = document.getElementById('mappack-inc-route')?.checked === true;
+  return {
+    format: fmt,
+    preset,
+    includeRoute,
+    includeWeather: includeRoute && document.getElementById('mappack-inc-weather')?.checked === true,
+    includeState: document.getElementById('mappack-inc-state')?.checked === true,
+    includeTiles: document.getElementById('mappack-inc-tiles')?.checked === true,
+  };
+}
+
+function updateExportPlanSummary() {
+  const summary = document.getElementById('export-plan-summary');
+  if (!summary) return;
+  const plan = readExportPlan();
+  const content = [];
+  if (plan.includeRoute) content.push('路線');
+  if (plan.includeRoute && plan.includeWeather) content.push('天氣');
+  if (plan.includeState) content.push('設定');
+  if (plan.includeTiles) content.push('離線包');
+  if (content.length === 0) content.push('尚未選擇內容');
+  summary.textContent = `${EXPORT_FORMAT_LABELS[plan.format] || '匯出'} · ${content.join('、')}`;
+}
+
 function openExportModal() {
   const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
   // For non-melmap formats, a route is required. For melmap, we gate per-option
@@ -3855,19 +4051,39 @@ function openExportModal() {
     nameInput.value = buildDefaultRouteName();
   }
 
+  applyExportPresetToDetailControls(getSelectedExportPreset());
+  syncExportModalState();
   document.body.classList.add('modal-open');
   exportModal.classList.remove('hidden');
 }
 
-// Toggle melmap sub-options visibility when fmt radio changes.
+// Toggle .melmap detail visibility and preset-driven content.
 exportModal?.querySelectorAll('input[name="export-fmt"]').forEach((r) => {
   r.addEventListener('change', () => {
-    const sub = document.getElementById('melmap-sub-options');
-    if (sub) sub.style.display = r.checked && r.value === 'melmap' ? '' : sub.style.display;
-    // Hide if a non-melmap radio is now checked.
-    const checked = exportModal.querySelector('input[name="export-fmt"]:checked')?.value;
-    if (sub) sub.style.display = checked === 'melmap' ? '' : 'none';
-    if (checked === 'melmap') updateMapPackTileOptionState();
+    if (r.checked && r.value !== 'melmap') {
+      const preset = getSelectedExportPreset();
+      if (EXPORT_PRESET_CONFIG[preset]?.requiresMelmap) {
+        setCheckedExportValue('export-preset', 'with-weather');
+        applyExportPresetToDetailControls('with-weather');
+      }
+    }
+    syncExportModalState();
+  });
+});
+
+exportModal?.querySelectorAll('input[name="export-preset"]').forEach((r) => {
+  r.addEventListener('change', () => {
+    if (!r.checked) return;
+    applyExportPresetToDetailControls(r.value);
+    syncExportModalState();
+  });
+});
+
+['mappack-inc-route', 'mappack-inc-weather', 'mappack-inc-state', 'mappack-inc-tiles'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('change', () => {
+    syncMelmapWeatherOption();
+    if (id === 'mappack-inc-tiles') updateMapPackTileOptionState();
+    updateExportPlanSummary();
   });
 });
 
@@ -3947,6 +4163,53 @@ function buildExportFilenameBase() {
   return `${namePart}_${ts}`;
 }
 
+function distanceForCoords(coords = []) {
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    total += haversineDistance(coords[i - 1], coords[i]);
+  }
+  return total;
+}
+
+function boundsForCoordsObject(coords = []) {
+  if (!coords.length) return null;
+  const lats = coords.map(([lat]) => lat).filter(Number.isFinite);
+  const lngs = coords.map(([, lng]) => lng).filter(Number.isFinite);
+  if (!lats.length || !lngs.length) return null;
+  return {
+    north: Math.max(...lats),
+    south: Math.min(...lats),
+    east: Math.max(...lngs),
+    west: Math.min(...lngs),
+  };
+}
+
+function routeFingerprintForCoords(coords = []) {
+  let hash = 2166136261;
+  const text = coords
+    .map(([lat, lng]) => `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`)
+    .join('|');
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `route-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function buildExportRouteMeta(routeName, coords = currentRouteCoords) {
+  if (!coords?.length) return null;
+  const fingerprint = routeFingerprintForCoords(coords);
+  return {
+    id: fingerprint,
+    fingerprint,
+    name: routeName || buildDefaultRouteName() || 'Mapping Elf Track',
+    distanceM: distanceForCoords(coords),
+    pointCount: coords.length,
+    waypointCount: mapManager.waypoints.length,
+    bounds: boundsForCoordsObject(coords),
+  };
+}
+
 function closeExportModal() {
   document.body.classList.remove('modal-open');
   exportModal.classList.add('hidden');
@@ -3959,12 +4222,9 @@ function closeExportModal() {
 // });
 btnExportCancel?.addEventListener('click', closeExportModal);
 btnExportConfirm?.addEventListener('click', async () => {
-  const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
-  if (fmt === 'melmap') {
-    const includeRoute = document.getElementById('mappack-inc-route').checked;
-    const includeTiles = document.getElementById('mappack-inc-tiles').checked;
-    const includeState = document.getElementById('mappack-inc-state').checked;
-    if (includeTiles) {
+  const plan = readExportPlan();
+  if (plan.format === 'melmap') {
+    if (plan.includeTiles) {
       const tilePolicy = getOfflineTileExportPolicy();
       if (!tilePolicy.allowed) {
         showNotification(tilePolicy.reason || OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE, 'warning');
@@ -3972,11 +4232,11 @@ btnExportConfirm?.addEventListener('click', async () => {
         return;
       }
     }
-    if (!includeRoute && !includeTiles && !includeState) {
+    if (!plan.includeRoute && !plan.includeTiles && !plan.includeState) {
       showNotification('請至少勾選一項離線地圖包內容', 'warning');
       return;
     }
-    if ((includeRoute || includeTiles) && currentRouteCoords.length === 0) {
+    if ((plan.includeRoute || plan.includeTiles) && currentRouteCoords.length === 0) {
       showNotification('匯出路線/圖磚前請先建立路線', 'warning');
       return;
     }
@@ -3985,12 +4245,12 @@ btnExportConfirm?.addEventListener('click', async () => {
     const routeName = nameInput ? nameInput.value.trim() : buildDefaultRouteName();
 
     closeExportModal();
-    await doExportMapPack(buildExportFilenameBase(), routeName);
+    await doExportMapPack(buildExportFilenameBase(), routeName, plan);
     return;
   }
   closeExportModal();
   try {
-    await doExport(fmt);
+    await doExport(plan.format, plan);
   } catch (err) {
     console.error(err);
     showNotification('匯出失敗', 'error');
@@ -4000,11 +4260,24 @@ btnExportConfirm?.addEventListener('click', async () => {
 // =========== Favorites ===========
 
 const favoritesReplaceModal = document.getElementById('favorites-replace-modal');
+let favoriteExportRequestSeq = 0;
 
 function _escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
+}
+
+const ROUTE_LIBRARY_ACTION_ICONS = Object.freeze({
+  load: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M10 17l5-5-5-5v4H3v2h12v4l-5 0zM19 3h-8v2h8v14h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" fill="currentColor"/></svg>',
+  export: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>',
+  delete: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor"/></svg>',
+});
+
+function routeLibraryActionButton({ action, id, label, icon, className = '' }) {
+  const safeId = _escapeHtml(id);
+  const safeLabel = _escapeHtml(label);
+  return `<button type="button" class="btn-secondary route-library-mini-btn route-library-icon-action ${className}" data-favorite-${action}="${safeId}" title="${safeLabel}" aria-label="${safeLabel}">${ROUTE_LIBRARY_ACTION_ICONS[icon]}</button>`;
 }
 
 const ROUTE_MODE_LABELS = {
@@ -4261,12 +4534,80 @@ function loadFavorite(fav) {
 }
 
 function deleteFavorite(id) {
+  favoriteExportRequestSeq += 1;
   const n = favorites.length;
   favorites = favorites.filter(f => f.id !== id);
   if (favorites.length !== n) {
     persistFavorites();
     renderFavoritesList();
     showNotification('已從最愛移除', 'info', 1200);
+  }
+}
+
+function waitForFavoriteRouteReady(fav, requestId, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let sawRoutePlanning = isProcessing || isRouteWeatherBusy();
+
+    const check = () => {
+      if (requestId !== favoriteExportRequestSeq) {
+        resolve(false);
+        return;
+      }
+
+      const currentMatchesFavorite = waypointsMatch(fav?.waypoints, mapManager.waypoints);
+      sawRoutePlanning ||= isProcessing || isRouteWeatherBusy();
+
+      if (currentMatchesFavorite && currentRouteCoords.length >= 2 && !isProcessing && !isRouteWeatherBusy()) {
+        resolve(true);
+        return;
+      }
+
+      if (
+        sawRoutePlanning
+        && currentMatchesFavorite
+        && !isProcessing
+        && !isRouteWeatherBusy()
+        && !pendingUpdate
+        && currentRouteCoords.length < 2
+      ) {
+        resolve(false);
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+
+      setTimeout(check, 250);
+    };
+
+    check();
+  });
+}
+
+async function exportFavorite(fav) {
+  if (!fav || !Array.isArray(fav.waypoints) || fav.waypoints.length < 2) {
+    showNotification('最愛路線資料無效', 'error');
+    return;
+  }
+
+  const requestId = ++favoriteExportRequestSeq;
+  loadFavorite(fav);
+  const ready = await waitForFavoriteRouteReady(fav, requestId);
+  if (requestId !== favoriteExportRequestSeq) return;
+
+  if (!ready) {
+    showNotification('找不到合適路徑', 'warning');
+    return;
+  }
+
+  openExportModal();
+  const nameInput = document.getElementById('export-filename-input');
+  if (nameInput && fav.name) {
+    nameInput.value = fav.name;
+    updateExportPlanSummary();
   }
 }
 
@@ -4293,8 +4634,9 @@ function renderFavoritesContainer(container) {
           <div class="fav-meta">${count} 個航點 · ${_escapeHtml(dateStr)}</div>
         </div>
         <div class="route-library-inline-actions">
-          <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-load="${_escapeHtml(f.id)}">載入</button>
-          <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-delete="${_escapeHtml(f.id)}">刪除</button>
+          ${routeLibraryActionButton({ action: 'load', id: f.id, label: '載入', icon: 'load' })}
+          ${routeLibraryActionButton({ action: 'export', id: f.id, label: '匯出', icon: 'export' })}
+          ${routeLibraryActionButton({ action: 'delete', id: f.id, label: '刪除', icon: 'delete', className: 'danger' })}
         </div>
       </div>`;
   }).join('');
@@ -4310,8 +4652,16 @@ function _bindFavoriteItemInteractions(container) {
   container.querySelectorAll('[data-favorite-load]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      favoriteExportRequestSeq += 1;
       const fav = favorites.find(f => f.id === btn.dataset.favoriteLoad);
       if (fav) loadFavorite(fav);
+    });
+  });
+  container.querySelectorAll('[data-favorite-export]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fav = favorites.find(f => f.id === btn.dataset.favoriteExport);
+      if (fav) exportFavorite(fav);
     });
   });
   container.querySelectorAll('[data-favorite-delete]').forEach(btn => {
@@ -4323,12 +4673,14 @@ function _bindFavoriteItemInteractions(container) {
   container.querySelectorAll('.favorite-item').forEach(item => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
+      favoriteExportRequestSeq += 1;
       const fav = favorites.find(f => f.id === item.dataset.id);
       if (fav) loadFavorite(fav);
     });
     item.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       e.preventDefault();
+      favoriteExportRequestSeq += 1;
       const fav = favorites.find(f => f.id === item.dataset.id);
       if (fav) loadFavorite(fav);
     });
@@ -4474,27 +4826,28 @@ function collectSegmentDates() {
   return result;
 }
 
-async function doExport(fmt) {
+async function doExport(fmt, plan = readExportPlan()) {
   const nameInput = document.getElementById('export-filename-input');
   const routeName = (nameInput ? nameInput.value.trim() : null) || buildDefaultRouteName() || 'Mapping Elf Track';
   const filename = buildExportFilenameBase();
+  const includeWeather = plan.includeWeather !== false;
 
   const wpData = collectExportData();
   const { exportCoords, exportElevations } = getExportRouteData();
   const { GpxExporter, KmlExporter } = await ensureRouteExporters();
 
   if (fmt === 'gpx' || fmt === 'all') {
-    const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName);
-    await platform.downloadFile(GpxExporter.createDownloadPayload(gpx, `${filename}.gpx`));
+    const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
+    await platform.shareFile(GpxExporter.createDownloadPayload(gpx, `${filename}.gpx`));
   }
 
   if (fmt === 'kml' || fmt === 'all') {
-    const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName);
-    await platform.downloadFile(KmlExporter.createDownloadPayload(kml, `${filename}.kml`));
+    const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
+    await platform.shareFile(KmlExporter.createDownloadPayload(kml, `${filename}.kml`));
   }
 
   const label = fmt === 'all' ? 'GPX + KML' : fmt.toUpperCase();
-  showNotification(`${label} 檔案已匯出`, 'success');
+  showNotification(`${label} 檔案已準備分享${includeWeather ? '（含天氣）' : '（只含路線）'}`, 'success');
 }
 
 /**

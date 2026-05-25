@@ -41,6 +41,43 @@ function buildTileProviderManifest(layerInfo) {
   };
 }
 
+function cleanText(value, fallback = null) {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+}
+
+function cleanNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeBounds(bounds) {
+  if (!bounds || typeof bounds !== 'object') return null;
+  const normalized = {
+    north: cleanNumber(bounds.north),
+    south: cleanNumber(bounds.south),
+    east: cleanNumber(bounds.east),
+    west: cleanNumber(bounds.west),
+  };
+  return Object.values(normalized).every((value) => value !== null) ? normalized : null;
+}
+
+function normalizeRouteManifest(routeMeta = {}) {
+  if (!routeMeta || typeof routeMeta !== 'object') return null;
+  const pointCount = Math.max(0, Number(routeMeta.pointCount || 0));
+  const waypointCount = Math.max(0, Number(routeMeta.waypointCount || 0));
+  const route = {
+    id: cleanText(routeMeta.id),
+    fingerprint: cleanText(routeMeta.fingerprint),
+    name: cleanText(routeMeta.name, 'Mapping Elf Track'),
+    distanceM: cleanNumber(routeMeta.distanceM),
+    pointCount,
+    waypointCount,
+    bounds: normalizeBounds(routeMeta.bounds),
+  };
+  return route.name || route.fingerprint || route.pointCount > 0 ? route : null;
+}
+
 function getOfflineTileExportPolicy(layerInfo) {
   const policy = layerInfo?.provider?.offlineTileExport;
   if (policy?.allowed === false) {
@@ -61,8 +98,11 @@ export class MapPackExporter {
    * @param {Array}    opts.routeCoords      [[lat,lng], ...]
    * @param {Object}   opts.layerInfo        { urlTemplate, maxZoom, name }
    * @param {boolean}  opts.includeRoute
+   * @param {boolean}  opts.includeWeather
    * @param {boolean}  opts.includeTiles
    * @param {boolean}  opts.includeState
+   * @param {string}   opts.sharePreset
+   * @param {Object}   opts.routeMeta
    * @param {string}   opts.gpxXml           Pre-built GPX (required if includeRoute)
    * @param {string}   opts.filenameBase
    * @param {Function} opts.onProgress       (current, total, phase) → void
@@ -73,8 +113,11 @@ export class MapPackExporter {
     routeCoords,
     layerInfo,
     includeRoute,
+    includeWeather = true,
     includeTiles,
     includeState,
+    sharePreset = null,
+    routeMeta = null,
     gpxXml,
     filenameBase = 'mapping-elf-pack',
     onProgress = () => {},
@@ -92,8 +135,25 @@ export class MapPackExporter {
       createdAt: new Date().toISOString(),
       includes: {
         route: !!includeRoute,
+        weather: !!(includeRoute && includeWeather),
         tiles: !!includeTiles,
         state: !!includeState,
+      },
+      sharePreset: sharePreset || null,
+      route: includeRoute ? normalizeRouteManifest(routeMeta) : null,
+      resources: {
+        route: {
+          included: !!includeRoute,
+          weatherIncluded: !!(includeRoute && includeWeather),
+        },
+        state: {
+          included: !!includeState,
+          keyCount: 0,
+        },
+        tiles: {
+          included: !!includeTiles,
+          status: includeTiles ? 'pending' : 'not-included',
+        },
       },
       layer: null,
       bounds: null,
@@ -118,6 +178,7 @@ export class MapPackExporter {
         const v = localStorage.getItem(key);
         if (v !== null) snapshot[key] = v;
       }
+      manifest.resources.state.keyCount = Object.keys(snapshot).length;
       zip.file('state.json', JSON.stringify(snapshot, null, 2));
     }
 
@@ -145,6 +206,12 @@ export class MapPackExporter {
       manifest.maxZoom = maxZoom;
       manifest.tileCount = totalTiles;
       manifest.tileProvider = buildTileProviderManifest(layerInfo);
+      manifest.resources.tiles.layer = layerInfo.name;
+      manifest.resources.tiles.provider = manifest.tileProvider;
+      manifest.resources.tiles.bounds = manifest.bounds;
+      manifest.resources.tiles.minZoom = minZoom;
+      manifest.resources.tiles.maxZoom = maxZoom;
+      manifest.resources.tiles.expectedTileCount = totalTiles;
 
       const cache = 'caches' in self ? await caches.open(OFFLINE_TILE_CACHE_NAME) : null;
       const cachedTileUrls = new Set();
@@ -170,10 +237,15 @@ export class MapPackExporter {
       }
       manifest.downloadedTileCount = downloadedTileCount;
       manifest.downloadedTileBytes = downloadedTileBytes;
+      manifest.resources.tiles.status = downloadedTileCount === totalTiles ? 'complete' : 'incomplete';
+      manifest.resources.tiles.cachedTileCount = downloadedTileCount;
+      manifest.resources.tiles.tileBytes = downloadedTileBytes;
 
       await addOfflineTilePack({
         source: 'export',
         status: downloadedTileCount === totalTiles ? 'complete' : 'incomplete',
+        route: manifest.route,
+        sharePreset,
         layer: layerInfo.name,
         bounds: manifest.bounds,
         minZoom,

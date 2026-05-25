@@ -27,6 +27,41 @@ function toNonNegativeNumber(value) {
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
+function safeText(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
+function safeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeBounds(bounds) {
+  if (!bounds || typeof bounds !== 'object') return null;
+  const normalized = {
+    north: safeNumber(bounds.north),
+    south: safeNumber(bounds.south),
+    east: safeNumber(bounds.east),
+    west: safeNumber(bounds.west),
+  };
+  return Object.values(normalized).every((value) => value !== null) ? normalized : null;
+}
+
+function normalizeRoute(route) {
+  if (!route || typeof route !== 'object') return null;
+  const normalized = {
+    id: safeText(route.id),
+    fingerprint: safeText(route.fingerprint),
+    name: safeText(route.name),
+    distanceM: safeNumber(route.distanceM),
+    pointCount: toNonNegativeNumber(route.pointCount),
+    waypointCount: toNonNegativeNumber(route.waypointCount),
+    bounds: normalizeBounds(route.bounds),
+  };
+  return normalized.name || normalized.fingerprint || normalized.pointCount > 0 ? normalized : null;
+}
+
 function normalizeIndex(value) {
   if (!value || typeof value !== 'object') return emptyIndex();
   const packs = value.packs && typeof value.packs === 'object' ? value.packs : {};
@@ -43,6 +78,9 @@ function normalizeIndex(value) {
             cachedTileCount: toNonNegativeNumber(pack.cachedTileCount),
             tileUrlCount: toNonNegativeNumber(pack.tileUrlCount) || tileUrls.length,
             tileBytes: toNonNegativeNumber(pack.tileBytes ?? pack.downloadedTileBytes),
+            route: normalizeRoute(pack.route),
+            sharePreset: safeText(pack.sharePreset),
+            sourceFileName: safeText(pack.sourceFileName),
             tileUrls,
           }];
         })
@@ -111,6 +149,9 @@ export async function addOfflineTilePack(record = {}) {
     tileUrlCount: tileUrls.length,
     tileBytes: toNonNegativeNumber(record.tileBytes ?? record.downloadedTileBytes),
     provider: record.provider || null,
+    route: normalizeRoute(record.route),
+    sharePreset: safeText(record.sharePreset),
+    sourceFileName: safeText(record.sourceFileName),
     tileUrls,
   };
 

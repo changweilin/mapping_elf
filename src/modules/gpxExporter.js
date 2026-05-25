@@ -20,8 +20,11 @@ export class GpxExporter {
    * @param {Array}    routeCoords - [[lat,lng], …] full track
    * @param {number[]} elevations  - elevation at each route coord
    * @param {string}   name
+   * @param {Object}   options
+   * @param {boolean}  options.includeWeather
    */
-  static generate(wpData, routeCoords, elevations = [], name = 'Mapping Elf Track') {
+  static generate(wpData, routeCoords, elevations = [], name = 'Mapping Elf Track', options = {}) {
+    const includeWeather = options.includeWeather !== false;
     const now = new Date().toISOString();
     let gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Mapping Elf"
@@ -54,21 +57,22 @@ export class GpxExporter {
       }
 
       const hasCum = typeof pt.cum === 'number' && Number.isFinite(pt.cum);
-      const hasExt = pt.date || pt.time || pt.windyUrl || hasCum ||
-        (pt.weather && Object.values(pt.weather).some(v => v.value && v.value !== '—'));
+      const hasWeatherExt = includeWeather && (pt.date || pt.time || pt.windyUrl ||
+        (pt.weather && Object.values(pt.weather).some(v => v.value && v.value !== '—')));
+      const hasExt = hasCum || hasWeatherExt;
       if (hasExt) {
         gpx += `    <extensions>\n`;
         if (hasCum) gpx += `      <mel:cumDistM>${pt.cum.toFixed(1)}</mel:cumDistM>\n`;
-        if (pt.date) gpx += `      <mel:date>${this._escapeXml(pt.date)}</mel:date>\n`;
-        if (pt.time) gpx += `      <mel:time>${this._escapeXml(pt.time)}</mel:time>\n`;
-        if (pt.weather) {
+        if (includeWeather && pt.date) gpx += `      <mel:date>${this._escapeXml(pt.date)}</mel:date>\n`;
+        if (includeWeather && pt.time) gpx += `      <mel:time>${this._escapeXml(pt.time)}</mel:time>\n`;
+        if (includeWeather && pt.weather) {
           for (const [key, { value }] of Object.entries(pt.weather)) {
             if (value && value !== '—') {
               gpx += `      <mel:${key}>${this._escapeXml(String(value))}</mel:${key}>\n`;
             }
           }
         }
-        if (pt.windyUrl) {
+        if (includeWeather && pt.windyUrl) {
           gpx += `      <mel:windyUrl>${this._escapeXml(pt.windyUrl)}</mel:windyUrl>\n`;
         }
         gpx += `    </extensions>\n`;
@@ -80,7 +84,7 @@ export class GpxExporter {
     // Track — annotate each trkpt with the nearest weather-point data
     if (routeCoords.length > 0) {
       // Build cumulative distance index for wpData points (metres along route)
-      const wpWithCum = wpData.filter(p => typeof p.cum === 'number');
+      const wpWithCum = includeWeather ? wpData.filter(p => typeof p.cum === 'number') : [];
 
       // Compute cumulative distances for routeCoords
       const trkCum = this._cumulativeDistances(routeCoords);
