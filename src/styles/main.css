@@ -454,6 +454,10 @@ html.light-theme #loading-screen .loading-bar {
   pointer-events: none;
 }
 
+body.app-initial-loading .app-busy-overlay {
+  opacity: 0;
+}
+
 .app-busy-overlay .loading-content {
   position: relative;
   z-index: 1;

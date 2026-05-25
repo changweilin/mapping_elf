@@ -1290,6 +1290,8 @@ mapManager.onIntermediateSelect = (lat, lng) => {
 
 // =========== DOM Elements ===========
 const loadingScreen = document.getElementById('loading-screen');
+const INITIAL_LOADING_FADE_MS = 520;
+document.body.classList.add('app-initial-loading');
 const sidePanel = document.getElementById('side-panel');
 const waypointList = document.getElementById('waypoint-list');
 const alternativesList = document.getElementById('alternatives-list');
@@ -9910,6 +9912,10 @@ async function init() {
 
   setTimeout(() => {
     loadingScreen.classList.add('hidden');
+    setTimeout(() => {
+      document.body.classList.remove('app-initial-loading');
+      document.body.classList.add('app-loading-ready');
+    }, INITIAL_LOADING_FADE_MS);
   }, 800);
 
   // Seed undo/redo history with the restored state as the baseline.
