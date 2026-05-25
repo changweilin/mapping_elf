@@ -8,6 +8,7 @@ const nativePlugins = {
   Geolocation: registerPlugin('Geolocation'),
   Haptics: registerPlugin('Haptics'),
   Network: registerPlugin('Network'),
+  OfflineMaps: registerPlugin('OfflineMaps'),
   Share: registerPlugin('Share'),
 };
 
@@ -263,6 +264,30 @@ export const capacitorPlatform = {
     return () => {
       handlePromise.then((handle) => handle?.remove?.()).catch(() => {});
     };
+  },
+  supportsOfflineMapImport() {
+    return canUsePlugin('OfflineMaps');
+  },
+  async getOfflineMapImportCapabilities() {
+    if (!canUsePlugin('OfflineMaps')) {
+      return {
+        supported: false,
+        platform: this.getPlatform(),
+        formats: [],
+        reason: 'native-plugin-unavailable',
+      };
+    }
+    return nativePlugins.OfflineMaps.getCapabilities();
+  },
+  async importOfflineMapSource() {
+    if (!canUsePlugin('OfflineMaps')) {
+      throw new Error('離線底圖匯入僅支援 Android App');
+    }
+    return nativePlugins.OfflineMaps.importOfflineMapSource();
+  },
+  async deleteOfflineMapSource(payload = {}) {
+    if (!canUsePlugin('OfflineMaps')) return { deleted: false, supported: false };
+    return nativePlugins.OfflineMaps.deleteOfflineMapSource(payload);
   },
   exitApp() {
     if (!canUsePlugin('App')) return false;

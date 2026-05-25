@@ -163,7 +163,22 @@ async function clearOfflineTileCaches(page) {
     if (!('caches' in window)) return;
     await caches.delete('mapping-elf-tiles');
     await caches.delete('mapping-elf-tile-index');
+    await caches.delete('mapping-elf-offline-map-sources');
   });
+}
+
+async function writeOfflineMapSourceIndex(page, source) {
+  await page.evaluate(async ({ source }) => {
+    const cache = await caches.open('mapping-elf-offline-map-sources');
+    await cache.put('https://mapping-elf.local/offline-map-sources.json', new Response(JSON.stringify({
+      version: 1,
+      sources: {
+        [source.id]: source,
+      },
+    }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  }, { source });
 }
 
 async function readOfflineTileIndex(page) {
@@ -347,6 +362,52 @@ test('map-pack tile import writes and clears one offline tile pack index entry',
   }).toBe(0);
   await expect.poll(() => countCachedTiles(page)).toBe(0);
   await expect(page.locator('#offline-pack-list')).toContainText(/No offline tile packs yet|尚無離線圖磚包/);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('web build exposes app-only offline basemap registry without enabling import', async ({ page }) => {
+  const consoleErrors = await openApp(page);
+  await clearOfflineTileCaches(page);
+  await openRouteLibrary(page);
+  await clickStable(page, '[data-route-library-tab="offline"]');
+
+  await expect(page.locator('#btn-import-offline-map-source')).toBeDisabled();
+  await expect(page.locator('#offline-map-source-list')).toContainText(/Web 版不支援|Web version/);
+
+  await writeOfflineMapSourceIndex(page, {
+    id: 'offline-map-test-lu',
+    createdAt: '2026-05-25T00:00:00.000Z',
+    source: 'native-import',
+    platform: 'android',
+    name: 'MOI_OSM_Taiwan_TOPO_Lite.map',
+    format: 'mapsforge',
+    rendererStatus: 'pending-native-renderer',
+    storage: {
+      kind: 'app-private-file',
+      relativePath: 'offline_maps/MOI_OSM_Taiwan_TOPO_Lite.map',
+    },
+    file: {
+      filename: 'MOI_OSM_Taiwan_TOPO_Lite.map',
+      extension: 'map',
+      sizeBytes: 123456789,
+      checksumSha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    },
+  });
+  await page.reload();
+  await expect(page.locator('#map')).toBeVisible();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  await openRouteLibrary(page);
+  await clickStable(page, '[data-route-library-tab="offline"]');
+
+  await expect(page.locator('#offline-map-source-list .offline-map-source-item')).toHaveCount(1);
+  await expect(page.locator('#offline-map-source-list')).toContainText('MOI_OSM_Taiwan_TOPO_Lite.map');
+  await expect(page.locator('#offline-map-source-list')).toContainText('Mapsforge .map');
+  await expect(page.locator('#offline-map-source-list')).toContainText(/待接原生渲染|pending/);
+
+  await page.locator('#offline-map-source-list [data-delete-offline-map-id]').click();
+  await expect(page.locator('#offline-map-source-list .offline-map-source-item')).toHaveCount(0);
+  await expect(page.locator('#offline-map-source-list')).toContainText(/Web 版不支援|Web version/);
 
   expect(consoleErrors).toEqual([]);
 });

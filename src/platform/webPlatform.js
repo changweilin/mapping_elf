@@ -106,6 +106,15 @@ function subscribeOpenUrl() {
   return () => {};
 }
 
+function getOfflineMapImportCapabilities() {
+  return {
+    supported: false,
+    platform: 'web',
+    formats: [],
+    reason: 'web-not-supported',
+  };
+}
+
 export const webPlatform = {
   name: 'web',
   isNative: false,
@@ -129,6 +138,18 @@ export const webPlatform = {
   subscribeNetworkStatus,
   getLaunchUrl,
   subscribeOpenUrl,
+  supportsOfflineMapImport() {
+    return false;
+  },
+  async getOfflineMapImportCapabilities() {
+    return getOfflineMapImportCapabilities();
+  },
+  async importOfflineMapSource() {
+    throw new Error('離線底圖匯入僅支援 App 版');
+  },
+  async deleteOfflineMapSource() {
+    return { deleted: false, supported: false };
+  },
   getUserAgent() {
     return navigator.userAgent || '';
   },

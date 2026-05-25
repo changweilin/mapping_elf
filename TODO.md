@@ -47,6 +47,7 @@ Last updated: 2026-05-25
 | R1 | 阻塞 | Native device validation | Android native bridge QA、iOS simulator/device validation | Android 完成 `doc/native-app-qa.md`；iOS 在 Mac/Xcode 驗證 safe area、檔案匯入匯出、外部連結與 TestFlight readiness。 |
 | R2 | 阻塞 | Android signing 與 internal testing artifact | upload keystore、release AAB rebuild、Google Play internal testing upload | 2026-05-20 重建 `android/app/build/outputs/bundle/release/app-release.aab` 成功但未簽章；需提供 ignored `android/keystore.properties` 與 upload key 後重建，才能上傳 internal testing。 |
 | R3 | 待辦 | 商店與合規收斂 | privacy URL、native screenshots、Google Play Data safety、Apple App Privacy、provider terms、dev-tool audit | 2026-05-20 已複查 audit 與 provider terms；bundled public raster providers 已禁用 tile export。仍需 live store forms、native screenshots、dev-tool findings 決策。 |
+| R4 | 待辦 | 原生離線底圖渲染 | Mapsforge `.map`、MBTiles renderer、圖層切換、授權標示 | 2026-05-25 已完成 Android app-private 匯入與來源 registry；下一步才接實際渲染與魯地圖主題/POI 支援。 |
 
 ## 已完成基線
 
@@ -56,10 +57,18 @@ Last updated: 2026-05-25
 - 第一輪低風險精簡已完成，包含配速單位轉換 helper、配速 placeholder 格式化集中化、天氣表 `timeOpts` 去重、天氣表 HTML helper 拆分與 GUI/Playwright 可靠度整理。
 - Web/App build split、platform adapter、Capacitor sync helpers、Android APK/AAB build scripts 已建立。
 - GPX/KML/`.melmap` round-trip、state contract、reset/import behavior 已有測試與文件基準。
+- Android App 離線底圖來源 registry 已建立，可匯入/刪除 `.map` 與 `.mbtiles` 檔案；Web 版維持 disabled guard。
 - Privacy inventory、store disclosure draft、store listing draft、Google Play draft images 與 bundled privacy page 已建立。
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-05-25 R4 Foundation Update
+
+- 狀態變更：新增 `R4 原生離線底圖渲染` 待辦，並完成第一階段匯入/管理基礎。
+- 影響範圍：新增 `OfflineMaps` Android native plugin，從系統檔案選擇器複製 Mapsforge `.map` 與 MBTiles 到 app-private `offline_maps/`；新增 `mapping-elf-offline-map-sources` registry、離線包頁面的 App 離線底圖來源清單與刪除行為。Web 版匯入按鈕維持停用。
+- 契約邊界：`.melmap` 不包含魯地圖/MBTiles 大型底圖；state contract、offline tile strategy 與 native QA 已同步。
+- 驗證：`npm.cmd run build`、`npm.cmd run test:native-config`、`node test/run-playwright-with-preview.mjs test/import-export.spec.js`（9 passed）、`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'; npm.cmd run android:build:debug`。Android 實機匯入仍併入 `R1 Native device validation`。
 
 ### 2026-05-25 P2.1 Update
 

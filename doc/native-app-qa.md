@@ -40,6 +40,8 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 | Network status | Toggle device airplane mode or network | File-management status updates online/offline. |
 | Haptics | Long-press or drag waypoint interactions | Device vibration happens where supported; no error where unsupported. |
 | Offline tiles | Export/import tile-enabled `.melmap`, then disable network | Cached tiles remain usable for the exported area; tile pack delete and clear-all work. |
+| Offline basemap import | In Android App, open `我的最愛 > 離線包`, tap `匯入底圖`, choose a Lu map/Rudy map `.map` or an `.mbtiles` file | The file is copied into app-private storage, appears in `App 離線底圖來源`, shows format/size/checksum metadata, and can be removed. Rendering remains a follow-up native renderer task. |
+| Web basemap guard | In a web build, open `我的最愛 > 離線包` | `匯入底圖` stays disabled and the list explains that web import is unsupported. |
 | OS backup | Check Android app backup settings where visible | Mapping Elf should not offer OS cloud backup for local route/cache data. |
 
 ## Release Readiness Gaps Mirrored In TODO.md

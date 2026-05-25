@@ -26,6 +26,8 @@ const packageLock = readJson('package-lock.json');
 const capacitorConfig = readJson('capacitor.config.json');
 const androidBuildGradle = readText('android/app/build.gradle');
 const androidManifest = readText('android/app/src/main/AndroidManifest.xml');
+const androidMainActivity = readText('android/app/src/main/java/com/mappingelf/app/MainActivity.java');
+const androidOfflineMapsPlugin = readText('android/app/src/main/java/com/mappingelf/app/OfflineMapsPlugin.java');
 const iosProject = readText('ios/App/App.xcodeproj/project.pbxproj');
 const iosInfoPlist = readText('ios/App/App/Info.plist');
 
@@ -43,6 +45,10 @@ assertIncludes(androidBuildGradle, 'signingConfigs.release', 'Android release si
 
 assertIncludes(androidManifest, 'android:allowBackup="false"', 'Android manifest privacy setting');
 assertIncludes(androidManifest, 'android.intent.action.VIEW', 'Android manifest file-open intent filter');
+assertIncludes(androidMainActivity, 'registerPlugin(OfflineMapsPlugin.class)', 'Android native offline maps plugin registration');
+assertIncludes(androidOfflineMapsPlugin, '@CapacitorPlugin(name = "OfflineMaps")', 'Android native offline maps plugin');
+assertIncludes(androidOfflineMapsPlugin, 'ACTION_OPEN_DOCUMENT', 'Android native offline maps picker');
+assertIncludes(androidOfflineMapsPlugin, 'OFFLINE_MAP_DIR = "offline_maps"', 'Android native offline maps private storage');
 [
   'application/gpx+xml',
   'application/vnd.google-earth.kml+xml',
