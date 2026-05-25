@@ -238,6 +238,10 @@ function updateRouteWeatherBusyOverlay() {
   const fillEl = document.getElementById('route-weather-busy-fill');
   const barEl = overlay?.querySelector('.loading-bar');
   const brandEl = document.getElementById('route-weather-busy-brand');
+  const brandTextEl = brandEl?.querySelector('.route-busy-brand-text');
+  if (brandTextEl && !brandTextEl.dataset.defaultText) {
+    brandTextEl.dataset.defaultText = brandTextEl.textContent || '';
+  }
 
   if (overlay) overlay.classList.toggle('hidden', !busy);
   if (busy) {
@@ -248,6 +252,11 @@ function updateRouteWeatherBusyOverlay() {
     if (brandEl) {
       brandEl.classList.toggle('hidden', !showCenterBrand);
       brandEl.setAttribute('aria-hidden', showCenterBrand ? 'false' : 'true');
+    }
+    if (brandTextEl) {
+      brandTextEl.textContent = showCenterBrand
+        ? (task?.title || brandTextEl.dataset.defaultText || brandTextEl.textContent)
+        : (brandTextEl.dataset.defaultText || brandTextEl.textContent);
     }
     if (titleEl) titleEl.textContent = task?.title || '處理中';
     if (detailEl) detailEl.textContent = task?.detail || '請稍候...';

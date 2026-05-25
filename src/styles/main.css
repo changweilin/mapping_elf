@@ -169,6 +169,13 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 /* ======== Loading Screen ======== */
 
 .loading-screen {
+  --loading-bg-a: #071014;
+  --loading-bg-b: #0d1726;
+  --loading-bg-c: #111827;
+  --loading-surface: rgba(12, 18, 27, 0.72);
+  --loading-surface-edge: rgba(125, 211, 252, 0.18);
+  --loading-grid: rgba(226, 232, 240, 0.06);
+  --loading-glow: rgba(20, 184, 166, 0.3);
   position: fixed;
   inset: 0;
   z-index: 10000;
@@ -177,6 +184,81 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   justify-content: center;
   background: var(--bg-primary);
   transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+
+html.light-theme .loading-screen {
+  --loading-bg-a: #f7fbff;
+  --loading-bg-b: #eaf8f2;
+  --loading-bg-c: #edf5ff;
+  --loading-surface: rgba(255, 255, 255, 0.74);
+  --loading-surface-edge: rgba(14, 116, 144, 0.2);
+  --loading-grid: rgba(15, 23, 42, 0.07);
+  --loading-glow: rgba(14, 165, 233, 0.22);
+}
+
+#loading-screen,
+.app-busy-overlay.has-center-brand {
+  --loading-bg-a: #071014;
+  --loading-bg-b: #0d1726;
+  --loading-bg-c: #111827;
+  --loading-surface: rgba(12, 18, 27, 0.72);
+  --loading-surface-edge: rgba(125, 211, 252, 0.18);
+  --loading-grid: rgba(226, 232, 240, 0.06);
+  --loading-glow: rgba(20, 184, 166, 0.3);
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(20, 184, 166, 0.32), transparent 28rem),
+    radial-gradient(circle at 82% 24%, rgba(59, 130, 246, 0.28), transparent 30rem),
+    radial-gradient(circle at 48% 86%, rgba(251, 191, 36, 0.14), transparent 24rem),
+    linear-gradient(145deg, var(--loading-bg-a) 0%, var(--loading-bg-b) 48%, var(--loading-bg-c) 100%);
+}
+
+html.light-theme #loading-screen,
+html.light-theme .app-busy-overlay.has-center-brand {
+  --loading-bg-a: #f7fbff;
+  --loading-bg-b: #eaf8f2;
+  --loading-bg-c: #edf5ff;
+  --loading-surface: rgba(255, 255, 255, 0.74);
+  --loading-surface-edge: rgba(14, 116, 144, 0.2);
+  --loading-grid: rgba(15, 23, 42, 0.07);
+  --loading-glow: rgba(14, 165, 233, 0.22);
+}
+
+#loading-screen::before,
+#loading-screen::after,
+.app-busy-overlay.has-center-brand::before,
+.app-busy-overlay.has-center-brand::after {
+  content: '';
+  position: absolute;
+  inset: -18%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+#loading-screen::before,
+.app-busy-overlay.has-center-brand::before {
+  background-image:
+    linear-gradient(var(--loading-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--loading-grid) 1px, transparent 1px);
+  background-position: center;
+  background-size: 46px 46px;
+  mask-image: radial-gradient(circle at 50% 48%, black 0 44%, transparent 72%);
+  -webkit-mask-image: radial-gradient(circle at 50% 48%, black 0 44%, transparent 72%);
+  animation: loadingGridDrift 18s linear infinite;
+}
+
+#loading-screen::after,
+.app-busy-overlay.has-center-brand::after {
+  background:
+    conic-gradient(from 216deg at 50% 50%,
+      transparent 0 34%,
+      rgba(20, 184, 166, 0.28) 38%,
+      rgba(59, 130, 246, 0.22) 44%,
+      transparent 51% 100%);
+  filter: blur(10px);
+  opacity: 0.8;
+  animation: loadingAura 7s ease-in-out infinite;
 }
 
 .loading-screen.hidden {
@@ -189,14 +271,89 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   text-align: center;
 }
 
+#loading-screen .loading-content {
+  position: relative;
+  z-index: 1;
+  width: min(360px, calc(100vw - 40px));
+  padding: 34px 30px 30px;
+  overflow: hidden;
+  border: 1px solid var(--loading-surface-edge);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 44%), var(--loading-surface);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.34),
+    0 0 60px var(--loading-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(20px) saturate(1.12);
+  animation: loadingPanelIn 0.72s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+}
+
+#loading-screen .loading-content::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg,
+      transparent 0%,
+      transparent 32%,
+      rgba(125, 211, 252, 0.14) 43%,
+      rgba(110, 231, 183, 0.18) 50%,
+      transparent 62%,
+      transparent 100%);
+  transform: translateX(-78%);
+  animation: loadingPanelSweep 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
 .loading-icon {
   margin-bottom: 16px;
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+#loading-screen .loading-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 156px;
+  height: 156px;
+  margin: 0 auto 18px;
+  animation: loadingLogoFloat 3.2s ease-in-out infinite;
+}
+
+#loading-screen .loading-icon::before,
+#loading-screen .loading-icon::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+#loading-screen .loading-icon::before {
+  inset: 0;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-top-color: rgba(110, 231, 183, 0.86);
+  border-right-color: rgba(251, 191, 36, 0.5);
+  box-shadow: 0 0 34px rgba(20, 184, 166, 0.18);
+  animation: loadingLogoOrbit 4.8s linear infinite;
+}
+
+#loading-screen .loading-icon::after {
+  inset: 18px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  transform: rotate(-18deg);
+  animation: loadingLogoOrbit 9s linear infinite reverse;
+}
+
 .loading-icon img {
   display: block;
   margin: 0 auto;
+}
+
+#loading-screen .loading-icon img {
+  position: relative;
+  z-index: 1;
+  width: 116px;
+  height: 116px;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.28));
 }
 
 .app-logo-icon {
@@ -213,9 +370,31 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   margin-bottom: 8px;
 }
 
+#loading-screen .loading-content h2 {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 10px;
+  font-size: 30px;
+  line-height: 1.08;
+  letter-spacing: 0;
+  background: linear-gradient(110deg, #34d399 0%, #38bdf8 48%, #fbbf24 100%);
+  background-size: 180% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: loadingTitleShift 5s ease-in-out infinite;
+}
+
 .loading-content p {
   color: var(--text-secondary);
   margin-bottom: 20px;
+}
+
+#loading-screen .loading-content p {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 22px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .loading-bar {
@@ -227,12 +406,39 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   overflow: hidden;
 }
 
+#loading-screen .loading-bar {
+  position: relative;
+  z-index: 1;
+  width: min(260px, 100%);
+  height: 8px;
+  padding: 1px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.36);
+  box-shadow: inset 0 1px 6px rgba(0, 0, 0, 0.22);
+}
+
+html.light-theme #loading-screen .loading-bar {
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: inset 0 1px 7px rgba(15, 23, 42, 0.08);
+}
+
 .loading-bar-fill {
   width: 40%;
   height: 100%;
   background: var(--accent-gradient);
   border-radius: 2px;
   animation: loadingSlide 1.2s ease-in-out infinite;
+}
+
+#loading-screen .loading-bar-fill {
+  width: 46%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #34d399 0%, #38bdf8 56%, #fbbf24 100%);
+  box-shadow:
+    0 0 14px rgba(56, 189, 248, 0.34),
+    0 0 20px rgba(52, 211, 153, 0.2);
+  animation: loadingSlide 1.45s cubic-bezier(0.74, 0, 0.24, 1) infinite;
 }
 
 .app-busy-overlay {
@@ -254,6 +460,23 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   pointer-events: none;
 }
 
+.app-busy-overlay.has-center-brand {
+  inset: 0;
+  z-index: 10020;
+  height: auto;
+  min-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  isolation: isolate;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(20, 184, 166, 0.32), transparent 28rem),
+    radial-gradient(circle at 82% 24%, rgba(59, 130, 246, 0.28), transparent 30rem),
+    radial-gradient(circle at 48% 86%, rgba(251, 191, 36, 0.14), transparent 24rem),
+    linear-gradient(145deg, var(--loading-bg-a) 0%, var(--loading-bg-b) 48%, var(--loading-bg-c) 100%);
+}
+
 .app-busy-overlay .loading-content {
   position: relative;
   z-index: 1;
@@ -265,11 +488,26 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   min-width: 0;
   margin: 0 auto;
   padding: 7px 12px 8px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid var(--loading-surface-edge);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.9);
-  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 56%), rgba(12, 18, 27, 0.88);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.3),
+    0 0 28px rgba(20, 184, 166, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px) saturate(1.08);
   text-align: left;
+}
+
+.app-busy-overlay.has-center-brand .loading-content {
+  position: fixed;
+  top: calc(50% + 132px);
+  left: 50%;
+  right: auto;
+  z-index: 3;
+  width: min(360px, calc(100vw - 40px));
+  transform: translateX(-50%);
+  animation: loadingFadeIn 0.72s cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
 .route-busy-center-brand {
@@ -283,13 +521,88 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   pointer-events: none;
 }
 
+.app-busy-overlay.has-center-brand .route-busy-center-brand {
+  z-index: 2;
+  width: min(360px, calc(100vw - 40px));
+  padding: 30px 30px 28px;
+  overflow: hidden;
+  border: 1px solid var(--loading-surface-edge);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 44%), var(--loading-surface);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.34),
+    0 0 60px var(--loading-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(20px) saturate(1.12);
+  transform: translate(-50%, -62%);
+  animation: loadingFadeIn 0.72s cubic-bezier(0.2, 0.85, 0.25, 1) both;
+}
+
+.app-busy-overlay.has-center-brand .route-busy-center-brand::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg,
+      transparent 0%,
+      transparent 32%,
+      rgba(125, 211, 252, 0.14) 43%,
+      rgba(110, 231, 183, 0.18) 50%,
+      transparent 62%,
+      transparent 100%);
+  transform: translateX(-78%);
+  animation: loadingPanelSweep 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
 .route-busy-brand-logo {
   margin-bottom: 0;
+}
+
+.app-busy-overlay.has-center-brand .route-busy-brand-logo {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 140px;
+  height: 140px;
+  margin: 0 auto 16px;
+  animation: loadingLogoFloat 3.2s ease-in-out infinite;
+}
+
+.app-busy-overlay.has-center-brand .route-busy-brand-logo::before,
+.app-busy-overlay.has-center-brand .route-busy-brand-logo::after {
+  content: '';
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.app-busy-overlay.has-center-brand .route-busy-brand-logo::before {
+  inset: 0;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-top-color: rgba(110, 231, 183, 0.86);
+  border-right-color: rgba(251, 191, 36, 0.5);
+  box-shadow: 0 0 34px rgba(20, 184, 166, 0.18);
+  animation: loadingLogoOrbit 4.8s linear infinite;
+}
+
+.app-busy-overlay.has-center-brand .route-busy-brand-logo::after {
+  inset: 16px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  transform: rotate(-18deg);
+  animation: loadingLogoOrbit 9s linear infinite reverse;
 }
 
 .route-busy-brand-logo img {
   width: 256px;
   height: 256px;
+}
+
+.app-busy-overlay.has-center-brand .route-busy-brand-logo img {
+  position: relative;
+  z-index: 1;
+  width: 104px;
+  height: 104px;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.28));
 }
 
 .route-busy-brand-text {
@@ -307,6 +620,20 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
   overflow-wrap: anywhere;
 }
 
+.app-busy-overlay.has-center-brand .route-busy-brand-text {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.08;
+  letter-spacing: 0;
+  background: linear-gradient(110deg, #34d399 0%, #38bdf8 48%, #fbbf24 100%);
+  background-size: 180% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: loadingTitleShift 5s ease-in-out infinite;
+}
+
 .route-busy-brand-reserve {
   visibility: hidden;
 }
@@ -317,9 +644,12 @@ html:not(.light-theme) ::-webkit-calendar-picker-indicator {
 }
 
 html.light-theme .app-busy-overlay .loading-content {
-  background: rgba(255, 255, 255, 0.94);
-  border-color: rgba(100, 116, 139, 0.22);
-  box-shadow: 0 8px 26px rgba(15, 23, 42, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.68), transparent 54%), rgba(255, 255, 255, 0.86);
+  border-color: var(--loading-surface-edge);
+  box-shadow:
+    0 12px 32px rgba(15, 23, 42, 0.14),
+    0 0 28px rgba(14, 165, 233, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .app-busy-overlay .loading-content h2 {
@@ -349,8 +679,26 @@ html.light-theme .app-busy-overlay .loading-content {
 .app-busy-overlay .loading-bar {
   grid-column: 1 / -1;
   width: 100%;
+  height: 6px;
   max-width: none;
   margin: 0;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.28);
+  box-shadow: inset 0 1px 6px rgba(0, 0, 0, 0.18);
+}
+
+html.light-theme .app-busy-overlay .loading-bar {
+  background: rgba(255, 255, 255, 0.48);
+  box-shadow: inset 0 1px 7px rgba(15, 23, 42, 0.08);
+}
+
+.app-busy-overlay .loading-bar-fill {
+  border-radius: inherit;
+  background: linear-gradient(90deg, #34d399 0%, #38bdf8 56%, #fbbf24 100%);
+  box-shadow:
+    0 0 14px rgba(56, 189, 248, 0.28),
+    0 0 18px rgba(52, 211, 153, 0.16);
 }
 
 .app-busy-overlay .loading-bar-fill.is-determinate {
@@ -400,13 +748,138 @@ body.weather-card-busy .weather-edit-control:disabled {
   }
 }
 
-@keyframes loadingSlide {
+@keyframes loadingGridDrift {
   0% {
-    transform: translateX(-100%);
+    transform: translate3d(0, 0, 0) rotate(-8deg);
   }
 
   100% {
-    transform: translateX(350%);
+    transform: translate3d(46px, 46px, 0) rotate(-8deg);
+  }
+}
+
+@keyframes loadingAura {
+
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+    opacity: 0.68;
+  }
+
+  50% {
+    transform: rotate(12deg) scale(1.08);
+    opacity: 0.92;
+  }
+}
+
+@keyframes loadingPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes loadingFadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes loadingPanelSweep {
+
+  0%,
+  28% {
+    transform: translateX(-78%);
+    opacity: 0;
+  }
+
+  42% {
+    opacity: 1;
+  }
+
+  72%,
+  100% {
+    transform: translateX(78%);
+    opacity: 0;
+  }
+}
+
+@keyframes loadingLogoFloat {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes loadingLogoOrbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loadingTitleShift {
+
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes loadingSlide {
+
+  0% {
+    transform: translateX(-24%);
+  }
+
+  50% {
+    transform: translateX(82%);
+  }
+
+  100% {
+    transform: translateX(-24%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #loading-screen,
+  #loading-screen::before,
+  #loading-screen::after,
+  .app-busy-overlay.has-center-brand,
+  .app-busy-overlay.has-center-brand::before,
+  .app-busy-overlay.has-center-brand::after,
+  #loading-screen .loading-content,
+  #loading-screen .loading-content::before,
+  .app-busy-overlay.has-center-brand .loading-content,
+  .app-busy-overlay.has-center-brand .route-busy-center-brand,
+  .app-busy-overlay.has-center-brand .route-busy-center-brand::before,
+  #loading-screen .loading-icon,
+  #loading-screen .loading-icon::before,
+  #loading-screen .loading-icon::after,
+  .app-busy-overlay.has-center-brand .route-busy-brand-logo,
+  .app-busy-overlay.has-center-brand .route-busy-brand-logo::before,
+  .app-busy-overlay.has-center-brand .route-busy-brand-logo::after,
+  #loading-screen .loading-content h2,
+  .app-busy-overlay.has-center-brand .route-busy-brand-text,
+  #loading-screen .loading-bar-fill {
+    animation: none;
   }
 }
 
@@ -3572,6 +4045,26 @@ body.route-list-dragging {
     --toolbar-height: 50px;
   }
 
+  #loading-screen .loading-content {
+    width: min(330px, calc(100vw - 28px));
+    padding: 28px 22px 24px;
+  }
+
+  #loading-screen .loading-icon {
+    width: 132px;
+    height: 132px;
+    margin-bottom: 16px;
+  }
+
+  #loading-screen .loading-icon img {
+    width: 98px;
+    height: 98px;
+  }
+
+  #loading-screen .loading-content h2 {
+    font-size: 26px;
+  }
+
   .app-busy-overlay {
     top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 8px);
     left: 56px;
@@ -3591,6 +4084,37 @@ body.route-list-dragging {
 
   .app-busy-overlay .loading-content p {
     font-size: 10px;
+  }
+
+  .app-busy-overlay.has-center-brand {
+    inset: 0;
+    min-height: 100dvh;
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-center-brand {
+    width: min(330px, calc(100vw - 28px));
+    padding: 26px 22px 24px;
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-brand-logo {
+    width: 124px;
+    height: 124px;
+    margin-bottom: 14px;
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-brand-logo img {
+    width: 92px;
+    height: 92px;
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-brand-text {
+    font-size: 25px;
+  }
+
+  .app-busy-overlay.has-center-brand .loading-content {
+    top: calc(50% + 116px);
+    width: min(330px, calc(100vw - 28px));
+    padding: 6px 8px 7px;
   }
 
   .toolbar {
@@ -3759,6 +4283,36 @@ body.route-list-dragging {
 
   .app-busy-overlay .loading-content {
     width: min(320px, 100%);
+  }
+
+  .app-busy-overlay.has-center-brand {
+    inset: 0;
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-center-brand {
+    width: min(320px, calc(100vw - 28px));
+    padding: 18px 20px 16px;
+    transform: translate(-50%, -60%);
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-brand-logo {
+    width: 96px;
+    height: 96px;
+    margin-bottom: 8px;
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-brand-logo img {
+    width: 72px;
+    height: 72px;
+  }
+
+  .app-busy-overlay.has-center-brand .route-busy-brand-text {
+    font-size: 22px;
+  }
+
+  .app-busy-overlay.has-center-brand .loading-content {
+    top: calc(50% + 88px);
+    width: min(320px, calc(100vw - 28px));
   }
 
   .side-panel {
