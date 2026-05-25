@@ -77,6 +77,13 @@ Last updated: 2026-05-25
 - 契約邊界：`mapping-elf-offline-map-sources` 補 `minZoom`、`maxZoom`、`tileMimeType`、`rendererStatus`；不新增 `.melmap` durable state。
 - 驗證：`npm.cmd run build`、`npm.cmd run test:native-config`、`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'; npm.cmd run android:build:debug`、`node test/run-playwright-with-preview.mjs test/import-export.spec.js`（9 passed）、`node test/run-playwright-with-preview.mjs test/map-layer-theme.spec.js`（2 passed）。Android 實機載入真實 MBTiles 與魯地圖 `.map` 仍併入 `R1 Native device validation`。
 
+### 2026-05-25 R4 Mapsforge Renderer Update
+
+- 範圍：把 R4 從「可匯入魯地圖/Mapsforge `.map`」補到 Android app 可原生渲染。
+- 完成：Android `OfflineMaps` plugin 加入 Mapsforge 0.25.0 依賴，`getOfflineMapTile` 現在同時支援 `mapsforge` 與 raster `mbtiles`；`.map` 匯入會標記 `rendererStatus: "ready"`，前端離線底圖 `GridLayer` 可直接切換使用。Native renderer 會快取 MapFile/theme/renderer，刪除來源時同步釋放。
+- 管理邊界：web 版仍維持停用匯入與渲染；`.melmap` 仍只作路線/狀態/圖磚包，不內嵌大型 `.map`/`.mbtiles` 底圖檔。
+- 驗證：`npm.cmd run build`、`npm.cmd run test:native-config`、`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'; npm.cmd run android:build:debug` passed。仍需用實體 Android 裝置或 emulator 匯入真實魯地圖 `.map` 做視覺與效能 QA。
+
 ### 2026-05-25 P2.1 Update
 
 - 狀態變更：`P2 保存與分享整併` 完成第二階段 UI 簡化。

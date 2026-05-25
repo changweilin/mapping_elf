@@ -17,6 +17,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -28,11 +29,27 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import org.mapsforge.core.graphics.GraphicFactory;
+import org.mapsforge.core.graphics.TileBitmap;
+import org.mapsforge.core.model.Tile;
+import org.mapsforge.map.android.graphics.AndroidGraphicFactory;
+import org.mapsforge.map.datastore.MapDataStore;
+import org.mapsforge.map.layer.cache.InMemoryTileCache;
+import org.mapsforge.map.layer.cache.TileCache;
+import org.mapsforge.map.layer.renderer.DatabaseRenderer;
+import org.mapsforge.map.layer.renderer.RendererJob;
+import org.mapsforge.map.model.DisplayModel;
+import org.mapsforge.map.reader.MapFile;
+import org.mapsforge.map.rendertheme.internal.MapsforgeThemes;
+import org.mapsforge.map.rendertheme.rule.RenderThemeFuture;
 
 @CapacitorPlugin(name = "OfflineMaps")
 public class OfflineMapsPlugin extends Plugin {
     private static final String OFFLINE_MAP_DIR = "offline_maps";
     private static final int COPY_BUFFER_SIZE = 256 * 1024;
+    private static final int TILE_SIZE = 256;
+    private static boolean mapsforgeGraphicFactoryReady = false;
+    private final Map<String, MapsforgeRendererContext> mapsforgeRenderers = new HashMap<>();
 
     @PluginMethod
     public void getCapabilities(PluginCall call) {
@@ -40,7 +57,7 @@ public class OfflineMapsPlugin extends Plugin {
         result.put("supported", true);
         result.put("platform", "android");
         result.put("formats", new JSArray(Arrays.asList("mapsforge", "mbtiles")));
-        result.put("renderFormats", new JSArray(Arrays.asList("mbtiles")));
+        result.put("renderFormats", new JSArray(Arrays.asList("mapsforge", "mbtiles")));
         result.put("storage", "app-private-file");
         call.resolve(result);
     }
@@ -68,6 +85,7 @@ public class OfflineMapsPlugin extends Plugin {
             }
 
             boolean existed = target.exists();
+            closeMapsforgeRenderer(target);
             boolean deleted = !existed || target.delete();
             if (!deleted) {
                 call.reject("刪除離線底圖檔案失敗");
@@ -120,9 +138,11 @@ public class OfflineMapsPlugin extends Plugin {
             payload.put("uri", Uri.fromFile(destination).toString());
             payload.put("originalUri", sourceUri.toString());
             payload.put("platform", "android");
-            payload.put("rendererStatus", "mbtiles".equals(format) ? "ready" : "pending-native-renderer");
+            payload.put("rendererStatus", "ready");
             if ("mbtiles".equals(format)) {
                 appendMbtilesMetadata(payload, destination);
+            } else if ("mapsforge".equals(format)) {
+                payload.put("tileMimeType", "image/png");
             }
             call.resolve(payload);
         } catch (IOException | NoSuchAlgorithmException err) {
@@ -133,7 +153,7 @@ public class OfflineMapsPlugin extends Plugin {
     @PluginMethod
     public void getOfflineMapTile(PluginCall call) {
         String format = call.getString("format", "");
-        if (!"mbtiles".equals(format)) {
+        if (!"mbtiles".equals(format) && !"mapsforge".equals(format)) {
             JSObject result = new JSObject();
             result.put("found", false);
             result.put("reason", "unsupported-format");
@@ -156,12 +176,16 @@ public class OfflineMapsPlugin extends Plugin {
                 return;
             }
 
-            byte[] tile = readMbtilesTile(target, zValue, xValue, yValue);
+            byte[] tile = "mbtiles".equals(format)
+                ? readMbtilesTile(target, zValue, xValue, yValue)
+                : renderMapsforgeTile(target, zValue, xValue, yValue);
             JSObject result = new JSObject();
             if (tile == null || tile.length == 0) {
                 result.put("found", false);
             } else {
-                String mimeType = detectTileMimeType(tile, call.getString("tileMimeType", ""));
+                String mimeType = "mapsforge".equals(format)
+                    ? "image/png"
+                    : detectTileMimeType(tile, call.getString("tileMimeType", ""));
                 result.put("found", true);
                 result.put("mimeType", mimeType);
                 result.put("dataUrl", "data:" + mimeType + ";base64," + Base64.encodeToString(tile, Base64.NO_WRAP));
@@ -386,6 +410,70 @@ public class OfflineMapsPlugin extends Plugin {
         return null;
     }
 
+    private byte[] renderMapsforgeTile(File target, int z, int x, int y) throws IOException {
+        MapsforgeRendererContext rendererContext = getMapsforgeRenderer(target);
+        TileBitmap tileBitmap = null;
+        try {
+            Tile tile = new Tile(x, y, (byte) z, TILE_SIZE);
+            RendererJob job = new RendererJob(
+                tile,
+                rendererContext.mapDataStore,
+                rendererContext.renderThemeFuture,
+                rendererContext.displayModel,
+                1f,
+                false,
+                false
+            );
+            synchronized (rendererContext) {
+                tileBitmap = rendererContext.renderer.executeJob(job);
+            }
+            if (tileBitmap == null) return null;
+
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            tileBitmap.compress(output);
+            return output.toByteArray();
+        } catch (RuntimeException err) {
+            throw new IOException("Cannot render Mapsforge tile", err);
+        } finally {
+            if (tileBitmap != null) {
+                tileBitmap.decrementRefCount();
+            }
+        }
+    }
+
+    private MapsforgeRendererContext getMapsforgeRenderer(File target) throws IOException {
+        ensureMapsforgeGraphicFactory();
+        String key = target.getCanonicalPath();
+        synchronized (mapsforgeRenderers) {
+            MapsforgeRendererContext existing = mapsforgeRenderers.get(key);
+            if (existing != null) return existing;
+
+            MapsforgeRendererContext created = new MapsforgeRendererContext(target, AndroidGraphicFactory.INSTANCE);
+            mapsforgeRenderers.put(key, created);
+            return created;
+        }
+    }
+
+    private void closeMapsforgeRenderer(File target) throws IOException {
+        String key = target.getCanonicalPath();
+        MapsforgeRendererContext rendererContext;
+        synchronized (mapsforgeRenderers) {
+            rendererContext = mapsforgeRenderers.remove(key);
+        }
+        if (rendererContext != null) {
+            rendererContext.close();
+        }
+    }
+
+    private void ensureMapsforgeGraphicFactory() {
+        synchronized (OfflineMapsPlugin.class) {
+            if (!mapsforgeGraphicFactoryReady) {
+                AndroidGraphicFactory.createInstance(getContext().getApplicationContext());
+                mapsforgeGraphicFactoryReady = true;
+            }
+        }
+    }
+
     private String mimeTypeForMbtilesFormat(String format) {
         String lower = format == null ? "" : format.toLowerCase(Locale.ROOT).trim();
         if (lower.contains("jpg") || lower.contains("jpeg")) return "image/jpeg";
@@ -425,6 +513,38 @@ public class OfflineMapsPlugin extends Plugin {
             builder.append(String.format("%02x", value));
         }
         return builder.toString();
+    }
+
+    private static class MapsforgeRendererContext {
+        final MapDataStore mapDataStore;
+        final DisplayModel displayModel;
+        final RenderThemeFuture renderThemeFuture;
+        final DatabaseRenderer renderer;
+        final TileCache tileCache;
+
+        MapsforgeRendererContext(File target, GraphicFactory graphicFactory) {
+            mapDataStore = new MapFile(target);
+            displayModel = new DisplayModel();
+            tileCache = new InMemoryTileCache(64);
+            renderThemeFuture = new RenderThemeFuture(graphicFactory, MapsforgeThemes.OSMARENDER, displayModel);
+            new Thread(renderThemeFuture).start();
+            renderer = new DatabaseRenderer(
+                mapDataStore,
+                graphicFactory,
+                tileCache,
+                null,
+                true,
+                false,
+                null
+            );
+        }
+
+        void close() {
+            renderThemeFuture.decrementRefCount();
+            renderer.interruptAndDestroy();
+            tileCache.destroy();
+            mapDataStore.close();
+        }
     }
 
     private static class CopyResult {

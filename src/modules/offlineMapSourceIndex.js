@@ -46,6 +46,12 @@ function normalizeFormat(format, filename = '') {
   return '';
 }
 
+function normalizeRendererStatus(format, status) {
+  const value = safeText(status);
+  if (format === 'mapsforge' && (!value || value === 'pending-native-renderer')) return 'ready';
+  return value || 'pending-native-renderer';
+}
+
 function makeSourceId(format, name) {
   const random = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const safeFormat = safeText(format || 'map').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
@@ -81,7 +87,7 @@ function normalizeSource(record = {}) {
     bounds: record.bounds || null,
     attribution: record.attribution || null,
     license: record.license || null,
-    rendererStatus: safeText(record.rendererStatus) || 'pending-native-renderer',
+    rendererStatus: normalizeRendererStatus(format, record.rendererStatus),
     minZoom,
     maxZoom,
     tileMimeType: safeText(record.tileMimeType),

@@ -3925,8 +3925,9 @@ export class MapManager {
   }
 
   _canRenderOfflineMapSource(source) {
+    const nativeRenderableFormats = new Set(['mapsforge', 'mbtiles']);
     return !!source?.id
-      && source.format === 'mbtiles'
+      && nativeRenderableFormats.has(source.format)
       && source.rendererStatus === 'ready'
       && platform.supportsOfflineMapRendering?.();
   }

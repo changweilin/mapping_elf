@@ -82,7 +82,7 @@ Not exported in `.melmap` state:
 | Index | Storage | Format | Default/Fallback | `.melmap` | Reset |
 | --- | --- | --- | --- | --- | --- |
 | Offline tile packs | Cache API `mapping-elf-tile-index` | JSON `{ version, packs }` | empty index | no | clear only through offline cache controls |
-| Native offline basemap sources | Cache API `mapping-elf-offline-map-sources` | JSON `{ version, sources }`; source records include `format`, app-private storage path, size, checksum, zoom range, tile MIME type, and renderer status | empty index; web import disabled | no | no |
+| Native offline basemap sources | Cache API `mapping-elf-offline-map-sources` | JSON `{ version, sources }`; source records include `format`, app-private storage path, size, checksum, zoom range, tile MIME type, and renderer status. Android Mapsforge `.map` and raster MBTiles sources use `rendererStatus: "ready"`; vector MBTiles use `unsupported-vector-tiles`. | empty index; web import disabled | no | no |
 
 ## Import And Reset Rules
 
