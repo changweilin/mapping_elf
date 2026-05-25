@@ -47,7 +47,7 @@ Last updated: 2026-05-25
 | R1 | 阻塞 | Native device validation | Android native bridge QA、iOS simulator/device validation | Android 完成 `doc/native-app-qa.md`；iOS 在 Mac/Xcode 驗證 safe area、檔案匯入匯出、外部連結與 TestFlight readiness。 |
 | R2 | 阻塞 | Android signing 與 internal testing artifact | upload keystore、release AAB rebuild、Google Play internal testing upload | 2026-05-20 重建 `android/app/build/outputs/bundle/release/app-release.aab` 成功但未簽章；需提供 ignored `android/keystore.properties` 與 upload key 後重建，才能上傳 internal testing。 |
 | R3 | 待辦 | 商店與合規收斂 | privacy URL、native screenshots、Google Play Data safety、Apple App Privacy、provider terms、dev-tool audit | 2026-05-20 已複查 audit 與 provider terms；bundled public raster providers 已禁用 tile export。仍需 live store forms、native screenshots、dev-tool findings 決策。 |
-| R4 | 待辦 | 原生離線底圖渲染 | Mapsforge `.map`、MBTiles renderer、圖層切換、授權標示 | 2026-05-25 已完成 Android app-private 匯入與來源 registry；下一步才接實際渲染與魯地圖主題/POI 支援。 |
+| R4 | 進行中 | 原生離線底圖渲染 | Mapsforge `.map`、MBTiles renderer、圖層切換、授權標示 | 2026-05-25 已完成 Android app-private 匯入、來源 registry 與 raster MBTiles native tile bridge；下一步接 Mapsforge 魯地圖 renderer、主題/POI 支援與實機驗證。 |
 
 ## 已完成基線
 
@@ -69,6 +69,13 @@ Last updated: 2026-05-25
 - 影響範圍：新增 `OfflineMaps` Android native plugin，從系統檔案選擇器複製 Mapsforge `.map` 與 MBTiles 到 app-private `offline_maps/`；新增 `mapping-elf-offline-map-sources` registry、離線包頁面的 App 離線底圖來源清單與刪除行為。Web 版匯入按鈕維持停用。
 - 契約邊界：`.melmap` 不包含魯地圖/MBTiles 大型底圖；state contract、offline tile strategy 與 native QA 已同步。
 - 驗證：`npm.cmd run build`、`npm.cmd run test:native-config`、`node test/run-playwright-with-preview.mjs test/import-export.spec.js`（9 passed）、`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'; npm.cmd run android:build:debug`。Android 實機匯入仍併入 `R1 Native device validation`。
+
+### 2026-05-25 R4 MBTiles Update
+
+- 狀態變更：`R4 原生離線底圖渲染` 改為進行中；raster MBTiles 已有原生圖磚讀取與 Leaflet 顯示管線。
+- 影響範圍：Android `OfflineMaps` plugin 新增 `getOfflineMapTile`，以 SQLite 讀取 MBTiles `tiles` 表並回傳 raster tile data URL；前端 `MapManager` 新增 native offline `GridLayer`，離線來源清單新增可用時的「使用」按鈕。Vector MBTiles 與 Mapsforge `.map` 仍保持停用顯示狀態。
+- 契約邊界：`mapping-elf-offline-map-sources` 補 `minZoom`、`maxZoom`、`tileMimeType`、`rendererStatus`；不新增 `.melmap` durable state。
+- 驗證：`npm.cmd run build`、`npm.cmd run test:native-config`、`$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'; npm.cmd run android:build:debug`、`node test/run-playwright-with-preview.mjs test/import-export.spec.js`（9 passed）、`node test/run-playwright-with-preview.mjs test/map-layer-theme.spec.js`（2 passed）。Android 實機載入真實 MBTiles 與魯地圖 `.map` 仍併入 `R1 Native device validation`。
 
 ### 2026-05-25 P2.1 Update
 

@@ -2613,6 +2613,28 @@ function applyLayerSelection(name) {
   const modal = document.getElementById('export-modal');
   if (modal && !modal.classList.contains('hidden')) updateMapPackTileOptionState();
 }
+
+document.addEventListener('mapping-elf:offline-map-source-activate', (event) => {
+  const source = event.detail?.source;
+  if (!source) return;
+  const activated = mapManager.activateOfflineMapSource(source);
+  if (!activated) {
+    showNotification('此離線底圖尚未支援顯示', 'warning');
+    return;
+  }
+  layerBtns.forEach((b) => b.classList.remove('active'));
+  showNotification(`已切換離線底圖：${source.name || 'MBTiles'}`, 'success');
+  const modal = document.getElementById('export-modal');
+  if (modal && !modal.classList.contains('hidden')) updateMapPackTileOptionState();
+});
+
+document.addEventListener('mapping-elf:offline-map-source-delete', (event) => {
+  const sourceId = event.detail?.sourceId;
+  if (!sourceId) return;
+  mapManager.removeOfflineMapSource(sourceId);
+  layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === mapManager.currentLayerName));
+});
+
 function cycleLayer(step) {
   const cur = mapManager.currentLayerName;
   const i = LAYER_CYCLE_ORDER.indexOf(cur);

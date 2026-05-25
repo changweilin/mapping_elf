@@ -150,6 +150,12 @@ export const webPlatform = {
   async deleteOfflineMapSource() {
     return { deleted: false, supported: false };
   },
+  supportsOfflineMapRendering() {
+    return false;
+  },
+  async getOfflineMapTile() {
+    return { found: false, supported: false };
+  },
   getUserAgent() {
     return navigator.userAgent || '';
   },

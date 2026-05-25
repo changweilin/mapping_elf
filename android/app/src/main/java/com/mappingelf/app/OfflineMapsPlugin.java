@@ -4,8 +4,11 @@ import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteException;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -22,6 +25,9 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 
 @CapacitorPlugin(name = "OfflineMaps")
 public class OfflineMapsPlugin extends Plugin {
@@ -34,6 +40,7 @@ public class OfflineMapsPlugin extends Plugin {
         result.put("supported", true);
         result.put("platform", "android");
         result.put("formats", new JSArray(Arrays.asList("mapsforge", "mbtiles")));
+        result.put("renderFormats", new JSArray(Arrays.asList("mbtiles")));
         result.put("storage", "app-private-file");
         call.resolve(result);
     }
@@ -113,9 +120,55 @@ public class OfflineMapsPlugin extends Plugin {
             payload.put("uri", Uri.fromFile(destination).toString());
             payload.put("originalUri", sourceUri.toString());
             payload.put("platform", "android");
+            payload.put("rendererStatus", "mbtiles".equals(format) ? "ready" : "pending-native-renderer");
+            if ("mbtiles".equals(format)) {
+                appendMbtilesMetadata(payload, destination);
+            }
             call.resolve(payload);
         } catch (IOException | NoSuchAlgorithmException err) {
             call.reject("離線底圖匯入失敗", err);
+        }
+    }
+
+    @PluginMethod
+    public void getOfflineMapTile(PluginCall call) {
+        String format = call.getString("format", "");
+        if (!"mbtiles".equals(format)) {
+            JSObject result = new JSObject();
+            result.put("found", false);
+            result.put("reason", "unsupported-format");
+            call.resolve(result);
+            return;
+        }
+
+        Integer zValue = call.getInt("z");
+        Integer xValue = call.getInt("x");
+        Integer yValue = call.getInt("y");
+        if (zValue == null || xValue == null || yValue == null) {
+            call.reject("缺少圖磚座標");
+            return;
+        }
+
+        try {
+            File target = resolveOfflineMapFile(call.getString("storedPath"), call.getString("relativePath"));
+            if (target == null || !target.exists()) {
+                call.reject("找不到離線底圖檔案");
+                return;
+            }
+
+            byte[] tile = readMbtilesTile(target, zValue, xValue, yValue);
+            JSObject result = new JSObject();
+            if (tile == null || tile.length == 0) {
+                result.put("found", false);
+            } else {
+                String mimeType = detectTileMimeType(tile, call.getString("tileMimeType", ""));
+                result.put("found", true);
+                result.put("mimeType", mimeType);
+                result.put("dataUrl", "data:" + mimeType + ";base64," + Base64.encodeToString(tile, Base64.NO_WRAP));
+            }
+            call.resolve(result);
+        } catch (IOException | SQLiteException err) {
+            call.reject("讀取離線圖磚失敗", err);
         }
     }
 
@@ -232,6 +285,138 @@ public class OfflineMapsPlugin extends Plugin {
             total = destination.length();
         }
         return new CopyResult(total, bytesToHex(digest.digest()));
+    }
+
+    private void appendMbtilesMetadata(JSObject payload, File destination) {
+        try (SQLiteDatabase db = SQLiteDatabase.openDatabase(destination.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY)) {
+            Map<String, String> metadata = readMbtilesMetadata(db);
+            String tileFormat = metadata.get("format");
+            if (tileFormat != null && !tileFormat.trim().isEmpty()) {
+                String tileMimeType = mimeTypeForMbtilesFormat(tileFormat);
+                payload.put("tileMimeType", tileMimeType);
+                if ("application/x-protobuf".equals(tileMimeType)) {
+                    payload.put("rendererStatus", "unsupported-vector-tiles");
+                }
+            }
+            Integer minZoom = parseInteger(metadata.get("minzoom"));
+            Integer maxZoom = parseInteger(metadata.get("maxzoom"));
+            if (minZoom == null || maxZoom == null) {
+                int[] zoomRange = queryMbtilesZoomRange(db);
+                if (minZoom == null && zoomRange[0] >= 0) minZoom = zoomRange[0];
+                if (maxZoom == null && zoomRange[1] >= 0) maxZoom = zoomRange[1];
+            }
+            if (minZoom != null) payload.put("minZoom", minZoom);
+            if (maxZoom != null) payload.put("maxZoom", maxZoom);
+
+            JSObject bounds = parseMbtilesBounds(metadata.get("bounds"));
+            if (bounds != null) payload.put("bounds", bounds);
+            String attribution = metadata.get("attribution");
+            if (attribution != null && !attribution.trim().isEmpty()) payload.put("attribution", attribution);
+        } catch (Exception ignored) {
+            // Imported MBTiles can still be listed even if optional metadata is absent or malformed.
+        }
+    }
+
+    private Map<String, String> readMbtilesMetadata(SQLiteDatabase db) {
+        Map<String, String> metadata = new HashMap<>();
+        try (Cursor cursor = db.rawQuery("SELECT name, value FROM metadata", null)) {
+            while (cursor.moveToNext()) {
+                metadata.put(cursor.getString(0), cursor.getString(1));
+            }
+        } catch (Exception ignored) {}
+        return metadata;
+    }
+
+    private int[] queryMbtilesZoomRange(SQLiteDatabase db) {
+        int[] zoomRange = new int[] { -1, -1 };
+        try (Cursor cursor = db.rawQuery("SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles", null)) {
+            if (cursor.moveToFirst()) {
+                if (!cursor.isNull(0)) zoomRange[0] = cursor.getInt(0);
+                if (!cursor.isNull(1)) zoomRange[1] = cursor.getInt(1);
+            }
+        } catch (Exception ignored) {}
+        return zoomRange;
+    }
+
+    private Integer parseInteger(String value) {
+        if (value == null) return null;
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException err) {
+            return null;
+        }
+    }
+
+    private JSObject parseMbtilesBounds(String value) {
+        if (value == null || value.trim().isEmpty()) return null;
+        String[] parts = value.split(",");
+        if (parts.length != 4) return null;
+        try {
+            double west = Double.parseDouble(parts[0].trim());
+            double south = Double.parseDouble(parts[1].trim());
+            double east = Double.parseDouble(parts[2].trim());
+            double north = Double.parseDouble(parts[3].trim());
+            JSObject bounds = new JSObject();
+            bounds.put("north", north);
+            bounds.put("south", south);
+            bounds.put("east", east);
+            bounds.put("west", west);
+            return bounds;
+        } catch (NumberFormatException err) {
+            return null;
+        }
+    }
+
+    private byte[] readMbtilesTile(File target, int z, int x, int y) {
+        try (SQLiteDatabase db = SQLiteDatabase.openDatabase(target.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY)) {
+            int flippedY = ((1 << z) - 1) - y;
+            byte[] tile = queryMbtilesTile(db, z, x, flippedY);
+            if (tile != null) return tile;
+            return queryMbtilesTile(db, z, x, y);
+        }
+    }
+
+    private byte[] queryMbtilesTile(SQLiteDatabase db, int z, int x, int y) {
+        try (Cursor cursor = db.rawQuery(
+            "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ? LIMIT 1",
+            new String[] { String.valueOf(z), String.valueOf(x), String.valueOf(y) }
+        )) {
+            if (cursor.moveToFirst()) return cursor.getBlob(0);
+        }
+        return null;
+    }
+
+    private String mimeTypeForMbtilesFormat(String format) {
+        String lower = format == null ? "" : format.toLowerCase(Locale.ROOT).trim();
+        if (lower.contains("jpg") || lower.contains("jpeg")) return "image/jpeg";
+        if (lower.contains("webp")) return "image/webp";
+        if (lower.contains("pbf") || lower.contains("mvt")) return "application/x-protobuf";
+        return "image/png";
+    }
+
+    private String detectTileMimeType(byte[] tile, String fallback) {
+        if (tile.length >= 8
+            && tile[0] == (byte) 0x89
+            && tile[1] == 0x50
+            && tile[2] == 0x4e
+            && tile[3] == 0x47) {
+            return "image/png";
+        }
+        if (tile.length >= 3 && tile[0] == (byte) 0xff && tile[1] == (byte) 0xd8 && tile[2] == (byte) 0xff) {
+            return "image/jpeg";
+        }
+        if (tile.length >= 12
+            && tile[0] == 0x52
+            && tile[1] == 0x49
+            && tile[2] == 0x46
+            && tile[3] == 0x46
+            && tile[8] == 0x57
+            && tile[9] == 0x45
+            && tile[10] == 0x42
+            && tile[11] == 0x50) {
+            return "image/webp";
+        }
+        return fallback == null || fallback.trim().isEmpty() ? "image/png" : fallback.trim();
     }
 
     private String bytesToHex(byte[] bytes) {

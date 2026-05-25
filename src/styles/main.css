@@ -3385,7 +3385,7 @@ body.route-list-dragging {
   border-radius: 8px;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) auto;
   padding: 9px 10px;
 }
 
@@ -3404,6 +3404,17 @@ body.route-list-dragging {
 }
 
 .offline-pack-delete {
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.offline-pack-inline-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.offline-map-source-use {
   height: 32px;
   min-width: 32px;
   padding: 0;

@@ -156,6 +156,7 @@ export class OfflineManager {
       supported: platform.supportsOfflineMapImport?.() === true,
       platform: platform.getPlatform?.() || platform.name || 'web',
       formats: ['mapsforge', 'mbtiles'],
+      renderFormats: [],
     };
     try {
       return {
@@ -203,6 +204,23 @@ export class OfflineManager {
   }
 
   async _handleOfflineMapSourceListClick(event) {
+    const activateButton = event.target.closest?.('[data-activate-offline-map-id]');
+    if (activateButton) {
+      const sourceId = activateButton.dataset.activateOfflineMapId;
+      if (!sourceId) return;
+      activateButton.disabled = true;
+      try {
+        const source = await getOfflineMapSource(sourceId);
+        if (!source) throw new Error('找不到離線底圖來源');
+        document.dispatchEvent(new CustomEvent('mapping-elf:offline-map-source-activate', {
+          detail: { source },
+        }));
+      } finally {
+        activateButton.disabled = false;
+      }
+      return;
+    }
+
     const button = event.target.closest?.('[data-delete-offline-map-id]');
     if (!button) return;
     const sourceId = button.dataset.deleteOfflineMapId;
@@ -214,6 +232,9 @@ export class OfflineManager {
         await platform.deleteOfflineMapSource?.(source.storage);
       }
       await removeOfflineMapSource(sourceId);
+      document.dispatchEvent(new CustomEvent('mapping-elf:offline-map-source-delete', {
+        detail: { sourceId },
+      }));
       await this.updateOfflineMapSourceInfo();
       this._notify('已移除離線底圖來源', 'success');
     } catch (err) {
@@ -267,7 +288,7 @@ export class OfflineManager {
     }
 
     sortedSources.forEach((source) => {
-      this._offlineMapSourceList.appendChild(this._createOfflineMapSourceItem(source));
+      this._offlineMapSourceList.appendChild(this._createOfflineMapSourceItem(source, capabilities));
     });
   }
 
@@ -310,7 +331,7 @@ export class OfflineManager {
     return button;
   }
 
-  _createOfflineMapSourceItem(source) {
+  _createOfflineMapSourceItem(source, capabilities = {}) {
     const item = document.createElement('div');
     item.className = 'offline-pack-item offline-map-source-item';
     item.dataset.offlineMapSourceId = source.id || '';
@@ -326,9 +347,29 @@ export class OfflineManager {
     meta.className = 'offline-pack-meta';
     meta.textContent = this._formatOfflineMapSourceMeta(source);
 
+    const actions = document.createElement('div');
+    actions.className = 'offline-pack-inline-actions';
+    actions.append(
+      this._createOfflineMapSourceUseButton(source, capabilities),
+      this._createOfflineMapSourceDeleteButton(source)
+    );
+
     content.append(title, meta);
-    item.append(content, this._createOfflineMapSourceDeleteButton(source));
+    item.append(content, actions);
     return item;
+  }
+
+  _createOfflineMapSourceUseButton(source, capabilities = {}) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'icon-btn offline-map-source-use';
+    button.dataset.activateOfflineMapId = source.id || '';
+    const renderable = this._isOfflineMapSourceRenderable(source, capabilities);
+    button.disabled = !renderable;
+    button.title = translatePhrase(renderable ? '使用此離線底圖' : this._offlineMapRendererStatusLabel(source.rendererStatus));
+    button.setAttribute('aria-label', translatePhrase('使用此離線底圖'));
+    button.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3zm-1 14.6-3.3-3.3 1.4-1.4 1.9 1.9 4.9-4.9 1.4 1.4-6.3 6.3z" fill="currentColor"/></svg>';
+    return button;
   }
 
   _createOfflineMapSourceDeleteButton(source) {
@@ -393,10 +434,19 @@ export class OfflineManager {
   _offlineMapRendererStatusLabel(status) {
     const labels = {
       'pending-native-renderer': '待接原生渲染',
+      'unsupported-vector-tiles': '向量 MBTiles 尚未支援',
       ready: '可用',
       disabled: '停用',
     };
     return translatePhrase(labels[status] || '已匯入');
+  }
+
+  _isOfflineMapSourceRenderable(source, capabilities = {}) {
+    const renderFormats = new Set(capabilities.renderFormats || []);
+    return source?.rendererStatus === 'ready'
+      && source?.format
+      && renderFormats.has(source.format)
+      && platform.supportsOfflineMapRendering?.();
   }
 
   _sourceLabel(source) {

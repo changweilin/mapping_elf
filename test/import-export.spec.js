@@ -404,6 +404,7 @@ test('web build exposes app-only offline basemap registry without enabling impor
   await expect(page.locator('#offline-map-source-list')).toContainText('MOI_OSM_Taiwan_TOPO_Lite.map');
   await expect(page.locator('#offline-map-source-list')).toContainText('Mapsforge .map');
   await expect(page.locator('#offline-map-source-list')).toContainText(/待接原生渲染|pending/);
+  await expect(page.locator('#offline-map-source-list [data-activate-offline-map-id]')).toBeDisabled();
 
   await page.locator('#offline-map-source-list [data-delete-offline-map-id]').click();
   await expect(page.locator('#offline-map-source-list .offline-map-source-item')).toHaveCount(0);

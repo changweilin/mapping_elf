@@ -289,6 +289,13 @@ export const capacitorPlatform = {
     if (!canUsePlugin('OfflineMaps')) return { deleted: false, supported: false };
     return nativePlugins.OfflineMaps.deleteOfflineMapSource(payload);
   },
+  supportsOfflineMapRendering() {
+    return canUsePlugin('OfflineMaps');
+  },
+  async getOfflineMapTile(payload = {}) {
+    if (!canUsePlugin('OfflineMaps')) return { found: false, supported: false };
+    return nativePlugins.OfflineMaps.getOfflineMapTile(payload);
+  },
   exitApp() {
     if (!canUsePlugin('App')) return false;
     nativePlugins.App.exitApp().catch(() => {});

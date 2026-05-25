@@ -65,6 +65,8 @@ function normalizeSource(record = {}) {
   const sizeBytes = toNonNegativeNumber(record.sizeBytes ?? file.sizeBytes);
   const checksumSha256 = safeText(record.checksumSha256 || file.checksumSha256);
   const mimeType = safeText(record.mimeType || file.mimeType);
+  const minZoom = toOptionalInteger(record.minZoom);
+  const maxZoom = toOptionalInteger(record.maxZoom);
 
   return {
     id,
@@ -80,6 +82,9 @@ function normalizeSource(record = {}) {
     attribution: record.attribution || null,
     license: record.license || null,
     rendererStatus: safeText(record.rendererStatus) || 'pending-native-renderer',
+    minZoom,
+    maxZoom,
+    tileMimeType: safeText(record.tileMimeType),
     storage: {
       kind: safeText(storage.kind || record.storageKind) || 'app-private-file',
       storedPath: safeText(storage.storedPath || record.storedPath),
@@ -95,6 +100,12 @@ function normalizeSource(record = {}) {
       checksumSha256,
     },
   };
+}
+
+function toOptionalInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : null;
 }
 
 function normalizeIndex(value) {

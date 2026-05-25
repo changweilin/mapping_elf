@@ -49,6 +49,9 @@ assertIncludes(androidMainActivity, 'registerPlugin(OfflineMapsPlugin.class)', '
 assertIncludes(androidOfflineMapsPlugin, '@CapacitorPlugin(name = "OfflineMaps")', 'Android native offline maps plugin');
 assertIncludes(androidOfflineMapsPlugin, 'ACTION_OPEN_DOCUMENT', 'Android native offline maps picker');
 assertIncludes(androidOfflineMapsPlugin, 'OFFLINE_MAP_DIR = "offline_maps"', 'Android native offline maps private storage');
+assertIncludes(androidOfflineMapsPlugin, 'getOfflineMapTile', 'Android MBTiles tile bridge');
+assertIncludes(androidOfflineMapsPlugin, 'SQLiteDatabase.openDatabase', 'Android MBTiles SQLite reader');
+assertIncludes(androidOfflineMapsPlugin, 'renderFormats', 'Android offline map render capabilities');
 [
   'application/gpx+xml',
   'application/vnd.google-earth.kml+xml',
