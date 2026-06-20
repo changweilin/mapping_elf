@@ -15,6 +15,7 @@ import { RESET_STATE_KEYS } from './modules/stateKeys.js';
 import { estimateMapPackTiles } from './modules/tileEstimator.js';
 import { buildWeatherPointsFromState } from './modules/weatherPointBuilder.js';
 import { platform } from './platform/index.js';
+import { TerrainViewer } from './modules/terrainViewer.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -1960,6 +1961,156 @@ if (btnToggleTheme) {
 }
 
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+// =========== 3D Terrain Viewer ===========
+const btnOpen3d = document.getElementById('btn-open-3d-viewer');
+const terrainViewerEl = document.getElementById('terrain-viewer');
+const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
+const tvCloseBtn = document.getElementById('tv-close-btn');
+const tpPlay = document.getElementById('tp-play');
+const tpSlider = document.getElementById('tp-slider');
+const tpProgressLabel = document.getElementById('tp-progress-label');
+const tpTimeLabel = document.getElementById('tp-time-label');
+const tpSpeedBtns = document.querySelectorAll('.tp-speed-btn');
+
+let terrainViewer = null;
+
+async function openTerrainViewer() {
+  try {
+    if (!currentRouteCoords || currentRouteCoords.length < 2) {
+      showNotification('請先規劃路線', 'warning');
+      return;
+    }
+
+    const route = allAlternatives[selectedAltIndex];
+    if (!route) {
+      showNotification('路線資料尚未就緒', 'warning');
+      return;
+    }
+
+    const routeCoords = route.coords;
+    const routeElevs = route.fullElevations || route.elevations;
+    const waypoints = mapManager.waypoints.map((wp, i) => {
+      const name = getWaypointLabel(i, wp[0], wp[1]);
+      let wpElev = 0;
+      if (routeElevs && routeCoords) {
+        let closest = 0;
+        let minDist = Infinity;
+        for (let j = 0; j < routeCoords.length; j++) {
+          const d = (routeCoords[j][0] - wp[0]) ** 2 + (routeCoords[j][1] - wp[1]) ** 2;
+          if (d < minDist) { minDist = d; closest = j; }
+        }
+        wpElev = routeElevs[closest] || 0;
+      }
+      return { coords: wp, label: name, elevation: wpElev };
+    });
+
+    const weatherPointsData = (weatherPoints || []).map((wp) => ({
+      coords: wp.coords || [wp.lat, wp.lng],
+      elevation: wp.elevation || 0,
+      weatherCode: wp.weatherCode || wp.weather_code,
+      temperature: wp.temperature || wp.temp,
+    }));
+
+    const routeData = {
+      coords: route.coords,
+      elevations: route.fullElevations || route.elevations,
+      waypoints,
+      weatherPoints: weatherPointsData,
+      routeStats: {
+        distance: route.distance,
+        ascent: route.ascent,
+        descent: route.descent,
+        maxElev: route.maxElev,
+        minElev: route.minElev,
+      },
+    };
+
+    if (!terrainViewer) {
+      terrainViewer = new TerrainViewer(terrainCanvasWrap);
+    }
+
+    terrainViewer.onClose(() => closeTerrainViewer());
+    terrainViewer.onProgressChange((p) => {
+      tpSlider.value = p;
+      tpProgressLabel.textContent = `${Math.round(p * 100)}%`;
+    });
+
+    terrainViewerEl.classList.remove('hidden');
+    terrainViewer.show();
+    await terrainViewer.loadRouteData(routeData);
+    updateTerrainPlayerUI();
+  } catch (err) {
+    console.error('3D viewer error:', err);
+    showNotification('3D 地形載入失敗: ' + (err.message || ''), 'error');
+  }
+}
+
+function closeTerrainViewer() {
+  if (terrainViewer) {
+    terrainViewer.pause();
+    terrainViewer.hide();
+  }
+  terrainViewerEl.classList.add('hidden');
+  updateTerrainPlayerUI();
+}
+
+function updateTerrainPlayerUI() {
+  const playing = terrainViewer?.isPlaying() ?? false;
+  const playIcon = document.getElementById('tp-play-icon');
+  const pauseIcon = document.getElementById('tp-pause-icon');
+  if (playIcon) playIcon.style.display = playing ? 'none' : '';
+  if (pauseIcon) pauseIcon.style.display = playing ? '' : 'none';
+  tpPlay?.classList.toggle('active', playing);
+
+  const progress = terrainViewer?.getProgress() ?? 0;
+  if (tpSlider) tpSlider.value = progress;
+  if (tpProgressLabel) tpProgressLabel.textContent = `${Math.round(progress * 100)}%`;
+}
+
+btnOpen3d?.addEventListener('click', openTerrainViewer);
+tvCloseBtn?.addEventListener('click', closeTerrainViewer);
+
+// Show 3D button badge when route is available
+function update3dButtonBadge() {
+  const hasRoute = currentRouteCoords && currentRouteCoords.length >= 2;
+  btnOpen3d?.classList.toggle('has-route', hasRoute);
+}
+
+// Hook into route update flow
+const _origSetCurrentRouteData = setCurrentRouteData;
+setCurrentRouteData = function (coords, elevations) {
+  _origSetCurrentRouteData(coords, elevations);
+  update3dButtonBadge();
+};
+update3dButtonBadge();
+
+// Player controls
+tpPlay?.addEventListener('click', () => {
+  if (!terrainViewer) return;
+  if (terrainViewer.isPlaying()) {
+    terrainViewer.pause();
+  } else {
+    terrainViewer.play();
+  }
+  updateTerrainPlayerUI();
+});
+
+tpSlider?.addEventListener('input', () => {
+  if (!terrainViewer) return;
+  const val = parseFloat(tpSlider.value);
+  terrainViewer.setProgress(val);
+  tpProgressLabel.textContent = `${Math.round(val * 100)}%`;
+});
+
+tpSpeedBtns.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    tpSpeedBtns.forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const speed = parseFloat(btn.dataset.speed);
+    if (terrainViewer) terrainViewer.setSpeed(speed);
+  });
+});
 
 btnPanelNarrow?.addEventListener('click', () => {
   applySidePanelWidth(getCurrentPanelWidth() - PANEL_WIDTH_STEP);
