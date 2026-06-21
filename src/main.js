@@ -1972,8 +1972,96 @@ const tpSlider = document.getElementById('tp-slider');
 const tpProgressLabel = document.getElementById('tp-progress-label');
 const tpTimeLabel = document.getElementById('tp-time-label');
 const tpSpeedBtns = document.querySelectorAll('.tp-speed-btn');
+const tvInfoPanel = document.getElementById('tv-info-panel');
+const tvInfoCollapse = document.getElementById('tv-info-collapse');
+const tvRouteStats = document.getElementById('tv-route-stats');
+const tvWpCount = document.getElementById('tv-wp-count');
+const tvWpList = document.getElementById('tv-wp-list');
+const tvToggleContour = document.getElementById('tv-toggle-contour');
+const tvToggleContourLabels = document.getElementById('tv-toggle-contour-labels');
+const tvToggleWeather = document.getElementById('tv-toggle-weather');
+const tvLoading = document.getElementById('tv-loading');
+const tvLoadingTitle = document.getElementById('tv-loading-title');
+const tvLoadingDetail = document.getElementById('tv-loading-detail');
+const tvLoadingFill = document.getElementById('tv-loading-fill');
+const tvLoadingPercent = document.getElementById('tv-loading-percent');
+const tvLoadingAbort = document.getElementById('tv-loading-abort');
 
 let terrainViewer = null;
+
+function setTerrainBusy(busy) {
+  terrainViewerEl?.classList.toggle('tv-busy', busy);
+  tvLoading?.classList.toggle('hidden', !busy);
+}
+
+function handleTerrainLoadState(state) {
+  if (state.active) {
+    setTerrainBusy(true);
+    const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
+    if (tvLoadingFill) tvLoadingFill.style.width = `${pct}%`;
+    if (tvLoadingPercent) tvLoadingPercent.textContent = `${pct}%`;
+    if (state.title && tvLoadingTitle) tvLoadingTitle.textContent = state.title;
+    if (state.detail && tvLoadingDetail) tvLoadingDetail.textContent = state.detail;
+    const bar = tvLoading?.querySelector('.loading-bar');
+    if (bar) bar.setAttribute('aria-valuenow', String(pct));
+    return;
+  }
+  // Finished, aborted, or errored.
+  setTerrainBusy(false);
+  if (state.aborted) {
+    closeTerrainViewer();
+    showNotification('已終止 3D 地形建立', 'info');
+  } else if (state.error) {
+    closeTerrainViewer();
+    showNotification('3D 地形載入失敗: ' + (state.error.message || ''), 'error');
+  }
+}
+
+function tvEscapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function renderTerrainInfoPanel(routeData) {
+  if (!tvRouteStats) return;
+  const s = routeData.routeStats || {};
+  const fmtDist = (m) => (m == null ? '—' : (m < 1000 ? `${Math.round(m)}<span class="tv-stat-unit">m</span>` : `${(m / 1000).toFixed(2)}<span class="tv-stat-unit">km</span>`));
+  const fmtElev = (m) => (m == null ? '—' : `${Math.round(m)}<span class="tv-stat-unit">m</span>`);
+
+  const stats = [
+    { label: '距離', value: fmtDist(s.distance) },
+    { label: '總爬升', value: fmtElev(s.ascent) },
+    { label: '總下降', value: fmtElev(s.descent) },
+    { label: '最高點', value: fmtElev(s.maxElev) },
+    { label: '最低點', value: fmtElev(s.minElev) },
+  ];
+  tvRouteStats.innerHTML = stats.map(st =>
+    `<div class="tv-stat-item"><span class="tv-stat-label">${st.label}</span><span class="tv-stat-value">${st.value}</span></div>`
+  ).join('');
+
+  const wps = routeData.waypoints || [];
+  if (tvWpCount) tvWpCount.textContent = wps.length ? `(${wps.length})` : '';
+  if (tvWpList) {
+    tvWpList.innerHTML = wps.map((wp, i) => {
+      const color = i === 0 ? '#00ff88' : (i === wps.length - 1 ? '#ff4466' : '#ffaa44');
+      const name = wp.label || `WP${i + 1}`;
+      const elev = wp.elevation != null ? `${Math.round(wp.elevation)} m` : '';
+      return `<li><span class="tv-wp-dot" style="color:${color};background:${color}"></span><span class="tv-wp-name">${tvEscapeHtml(name)}</span><span class="tv-wp-elev">${elev}</span></li>`;
+    }).join('');
+  }
+}
+
+function renderTerrainContourInfo(info) {
+  if (!tvRouteStats || !info) return;
+  // Append the contour interval as an extra stat so the model legend is explicit.
+  if (tvRouteStats.querySelector('[data-contour]')) return;
+  const item = document.createElement('div');
+  item.className = 'tv-stat-item';
+  item.setAttribute('data-contour', '');
+  item.innerHTML = `<span class="tv-stat-label">等高線間距</span><span class="tv-stat-value">${Math.round(info.contourInterval)}<span class="tv-stat-unit">m</span></span>`;
+  tvRouteStats.appendChild(item);
+}
 
 async function openTerrainViewer() {
   try {
@@ -1982,14 +2070,38 @@ async function openTerrainViewer() {
       return;
     }
 
+    // Planned routes come from the routing engine (allAlternatives); imported
+    // tracks skip routing, so fall back to the drawn track + elevation profile.
     const route = allAlternatives[selectedAltIndex];
-    if (!route) {
+    let routeCoords, routeElevs, routeStats;
+    if (route) {
+      routeCoords = route.coords;
+      routeElevs = route.fullElevations || route.elevations;
+      routeStats = {
+        distance: route.distance,
+        ascent: route.ascent,
+        descent: route.descent,
+        maxElev: route.maxElev,
+        minElev: route.minElev,
+      };
+    } else {
+      routeCoords = currentRouteCoords;
+      routeElevs = currentElevations;
+      const epStats = typeof elevationProfile?._calcStats === 'function' ? elevationProfile._calcStats() : {};
+      routeStats = {
+        distance: elevationProfile?.distances?.at?.(-1) || 0,
+        ascent: epStats.ascent,
+        descent: epStats.descent,
+        maxElev: epStats.maxElev,
+        minElev: epStats.minElev,
+      };
+    }
+
+    if (!routeCoords || routeCoords.length < 2) {
       showNotification('路線資料尚未就緒', 'warning');
       return;
     }
 
-    const routeCoords = route.coords;
-    const routeElevs = route.fullElevations || route.elevations;
     const waypoints = mapManager.waypoints.map((wp, i) => {
       const name = getWaypointLabel(i, wp[0], wp[1]);
       let wpElev = 0;
@@ -2013,17 +2125,11 @@ async function openTerrainViewer() {
     }));
 
     const routeData = {
-      coords: route.coords,
-      elevations: route.fullElevations || route.elevations,
+      coords: routeCoords,
+      elevations: routeElevs,
       waypoints,
       weatherPoints: weatherPointsData,
-      routeStats: {
-        distance: route.distance,
-        ascent: route.ascent,
-        descent: route.descent,
-        maxElev: route.maxElev,
-        minElev: route.minElev,
-      },
+      routeStats,
     };
 
     if (!terrainViewer) {
@@ -2035,6 +2141,11 @@ async function openTerrainViewer() {
       tpSlider.value = p;
       tpProgressLabel.textContent = `${Math.round(p * 100)}%`;
     });
+    terrainViewer.onInfo((info) => renderTerrainContourInfo(info));
+    terrainViewer.onLoad((state) => handleTerrainLoadState(state));
+
+    renderTerrainInfoPanel(routeData);
+    resetTerrainLayerToggles();
 
     terrainViewerEl.classList.remove('hidden');
     terrainViewer.show();
@@ -2042,15 +2153,18 @@ async function openTerrainViewer() {
     updateTerrainPlayerUI();
   } catch (err) {
     console.error('3D viewer error:', err);
+    setTerrainBusy(false);
     showNotification('3D 地形載入失敗: ' + (err.message || ''), 'error');
   }
 }
 
 function closeTerrainViewer() {
   if (terrainViewer) {
+    if (terrainViewer.isLoading()) terrainViewer.abort();
     terrainViewer.pause();
     terrainViewer.hide();
   }
+  setTerrainBusy(false);
   terrainViewerEl.classList.add('hidden');
   updateTerrainPlayerUI();
 }
@@ -2110,6 +2224,36 @@ tpSpeedBtns.forEach((btn) => {
     const speed = parseFloat(btn.dataset.speed);
     if (terrainViewer) terrainViewer.setSpeed(speed);
   });
+});
+
+// Layer toggles (contours / elevation labels / weather)
+function resetTerrainLayerToggles() {
+  [tvToggleContour, tvToggleContourLabels, tvToggleWeather].forEach((b) => b?.classList.add('active'));
+}
+
+tvToggleContour?.addEventListener('click', () => {
+  const on = tvToggleContour.classList.toggle('active');
+  terrainViewer?.setContoursVisible(on);
+});
+tvToggleContourLabels?.addEventListener('click', () => {
+  const on = tvToggleContourLabels.classList.toggle('active');
+  terrainViewer?.setContourLabelsVisible(on);
+});
+tvToggleWeather?.addEventListener('click', () => {
+  const on = tvToggleWeather.classList.toggle('active');
+  terrainViewer?.setWeatherVisible(on);
+});
+
+tvInfoCollapse?.addEventListener('click', () => {
+  tvInfoPanel?.classList.toggle('collapsed');
+});
+
+tvLoadingAbort?.addEventListener('click', () => {
+  if (terrainViewer?.isLoading()) {
+    terrainViewer.abort();
+  } else {
+    closeTerrainViewer();
+  }
 });
 
 btnPanelNarrow?.addEventListener('click', () => {

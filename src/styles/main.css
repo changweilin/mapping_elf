@@ -6945,6 +6945,252 @@ html.light-theme .panel-bottom-logo {
   overflow: hidden;
 }
 
+/* Track + waypoint info panel */
+.tv-info-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 230px;
+  max-width: calc(100% - 24px);
+  background: rgba(15, 17, 23, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-primary);
+  z-index: 12;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.tv-info-panel.collapsed .tv-info-body {
+  display: none;
+}
+.tv-info-panel.collapsed .tv-info-collapse svg {
+  transform: rotate(-90deg);
+}
+.tv-info-collapse {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 2;
+}
+.tv-info-collapse svg { transition: transform var(--transition-fast); }
+.tv-info-collapse:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); }
+.tv-info-body {
+  padding: 12px 14px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+.tv-info-section + .tv-info-section { margin-top: 14px; }
+.tv-info-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.tv-wp-count {
+  color: var(--text-muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.tv-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+.tv-stat-grid .tv-stat-item { display: flex; flex-direction: column; gap: 2px; }
+.tv-stat-grid .tv-stat-label { font-size: 10px; color: var(--text-muted); }
+.tv-stat-grid .tv-stat-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.tv-stat-grid .tv-stat-value .tv-stat-unit { font-size: 10px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
+.tv-wp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tv-wp-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.tv-wp-list .tv-wp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+.tv-wp-list .tv-wp-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.tv-wp-list .tv-wp-elev {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Layer toggle controls */
+.tv-layer-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 12;
+}
+.tv-layer-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(15, 17, 23, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.tv-layer-btn svg { opacity: 0.6; }
+.tv-layer-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+.tv-layer-btn.active {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  background: rgba(0, 255, 127, 0.08);
+}
+.tv-layer-btn.active svg { opacity: 1; }
+
+html.light-theme .tv-info-panel,
+html.light-theme .tv-layer-btn {
+  background: rgba(255,255,255,0.85);
+}
+
+@media (max-width: 640px) {
+  .tv-info-panel { width: 190px; }
+  .tv-layer-btn span { display: none; }
+  .tv-layer-btn { padding: 8px; }
+}
+
+/* Loading overlay + abort */
+.tv-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 18, 0.72);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.tv-loading-overlay.hidden { display: none; }
+.tv-loading-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(320px, calc(100% - 48px));
+  padding: 28px 26px;
+  background: rgba(20, 23, 31, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+  text-align: center;
+}
+.tv-loading-spinner svg { display: block; }
+.tv-loading-track { stroke: rgba(255,255,255,0.12); }
+.tv-loading-arc {
+  stroke: var(--accent-primary);
+  stroke-dasharray: 90 150;
+  transform-origin: center;
+  animation: tvSpin 0.9s linear infinite;
+}
+@keyframes tvSpin { to { transform: rotate(360deg); } }
+.tv-loading-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tv-loading-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-height: 16px;
+}
+.tv-loading-card .loading-bar {
+  width: 100%;
+  height: 6px;
+}
+.tv-loading-fill {
+  animation: none;
+  transition: width 0.25s ease;
+}
+.tv-loading-percent {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tv-loading-abort {
+  margin-top: 4px;
+  padding: 8px 22px;
+  border: 1px solid rgba(255, 90, 110, 0.5);
+  background: rgba(255, 68, 102, 0.12);
+  color: #ff7088;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.tv-loading-abort:hover {
+  background: rgba(255, 68, 102, 0.22);
+  color: #ff8a9c;
+}
+
+/* Locked state while terrain is computing */
+.terrain-viewer-overlay.tv-busy .terrain-player-bar,
+.terrain-viewer-overlay.tv-busy .tv-layer-controls,
+.terrain-viewer-overlay.tv-busy .tv-info-panel,
+.terrain-viewer-overlay.tv-busy .tv-close-btn {
+  pointer-events: none;
+  opacity: 0.45;
+  filter: grayscale(0.3);
+}
+
+html.light-theme .tv-loading-overlay { background: rgba(240, 244, 250, 0.72); }
+html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
+
 /* Player Controls Bar */
 .terrain-player-bar {
   display: flex;

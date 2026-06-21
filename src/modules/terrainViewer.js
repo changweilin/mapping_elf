@@ -24,12 +24,27 @@ export class TerrainViewer {
     this.playerMarker = null;
     this.playerPath = null;
 
+    this.contourGroup = null;
+    this.contourLabelGroup = null;
+    this.waypointLabelGroup = null;
+    this.weatherGroup = null;
+
+    this._grid = null;
+    this._bbox = null;
+    this._terrainInfo = null;
+
     this._playing = false;
     this._speed = 1;
     this._progress = 0;
     this._animFrameId = null;
     this._onProgressChange = null;
+    this._onInfo = null;
+    this._onLoad = null;
     this._onClose = null;
+
+    this._abortController = null;
+    this._aborted = false;
+    this._loading = false;
   }
 
   show() {
@@ -72,6 +87,48 @@ export class TerrainViewer {
     this._onProgressChange = cb;
   }
 
+  onInfo(cb) {
+    this._onInfo = cb;
+  }
+
+  // cb({ active, percent, title, detail, aborted, error })
+  onLoad(cb) {
+    this._onLoad = cb;
+  }
+
+  isLoading() {
+    return this._loading;
+  }
+
+  abort() {
+    if (!this._loading) return;
+    this._aborted = true;
+    if (this._abortController) {
+      try { this._abortController.abort(); } catch { /* noop */ }
+    }
+  }
+
+  _emitLoad(state) {
+    this._loading = !!state.active;
+    if (this._onLoad) this._onLoad(state);
+  }
+
+  getTerrainInfo() {
+    return this._terrainInfo;
+  }
+
+  setContoursVisible(visible) {
+    if (this.contourGroup) this.contourGroup.visible = visible;
+  }
+
+  setContourLabelsVisible(visible) {
+    if (this.contourLabelGroup) this.contourLabelGroup.visible = visible;
+  }
+
+  setWeatherVisible(visible) {
+    if (this.weatherGroup) this.weatherGroup.visible = visible;
+  }
+
   play() {
     if (!this.playerPath || this.playerPath.getPoint(0) === undefined) return;
     this._playing = true;
@@ -111,19 +168,49 @@ export class TerrainViewer {
     this.routeElevations = elevations || coords.map(() => 0);
 
     const bbox = this._computeBbox(coords);
-    const gridData = await this._fetchElevationGrid(bbox);
+
+    this._aborted = false;
+    this._abortController = new AbortController();
+    this._emitLoad({ active: true, percent: 3, title: '建立地形模型', detail: '下載高程資料中…' });
+
+    let gridData;
+    try {
+      gridData = await this._fetchElevationGrid(bbox, (p) => {
+        this._emitLoad({ active: true, percent: 3 + p * 80, title: '建立地形模型', detail: '下載高程資料中…' });
+      });
+    } catch (err) {
+      if (this._aborted) {
+        this._emitLoad({ active: false, percent: 0, aborted: true });
+        return;
+      }
+      this._emitLoad({ active: false, percent: 0, error: err });
+      return;
+    }
+
+    if (this._aborted || gridData == null) {
+      this._emitLoad({ active: false, percent: 0, aborted: true });
+      return;
+    }
+
+    this._grid = gridData;
+    this._bbox = bbox;
 
     if (!this.scene) {
       this._initScene();
     }
 
+    this._emitLoad({ active: true, percent: 88, title: '建立地形模型', detail: '計算等高線與軌跡…' });
+
     this._clearScene();
     this._createTerrain(gridData, bbox);
+    this._createContours(gridData, bbox);
     this._createRoutePath(coords, elevations, bbox);
     this._createWaypoints(waypoints, bbox);
     this._createWeatherLabels(weatherPoints, bbox);
     this._setupPlayer(coords, elevations, bbox);
     this._setupLighting();
+
+    if (this._onInfo) this._onInfo(this._terrainInfo);
 
     const cx = (bbox.minLng + bbox.maxLng) / 2;
     const cy = (bbox.minLat + bbox.maxLat) / 2;
@@ -133,12 +220,15 @@ export class TerrainViewer {
     );
     const dist = Math.max(span * 2.5, 2000);
 
-    const center = this._latLngToLocal(cx, cy, 0, bbox);
+    // _latLngToLocal expects (lat, lng): cy is the centre latitude, cx the centre longitude.
+    const center = this._latLngToLocal(cy, cx, 0, bbox);
     this.controls.target.set(center.x, center.y, center.z);
     this.camera.position.set(center.x + dist * 0.3, center.y + dist * 0.4, center.z + dist);
     this.controls.update();
 
     this._setupResizeHandler();
+
+    this._emitLoad({ active: false, percent: 100 });
   }
 
   _checkWebGL() {
@@ -162,7 +252,7 @@ export class TerrainViewer {
     this.scene.background = new THREE.Color(0x1a1a2e);
 
     this.camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 500000);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -230,7 +320,24 @@ export class TerrainViewer {
     return { x, y, z };
   }
 
-  async _fetchElevationGrid(bbox) {
+  // fetch with a per-request timeout that also honours the shared abort signal.
+  async _fetchWithTimeout(url, parentSignal, ms) {
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    if (parentSignal) {
+      if (parentSignal.aborted) ctrl.abort();
+      else parentSignal.addEventListener('abort', onAbort, { once: true });
+    }
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await fetch(url, { signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+      parentSignal?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  async _fetchElevationGrid(bbox, onProgress) {
     const lats = [];
     const lngs = [];
     for (let i = 0; i < GRID_SIZE; i++) {
@@ -242,20 +349,27 @@ export class TerrainViewer {
       }
     }
 
+    const signal = this._abortController?.signal;
     const elevations = [];
     const total = lats.length;
     const batchSize = 100;
+    const batchCount = Math.ceil(total / batchSize);
+    let batchIdx = 0;
+
     for (let start = 0; start < total; start += batchSize) {
+      if (this._aborted) return null;
       const end = Math.min(start + batchSize, total);
       const batchLats = lats.slice(start, end);
       const batchLngs = lngs.slice(start, end);
       const latsStr = batchLats.map(v => v.toFixed(4)).join(',');
       const lngsStr = batchLngs.map(v => v.toFixed(4)).join(',');
+      const url = `${ELEVATION_API}?latitude=${latsStr}&longitude=${lngsStr}`;
 
       let success = false;
       for (let attempt = 0; attempt < 3 && !success; attempt++) {
+        if (this._aborted) return null;
         try {
-          const resp = await fetch(`${ELEVATION_API}?latitude=${latsStr}&longitude=${lngsStr}`);
+          const resp = await this._fetchWithTimeout(url, signal, 15000);
           if (resp.ok) {
             const data = await resp.json();
             if (data.elevation) elevations.push(...data.elevation);
@@ -268,11 +382,19 @@ export class TerrainViewer {
             success = true;
           }
         } catch {
-          elevations.push(...batchLats.map(() => 0));
-          success = true;
+          if (this._aborted) return null;
+          if (attempt >= 2) {
+            elevations.push(...batchLats.map(() => 0));
+            success = true;
+          } else {
+            await new Promise(r => setTimeout(r, 500));
+          }
         }
       }
       if (!success) elevations.push(...batchLats.map(() => 0));
+
+      batchIdx++;
+      onProgress?.(batchIdx / batchCount);
     }
 
     const grid = [];
@@ -346,6 +468,154 @@ export class TerrainViewer {
     this.scene.add(this.terrainMesh);
   }
 
+  // ---------- Contour lines (等高線) ----------
+
+  _niceContourInterval(range) {
+    const target = range / 14; // aim for ~14 contour bands
+    const steps = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000];
+    for (const s of steps) {
+      if (s >= target) return s;
+    }
+    return 2000;
+  }
+
+  _createContours(grid, bbox) {
+    const flat = grid.flat();
+    const minElev = Math.min(...flat);
+    const maxElev = Math.max(...flat);
+    const range = maxElev - minElev;
+
+    const interval = this._niceContourInterval(Math.max(range, 1));
+    const majorEvery = 5;
+
+    this._terrainInfo = {
+      elevMin: minElev,
+      elevMax: maxElev,
+      contourInterval: interval,
+      gridSize: GRID_SIZE,
+    };
+
+    if (range < 1) return;
+
+    this.contourGroup = new THREE.Group();
+    this.contourLabelGroup = new THREE.Group();
+
+    const minorVerts = [];
+    const majorVerts = [];
+    const labelAnchors = []; // { level, point: Vector3 }
+
+    const startLevel = Math.ceil(minElev / interval) * interval;
+    for (let level = startLevel; level < maxElev; level += interval) {
+      const isMajor = Math.round(level / interval) % majorEvery === 0;
+      const segments = this._marchingSquares(grid, level, bbox);
+      const sink = isMajor ? majorVerts : minorVerts;
+      for (const seg of segments) {
+        sink.push(seg.a.x, seg.a.y, seg.a.z, seg.b.x, seg.b.y, seg.b.z);
+      }
+      if (isMajor && segments.length) {
+        // Pick a mid segment so the label sits inside the terrain, not on an edge.
+        const mid = segments[Math.floor(segments.length / 2)];
+        labelAnchors.push({
+          level,
+          point: new THREE.Vector3(
+            (mid.a.x + mid.b.x) / 2,
+            (mid.a.y + mid.b.y) / 2 + 4,
+            (mid.a.z + mid.b.z) / 2
+          ),
+        });
+      }
+    }
+
+    if (minorVerts.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(minorVerts, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xe8d9b5,
+        transparent: true,
+        opacity: 0.22,
+      });
+      this.contourGroup.add(new THREE.LineSegments(geo, mat));
+    }
+
+    if (majorVerts.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(majorVerts, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xfff0c2,
+        transparent: true,
+        opacity: 0.6,
+      });
+      this.contourGroup.add(new THREE.LineSegments(geo, mat));
+    }
+
+    this.scene.add(this.contourGroup);
+
+    for (const anchor of labelAnchors) {
+      const label = this._createLabel(`${Math.round(anchor.level)} m`, anchor.point.x, anchor.point.y, anchor.point.z, 0xfff0c2);
+      label.scale.set(40, 14, 1);
+      this.contourLabelGroup.add(label);
+    }
+    this.scene.add(this.contourLabelGroup);
+  }
+
+  _cellToWorld(fi, fj, level, bbox) {
+    const lat = bbox.minLat + (bbox.maxLat - bbox.minLat) * fi / (GRID_SIZE - 1);
+    const lng = bbox.minLng + (bbox.maxLng - bbox.minLng) * fj / (GRID_SIZE - 1);
+    const p = this._latLngToLocal(lat, lng, level + 2, bbox);
+    return new THREE.Vector3(p.x, p.y, p.z);
+  }
+
+  // Marching squares over the elevation grid for a single iso-level.
+  _marchingSquares(grid, level, bbox) {
+    const segments = [];
+    const lerp = (a, b) => (level - a) / (b - a);
+
+    for (let i = 0; i < GRID_SIZE - 1; i++) {
+      for (let j = 0; j < GRID_SIZE - 1; j++) {
+        const tl = grid[i][j];
+        const tr = grid[i][j + 1];
+        const br = grid[i + 1][j + 1];
+        const bl = grid[i + 1][j];
+
+        let idx = 0;
+        if (tl > level) idx |= 8;
+        if (tr > level) idx |= 4;
+        if (br > level) idx |= 2;
+        if (bl > level) idx |= 1;
+        if (idx === 0 || idx === 15) continue;
+
+        // Edge crossing points in fractional grid coords.
+        const top = () => [i, j + lerp(tl, tr)];
+        const right = () => [i + lerp(tr, br), j + 1];
+        const bottom = () => [i + 1, j + lerp(bl, br)];
+        const left = () => [i + lerp(tl, bl), j];
+
+        const pairs = [];
+        switch (idx) {
+          case 1: case 14: pairs.push([left, bottom]); break;
+          case 2: case 13: pairs.push([bottom, right]); break;
+          case 3: case 12: pairs.push([left, right]); break;
+          case 4: case 11: pairs.push([top, right]); break;
+          case 6: case 9: pairs.push([top, bottom]); break;
+          case 7: case 8: pairs.push([top, left]); break;
+          case 5: pairs.push([top, right], [bottom, left]); break;
+          case 10: pairs.push([top, left], [bottom, right]); break;
+          default: break;
+        }
+
+        for (const [ea, eb] of pairs) {
+          const [ai, aj] = ea();
+          const [bi, bj] = eb();
+          segments.push({
+            a: this._cellToWorld(ai, aj, level, bbox),
+            b: this._cellToWorld(bi, bj, level, bbox),
+          });
+        }
+      }
+    }
+    return segments;
+  }
+
   _createRoutePath(coords, elevations, bbox) {
     if (!coords || coords.length < 2) return;
 
@@ -417,6 +687,9 @@ export class TerrainViewer {
   _createWeatherLabels(weatherPoints, bbox) {
     if (!weatherPoints || weatherPoints.length === 0) return;
 
+    this.weatherGroup = new THREE.Group();
+    this.scene.add(this.weatherGroup);
+
     weatherPoints.forEach((pt) => {
       if (!pt || !pt.coords) return;
       const [lat, lng] = pt.coords;
@@ -440,7 +713,7 @@ export class TerrainViewer {
       if (!text) return;
 
       const label = this._createLabel(text, p.x, p.y, p.z, 0x44aaff);
-      this.scene.add(label);
+      this.weatherGroup.add(label);
       this.weatherLabels.push(label);
     });
   }
@@ -599,6 +872,10 @@ export class TerrainViewer {
     this.terrainMesh = null;
     this.routeLine = null;
     this.routeTube = null;
+    this.contourGroup = null;
+    this.contourLabelGroup = null;
+    this.waypointLabelGroup = null;
+    this.weatherGroup = null;
     this.playerMarker = null;
     this.playerRing = null;
     this.playerTrail = null;
