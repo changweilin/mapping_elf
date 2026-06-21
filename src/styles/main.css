@@ -6952,42 +6952,50 @@ html.light-theme .panel-bottom-logo {
   left: 12px;
   width: 230px;
   max-width: calc(100% - 24px);
-  background: rgba(15, 17, 23, 0.82);
+  background: rgba(12, 14, 20, 0.92);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 12px;
   color: var(--text-primary);
   z-index: 12;
   overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
 }
-.tv-info-panel.collapsed .tv-info-body {
-  display: none;
-}
-.tv-info-panel.collapsed .tv-info-collapse svg {
-  transform: rotate(-90deg);
-}
-.tv-info-collapse {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: rgba(255,255,255,0.06);
-  color: var(--text-secondary);
-  border-radius: 6px;
+/* Shared collapsible header for the route-info and live-HUD panels. Always
+   visible so a collapsed panel can still be re-expanded (the old absolute
+   toggle was clipped by the panel's overflow when the body was hidden). */
+.tv-panel-header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   cursor: pointer;
-  z-index: 2;
+  pointer-events: auto;
 }
-.tv-info-collapse svg { transition: transform var(--transition-fast); }
-.tv-info-collapse:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); }
+.tv-panel-header:hover { color: var(--text-primary); }
+.tv-panel-header-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-panel-chevron { flex-shrink: 0; transition: transform var(--transition-fast); }
+.tv-info-panel.collapsed .tv-info-body,
+.tv-live-hud.collapsed .tv-hud-body {
+  display: none;
+}
+.tv-info-panel.collapsed .tv-panel-chevron,
+.tv-live-hud.collapsed .tv-panel-chevron {
+  transform: rotate(-90deg);
+}
 .tv-info-body {
-  padding: 12px 14px;
+  padding: 0 14px 12px;
   max-height: calc(100vh - 220px);
   overflow-y: auto;
 }
@@ -7054,6 +7062,64 @@ html.light-theme .panel-bottom-logo {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+.tv-wp-list li.tv-wp-clickable { cursor: pointer; border-radius: 6px; padding: 2px 4px; margin: -2px -4px; }
+.tv-wp-list li.tv-wp-clickable:hover { background: rgba(255,255,255,0.08); }
+
+/* Marker detail popup (opened by clicking a 3D billboard / waypoint) */
+.tv-marker-detail {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 260px;
+  max-width: calc(100% - 24px);
+  padding: 12px 14px 14px;
+  background: rgba(12, 14, 20, 0.94);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  color: var(--text-primary);
+  z-index: 14;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+}
+.tv-marker-detail.hidden { display: none; }
+.tv-marker-detail-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: rgba(255,255,255,0.08);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.tv-marker-detail-close:hover { background: rgba(255,255,255,0.16); color: var(--text-primary); }
+.tv-marker-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  padding-right: 26px;
+}
+.tv-marker-detail-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  box-shadow: 0 0 8px currentColor;
+}
+.tv-marker-detail-rows { display: flex; flex-direction: column; gap: 5px; }
+.tv-marker-detail-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font-size: 12px;
+}
+.tv-marker-detail-row .tv-md-label { color: var(--text-muted); }
+.tv-marker-detail-row .tv-md-value { color: var(--text-primary); font-variant-numeric: tabular-nums; text-align: right; }
 
 /* Layer toggle controls */
 .tv-layer-controls {
@@ -7070,36 +7136,151 @@ html.light-theme .panel-bottom-logo {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  background: rgba(15, 17, 23, 0.82);
+  /* Near-opaque so the controls stay legible over a bright daytime sky, where
+     the previous translucent dark chip blended into the light background. */
+  background: rgba(10, 12, 18, 0.92);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 8px;
-  color: var(--text-muted);
+  color: #e7ebf2;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: all var(--transition-fast);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
-.tv-layer-btn svg { opacity: 0.6; }
-.tv-layer-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+.tv-layer-btn svg { opacity: 0.85; }
+.tv-layer-btn:hover { color: #fff; border-color: rgba(255, 255, 255, 0.4); }
 .tv-layer-btn.active {
   color: var(--accent-primary);
   border-color: var(--accent-primary);
-  background: rgba(0, 255, 127, 0.08);
+  background: rgba(0, 40, 22, 0.92);
 }
 .tv-layer-btn.active svg { opacity: 1; }
+.tv-layer-btn:disabled { opacity: 0.4; cursor: default; }
+.tv-layer-btn:disabled:hover { color: #e7ebf2; border-color: rgba(255, 255, 255, 0.22); }
+/* Contour "none" state reads as off without losing legibility. */
+.tv-layer-btn.tv-contour-off {
+  color: #c2c8d2;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(10, 12, 18, 0.92);
+}
+.tv-layer-btn.tv-contour-off svg { opacity: 0.5; }
 
 html.light-theme .tv-info-panel,
-html.light-theme .tv-layer-btn {
-  background: rgba(255,255,255,0.85);
+html.light-theme .tv-live-hud {
+  background: rgba(255,255,255,0.9);
 }
 
 @media (max-width: 640px) {
   .tv-info-panel { width: 190px; }
   .tv-layer-btn span { display: none; }
   .tv-layer-btn { padding: 8px; }
+}
+
+/* Position-driven live readout (HUD) */
+.tv-live-hud {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 248px;
+  max-width: calc(100% - 24px);
+  background: rgba(12, 14, 20, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  color: var(--text-primary);
+  z-index: 12;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  pointer-events: none;
+  overflow: hidden;
+}
+.tv-hud-body {
+  padding: 0 12px 10px;
+}
+.tv-hud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.tv-hud-time {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+.tv-hud-clock {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.tv-hud-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tv-hud-weather {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.tv-hud-wx-icon { font-size: 20px; line-height: 1; }
+.tv-hud-wx-temp { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.tv-hud-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+}
+.tv-hud-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.tv-hud-stat-label { font-size: 10px; color: var(--text-muted); }
+.tv-hud-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.tv-hud-stat-value .tv-hud-unit { font-size: 10px; font-weight: 400; color: var(--text-muted); margin-left: 1px; }
+.tv-hud-fatigue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.tv-hud-fatigue-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.12);
+  overflow: hidden;
+}
+.tv-hud-fatigue-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #4ade80, #facc15 55%, #f87171);
+  transition: width 0.2s ease;
+}
+.tv-hud-fatigue-pct {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+html.light-theme .tv-live-hud { background: rgba(255,255,255,0.85); }
+html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
+
+@media (max-width: 640px) {
+  .tv-live-hud { width: 200px; left: 8px; bottom: 8px; }
+  .tv-hud-body { padding: 0 10px 8px; }
+  .tv-hud-clock { font-size: 17px; }
 }
 
 /* Loading overlay + abort */
@@ -7182,6 +7363,7 @@ html.light-theme .tv-layer-btn {
 .terrain-viewer-overlay.tv-busy .terrain-player-bar,
 .terrain-viewer-overlay.tv-busy .tv-layer-controls,
 .terrain-viewer-overlay.tv-busy .tv-info-panel,
+.terrain-viewer-overlay.tv-busy .tv-live-hud,
 .terrain-viewer-overlay.tv-busy .tv-close-btn {
   pointer-events: none;
   opacity: 0.45;
@@ -7310,21 +7492,6 @@ html.light-theme .terrain-player-bar .tp-slider::-webkit-slider-thumb {
 }
 
 /* Open 3D viewer button */
-#btn-open-3d-viewer {
-  position: relative;
-}
-#btn-open-3d-viewer .badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-primary);
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  box-shadow: 0 0 6px rgba(0,255,127,0.5);
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-}
-#btn-open-3d-viewer.has-route .badge-dot {
-  opacity: 1;
-}
+/* 3D terrain button lives in the route-planning section header (an .icon-btn).
+   Tint it with the accent so it stands out among the route tools. */
+#btn-open-3d-viewer:not(:disabled) { color: var(--accent-primary); }

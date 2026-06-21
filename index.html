@@ -112,13 +112,6 @@
       </div>
     </div>
     <div class="toolbar-right">
-      <button class="tool-btn" id="btn-open-3d-viewer" title="3D 地形預覽">
-        <svg viewBox="0 0 24 24" width="20" height="20">
-          <path d="M21 5v14H3V5h18zm-2 2H5v3h14V7zm0 5H5v5h14v-5z" fill="currentColor" opacity="0.7"/>
-          <path d="M7 10l2-3h6l2 3-5 4-5-4z" fill="currentColor" opacity="0.9"/>
-        </svg>
-        <span class="badge-dot"></span>
-      </button>
       <button class="tool-btn" id="btn-toggle-theme" title="切換深淺色">
         <svg id="icon-moon" viewBox="0 0 24 24" width="20" height="20" style="display: block;">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor" />
@@ -273,6 +266,12 @@
               <path
                 d="M9 3 5 6.99h3V14h2V6.99h3L9 3zm6 18 4-3.99h-3V10h-2v7.01h-3L15 21z"
                 fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="btn-open-3d-viewer" title="建立 3D 地形" aria-label="建立 3D 地形" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path d="M21 5v14H3V5h18zm-2 2H5v3h14V7zm0 5H5v5h14v-5z" fill="currentColor" opacity="0.7"/>
+              <path d="M7 10l2-3h6l2 3-5 4-5-4z" fill="currentColor" opacity="0.9"/>
             </svg>
           </button>
           <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
@@ -1269,12 +1268,12 @@
     <div class="terrain-viewer-canvas-wrap" id="terrain-canvas-wrap">
       <!-- Track + waypoint info panel -->
       <div class="tv-info-panel" id="tv-info-panel">
-        <button class="tv-info-collapse" id="tv-info-collapse" title="收合/展開">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
+        <button class="tv-panel-header" id="tv-info-collapse" title="收合/展開" aria-expanded="true">
+          <span class="tv-panel-header-title">路線資訊</span>
+          <svg class="tv-panel-chevron" viewBox="0 0 24 24" width="16" height="16"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
         </button>
         <div class="tv-info-body" id="tv-info-body">
           <div class="tv-info-section">
-            <div class="tv-info-title">路線資訊</div>
             <div class="tv-stat-grid" id="tv-route-stats"></div>
           </div>
           <div class="tv-info-section">
@@ -1283,11 +1282,18 @@
           </div>
         </div>
       </div>
+      <!-- Marker detail popup (waypoints / landmarks) -->
+      <div class="tv-marker-detail hidden" id="tv-marker-detail">
+        <button class="tv-marker-detail-close" id="tv-marker-detail-close" title="關閉" aria-label="關閉">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>
+        </button>
+        <div class="tv-marker-detail-body" id="tv-marker-detail-body"></div>
+      </div>
       <!-- Layer toggle controls -->
       <div class="tv-layer-controls">
-        <button class="tv-layer-btn active" id="tv-toggle-contour" title="等高線">
+        <button class="tv-layer-btn active" id="tv-toggle-contour" title="等高線精度（高/低/無）" data-contour-state="high">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 14c3-4 6-4 9 0s6 4 9 0M3 9c3-4 6-4 9 0s6 4 9 0M3 19c3-4 6-4 9 0s6 4 9 0" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-          <span>等高線</span>
+          <span id="tv-contour-label">等高線·高</span>
         </button>
         <button class="tv-layer-btn active" id="tv-toggle-contour-labels" title="高程標記">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 17h16M4 7h10" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="14" y="11" font-size="9" fill="currentColor">m</text></svg>
@@ -1297,6 +1303,44 @@
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 16a4 4 0 010-8 5 5 0 019.6 1.5A3.5 3.5 0 0117 16H7z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
           <span>天氣</span>
         </button>
+        <button class="tv-layer-btn active" id="tv-toggle-daynight" title="日夜光照">
+          <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span>日夜</span>
+        </button>
+        <button class="tv-layer-btn active" id="tv-toggle-weatherfx" title="天氣特效">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 14a4 4 0 010-8 5 5 0 019.6 1.5A3.5 3.5 0 0117 14H7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 17l-1 3M12 17l-1 3M16 17l-1 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span>特效</span>
+        </button>
+      </div>
+      <!-- Position-driven live readout (date/time, mileage, altitude, speed, grade, fatigue, weather) -->
+      <div class="tv-live-hud" id="tv-live-hud">
+        <button class="tv-panel-header" id="tv-hud-collapse" title="收合/展開" aria-expanded="true">
+          <span class="tv-panel-header-title">人物資訊</span>
+          <svg class="tv-panel-chevron" viewBox="0 0 24 24" width="16" height="16"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
+        </button>
+        <div class="tv-hud-body" id="tv-hud-body">
+        <div class="tv-hud-head">
+          <div class="tv-hud-time">
+            <span class="tv-hud-clock" id="tv-hud-clock">--:--</span>
+            <span class="tv-hud-date" id="tv-hud-date">—</span>
+          </div>
+          <div class="tv-hud-weather" id="tv-hud-weather">
+            <span class="tv-hud-wx-icon" id="tv-hud-wx-icon"></span>
+            <span class="tv-hud-wx-temp" id="tv-hud-wx-temp"></span>
+          </div>
+        </div>
+        <div class="tv-hud-stats">
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">里程</span><span class="tv-hud-stat-value" id="tv-hud-dist">—</span></div>
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">海拔</span><span class="tv-hud-stat-value" id="tv-hud-elev">—</span></div>
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">速度</span><span class="tv-hud-stat-value" id="tv-hud-speed">—</span></div>
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">坡度</span><span class="tv-hud-stat-value" id="tv-hud-grade">—</span></div>
+        </div>
+        <div class="tv-hud-fatigue" id="tv-hud-fatigue-row">
+          <span class="tv-hud-stat-label">疲勞</span>
+          <div class="tv-hud-fatigue-bar"><div class="tv-hud-fatigue-fill" id="tv-hud-fatigue-fill"></div></div>
+          <span class="tv-hud-fatigue-pct" id="tv-hud-fatigue-pct">—</span>
+        </div>
+        </div>
       </div>
       <!-- Loading overlay (terrain computation) -->
       <div class="tv-loading-overlay hidden" id="tv-loading" aria-live="polite">
