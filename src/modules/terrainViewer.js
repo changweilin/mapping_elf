@@ -58,6 +58,10 @@ export class TerrainViewer {
     this._grid = null;
     this._bbox = null;
     this._terrainInfo = null;
+    // Vertical datum: terrain (and everything on it) is shifted down by the
+    // terrain's minimum elevation, so the empty band below the lowest ground
+    // (e.g. sea-level 0–500 m that isn't on the map) isn't rendered.
+    this._elevBase = 0;
 
     this._playing = false;
     this._speed = 1;
@@ -383,6 +387,9 @@ export class TerrainViewer {
 
     this._grid = gridData;
     this._bbox = bbox;
+    // Datum: shift everything down by the terrain's lowest point so the empty
+    // band beneath the terrain (heights that aren't on the map) isn't rendered.
+    this._elevBase = Math.min(...gridData.flat());
 
     if (!this.scene) {
       this._initScene();
@@ -416,8 +423,12 @@ export class TerrainViewer {
 
     const dist = Math.max(span * 2.5, 2000);
 
-    // _latLngToLocal expects (lat, lng): cy is the centre latitude, cx the centre longitude.
-    const center = this._latLngToLocal(cy, cx, 0, bbox);
+    // Aim at the terrain's mid-height (datum-shifted) so the model is framed,
+    // not the empty space the old y=0 target used to look at.
+    const midElev = this._terrainInfo
+      ? (this._terrainInfo.elevMin + this._terrainInfo.elevMax) / 2
+      : this._elevBase;
+    const center = this._latLngToLocal(cy, cx, midElev, bbox);
     this.controls.target.set(center.x, center.y, center.z);
     this.camera.position.set(center.x + dist * 0.3, center.y + dist * 0.4, center.z + dist);
     this.controls.update();
@@ -828,9 +839,26 @@ export class TerrainViewer {
     const R = 6371000;
     const toRad = Math.PI / 180;
     const x = R * toRad * (lng - cx) * Math.cos(toRad * cy);
-    const y = elev;
+    const y = elev - (this._elevBase || 0);
     const z = R * toRad * (lat - cy);
     return { x, y, z };
+  }
+
+  // Bilinear-interpolated terrain elevation (raw metres) at a lat/lng, so points
+  // can be dropped onto the rendered surface.
+  _sampleGridElevation(lat, lng, grid, bbox) {
+    if (!grid || !grid.length) return 0;
+    const gx = (lng - bbox.minLng) / (bbox.maxLng - bbox.minLng) * (GRID_SIZE - 1);
+    const gy = (lat - bbox.minLat) / (bbox.maxLat - bbox.minLat) * (GRID_SIZE - 1);
+    const j0 = Math.max(0, Math.min(GRID_SIZE - 1, Math.floor(gx)));
+    const i0 = Math.max(0, Math.min(GRID_SIZE - 1, Math.floor(gy)));
+    const j1 = Math.min(GRID_SIZE - 1, j0 + 1);
+    const i1 = Math.min(GRID_SIZE - 1, i0 + 1);
+    const fx = gx - j0;
+    const fy = gy - i0;
+    const top = grid[i0][j0] + (grid[i0][j1] - grid[i0][j0]) * fx;
+    const bot = grid[i1][j0] + (grid[i1][j1] - grid[i1][j0]) * fx;
+    return top + (bot - top) * fy;
   }
 
   // fetch with a per-request timeout that also honours the shared abort signal.
@@ -983,15 +1011,9 @@ export class TerrainViewer {
 
   // ---------- Contour lines (等高線) ----------
 
-  _niceContourInterval(range) {
-    // Target band count depends on precision: high = dense, low = sparse.
-    const bands = this._contourPrecision === 'low' ? 7 : 28;
-    const target = range / bands;
-    const steps = [2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000];
-    for (const s of steps) {
-      if (s >= target) return s;
-    }
-    return 2000;
+  _niceContourInterval() {
+    // Fixed resolution per precision: high = 20 m, low = 100 m.
+    return this._contourPrecision === 'low' ? 100 : 20;
   }
 
   _createContours(grid, bbox) {
@@ -1000,7 +1022,7 @@ export class TerrainViewer {
     const maxElev = Math.max(...flat);
     const range = maxElev - minElev;
 
-    const interval = this._niceContourInterval(Math.max(range, 1));
+    const interval = this._niceContourInterval();
     const majorEvery = this._contourPrecision === 'low' ? 4 : 5;
 
     this._terrainInfo = {
@@ -1048,7 +1070,7 @@ export class TerrainViewer {
     if (minorVerts.length) {
       const geo = new LineSegmentsGeometry();
       geo.setPositions(minorVerts);
-      const mat = new LineMaterial({ color: 0xe8d9b5, linewidth: 2, transparent: true, opacity: 0.4 });
+      const mat = new LineMaterial({ color: 0xe8d9b5, linewidth: 1, transparent: true, opacity: 0.4 });
       const seg = new LineSegments2(geo, mat);
       seg.computeLineDistances();
       this.contourGroup.add(seg);
@@ -1058,7 +1080,7 @@ export class TerrainViewer {
     if (majorVerts.length) {
       const geo = new LineSegmentsGeometry();
       geo.setPositions(majorVerts);
-      const mat = new LineMaterial({ color: 0xfff0c2, linewidth: 3.5, transparent: true, opacity: 0.75 });
+      const mat = new LineMaterial({ color: 0xfff0c2, linewidth: 1.75, transparent: true, opacity: 0.75 });
       const seg = new LineSegments2(geo, mat);
       seg.computeLineDistances();
       this.contourGroup.add(seg);
@@ -1342,11 +1364,14 @@ export class TerrainViewer {
     this.weatherGroup = new THREE.Group();
     this.scene.add(this.weatherGroup);
 
+    const ms0 = this._markerScale || 1;
     weatherPoints.forEach((pt) => {
       if (!pt || !pt.coords) return;
       const [lat, lng] = pt.coords;
-      const elev = pt.elevation ?? 0;
-      const p = this._latLngToLocal(lat, lng, elev + 25, bbox);
+      // Sit the icon on the rendered terrain surface (sampled from the grid),
+      // not at the supplied/sea-level elevation that left it floating below.
+      const surfElev = this._sampleGridElevation(lat, lng, this._grid, bbox);
+      const p = this._latLngToLocal(lat, lng, surfElev + 18 * ms0, bbox);
 
       const icon = pt.weatherCode != null ? TerrainViewer.weatherIcon(pt.weatherCode) : '☀️';
 
