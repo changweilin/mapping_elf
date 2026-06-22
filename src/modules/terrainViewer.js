@@ -10,6 +10,15 @@ import { haversineDistance, cumulativeDistances } from './utils.js';
 const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
 const GRID_SIZE = 25;
 
+// The coarse downloaded grid is lightly smoothed and upsampled to a finer field
+// (SUBDIV fine samples per coarse cell) that is shared by BOTH the rendered
+// surface and the iso-lines. This makes the terrain read smooth instead of
+// faceted (kills the regular diagonal "corduroy" artefact) and keeps the
+// contours hugging the same surface so they no longer break through it. Missing
+// elevation (holes) propagates through, so blank tiles aren't drawn.
+const SUBDIV = 4;
+const FIELD_SIZE = (GRID_SIZE - 1) * SUBDIV + 1; // 97
+
 export class TerrainViewer {
   constructor(container) {
     this.container = container;
@@ -57,6 +66,11 @@ export class TerrainViewer {
 
     this._grid = null;
     this._bbox = null;
+    // Smoothed/upsampled height field shared by the surface mesh + contours, and
+    // the valid (hole-excluded) elevation range over it.
+    this._field = null;
+    this._fieldMinV = 0;
+    this._fieldMaxV = 1;
     this._terrainInfo = null;
     // Vertical datum: terrain (and everything on it) is shifted down by the
     // terrain's minimum elevation, so the empty band below the lowest ground
@@ -213,7 +227,7 @@ export class TerrainViewer {
     const alreadyBuilt = p === 'none' ? !this.contourGroup : !!this.contourGroup;
     if (p === this._contourPrecision && alreadyBuilt) return;
     this._contourPrecision = p;
-    if (!this.scene || !this._grid || !this._bbox) return;
+    if (!this.scene || !this._grid || !this._bbox || !this._field) return;
     this._rebuildContours();
   }
 
@@ -243,7 +257,7 @@ export class TerrainViewer {
       if (this._onInfo) this._onInfo(this._terrainInfo);
       return;
     }
-    this._createContours(this._grid, this._bbox);
+    this._createContours(this._bbox);
     if (this.contourLabelGroup) this.contourLabelGroup.visible = this._contourLabelsVisible;
     if (this._onInfo) this._onInfo(this._terrainInfo);
   }
@@ -279,6 +293,26 @@ export class TerrainViewer {
 
   isWeatherFxEnabled() {
     return this._weatherFxEnabled;
+  }
+
+  // --- Layer availability: lets the UI grey out toggles that can't do anything
+  // for this route (no weather points, no precipitation, no major-contour
+  // labels), so a no-op toggle doesn't look broken.
+  hasWeatherData() {
+    return !!(this.weatherGroup && this.weatherLabels.length);
+  }
+
+  hasContourLabels() {
+    return !!(this.contourLabelGroup && this.contourLabelGroup.children.length);
+  }
+
+  // True when any weather point along the route is something the FX layer can
+  // actually show (rain/snow/fog/cloud tint) — i.e. not plain clear sky.
+  routeHasWeatherFx() {
+    return (this._weatherPoints || []).some((p) => {
+      const code = p?.weatherCode;
+      return code != null && TerrainViewer.weatherCategory(code) !== 'clear';
+    });
   }
 
   play() {
@@ -387,9 +421,13 @@ export class TerrainViewer {
 
     this._grid = gridData;
     this._bbox = bbox;
-    // Datum: shift everything down by the terrain's lowest point so the empty
-    // band beneath the terrain (heights that aren't on the map) isn't rendered.
-    this._elevBase = Math.min(...gridData.flat());
+    // Smoothed, upsampled height field shared by the surface mesh and the
+    // contours (sets this._fieldMinV / this._fieldMaxV over valid data only).
+    this._field = this._buildFineField(gridData);
+    // Datum: anchor at the lowest *valid* ground (holes excluded) so the model
+    // never starts from a spurious sea-level 0 m skirt and the empty band
+    // beneath the terrain isn't rendered.
+    this._elevBase = this._fieldMinV;
 
     if (!this.scene) {
       this._initScene();
@@ -405,14 +443,14 @@ export class TerrainViewer {
     );
     this._worldSpan = span;
     // Scale markers/hiker to the terrain so they stay visible at the default
-    // framing (camera sits ~2.5× the span away).
+    // framing (camera sits ~1.7× the span away).
     this._markerScale = Math.max(1, span / 300);
 
     this._emitLoad({ active: true, percent: 88, title: '建立地形模型', detail: '計算等高線與軌跡…' });
 
     this._clearScene();
-    this._createTerrain(gridData, bbox);
-    this._createContours(gridData, bbox);
+    this._createTerrain(bbox);
+    this._createContours(bbox);
     this._createRoutePath(coords, elevations, bbox);
     this._createWaypoints(waypoints, bbox);
     this._createWeatherLabels(weatherPoints, bbox);
@@ -421,7 +459,9 @@ export class TerrainViewer {
 
     if (this._onInfo) this._onInfo(this._terrainInfo);
 
-    const dist = Math.max(span * 2.5, 2000);
+    // Frame the model larger in the view (closer camera) so the terrain reads
+    // bigger and dense 20 m contours aren't crammed together on screen.
+    const dist = Math.max(span * 1.7, 1500);
 
     // Aim at the terrain's mid-height (datum-shifted) so the model is framed,
     // not the empty space the old y=0 target used to look at.
@@ -844,21 +884,17 @@ export class TerrainViewer {
     return { x, y, z };
   }
 
-  // Bilinear-interpolated terrain elevation (raw metres) at a lat/lng, so points
-  // can be dropped onto the rendered surface.
-  _sampleGridElevation(lat, lng, grid, bbox) {
-    if (!grid || !grid.length) return 0;
-    const gx = (lng - bbox.minLng) / (bbox.maxLng - bbox.minLng) * (GRID_SIZE - 1);
-    const gy = (lat - bbox.minLat) / (bbox.maxLat - bbox.minLat) * (GRID_SIZE - 1);
-    const j0 = Math.max(0, Math.min(GRID_SIZE - 1, Math.floor(gx)));
-    const i0 = Math.max(0, Math.min(GRID_SIZE - 1, Math.floor(gy)));
-    const j1 = Math.min(GRID_SIZE - 1, j0 + 1);
-    const i1 = Math.min(GRID_SIZE - 1, i0 + 1);
-    const fx = gx - j0;
-    const fy = gy - i0;
-    const top = grid[i0][j0] + (grid[i0][j1] - grid[i0][j0]) * fx;
-    const bot = grid[i1][j0] + (grid[i1][j1] - grid[i1][j0]) * fx;
-    return top + (bot - top) * fy;
+  // Interpolated terrain elevation (metres) at a lat/lng on the rendered surface,
+  // so points can be dropped onto it. Samples the same fine field as the mesh;
+  // falls back to the datum height over a hole.
+  _sampleGridElevation(lat, lng) {
+    const field = this._field;
+    const bbox = this._bbox;
+    if (!field || !bbox) return this._elevBase || 0;
+    const gx = (lng - bbox.minLng) / (bbox.maxLng - bbox.minLng) * (FIELD_SIZE - 1);
+    const gy = (lat - bbox.minLat) / (bbox.maxLat - bbox.minLat) * (FIELD_SIZE - 1);
+    const v = this._sampleSmooth(field, gy, gx, FIELD_SIZE);
+    return this._isHole(v) ? (this._elevBase || 0) : v;
   }
 
   // fetch with a per-request timeout that also honours the shared abort signal.
@@ -914,25 +950,26 @@ export class TerrainViewer {
           if (resp.ok) {
             const data = await resp.json();
             if (data.elevation) elevations.push(...data.elevation);
-            else elevations.push(...batchLats.map(() => 0));
+            else elevations.push(...batchLats.map(() => null));
             success = true;
           } else if (resp.status === 429) {
             await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
           } else {
-            elevations.push(...batchLats.map(() => 0));
+            // Missing data → null (a hole), not a flat sea-level 0 m patch.
+            elevations.push(...batchLats.map(() => null));
             success = true;
           }
         } catch {
           if (this._aborted) return null;
           if (attempt >= 2) {
-            elevations.push(...batchLats.map(() => 0));
+            elevations.push(...batchLats.map(() => null));
             success = true;
           } else {
             await new Promise(r => setTimeout(r, 500));
           }
         }
       }
-      if (!success) elevations.push(...batchLats.map(() => 0));
+      if (!success) elevations.push(...batchLats.map(() => null));
 
       batchIdx++;
       onProgress?.(batchIdx / batchCount);
@@ -943,32 +980,38 @@ export class TerrainViewer {
     for (let i = 0; i < GRID_SIZE; i++) {
       const row = [];
       for (let j = 0; j < GRID_SIZE; j++) {
-        row.push(elevations[idx++] || 0);
+        const v = elevations[idx++];
+        row.push(Number.isFinite(v) ? v : null); // null = hole (missing data)
       }
       grid.push(row);
     }
     return grid;
   }
 
-  _createTerrain(grid, bbox) {
+  _createTerrain(bbox) {
+    const field = this._field;
+    const N = FIELD_SIZE;
     const geo = new THREE.BufferGeometry();
     const vertices = [];
     const colors = [];
     const indices = [];
     const uvs = [];
 
-    const minElev = Math.min(...grid.flat());
-    const maxElev = Math.max(...grid.flat());
+    const minElev = this._fieldMinV;
+    const maxElev = this._fieldMaxV;
     const elevRange = Math.max(maxElev - minElev, 1);
 
-    for (let i = 0; i < GRID_SIZE; i++) {
-      for (let j = 0; j < GRID_SIZE; j++) {
-        const lat = bbox.minLat + (bbox.maxLat - bbox.minLat) * i / (GRID_SIZE - 1);
-        const lng = bbox.minLng + (bbox.maxLng - bbox.minLng) * j / (GRID_SIZE - 1);
-        const elev = grid[i][j];
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const lat = bbox.minLat + (bbox.maxLat - bbox.minLat) * i / (N - 1);
+        const lng = bbox.minLng + (bbox.maxLng - bbox.minLng) * j / (N - 1);
+        const raw = field[i][j];
+        // Holes get a placeholder height; the quads touching them are skipped so
+        // they never appear on screen.
+        const elev = this._isHole(raw) ? minElev : raw;
         const p = this._latLngToLocal(lat, lng, elev, bbox);
         vertices.push(p.x, p.y, p.z);
-        uvs.push(j / (GRID_SIZE - 1), i / (GRID_SIZE - 1));
+        uvs.push(j / (N - 1), i / (N - 1));
 
         const t = (elev - minElev) / elevRange;
         const r = 0.1 + t * 0.7;
@@ -978,14 +1021,25 @@ export class TerrainViewer {
       }
     }
 
-    for (let i = 0; i < GRID_SIZE - 1; i++) {
-      for (let j = 0; j < GRID_SIZE - 1; j++) {
-        const a = i * GRID_SIZE + j;
-        const b = i * GRID_SIZE + j + 1;
-        const c = (i + 1) * GRID_SIZE + j;
-        const d = (i + 1) * GRID_SIZE + j + 1;
-        indices.push(a, b, c);
-        indices.push(b, d, c);
+    for (let i = 0; i < N - 1; i++) {
+      for (let j = 0; j < N - 1; j++) {
+        // Skip any quad touching missing data — blank tiles aren't drawn.
+        if (this._isHole(field[i][j]) || this._isHole(field[i][j + 1]) ||
+            this._isHole(field[i + 1][j]) || this._isHole(field[i + 1][j + 1])) continue;
+        const a = i * N + j;
+        const b = i * N + j + 1;
+        const c = (i + 1) * N + j;
+        const d = (i + 1) * N + j + 1;
+        // Alternate the split diagonal per cell (checkerboard) so the
+        // triangulation has no consistent direction — this removes the regular
+        // diagonal "corduroy" wrinkle that a uniform split produces.
+        if ((i + j) & 1) {
+          indices.push(a, b, d);
+          indices.push(a, d, c);
+        } else {
+          indices.push(a, b, c);
+          indices.push(b, d, c);
+        }
       }
     }
 
@@ -998,15 +1052,127 @@ export class TerrainViewer {
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       flatShading: false,
-      roughness: 0.6,
-      metalness: 0.1,
+      // Matte surface: less specular glint so any residual facets don't catch
+      // the light and read as wrinkles.
+      roughness: 0.92,
+      metalness: 0.0,
       side: THREE.DoubleSide,
+      // Push terrain fragments slightly back in the depth buffer so coincident
+      // contour/route lines win and don't z-fight / break through.
+      polygonOffset: true,
+      polygonOffsetFactor: 2,
+      polygonOffsetUnits: 2,
     });
 
     this.terrainMesh = new THREE.Mesh(geo, mat);
     this.terrainMesh.receiveShadow = true;
     this.terrainMesh.castShadow = true;
     this.scene.add(this.terrainMesh);
+  }
+
+  // --- Smoothed / upsampled height field -------------------------------------
+
+  _isHole(v) {
+    return v == null || !Number.isFinite(v);
+  }
+
+  // Build the fine render/contour field from the coarse download grid: a
+  // hole-aware light blur (softens DEM terracing) followed by a Catmull-Rom
+  // upsample to FIELD_SIZE (bilinear near holes). Records valid min/max in
+  // this._fieldMinV / this._fieldMaxV.
+  _buildFineField(grid) {
+    const N = GRID_SIZE;
+
+    // 1) Hole-aware 3×3 blur of the coarse grid.
+    const sm = [];
+    for (let i = 0; i < N; i++) {
+      const row = [];
+      for (let j = 0; j < N; j++) {
+        if (this._isHole(grid[i][j])) { row.push(null); continue; }
+        let sum = 0;
+        let w = 0;
+        for (let di = -1; di <= 1; di++) {
+          for (let dj = -1; dj <= 1; dj++) {
+            const ii = i + di;
+            const jj = j + dj;
+            if (ii < 0 || ii >= N || jj < 0 || jj >= N) continue;
+            const v = grid[ii][jj];
+            if (this._isHole(v)) continue;
+            const wt = (di === 0 && dj === 0) ? 4 : 1;
+            sum += v * wt;
+            w += wt;
+          }
+        }
+        row.push(w > 0 ? sum / w : grid[i][j]);
+      }
+      sm.push(row);
+    }
+
+    // 2) Upsample to the fine field.
+    const field = [];
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (let fi = 0; fi < FIELD_SIZE; fi++) {
+      const row = [];
+      const gy = fi / (FIELD_SIZE - 1) * (N - 1);
+      for (let fj = 0; fj < FIELD_SIZE; fj++) {
+        const gx = fj / (FIELD_SIZE - 1) * (N - 1);
+        const v = this._sampleSmooth(sm, gy, gx, N);
+        row.push(v);
+        if (v != null) { if (v < minV) minV = v; if (v > maxV) maxV = v; }
+      }
+      field.push(row);
+    }
+
+    this._fieldMinV = Number.isFinite(minV) ? minV : 0;
+    this._fieldMaxV = Number.isFinite(maxV) ? maxV : (this._fieldMinV + 1);
+    return field;
+  }
+
+  // Catmull-Rom (bicubic) sample of a grid at fractional coords; bilinear when
+  // the 4×4 neighbourhood isn't fully valid; null when a bilinear corner is a
+  // hole (so the fine sample is itself a hole and won't be drawn).
+  _sampleSmooth(grid, gy, gx, N) {
+    const j0 = Math.max(0, Math.min(N - 1, Math.floor(gx)));
+    const i0 = Math.max(0, Math.min(N - 1, Math.floor(gy)));
+    const j1 = Math.min(N - 1, j0 + 1);
+    const i1 = Math.min(N - 1, i0 + 1);
+    const c00 = grid[i0][j0];
+    const c01 = grid[i0][j1];
+    const c10 = grid[i1][j0];
+    const c11 = grid[i1][j1];
+    if (this._isHole(c00) || this._isHole(c01) || this._isHole(c10) || this._isHole(c11)) return null;
+    const tx = gx - j0;
+    const ty = gy - i0;
+
+    const g = (di, dj) => {
+      const ii = Math.max(0, Math.min(N - 1, i0 + di));
+      const jj = Math.max(0, Math.min(N - 1, j0 + dj));
+      return grid[ii][jj];
+    };
+
+    // Fall back to bilinear if any of the wider 4×4 stencil is a hole.
+    let allValid = true;
+    for (let di = -1; di <= 2 && allValid; di++) {
+      for (let dj = -1; dj <= 2; dj++) {
+        if (this._isHole(g(di, dj))) { allValid = false; break; }
+      }
+    }
+    if (!allValid) {
+      const top = c00 + (c01 - c00) * tx;
+      const bot = c10 + (c11 - c10) * tx;
+      return top + (bot - top) * ty;
+    }
+
+    const cr = (p0, p1, p2, p3, t) =>
+      0.5 * ((2 * p1) + (-p0 + p2) * t +
+        (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t +
+        (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
+    const col = [];
+    for (let di = -1; di <= 2; di++) {
+      col.push(cr(g(di, -1), g(di, 0), g(di, 1), g(di, 2), tx));
+    }
+    return cr(col[0], col[1], col[2], col[3], ty);
   }
 
   // ---------- Contour lines (等高線) ----------
@@ -1016,10 +1182,10 @@ export class TerrainViewer {
     return this._contourPrecision === 'low' ? 100 : 20;
   }
 
-  _createContours(grid, bbox) {
-    const flat = grid.flat();
-    const minElev = Math.min(...flat);
-    const maxElev = Math.max(...flat);
+  _createContours(bbox) {
+    const field = this._field;
+    const minElev = this._fieldMinV;
+    const maxElev = this._fieldMaxV;
     const range = maxElev - minElev;
 
     const interval = this._niceContourInterval();
@@ -1032,7 +1198,7 @@ export class TerrainViewer {
       gridSize: GRID_SIZE,
     };
 
-    if (range < 1) return;
+    if (range < 1 || !field) return;
 
     this.contourGroup = new THREE.Group();
     this.contourLabelGroup = new THREE.Group();
@@ -1041,10 +1207,14 @@ export class TerrainViewer {
     const majorVerts = [];
     const labelAnchors = []; // { level, point: Vector3 }
 
+    // Lift the iso-lines a touch above the surface so they read clearly without
+    // breaking through it. Small, because they now share the surface field.
+    const lift = Math.max(1.5, range * 0.004);
+
     const startLevel = Math.ceil(minElev / interval) * interval;
     for (let level = startLevel; level < maxElev; level += interval) {
       const isMajor = Math.round(level / interval) % majorEvery === 0;
-      const segments = this._marchingSquares(grid, level, bbox);
+      const segments = this._marchingSquares(field, level, bbox, lift);
       const sink = isMajor ? majorVerts : minorVerts;
       for (const seg of segments) {
         sink.push(seg.a.x, seg.a.y, seg.a.z, seg.b.x, seg.b.y, seg.b.z);
@@ -1100,24 +1270,26 @@ export class TerrainViewer {
     this._updateLineResolutions();
   }
 
-  _cellToWorld(fi, fj, level, bbox) {
-    const lat = bbox.minLat + (bbox.maxLat - bbox.minLat) * fi / (GRID_SIZE - 1);
-    const lng = bbox.minLng + (bbox.maxLng - bbox.minLng) * fj / (GRID_SIZE - 1);
-    const p = this._latLngToLocal(lat, lng, level + 2, bbox);
+  _cellToWorld(fi, fj, level, bbox, lift) {
+    const lat = bbox.minLat + (bbox.maxLat - bbox.minLat) * fi / (FIELD_SIZE - 1);
+    const lng = bbox.minLng + (bbox.maxLng - bbox.minLng) * fj / (FIELD_SIZE - 1);
+    const p = this._latLngToLocal(lat, lng, level + (lift || 2), bbox);
     return new THREE.Vector3(p.x, p.y, p.z);
   }
 
-  // Marching squares over the elevation grid for a single iso-level.
-  _marchingSquares(grid, level, bbox) {
+  // Marching squares over the fine height field for a single iso-level. Cells
+  // touching a hole are skipped so no contour is drawn over missing data.
+  _marchingSquares(field, level, bbox, lift) {
     const segments = [];
     const lerp = (a, b) => (level - a) / (b - a);
 
-    for (let i = 0; i < GRID_SIZE - 1; i++) {
-      for (let j = 0; j < GRID_SIZE - 1; j++) {
-        const tl = grid[i][j];
-        const tr = grid[i][j + 1];
-        const br = grid[i + 1][j + 1];
-        const bl = grid[i + 1][j];
+    for (let i = 0; i < FIELD_SIZE - 1; i++) {
+      for (let j = 0; j < FIELD_SIZE - 1; j++) {
+        const tl = field[i][j];
+        const tr = field[i][j + 1];
+        const br = field[i + 1][j + 1];
+        const bl = field[i + 1][j];
+        if (this._isHole(tl) || this._isHole(tr) || this._isHole(br) || this._isHole(bl)) continue;
 
         let idx = 0;
         if (tl > level) idx |= 8;
@@ -1149,8 +1321,8 @@ export class TerrainViewer {
           const [ai, aj] = ea();
           const [bi, bj] = eb();
           segments.push({
-            a: this._cellToWorld(ai, aj, level, bbox),
-            b: this._cellToWorld(bi, bj, level, bbox),
+            a: this._cellToWorld(ai, aj, level, bbox, lift),
+            b: this._cellToWorld(bi, bj, level, bbox, lift),
           });
         }
       }
@@ -1370,7 +1542,7 @@ export class TerrainViewer {
       const [lat, lng] = pt.coords;
       // Sit the icon on the rendered terrain surface (sampled from the grid),
       // not at the supplied/sea-level elevation that left it floating below.
-      const surfElev = this._sampleGridElevation(lat, lng, this._grid, bbox);
+      const surfElev = this._sampleGridElevation(lat, lng);
       const p = this._latLngToLocal(lat, lng, surfElev + 18 * ms0, bbox);
 
       const icon = pt.weatherCode != null ? TerrainViewer.weatherIcon(pt.weatherCode) : '☀️';

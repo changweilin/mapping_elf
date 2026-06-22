@@ -2411,6 +2411,7 @@ async function openTerrainViewer(cacheKey = null) {
     terrainViewer.show();
     await terrainViewer.loadRouteData(routeData);
     terrainViewer.setContourPrecision(terrainContourState);
+    updateTerrainToggleAvailability();
     updateTerrainPlayerUI();
   } catch (err) {
     console.error('3D viewer error:', err);
@@ -2516,6 +2517,31 @@ function applyTerrainContourState(state) {
   // Elevation-label button is only meaningful when contours are shown.
   if (tvToggleContourLabels) tvToggleContourLabels.disabled = terrainContourState === 'none';
   terrainViewer?.setContourPrecision(terrainContourState);
+  updateTerrainToggleAvailability();
+}
+
+// Grey out layer toggles that can't do anything for the current route (no
+// weather points, clear-sky only, or no major-contour elevation labels) so a
+// no-op toggle doesn't look broken. Day/night always has an effect, so it stays.
+function updateTerrainToggleAvailability() {
+  if (!terrainViewer) return;
+
+  const hasWeather = terrainViewer.hasWeatherData?.() ?? false;
+  if (tvToggleWeather) {
+    tvToggleWeather.disabled = !hasWeather;
+    tvToggleWeather.title = hasWeather ? '天氣標記' : '此路線沒有天氣標記';
+  }
+
+  const hasFx = terrainViewer.routeHasWeatherFx?.() ?? false;
+  if (tvToggleWeatherFx) {
+    tvToggleWeatherFx.disabled = !hasFx;
+    tvToggleWeatherFx.title = hasFx ? '天氣特效（雨／雪／霧）' : '此路線天氣晴朗，無特效可顯示';
+  }
+
+  const hasLabels = terrainViewer.hasContourLabels?.() ?? false;
+  if (tvToggleContourLabels) {
+    tvToggleContourLabels.disabled = terrainContourState === 'none' || !hasLabels;
+  }
 }
 
 function resetTerrainLayerToggles() {
