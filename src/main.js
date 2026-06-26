@@ -1992,6 +1992,9 @@ const tvToggleWeatherFx = document.getElementById('tv-toggle-weatherfx');
 const tvToggleFeatures = document.getElementById('tv-toggle-features');
 const tvToggleLabelSize = document.getElementById('tv-toggle-labelsize');
 const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
+const tvToggleView = document.getElementById('tv-toggle-view');
+const tvViewLabel = document.getElementById('tv-view-label');
+const tvToggleNormalize = document.getElementById('tv-toggle-normalize');
 const tvLiveHud = document.getElementById('tv-live-hud');
 const tvHudCollapse = document.getElementById('tv-hud-collapse');
 const tvMarkerDetail = document.getElementById('tv-marker-detail');
@@ -2041,6 +2044,36 @@ let terrainLastLoadOk = true;
 // favourite is gone; route entries are capped to the most-recent few.
 const LS_TERRAIN_CACHE_KEY = 'mappingElf_terrain3dCache';
 const TERRAIN_ROUTE_CACHE_MAX = 8;
+
+// --- 3D viewer display settings (persisted across reloads) ----------------
+// The top-right display toggles (等高線/高程/天氣/日夜/特效/圖資/字體) plus the new
+// 海拔歸一化 toggle are remembered so reopening or reloading the 3D page keeps the
+// user's chosen look instead of snapping back to defaults.
+const LS_TERRAIN_DISPLAY_KEY = 'mappingElf_terrain3dDisplay';
+const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
+  contour: 'high',        // high | low | none
+  contourLabels: true,
+  weather: true,
+  daynight: true,
+  weatherfx: true,
+  features: true,
+  labelSize: 'none',      // none | large | small
+  elevNormalized: false,
+});
+
+function loadTerrainDisplaySettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_TERRAIN_DISPLAY_KEY) || '{}');
+    if (!saved || typeof saved !== 'object') return { ...TERRAIN_DISPLAY_DEFAULTS };
+    return { ...TERRAIN_DISPLAY_DEFAULTS, ...saved };
+  } catch { return { ...TERRAIN_DISPLAY_DEFAULTS }; }
+}
+
+let terrainDisplaySettings = loadTerrainDisplaySettings();
+
+function saveTerrainDisplaySettings() {
+  try { localStorage.setItem(LS_TERRAIN_DISPLAY_KEY, JSON.stringify(terrainDisplaySettings)); } catch (_) { }
+}
 
 function loadTerrainCache() {
   try {
@@ -2446,6 +2479,9 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       cachedTerrain: getTerrainCacheEntry(cacheKey),
       timing: buildTerrainTiming(routeCoords, routeElevs),
       preserveView: !!opts.preserveView,
+      // Bake the persisted normalization preference into the first build so the
+      // initial paint already uses the right vertical scale.
+      elevNormalized: !!terrainDisplaySettings.elevNormalized,
     };
 
     // Re-entry shortcut: if the same route (with the same departure + weather) is
@@ -2473,6 +2509,8 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       tpSlider.value = p;
       tpProgressLabel.textContent = `${Math.round(p * 100)}%`;
     });
+    // Sync the play/pause button when playback auto-stops at the end of the route.
+    terrainViewer.onPlayStateChange(() => updateTerrainPlayerUI());
     terrainViewer.onInfo((info) => renderTerrainContourInfo(info));
     terrainViewer.onMetrics((m) => renderTerrainMetrics(m));
     terrainViewer.onLoad((state) => handleTerrainLoadState(state));
@@ -2487,7 +2525,10 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     });
 
     renderTerrainInfoPanel(routeData);
-    resetTerrainLayerToggles();
+    // Apply the persisted display settings to the toolbar buttons + the prefs the
+    // build reads (contour interval, label size); visibility toggles that need the
+    // built groups are applied after loadRouteData below.
+    syncTerrainDisplayToggleUI();
     applyTerrainMobileDefaults();
     hideTerrainMarkerDetail();
 
@@ -2495,7 +2536,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     terrainViewer.show();
     terrainLastLoadOk = true;
     await terrainViewer.loadRouteData(routeData);
-    terrainViewer.setContourPrecision(terrainContourState);
+    applyTerrainDisplayToViewer();
     updateTerrainToggleAvailability();
     updateTerrainPlayerUI();
     // Remember what we just built so an unchanged re-entry can skip the rebuild —
@@ -2646,6 +2687,8 @@ function applyTerrainContourState(state) {
   if (tvToggleContourLabels) tvToggleContourLabels.disabled = terrainContourState === 'none';
   terrainViewer?.setContourPrecision(terrainContourState);
   updateTerrainToggleAvailability();
+  terrainDisplaySettings.contour = terrainContourState;
+  saveTerrainDisplaySettings();
 }
 
 // Grey out layer toggles that can't do anything for the current route (no
@@ -2680,12 +2723,56 @@ function updateTerrainToggleAvailability() {
   }
 }
 
-function resetTerrainLayerToggles() {
-  [tvToggleContourLabels, tvToggleWeather, tvToggleDaynight, tvToggleWeatherFx, tvToggleFeatures]
-    .forEach((b) => b?.classList.add('active'));
-  if (tvToggleContourLabels) tvToggleContourLabels.disabled = false;
-  applyTerrainContourState('high');
-  applyTerrainLabelState('none');
+// Apply the persisted display settings to the toolbar buttons + the build-time
+// prefs the model reads while building (contour interval, on-terrain label size).
+// Visibility toggles that need the built scene groups are applied separately by
+// applyTerrainDisplayToViewer() after loadRouteData.
+function syncTerrainDisplayToggleUI() {
+  const s = terrainDisplaySettings;
+  terrainContourState = TERRAIN_CONTOUR_STATES.includes(s.contour) ? s.contour : 'high';
+  if (tvContourLabel) tvContourLabel.textContent = TERRAIN_CONTOUR_LABELS[terrainContourState];
+  if (tvToggleContour) {
+    tvToggleContour.dataset.contourState = terrainContourState;
+    tvToggleContour.classList.toggle('active', terrainContourState !== 'none');
+    tvToggleContour.classList.toggle('tv-contour-off', terrainContourState === 'none');
+  }
+  tvToggleContourLabels?.classList.toggle('active', !!s.contourLabels);
+  if (tvToggleContourLabels) tvToggleContourLabels.disabled = terrainContourState === 'none';
+  tvToggleWeather?.classList.toggle('active', !!s.weather);
+  tvToggleDaynight?.classList.toggle('active', !!s.daynight);
+  tvToggleWeatherFx?.classList.toggle('active', !!s.weatherfx);
+  tvToggleFeatures?.classList.toggle('active', !!s.features);
+
+  terrainLabelState = TERRAIN_LABEL_STATES.includes(s.labelSize) ? s.labelSize : 'none';
+  if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
+  tvToggleLabelSize?.classList.toggle('active', terrainLabelState !== 'none');
+  // Set the build-time label scale before the model builds so labels come out at
+  // the persisted size with no post-build rescale flash.
+  terrainViewer?.setLabelScale(terrainLabelState);
+
+  syncTerrainNormalizeButton();
+}
+
+// Push the persisted visibility settings onto the freshly built model.
+function applyTerrainDisplayToViewer() {
+  if (!terrainViewer) return;
+  const s = terrainDisplaySettings;
+  terrainViewer.setContourPrecision(terrainContourState);
+  terrainViewer.setContourLabelsVisible(!!s.contourLabels);
+  terrainViewer.setWeatherVisible(!!s.weather);
+  terrainViewer.setEnvironmentEnabled(!!s.daynight);
+  terrainViewer.setWeatherFxEnabled(!!s.weatherfx);
+  terrainViewer.setFeaturesVisible(!!s.features);
+  terrainViewer.setLabelScale(terrainLabelState);
+  // Vertical normalization is baked into the build via routeData.elevNormalized;
+  // here we only keep the button state in sync.
+  syncTerrainNormalizeButton();
+}
+
+function syncTerrainNormalizeButton() {
+  if (tvToggleNormalize) {
+    tvToggleNormalize.classList.toggle('active', !!terrainDisplaySettings.elevNormalized);
+  }
 }
 
 // On phones the route-info (路線資訊) and character-info (人物資訊) overlays cover
@@ -2708,22 +2795,59 @@ tvToggleContourLabels?.addEventListener('click', () => {
   if (tvToggleContourLabels.disabled) return;
   const on = tvToggleContourLabels.classList.toggle('active');
   terrainViewer?.setContourLabelsVisible(on);
+  terrainDisplaySettings.contourLabels = on;
+  saveTerrainDisplaySettings();
 });
 tvToggleWeather?.addEventListener('click', () => {
   const on = tvToggleWeather.classList.toggle('active');
   terrainViewer?.setWeatherVisible(on);
+  terrainDisplaySettings.weather = on;
+  saveTerrainDisplaySettings();
 });
 tvToggleDaynight?.addEventListener('click', () => {
   const on = tvToggleDaynight.classList.toggle('active');
   terrainViewer?.setEnvironmentEnabled(on);
+  terrainDisplaySettings.daynight = on;
+  saveTerrainDisplaySettings();
 });
 tvToggleWeatherFx?.addEventListener('click', () => {
   const on = tvToggleWeatherFx.classList.toggle('active');
   terrainViewer?.setWeatherFxEnabled(on);
+  terrainDisplaySettings.weatherfx = on;
+  saveTerrainDisplaySettings();
 });
 tvToggleFeatures?.addEventListener('click', () => {
   const on = tvToggleFeatures.classList.toggle('active');
   terrainViewer?.setFeaturesVisible(on);
+  terrainDisplaySettings.features = on;
+  saveTerrainDisplaySettings();
+});
+
+// Camera view preset toggle: 45° oblique ⇄ straight-down, both north-up. Snaps
+// the camera but leaves OrbitControls free so the user can still orbit/tilt.
+// The label names the action the next click performs (e.g. "俯視" → click to go
+// top-down), so it never claims a preset that isn't actually active.
+const TERRAIN_VIEW_LABELS = { '45': '45°', top: '俯視' };
+let terrainViewNextMode = 'top'; // what clicking the button will switch to
+function syncTerrainViewButton() {
+  if (tvToggleView) tvToggleView.dataset.viewState = terrainViewNextMode;
+  if (tvViewLabel) tvViewLabel.textContent = TERRAIN_VIEW_LABELS[terrainViewNextMode] || '俯視';
+}
+tvToggleView?.addEventListener('click', () => {
+  const mode = terrainViewNextMode;
+  terrainViewer?.applyViewPreset(mode);
+  terrainViewNextMode = mode === 'top' ? '45' : 'top';
+  syncTerrainViewButton();
+});
+
+// 海拔高度歸一化 toggle — exaggerates relief so flat terrain reads as 3D. Persisted
+// and re-baked into the model on the next open; rebuilt in place when toggled live.
+tvToggleNormalize?.addEventListener('click', () => {
+  const on = !terrainDisplaySettings.elevNormalized;
+  terrainDisplaySettings.elevNormalized = on;
+  saveTerrainDisplaySettings();
+  syncTerrainNormalizeButton();
+  terrainViewer?.setElevationNormalized(on);
 });
 
 // On-terrain text (字體) cycles: 關 (off, default) → 大 → 小.
@@ -2736,6 +2860,8 @@ function applyTerrainLabelState(state) {
   if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
   if (tvToggleLabelSize) tvToggleLabelSize.classList.toggle('active', terrainLabelState !== 'none');
   terrainViewer?.setLabelScale(terrainLabelState);
+  terrainDisplaySettings.labelSize = terrainLabelState;
+  saveTerrainDisplaySettings();
 }
 
 function cycleTerrainLabelState() {
@@ -3606,6 +3732,134 @@ routeModeRadios.forEach((radio) => {
 
 // =========== Core Logic ===========
 
+// --- Computed-route session cache -----------------------------------------
+// Re-planning on every page return (especially after a mobile background-kill
+// reload) is slow and needs the network. When the route geometry hasn't changed
+// we instead restore the previously computed alternatives from localStorage and
+// redraw them directly — no routing/elevation round-trips. Weather is rebuilt
+// from its own cache by renderWeatherPanel(), so it isn't duplicated here.
+const LS_ROUTE_RESULT_KEY = 'mappingElf_routeResult';
+const ROUTE_RESULT_MAX_BYTES = 3_000_000; // localStorage safety guard
+// Set during init when a cached result matches the restored waypoints; consumed
+// once by the next onWaypointsChanged so it restores instead of re-planning.
+let pendingRouteRestore = null;
+
+// Stable signature of everything that determines the routed geometry: the
+// waypoints plus the routing mode and round-trip / O-loop flags.
+function routeStateSignature(waypoints) {
+  const wps = (waypoints || []).map(([a, b]) => `${a.toFixed(5)},${b.toFixed(5)}`).join('|');
+  return `${wps}#${routeEngine.mode}|${roundTripMode ? 'rt' : ''}${oLoopMode ? 'ol' : ''}`;
+}
+
+// Keep only the fields the redraw/selection path actually reads, so the cached
+// payload stays as small as possible.
+function trimAlternativeForCache(r) {
+  return {
+    coords: r.coords,
+    sampledCoords: r.sampledCoords,
+    elevations: r.elevations,
+    fullElevations: r.fullElevations,
+    distance: r.distance,
+    ascent: r.ascent,
+    descent: r.descent,
+    maxElev: r.maxElev,
+    minElev: r.minElev,
+    startElev: r.startElev,
+    endElev: r.endElev,
+    turnaroundElev: r.turnaroundElev,
+    score: r.score,
+    label: r.label,
+    index: r.index,
+  };
+}
+
+function persistRouteResult() {
+  try {
+    // Imported tracks restore via their own session (LS_IMPORTED_TRACK_KEY).
+    if (importedTrackMode) return;
+    const wps = mapManager.waypoints;
+    if (!wps || wps.length < 2 || !allAlternatives.length) {
+      localStorage.removeItem(LS_ROUTE_RESULT_KEY);
+      return;
+    }
+    const signature = routeStateSignature(wps);
+    const full = allAlternatives.map(trimAlternativeForCache);
+    const selected = full[selectedAltIndex] ? [full[selectedAltIndex]] : full.slice(0, 1);
+    // Prefer caching all alternatives; fall back to just the selected route if the
+    // full set is too large for localStorage; give up if even that's too big.
+    const variants = [
+      { alternatives: full, selectedAltIndex },
+      { alternatives: selected, selectedAltIndex: 0 },
+    ];
+    for (const v of variants) {
+      const payload = JSON.stringify({ signature, savedAt: Date.now(), ...v });
+      if (payload.length <= ROUTE_RESULT_MAX_BYTES) {
+        localStorage.setItem(LS_ROUTE_RESULT_KEY, payload);
+        return;
+      }
+    }
+    localStorage.removeItem(LS_ROUTE_RESULT_KEY);
+  } catch (_) {
+    try { localStorage.removeItem(LS_ROUTE_RESULT_KEY); } catch (__) { /* noop */ }
+  }
+}
+
+function clearRouteResultCache() {
+  try { localStorage.removeItem(LS_ROUTE_RESULT_KEY); } catch (_) { /* noop */ }
+}
+
+// Return the cached computed route iff it matches these waypoints, else null.
+function loadMatchingRouteResult(waypoints) {
+  try {
+    const raw = localStorage.getItem(LS_ROUTE_RESULT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.alternatives) || !data.alternatives.length) return null;
+    if (data.signature !== routeStateSignature(waypoints)) return null;
+    return data;
+  } catch { return null; }
+}
+
+// Compute the round-trip / O-loop turnaround the same way the planning path does.
+function computeTurnaroundLatLng(wps) {
+  const isLoop = wps.length >= 3 && haversineDistance(wps[0], wps[wps.length - 1]) < 0.1;
+  const actualOLoop = oLoopMode || (isLoop && !roundTripMode);
+  if (roundTripMode && wps.length >= 2) return wps[wps.length - 1];
+  if (actualOLoop && wps.length >= 2) {
+    if (isLoop) {
+      let maxD = 0;
+      let turn = null;
+      for (let i = 1; i < wps.length - 1; i++) {
+        const d = haversineDistance(wps[0], wps[i]);
+        if (d > maxD) { maxD = d; turn = wps[i]; }
+      }
+      return turn || wps[Math.floor(wps.length / 2)];
+    }
+    return wps[wps.length - 1];
+  }
+  return null;
+}
+
+// Redraw a cached computed route without re-planning. Falls back to a normal
+// re-plan if anything is missing or throws, so the worst case is current behaviour.
+async function applyRestoredRouteResult(restore) {
+  try {
+    allAlternatives = Array.isArray(restore.alternatives) ? restore.alternatives : [];
+    if (!allAlternatives.length) { debouncedCalculateRoute(mapManager.waypoints); return; }
+    selectedAltIndex = Math.min(Math.max(0, restore.selectedAltIndex || 0), allAlternatives.length - 1);
+
+    const turnaround = computeTurnaroundLatLng(mapManager.waypoints);
+    mapManager.drawMultipleRoutes(allAlternatives, selectedAltIndex, roundTripMode, turnaround);
+    renderAlternatives(allAlternatives, selectedAltIndex);
+    const ok = await selectAlternative(selectedAltIndex);
+    if (!ok) debouncedCalculateRoute(mapManager.waypoints);
+    else showNotification('已沿用先前規劃的路線', 'info', 1500);
+  } catch (err) {
+    console.warn('route restore failed, re-planning:', err);
+    debouncedCalculateRoute(mapManager.waypoints);
+  }
+}
+
 async function onWaypointsChanged(waypoints) {
   cancelWeatherFetchForRouteReplan();
   ensureWaypointIds();
@@ -3661,6 +3915,9 @@ async function onWaypointsChanged(waypoints) {
   if (!skipAutoGeocode) geocodeWaypoints(waypoints);
 
   if (waypoints.length < 2) {
+    // No routable geometry anymore — drop any cached computed route.
+    pendingRouteRestore = null;
+    clearRouteResultCache();
     if (waypoints.length === 1) {
       // Just 1 point, no route, but we still want to show weather
       mapManager.clearRoute();
@@ -3689,6 +3946,17 @@ async function onWaypointsChanged(waypoints) {
       if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
     }
     return;
+  }
+
+  // Page-return shortcut: if a cached computed route matches these exact
+  // waypoints (set up by the init restore), redraw it instead of re-planning.
+  if (pendingRouteRestore) {
+    const restore = pendingRouteRestore;
+    pendingRouteRestore = null;
+    if (restore.signature === routeStateSignature(waypoints)) {
+      applyRestoredRouteResult(restore);
+      return;
+    }
   }
 
   // Use debounced version for the heavy OSRM calculation
@@ -3777,6 +4045,8 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
           ? `找到 ${allAlternatives.length} 組建議路徑`
           : '已規劃最佳路徑';
         showNotification(altMsg, 'success', 2000);
+        // Cache the computed result so a later page return can skip re-planning.
+        persistRouteResult();
       }
     } else if (!isRoutePlanSnapshotStale(routePlanSnapshot)) {
       showNotification('找不到合適路徑', 'warning');
@@ -3899,6 +4169,9 @@ function renderAlternatives(routes, selectedIdx) {
     card.addEventListener('click', () => {
       const idx = parseInt(card.dataset.index);
       selectAlternative(idx);
+      // selectedAltIndex is updated synchronously at the top of selectAlternative,
+      // so persist the new selection for the page-return shortcut.
+      persistRouteResult();
     });
   });
 }
@@ -10772,6 +11045,10 @@ async function init() {
   if (savedWaypoints && savedWaypoints.length > 0) {
     initialWeatherLoadPending = true;
     skipAutoGeocode = true;
+    // If a previously computed route still matches these waypoints, arm the
+    // page-return shortcut so onWaypointsChanged redraws it instead of re-planning
+    // (no routing/elevation network round-trips on return).
+    pendingRouteRestore = loadMatchingRouteResult(savedWaypoints);
     const savedWaypointIds = getPersistedWaypointIds();
     mapManager.setWaypointsFromImport(savedWaypoints, savedWaypointIds.map(waypointId => ({ waypointId })));
     ensureWaypointIds(savedWaypointIds);

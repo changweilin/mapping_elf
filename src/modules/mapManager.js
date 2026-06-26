@@ -218,6 +218,7 @@ export class MapManager {
     this._weatherPopups = new Map(); // Inline marker weather cards (colIdx -> { marker, badge, slot })
     this._weatherPopupCloseTimers = new Map();
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
+    this._lastDblclickAt = 0;  // Timestamp of the last dblclick/double-tap, to suppress the trailing single click
     this._waypointClickTimeout = null; // Delay waypoint click selection so dblclick can cancel it first
     // Map cursor — placed by GPS button (goToMyLocation). Long-press / click
     // on the cursor opens an action menu (set as waypoint / copy coords / weather).
@@ -277,18 +278,29 @@ export class MapManager {
       }
       if (Date.now() - this._lastMultiTouchAt < 700) return;
       if (this.ignoreMapClick) return;
+      // A double-tap that just fired (zoom) sometimes still delivers a trailing
+      // single `click`; ignore clicks landing within the double-tap window after
+      // a dblclick so the second tap doesn't drop a stray waypoint.
+      if (Date.now() - this._lastDblclickAt < WAYPOINT_SINGLE_TAP_DELAY_MS) return;
       if (this._clickTimeout) {
+        // Second click of a quick pair → treat as a double tap, drop both.
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
-      } else {
-        this._clickTimeout = setTimeout(() => {
-          this._clickTimeout = null;
-          this.addWaypoint(e.latlng.lat, e.latlng.lng);
-        }, 300);
+        return;
       }
+      const latlng = e.latlng;
+      // Defer the waypoint commit past the double-tap window (rather than the old
+      // 300 ms, which fired before Leaflet's ~360 ms double-tap detection closed),
+      // and re-check no dblclick fired in the meantime.
+      this._clickTimeout = setTimeout(() => {
+        this._clickTimeout = null;
+        if (Date.now() - this._lastDblclickAt < WAYPOINT_SINGLE_TAP_DELAY_MS) return;
+        this.addWaypoint(latlng.lat, latlng.lng);
+      }, WAYPOINT_SINGLE_TAP_DELAY_MS);
     });
 
-    this.map.on('dblclick', (e) => {
+    this.map.on('dblclick', () => {
+      this._lastDblclickAt = Date.now();
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;

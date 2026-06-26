@@ -64,6 +64,7 @@ export class TerrainViewer {
     this.featureGroup = null;
     this.featureLabelGroup = null;
     this._featuresVisible = true;
+    this._weatherVisible = true;
 
     // --- Clickable 3D markers (billboard signboards) ---
     this._onMarkerClick = null;
@@ -92,12 +93,23 @@ export class TerrainViewer {
     // terrain's minimum elevation, so the empty band below the lowest ground
     // (e.g. sea-level 0–500 m that isn't on the map) isn't rendered.
     this._elevBase = 0;
+    // Vertical scale applied to every elevation in _latLngToLocal. 1 = true scale.
+    // When "海拔高度歸一化" is on, the scale is recomputed so the terrain's relief
+    // fills a consistent fraction of its horizontal span regardless of how flat
+    // or mountainous the area actually is.
+    this._elevScale = 1;
+    this._elevNormalized = false;
+    // Cached source data for an in-place geometry rebuild (normalization toggle)
+    // that doesn't re-download anything.
+    this._buildCtx = null;
+    this._featuresData = null;
 
     this._playing = false;
     this._speed = 1;
     this._progress = 0;
     this._animFrameId = null;
     this._onProgressChange = null;
+    this._onPlayStateChange = null;
     this._onInfo = null;
     this._onLoad = null;
     this._onClose = null;
@@ -182,6 +194,13 @@ export class TerrainViewer {
 
   onProgressChange(cb) {
     this._onProgressChange = cb;
+  }
+
+  // cb(playing) — fired when playback starts/stops, including the automatic stop
+  // when the hiker reaches the end of the route, so the UI can sync its
+  // play/pause button.
+  onPlayStateChange(cb) {
+    this._onPlayStateChange = cb;
   }
 
   onInfo(cb) {
@@ -354,7 +373,8 @@ export class TerrainViewer {
   }
 
   setWeatherVisible(visible) {
-    if (this.weatherGroup) this.weatherGroup.visible = visible;
+    this._weatherVisible = !!visible;
+    if (this.weatherGroup) this.weatherGroup.visible = this._weatherVisible;
   }
 
   // Day/night + directional sunlight driven by the route time. When off, the
@@ -403,11 +423,21 @@ export class TerrainViewer {
 
   play() {
     if (!this.playerPath || this.playerPath.getPoint(0) === undefined) return;
+    // Pressing play after the hiker has reached the end restarts from the start
+    // instead of sitting stuck at 100%.
+    if (this._progress >= 1) {
+      this._progress = 0;
+      this._updatePlayerPosition();
+      if (this._onProgressChange) this._onProgressChange(this._progress);
+    }
     this._playing = true;
+    if (this._onPlayStateChange) this._onPlayStateChange(true);
   }
 
   pause() {
+    const was = this._playing;
     this._playing = false;
+    if (was && this._onPlayStateChange) this._onPlayStateChange(false);
   }
 
   setSpeed(speed) {
@@ -433,9 +463,62 @@ export class TerrainViewer {
     return this._speed;
   }
 
+  // Snap the camera to a preset viewing angle with north (+Z) pointing up, while
+  // leaving OrbitControls free so the user can still orbit/tilt afterwards.
+  //   'top' — straight-down (垂直俯視)
+  //   '45'  — 45° oblique (45度視角)
+  // The current zoom distance and look-at target are preserved.
+  applyViewPreset(mode) {
+    if (!this.camera || !this.controls) return;
+    const target = this.controls.target.clone();
+    const dist = Math.max(this.camera.position.distanceTo(target), this.controls.minDistance + 1);
+    // phi = polar angle from +Y. Top-down ≈ 0; oblique = 45° off vertical.
+    const phi = mode === 'top' ? 0.0005 : Math.PI / 4;
+    // Place the camera due south of the target so looking toward +Z (north) puts
+    // north at the top of the screen.
+    const theta = Math.PI; // three.js spherical: atan2(x, z)
+    const sinPhi = Math.sin(phi);
+    const offset = new THREE.Vector3(
+      dist * sinPhi * Math.sin(theta),
+      dist * Math.cos(phi),
+      dist * sinPhi * Math.cos(theta)
+    );
+    this.camera.up.set(0, 1, 0);
+    this.camera.position.copy(target).add(offset);
+    this.camera.lookAt(target);
+    this.controls.update();
+  }
+
+  // "海拔高度歸一化" — when on, the vertical scale is recomputed so the relief
+  // reads boldly 3D for any route; when off, elevations render at true scale.
+  // Rebuilds the model geometry in place (no re-download) when a scene exists.
+  setElevationNormalized(on) {
+    this._elevNormalized = !!on;
+    this._recomputeElevScale();
+    if (this.hasBuiltScene()) this._rebuildScene();
+  }
+
+  isElevationNormalized() {
+    return this._elevNormalized;
+  }
+
+  // Derive the vertical scale from the current normalization flag, terrain relief
+  // and horizontal span. Targets a relief of ~35% of the span so framing always
+  // works; clamped so flat-terrain DEM noise isn't blown up absurdly.
+  _recomputeElevScale() {
+    if (!this._elevNormalized) { this._elevScale = 1; return; }
+    const range = Math.max(this._fieldMaxV - this._fieldMinV, 1);
+    const targetRelief = (this._worldSpan || 2000) * 0.35;
+    this._elevScale = Math.max(0.25, Math.min(targetRelief / range, 6));
+  }
+
   async loadRouteData(routeData) {
     const { coords, elevations, waypoints, weatherPoints, routeStats, timing, routeColors, cachedTerrain } = routeData;
     if (!coords || coords.length < 2) return;
+
+    // Honour the persisted "海拔高度歸一化" preference for the initial build so the
+    // first paint uses the right vertical scale (no rebuild needed on open).
+    if (typeof routeData.elevNormalized === 'boolean') this._elevNormalized = routeData.elevNormalized;
 
     // On a toolbar "更新" rebuild (preserveView) keep the user where they were
     // looking instead of snapping back to the default overview, so a refresh
@@ -544,6 +627,9 @@ export class TerrainViewer {
     // Scale markers/hiker to the terrain so they stay visible at the default
     // framing (camera sits ~1.1× the span away).
     this._markerScale = Math.max(1, span / 300);
+    // Vertical scale depends on the relief + span, both known now, so the initial
+    // geometry is baked at the right scale for the normalization preference.
+    this._recomputeElevScale();
 
     this._emitLoad({ active: true, percent: 88, title: '建立地形模型', detail: '計算等高線與軌跡…' });
 
@@ -574,6 +660,11 @@ export class TerrainViewer {
     if (featuresData) {
       try { this._buildMapFeatures(featuresData, bbox); } catch (err) { console.warn('map features failed:', err); }
     }
+
+    // Cache the source data so the normalization toggle can rebuild the geometry
+    // in place without re-downloading anything.
+    this._featuresData = featuresData || null;
+    this._buildCtx = { coords, elevations, waypoints, weatherPoints, bbox };
 
     if (this._onInfo) this._onInfo(this._terrainInfo);
 
@@ -645,6 +736,32 @@ export class TerrainViewer {
     this.controls.maxDistance = 200000;
 
     this._bindPointerHandlers();
+    this._bindContextLossHandlers();
+  }
+
+  // Mobile browsers drop the WebGL context when the tab is backgrounded for a
+  // while; without handling, the next frame throws and can take the page down.
+  // Swallow the loss (so the browser keeps the page and attempts a restore),
+  // pause the loop, then resume + rebuild the geometry once the context returns.
+  _bindContextLossHandlers() {
+    if (this._contextHandlersBound || !this.renderer) return;
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this._contextLost = true;
+      if (this._animFrameId) {
+        cancelAnimationFrame(this._animFrameId);
+        this._animFrameId = null;
+      }
+    }, false);
+    canvas.addEventListener('webglcontextrestored', () => {
+      this._contextLost = false;
+      // Re-upload GPU resources by rebuilding from the cached source data, then
+      // resume the render loop if the viewer is still open.
+      try { if (this._buildCtx) this._rebuildScene(); } catch (err) { console.warn('context restore rebuild failed:', err); }
+      if (!this.container.classList.contains('hidden') && this._animFrameId == null) this._animate();
+    }, false);
+    this._contextHandlersBound = true;
   }
 
   // Click-to-inspect: distinguishes a click from an orbit drag, then raycasts
@@ -994,12 +1111,26 @@ export class TerrainViewer {
     }
     const padLat = (maxLat - minLat) * 0.3 + 0.01;
     const padLng = (maxLng - minLng) * 0.3 + 0.01;
-    return {
-      minLat: minLat - padLat,
-      maxLat: maxLat + padLat,
-      minLng: minLng - padLng,
-      maxLng: maxLng + padLng,
-    };
+    minLat -= padLat; maxLat += padLat;
+    minLng -= padLng; maxLng += padLng;
+
+    // Expand the shorter side so the downloaded area is a square in real-world
+    // distance — the rendered terrain (x = E-W metres, z = N-S metres) then comes
+    // out square rather than a thin sliver for a mostly-straight route. Longitude
+    // degrees are foreshortened by cos(lat), so compare distances, not raw spans.
+    const cLat = (minLat + maxLat) / 2;
+    const cLng = (minLng + maxLng) / 2;
+    const cosLat = Math.cos(cLat * Math.PI / 180) || 1e-6;
+    const nsDist = maxLat - minLat;                 // ∝ N-S distance
+    const ewDist = (maxLng - minLng) * cosLat;      // ∝ E-W distance
+    if (nsDist > ewDist) {
+      const half = (nsDist / cosLat) / 2;           // widen longitude
+      minLng = cLng - half; maxLng = cLng + half;
+    } else if (ewDist > nsDist) {
+      const half = ewDist / 2;                       // grow latitude
+      minLat = cLat - half; maxLat = cLat + half;
+    }
+    return { minLat, maxLat, minLng, maxLng };
   }
 
   _latLngToLocal(lat, lng, elev, bbox) {
@@ -1008,7 +1139,7 @@ export class TerrainViewer {
     const R = 6371000;
     const toRad = Math.PI / 180;
     const x = R * toRad * (lng - cx) * Math.cos(toRad * cy);
-    const y = elev - (this._elevBase || 0);
+    const y = (elev - (this._elevBase || 0)) * (this._elevScale || 1);
     const z = R * toRad * (lat - cy);
     return { x, y, z };
   }
@@ -2802,6 +2933,53 @@ export class TerrainViewer {
     this._onMetrics(metrics || this._metricsAtProgress(this._progress));
   }
 
+  // Rebuild the whole model in place from the cached source data (no network),
+  // re-baking the current vertical scale into the geometry. Used by the
+  // normalization toggle. Preserves the camera pose, playback position and every
+  // layer/visibility toggle so the rebuild is seamless.
+  _rebuildScene() {
+    if (!this.scene || !this._buildCtx) return;
+    const { coords, elevations, waypoints, weatherPoints, bbox } = this._buildCtx;
+    const prevView = (this.camera && this.controls)
+      ? { pos: this.camera.position.clone(), target: this.controls.target.clone(), progress: this._progress }
+      : null;
+    const wasPlaying = this._playing;
+    this._playing = false;
+    if (wasPlaying && this._onPlayStateChange) this._onPlayStateChange(false);
+
+    this._clearScene();
+    this._createTerrain(bbox);
+    if (this._contourPrecision !== 'none') this._createContours(bbox);
+    this._createRoutePath(coords, elevations, bbox);
+    this._createWaypoints(waypoints, bbox);
+    this._createWeatherLabels(weatherPoints, bbox);
+    this._setupPlayer(coords, elevations, bbox);
+    this._setupEnvironment();
+    if (this._featuresData) {
+      try { this._buildMapFeatures(this._featuresData, bbox); } catch (err) { console.warn('map features failed:', err); }
+    }
+
+    // Reapply the persisted layer/label state to the freshly built objects.
+    this.setLabelScale(this._labelScale);
+    if (this.contourLabelGroup) {
+      this.contourLabelGroup.visible = this._contourLabelsVisible && this._contourPrecision !== 'none';
+    }
+    if (this.weatherGroup) this.weatherGroup.visible = this._weatherVisible;
+    if (this.featureGroup) this.featureGroup.visible = this._featuresVisible;
+    if (this.featureLabelGroup) this.featureLabelGroup.visible = this._featuresVisible;
+
+    if (prevView) {
+      this.controls.target.copy(prevView.target);
+      this.camera.position.copy(prevView.pos);
+      this._progress = Math.max(0, Math.min(1, prevView.progress));
+      this.controls.update();
+    }
+    this._updateLineResolutions();
+    this._updatePlayerPosition();
+    this._emitMetrics(true);
+    if (this._onInfo) this._onInfo(this._terrainInfo);
+  }
+
   _clearScene() {
     const toRemove = [];
     this.scene.traverse((child) => {
@@ -2880,6 +3058,7 @@ export class TerrainViewer {
   _animate() {
     if (!this.container || this.container.classList.contains('hidden')) return;
     if (!this.renderer || !this.scene || !this.camera) return;
+    if (this._contextLost) return;
 
     this._animFrameId = requestAnimationFrame(() => this._animate());
     this.controls?.update();
@@ -2890,12 +3069,17 @@ export class TerrainViewer {
     if (this._playing && this.playerPath) {
       this._personPhase += dt * this._speed;
       this._progress += dt * this._speed * 0.05;
+      let reachedEnd = false;
       if (this._progress >= 1) {
         this._progress = 1;
         this._playing = false;
+        reachedEnd = true;
       }
       this._updatePlayerPosition();
       if (this._onProgressChange) this._onProgressChange(this._progress);
+      // The hiker walked to the end: stop playback and let the UI reset its
+      // play/pause button.
+      if (reachedEnd && this._onPlayStateChange) this._onPlayStateChange(false);
     }
 
     // Weather keeps moving even while paused so a scrubbed-to frame still reads
