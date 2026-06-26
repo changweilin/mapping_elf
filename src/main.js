@@ -1967,6 +1967,7 @@ const btnOpen3d = document.getElementById('btn-open-3d-viewer');
 const terrainViewerEl = document.getElementById('terrain-viewer');
 const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
 const tvCloseBtn = document.getElementById('tv-close-btn');
+const tvRedrawBtn = document.getElementById('tv-redraw-btn');
 const tpPlay = document.getElementById('tp-play');
 const tpSlider = document.getElementById('tp-slider');
 const tpProgressLabel = document.getElementById('tp-progress-label');
@@ -1983,6 +1984,9 @@ const tvToggleContourLabels = document.getElementById('tv-toggle-contour-labels'
 const tvToggleWeather = document.getElementById('tv-toggle-weather');
 const tvToggleDaynight = document.getElementById('tv-toggle-daynight');
 const tvToggleWeatherFx = document.getElementById('tv-toggle-weatherfx');
+const tvToggleFeatures = document.getElementById('tv-toggle-features');
+const tvToggleLabelSize = document.getElementById('tv-toggle-labelsize');
+const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
 const tvLiveHud = document.getElementById('tv-live-hud');
 const tvHudCollapse = document.getElementById('tv-hud-collapse');
 const tvMarkerDetail = document.getElementById('tv-marker-detail');
@@ -2007,6 +2011,14 @@ const tvLoadingPercent = document.getElementById('tv-loading-percent');
 const tvLoadingAbort = document.getElementById('tv-loading-abort');
 
 let terrainViewer = null;
+// Cache key of the route currently shown in the 3D viewer, so the toolbar's
+// "更新" (redraw) button can rebuild it — picking up the latest departure date
+// and weather — while reusing the cached elevation grid + map features.
+let terrainCurrentCacheKey = null;
+// True while the toolbar "更新" rebuild is running. A redraw must never kick the
+// user out of the viewer: if the rebuild fails or is aborted we keep the model
+// that's already on screen instead of closing back to the planning page.
+let terrainRefreshing = false;
 
 // --- 3D terrain cache -----------------------------------------------------
 // The elevation-grid download is the slow part of building the 3D model, so the
@@ -2045,8 +2057,25 @@ function pruneTerrainCache(cache) {
 function saveTerrainCacheEntry(key, grid, bbox) {
   if (!key || !Array.isArray(grid) || !bbox) return;
   const cache = loadTerrainCache();
-  cache[key] = { grid, bbox, savedAt: Date.now() };
+  const prev = cache[key] || {};
+  cache[key] = { grid, bbox, features: prev.features, savedAt: Date.now() };
   pruneTerrainCache(cache);
+  try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
+}
+
+// Persist the downloaded vector map features alongside the cached terrain grid so
+// reopening the same route doesn't re-hit Overpass. Skipped if the payload is too
+// big for localStorage to keep comfortably (the model still works without it).
+function saveTerrainFeaturesEntry(key, features) {
+  if (!key || !features) return;
+  let json;
+  try { json = JSON.stringify(features); } catch { return; }
+  if (!json || json.length > 1_500_000) return; // ~1.5 MB guard
+  const cache = loadTerrainCache();
+  const prev = cache[key];
+  if (!prev) return; // only attach to an existing terrain entry
+  prev.features = features;
+  prev.savedAt = Date.now();
   try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
 }
 
@@ -2101,10 +2130,12 @@ function handleTerrainLoadState(state) {
   // Finished, aborted, or errored.
   setTerrainBusy(false);
   if (state.aborted) {
-    closeTerrainViewer();
+    // A failed/aborted *refresh* keeps the existing model on screen; only the
+    // initial open (nothing to fall back to) closes the viewer.
+    if (!terrainRefreshing) closeTerrainViewer();
     showNotification('已終止 3D 地形建立', 'info');
   } else if (state.error) {
-    closeTerrainViewer();
+    if (!terrainRefreshing) closeTerrainViewer();
     showNotification('3D 地形載入失敗: ' + (state.error.message || ''), 'error');
   }
 }
@@ -2303,7 +2334,7 @@ function renderTerrainMetrics(m) {
   }
 }
 
-async function openTerrainViewer(cacheKey = null) {
+async function openTerrainViewer(cacheKey = null, opts = {}) {
   try {
     if (!currentRouteCoords || currentRouteCoords.length < 2) {
       showNotification('請先規劃路線', 'warning');
@@ -2311,6 +2342,7 @@ async function openTerrainViewer(cacheKey = null) {
     }
     // Build/refresh for the current route when no explicit cache key is given.
     if (!cacheKey) cacheKey = terrainRouteSignature();
+    terrainCurrentCacheKey = cacheKey;
 
     // Planned routes come from the routing engine (allAlternatives); imported
     // tracks skip routing, so fall back to the drawn track + elevation profile.
@@ -2383,6 +2415,7 @@ async function openTerrainViewer(cacheKey = null) {
       routeColors: buildTerrainRouteColors(routeCoords),
       cachedTerrain: getTerrainCacheEntry(cacheKey),
       timing: buildTerrainTiming(routeCoords, routeElevs),
+      preserveView: !!opts.preserveView,
     };
 
     if (!terrainViewer) {
@@ -2401,6 +2434,10 @@ async function openTerrainViewer(cacheKey = null) {
     // Persist a freshly downloaded grid against this route/favourite for reuse.
     terrainViewer.onTerrainComputed(({ grid, bbox }) => {
       if (cacheKey) saveTerrainCacheEntry(cacheKey, grid, bbox);
+    });
+    // Persist freshly downloaded map features against the same cache entry.
+    terrainViewer.onFeaturesComputed(({ features }) => {
+      if (cacheKey) saveTerrainFeaturesEntry(cacheKey, features);
     });
 
     renderTerrainInfoPanel(routeData);
@@ -2456,8 +2493,26 @@ function build3dForCurrentRoute() {
   openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
 }
 
+// Toolbar "更新" — rebuild the open 3D model from its cached elevation grid +
+// map features, but re-read the latest departure date (weather table) and
+// weather points so the day/night lighting, clock and weather markers refresh
+// without leaving the viewer.
+async function refreshTerrainViewer() {
+  if (!terrainViewer || terrainViewerEl.classList.contains('hidden')) return;
+  if (terrainViewer.isLoading()) return;
+  tvRedrawBtn?.classList.add('tv-redraw-spin');
+  terrainRefreshing = true;
+  try {
+    await openTerrainViewer(terrainCurrentCacheKey, { preserveView: true });
+  } finally {
+    terrainRefreshing = false;
+    tvRedrawBtn?.classList.remove('tv-redraw-spin');
+  }
+}
+
 btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
 tvCloseBtn?.addEventListener('click', closeTerrainViewer);
+tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
 
 // Enable the 3D button only when a route exists.
 function update3dButtonBadge() {
@@ -2542,13 +2597,22 @@ function updateTerrainToggleAvailability() {
   if (tvToggleContourLabels) {
     tvToggleContourLabels.disabled = terrainContourState === 'none' || !hasLabels;
   }
+
+  const hasFeatures = terrainViewer.hasMapFeatures?.() ?? false;
+  if (tvToggleFeatures) {
+    tvToggleFeatures.disabled = !hasFeatures;
+    tvToggleFeatures.title = hasFeatures
+      ? '地圖圖資（道路／河流／水體／綠地／荒地／建築）'
+      : '此區域沒有可顯示的地圖圖資';
+  }
 }
 
 function resetTerrainLayerToggles() {
-  [tvToggleContourLabels, tvToggleWeather, tvToggleDaynight, tvToggleWeatherFx]
+  [tvToggleContourLabels, tvToggleWeather, tvToggleDaynight, tvToggleWeatherFx, tvToggleFeatures]
     .forEach((b) => b?.classList.add('active'));
   if (tvToggleContourLabels) tvToggleContourLabels.disabled = false;
   applyTerrainContourState('high');
+  applyTerrainLabelState('large');
 }
 
 tvToggleContour?.addEventListener('click', () => {
@@ -2571,6 +2635,40 @@ tvToggleDaynight?.addEventListener('click', () => {
 tvToggleWeatherFx?.addEventListener('click', () => {
   const on = tvToggleWeatherFx.classList.toggle('active');
   terrainViewer?.setWeatherFxEnabled(on);
+});
+tvToggleFeatures?.addEventListener('click', () => {
+  const on = tvToggleFeatures.classList.toggle('active');
+  terrainViewer?.setFeaturesVisible(on);
+});
+
+// Label-size cycles: large (default) → small → none.
+const TERRAIN_LABEL_STATES = ['large', 'small', 'none'];
+const TERRAIN_LABEL_LABELS = { large: '字級·大', small: '字級·小', none: '字級·無' };
+let terrainLabelState = 'large';
+
+function applyTerrainLabelState(state) {
+  terrainLabelState = TERRAIN_LABEL_STATES.includes(state) ? state : 'large';
+  if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
+  if (tvToggleLabelSize) tvToggleLabelSize.classList.toggle('active', terrainLabelState !== 'none');
+  terrainViewer?.setLabelScale(terrainLabelState);
+}
+
+function cycleTerrainLabelState() {
+  const next = TERRAIN_LABEL_STATES[(TERRAIN_LABEL_STATES.indexOf(terrainLabelState) + 1) % TERRAIN_LABEL_STATES.length];
+  applyTerrainLabelState(next);
+}
+
+tvToggleLabelSize?.addEventListener('click', cycleTerrainLabelState);
+
+// Keyboard: 'L' cycles the on-terrain label size while the 3D viewer is open.
+window.addEventListener('keydown', (e) => {
+  if (terrainViewerEl?.classList.contains('hidden')) return;
+  const tag = (e.target?.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+  if (e.key === 'l' || e.key === 'L') {
+    e.preventDefault();
+    cycleTerrainLabelState();
+  }
 });
 
 tvInfoCollapse?.addEventListener('click', () => {

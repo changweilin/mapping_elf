@@ -8,6 +8,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { haversineDistance, cumulativeDistances } from './utils.js';
 
 const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
+const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
 const GRID_SIZE = 25;
 
 // The coarse downloaded grid is lightly smoothed and upsampled to a finer field
@@ -51,6 +52,19 @@ export class TerrainViewer {
     this._contourPrecision = 'high';
     this._contourLabelsVisible = true;
 
+    // Global text-label size: 'large' (default) | 'small' | 'none'. Scales (or
+    // hides) every billboard/text sprite on the model — contour heights, weather
+    // tags, waypoint signs and map-feature names. Each registered sprite stores
+    // its base scale so the factor is applied relative to that.
+    this._labelScale = 'large';
+    this._labelSprites = [];
+    this._LABEL_FACTORS = { large: 1, small: 0.6, none: 0 };
+
+    // --- Map features (roads / water / land cover / buildings) ---
+    this.featureGroup = null;
+    this.featureLabelGroup = null;
+    this._featuresVisible = true;
+
     // --- Clickable 3D markers (billboard signboards) ---
     this._onMarkerClick = null;
     this._pickables = [];                 // THREE objects with userData.detail
@@ -87,6 +101,7 @@ export class TerrainViewer {
     this._onClose = null;
     this._onMetrics = null;
     this._onTerrainComputed = null;
+    this._onFeaturesComputed = null;
 
     this._abortController = null;
     this._aborted = false;
@@ -131,7 +146,10 @@ export class TerrainViewer {
     }
     try {
       this._initScene();
-      this._animate();
+      // Only start the render loop if one isn't already running, so re-showing
+      // an already-open viewer (e.g. the toolbar "更新" rebuild) doesn't spawn a
+      // second requestAnimationFrame loop and double the render/playback rate.
+      if (this._animFrameId == null) this._animate();
     } catch (err) {
       console.error('TerrainViewer init failed:', err);
     }
@@ -185,6 +203,12 @@ export class TerrainViewer {
     this._onTerrainComputed = cb;
   }
 
+  // cb({ features, bbox }) — fired once after a fresh map-feature download so the
+  // caller can persist it alongside the terrain cache. Not fired on a cache hit.
+  onFeaturesComputed(cb) {
+    this._onFeaturesComputed = cb;
+  }
+
   isLoading() {
     return this._loading;
   }
@@ -218,6 +242,56 @@ export class TerrainViewer {
     }
   }
 
+  // Record a text sprite + its authored base scale so the global label-size
+  // control can rescale/hide it later. Called right after the caller sets the
+  // sprite's scale.
+  _registerLabel(sprite) {
+    if (!sprite || !sprite.scale) return sprite;
+    sprite.userData.baseScale = { x: sprite.scale.x, y: sprite.scale.y };
+    this._labelSprites.push(sprite);
+    this._applyLabelScaleTo(sprite);
+    return sprite;
+  }
+
+  _applyLabelScaleTo(sprite) {
+    const base = sprite.userData.baseScale;
+    if (!base) return;
+    const f = this._LABEL_FACTORS[this._labelScale] ?? 1;
+    if (f <= 0) {
+      sprite.visible = false;
+    } else {
+      sprite.visible = true;
+      sprite.scale.set(base.x * f, base.y * f, 1);
+    }
+  }
+
+  // Global text-label size: 'large' | 'small' | 'none'. Rescales (or hides)
+  // every registered text sprite. Group-level toggles (weather/contour labels)
+  // still gate their own groups, so a label shows only when both allow it.
+  setLabelScale(scale) {
+    const s = (scale === 'small' || scale === 'none') ? scale : 'large';
+    this._labelScale = s;
+    for (const sprite of this._labelSprites) this._applyLabelScaleTo(sprite);
+  }
+
+  getLabelScale() {
+    return this._labelScale;
+  }
+
+  setFeaturesVisible(visible) {
+    this._featuresVisible = !!visible;
+    if (this.featureGroup) this.featureGroup.visible = this._featuresVisible;
+    if (this.featureLabelGroup) this.featureLabelGroup.visible = this._featuresVisible;
+  }
+
+  isFeaturesVisible() {
+    return this._featuresVisible;
+  }
+
+  hasMapFeatures() {
+    return !!(this.featureGroup && this.featureGroup.children.length);
+  }
+
   // Contour precision: 'high' (dense bands) | 'low' (sparse bands) | 'none'.
   // Rebuilds the iso-lines from the cached elevation grid.
   setContourPrecision(precision) {
@@ -242,6 +316,9 @@ export class TerrainViewer {
       if (!grp) continue;
       this.scene.remove(grp);
       grp.traverse((child) => {
+        // Drop contour-label sprites from the global label registry so the
+        // label-size control doesn't keep touching disposed sprites.
+        if (child.isSprite) this._labelSprites = this._labelSprites.filter((s) => s !== child);
         if (child.geometry) child.geometry.dispose();
         if (child.material) {
           // Drop the wide-line material from the resolution-tracked list.
@@ -351,6 +428,14 @@ export class TerrainViewer {
     const { coords, elevations, waypoints, weatherPoints, routeStats, timing, routeColors, cachedTerrain } = routeData;
     if (!coords || coords.length < 2) return;
 
+    // On a toolbar "更新" rebuild (preserveView) keep the user where they were
+    // looking instead of snapping back to the default overview, so a refresh
+    // feels like an in-place update rather than re-opening the model.
+    const preserveView = !!routeData.preserveView && !!this.camera && !!this.controls;
+    const prevView = preserveView
+      ? { pos: this.camera.position.clone(), target: this.controls.target.clone(), progress: this._progress }
+      : null;
+
     this.routePoints = coords;
     this.routeElevations = elevations || coords.map(() => 0);
     this._weatherPoints = Array.isArray(weatherPoints) ? weatherPoints : [];
@@ -443,7 +528,7 @@ export class TerrainViewer {
     );
     this._worldSpan = span;
     // Scale markers/hiker to the terrain so they stay visible at the default
-    // framing (camera sits ~1.7× the span away).
+    // framing (camera sits ~1.1× the span away).
     this._markerScale = Math.max(1, span / 300);
 
     this._emitLoad({ active: true, percent: 88, title: '建立地形模型', detail: '計算等高線與軌跡…' });
@@ -457,11 +542,31 @@ export class TerrainViewer {
     this._setupPlayer(coords, elevations, bbox);
     this._setupEnvironment();
 
+    // Map features (roads / rivers / water / land cover / buildings) draped on
+    // the terrain. Reuse cached vector data when present, otherwise download it
+    // from Overpass. A feature failure never blocks the (already built) model.
+    let featuresData = cachedTerrain && cachedTerrain.features ? cachedTerrain.features : null;
+    if (!featuresData && !this._aborted) {
+      this._emitLoad({ active: true, percent: 92, title: '建立地形模型', detail: '下載地圖圖資…' });
+      try {
+        featuresData = await this._fetchMapFeatures(bbox, (p) => {
+          this._emitLoad({ active: true, percent: 92 + p * 7, title: '建立地形模型', detail: '下載地圖圖資…' });
+        });
+      } catch { featuresData = null; }
+      if (featuresData && this._onFeaturesComputed) {
+        try { this._onFeaturesComputed({ features: featuresData, bbox }); } catch { /* noop */ }
+      }
+    }
+    if (featuresData) {
+      try { this._buildMapFeatures(featuresData, bbox); } catch (err) { console.warn('map features failed:', err); }
+    }
+
     if (this._onInfo) this._onInfo(this._terrainInfo);
 
     // Frame the model larger in the view (closer camera) so the terrain reads
-    // bigger and dense 20 m contours aren't crammed together on screen.
-    const dist = Math.max(span * 1.7, 1500);
+    // bigger and dense 20 m contours aren't crammed together on screen. The
+    // default sits noticeably closer than a fit-to-screen distance.
+    const dist = Math.max(span * 1.12, 1000);
 
     // Aim at the terrain's mid-height (datum-shifted) so the model is framed,
     // not the empty space the old y=0 target used to look at.
@@ -469,12 +574,22 @@ export class TerrainViewer {
       ? (this._terrainInfo.elevMin + this._terrainInfo.elevMax) / 2
       : this._elevBase;
     const center = this._latLngToLocal(cy, cx, midElev, bbox);
-    this.controls.target.set(center.x, center.y, center.z);
-    this.camera.position.set(center.x + dist * 0.3, center.y + dist * 0.4, center.z + dist);
+    if (prevView) {
+      // Refresh: restore the prior camera pose and playback position.
+      this.controls.target.copy(prevView.target);
+      this.camera.position.copy(prevView.pos);
+      this._progress = Math.max(0, Math.min(1, prevView.progress));
+    } else {
+      this.controls.target.set(center.x, center.y, center.z);
+      this.camera.position.set(center.x + dist * 0.3, center.y + dist * 0.4, center.z + dist);
+    }
     this.controls.update();
 
     this._setupResizeHandler();
     this._updateLineResolutions();
+    // Place the hiker/cursor at the current progress so a freshly built (or
+    // refreshed) model shows them on the track right away, not parked at origin.
+    this._updatePlayerPosition();
     this._emitMetrics(true);
 
     this._emitLoad({ active: false, percent: 100 });
@@ -897,6 +1012,37 @@ export class TerrainViewer {
     return this._isHole(v) ? (this._elevBase || 0) : v;
   }
 
+  // True when a lat/lng falls over a terrain "hole" (missing elevation data),
+  // i.e. where the surface mesh skips its tile and nothing is drawn. Map
+  // features must skip the same spots, otherwise they drape onto the basin-floor
+  // datum and float/stretch in the blank space beyond the visible terrain.
+  _isOverHole(lat, lng) {
+    const field = this._field;
+    const bbox = this._bbox;
+    if (!field || !bbox) return false;
+    const gx = (lng - bbox.minLng) / (bbox.maxLng - bbox.minLng) * (FIELD_SIZE - 1);
+    const gy = (lat - bbox.minLat) / (bbox.maxLat - bbox.minLat) * (FIELD_SIZE - 1);
+    return this._isHole(this._sampleSmooth(field, gy, gx, FIELD_SIZE));
+  }
+
+  // Split a polyline ([lat,lng][]) into runs of consecutive points that sit on
+  // real (non-hole) terrain, so a road/river/outline isn't drawn across a blank
+  // tile. Runs shorter than 2 points are dropped by the caller.
+  _splitPolylineAtHoles(pts) {
+    const runs = [];
+    let cur = [];
+    for (const p of pts) {
+      if (this._isOverHole(p[0], p[1])) {
+        if (cur.length >= 2) runs.push(cur);
+        cur = [];
+      } else {
+        cur.push(p);
+      }
+    }
+    if (cur.length >= 2) runs.push(cur);
+    return runs;
+  }
+
   // fetch with a per-request timeout that also honours the shared abort signal.
   async _fetchWithTimeout(url, parentSignal, ms) {
     const ctrl = new AbortController();
@@ -988,6 +1134,31 @@ export class TerrainViewer {
     return grid;
   }
 
+  // Natural elevation tint at normalised height t∈[0,1]: lowland green → upland
+  // tan → rocky grey → snow. Deliberately LIGHTENS with altitude instead of the
+  // old green→brown→near-black ramp, whose dark high ground muddied the
+  // translucent land-cover tints (green/waste) into brown/black. Keeping the
+  // high ground light lets each land-cover type keep its own colour.
+  static _terrainRampColor(t) {
+    const u = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const stops = [
+      { t: 0.0,  c: [0.27, 0.45, 0.23] }, // valley green
+      { t: 0.35, c: [0.46, 0.52, 0.29] }, // olive
+      { t: 0.6,  c: [0.64, 0.58, 0.41] }, // tan / grassy slope
+      { t: 0.8,  c: [0.63, 0.61, 0.56] }, // bare rock grey
+      { t: 1.0,  c: [0.93, 0.94, 0.96] }, // snow / peak
+    ];
+    let lo = stops[0], hi = stops[stops.length - 1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (u >= stops[i].t && u <= stops[i + 1].t) { lo = stops[i]; hi = stops[i + 1]; break; }
+    }
+    const span = (hi.t - lo.t) || 1;
+    const f = (u - lo.t) / span;
+    return [lo.c[0] + (hi.c[0] - lo.c[0]) * f,
+            lo.c[1] + (hi.c[1] - lo.c[1]) * f,
+            lo.c[2] + (hi.c[2] - lo.c[2]) * f];
+  }
+
   _createTerrain(bbox) {
     const field = this._field;
     const N = FIELD_SIZE;
@@ -1014,9 +1185,7 @@ export class TerrainViewer {
         uvs.push(j / (N - 1), i / (N - 1));
 
         const t = (elev - minElev) / elevRange;
-        const r = 0.1 + t * 0.7;
-        const g = 0.5 - t * 0.3;
-        const b = 0.1 + (1 - t) * 0.4;
+        const [r, g, b] = TerrainViewer._terrainRampColor(t);
         colors.push(r, g, b);
       }
     }
@@ -1047,7 +1216,12 @@ export class TerrainViewer {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(indices);
-    geo.computeVertexNormals();
+    // Smooth per-vertex normals from the height-field gradient (central
+    // differences) instead of averaging triangle faces. Triangulation-derived
+    // normals alternate cell-to-cell and read as regular directional wrinkles
+    // that shift with the light angle; gradient normals are independent of how
+    // the quads are split, so the surface shades cleanly.
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(this._computeFieldNormals(field, bbox, N), 3));
 
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
@@ -1068,6 +1242,48 @@ export class TerrainViewer {
     this.terrainMesh.receiveShadow = true;
     this.terrainMesh.castShadow = true;
     this.scene.add(this.terrainMesh);
+  }
+
+  // Smooth analytic normals (N×N×3, vertex order matching _createTerrain) from
+  // the height field's gradient. Using the continuous slope rather than the
+  // triangle facets removes the triangulation-dependent "corduroy" wrinkle that
+  // changed with the sun direction. World spacing between fine samples is needed
+  // so the slope is in true world units (x east, z north, y up).
+  _computeFieldNormals(field, bbox, N) {
+    const R = 6371000;
+    const toRad = Math.PI / 180;
+    const cy = (bbox.minLat + bbox.maxLat) / 2;
+    const dx = R * toRad * ((bbox.maxLng - bbox.minLng) / (N - 1)) * Math.cos(toRad * cy) || 1;
+    const dz = R * toRad * ((bbox.maxLat - bbox.minLat) / (N - 1)) || 1;
+
+    const normals = new Float32Array(N * N * 3);
+    const at = (i, j) => {
+      const ii = i < 0 ? 0 : (i >= N ? N - 1 : i);
+      const jj = j < 0 ? 0 : (j >= N ? N - 1 : j);
+      const v = field[ii][jj];
+      return this._isHole(v) ? null : v;
+    };
+    const tmp = new THREE.Vector3();
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const c = at(i, j);
+        // Hole vertices aren't drawn; give them a flat up-normal so they don't
+        // poison neighbour shading via interpolation.
+        const center = c == null ? 0 : c;
+        const hl = at(i, j - 1) ?? center;
+        const hr = at(i, j + 1) ?? center;
+        const hd = at(i - 1, j) ?? center;
+        const hu = at(i + 1, j) ?? center;
+        const gx = (hr - hl) / (2 * dx); // ∂h/∂x
+        const gz = (hu - hd) / (2 * dz); // ∂h/∂z
+        tmp.set(-gx, 1, -gz).normalize();
+        const o = (i * N + j) * 3;
+        normals[o] = tmp.x;
+        normals[o + 1] = tmp.y;
+        normals[o + 2] = tmp.z;
+      }
+    }
+    return normals;
   }
 
   // --- Smoothed / upsampled height field -------------------------------------
@@ -1264,6 +1480,7 @@ export class TerrainViewer {
     for (const anchor of labelAnchors) {
       const label = this._createLabel(`${Math.round(anchor.level)} m`, anchor.point.x, anchor.point.y, anchor.point.z, 0xfff0c2);
       label.scale.set(48 * ms, 16 * ms, 1);
+      this._registerLabel(label);
       this.contourLabelGroup.add(label);
     }
     this.scene.add(this.contourLabelGroup);
@@ -1452,6 +1669,7 @@ export class TerrainViewer {
       const sign = this._createBillboard(name, colorCss);
       const signH = 13 * ms;
       sign.scale.set(signH * (256 / 96), signH, 1);
+      this._registerLabel(sign);
       sign.position.set(p.x, p.y, p.z);
       sign.userData.detail = detail;
       this.scene.add(sign);
@@ -1556,6 +1774,7 @@ export class TerrainViewer {
       // invisible on real-scale terrain).
       const ms = this._markerScale || 1;
       label.scale.set(60 * ms, 20 * ms, 1);
+      this._registerLabel(label);
       label.userData.detail = {
         type: 'weather',
         label: pt.label || '天氣點',
@@ -1624,6 +1843,469 @@ export class TerrainViewer {
     return sprite;
   }
 
+  // ---------- Map features (道路 / 河流 / 水體 / 綠地 / 荒地 / 建築) ----------
+
+  // Classify an OSM element's tags into a render category, or null to ignore.
+  // Returns { group:'line'|'area'|'building', kind, cls } where kind drives the
+  // colour/label priority and cls the line/area style.
+  static _classifyFeature(tags) {
+    if (!tags) return null;
+    if (tags.building && tags.building !== 'no') return { group: 'building', kind: 'building', cls: 'building' };
+
+    const hw = tags.highway;
+    if (hw && tags.area !== 'yes') {
+      if (/^(motorway|trunk|primary|secondary|tertiary)(_link)?$/.test(hw)) return { group: 'line', kind: 'road', cls: 'major' };
+      if (/^(residential|unclassified|service|living_street|road|pedestrian)$/.test(hw)) return { group: 'line', kind: 'road', cls: 'minor' };
+      if (/^(footway|path|track|cycleway|steps|bridleway)$/.test(hw)) return { group: 'line', kind: 'road', cls: 'trail' };
+      return { group: 'line', kind: 'road', cls: 'minor' };
+    }
+
+    const ww = tags.waterway;
+    if (ww && !tags.tunnel) {
+      if (/^(river|canal)$/.test(ww)) return { group: 'line', kind: 'water', cls: 'river' };
+      if (/^(stream|ditch|drain|brook)$/.test(ww)) return { group: 'line', kind: 'water', cls: 'stream' };
+    }
+
+    if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir' || tags.landuse === 'basin') {
+      return { group: 'area', kind: 'water', cls: 'water' };
+    }
+    if (tags.natural === 'wood' || tags.landuse === 'forest') return { group: 'area', kind: 'green', cls: 'forest' };
+    if (/^(grass|meadow|village_green|recreation_ground|farmland|farmyard|orchard|cemetery|allotments|vineyard)$/.test(tags.landuse || '')
+      || /^(scrub|heath|grassland|fell|wetland)$/.test(tags.natural || '')
+      || /^(park|garden|nature_reserve|golf_course|pitch|recreation_ground|common)$/.test(tags.leisure || '')) {
+      return { group: 'area', kind: 'green', cls: 'grass' };
+    }
+    if (/^(brownfield|greenfield|landfill|quarry|construction|industrial|railway)$/.test(tags.landuse || '')
+      || /^(bare_rock|scree|sand|shingle|mud|rock|cliff)$/.test(tags.natural || '')) {
+      return { group: 'area', kind: 'waste', cls: 'waste' };
+    }
+    // Built-up / urban land cover (matches the tinted urban blocks on the 2D map).
+    if (/^(residential|commercial|retail|education|institutional|civic|garages)$/.test(tags.landuse || '')
+      || tags.place === 'neighbourhood' || tags.place === 'quarter') {
+      return { group: 'area', kind: 'urban', cls: 'urban' };
+    }
+    return null;
+  }
+
+  static _featureName(tags) {
+    if (!tags) return null;
+    return tags['name:zh'] || tags['name:zh-Hant'] || tags.name || tags['name:en'] || null;
+  }
+
+  static _buildingHeight(tags) {
+    const h = parseFloat(tags.height || tags['building:height']);
+    if (Number.isFinite(h)) return Math.max(2, h);
+    const lv = parseFloat(tags['building:levels'] || tags.levels);
+    if (Number.isFinite(lv)) return Math.max(2, lv * 3.2);
+    return 6;
+  }
+
+  // Download vector map features inside the terrain bbox from Overpass. Returns a
+  // compact, serialisable structure { lines, areas, buildings } so it can be
+  // cached. Parsed once here; rendering happens in _buildMapFeatures.
+  async _fetchMapFeatures(bbox, onProgress) {
+    const s = bbox.minLat.toFixed(5), w = bbox.minLng.toFixed(5);
+    const n = bbox.maxLat.toFixed(5), e = bbox.maxLng.toFixed(5);
+    const bb = `${s},${w},${n},${e}`;
+    const q = `[out:json][timeout:30];(` +
+      `way["highway"](${bb});` +
+      `way["waterway"](${bb});` +
+      `way["natural"~"water|wood|scrub|heath|grassland|wetland|bare_rock|scree|sand|shingle"](${bb});` +
+      `way["water"](${bb});` +
+      `way["landuse"](${bb});` +
+      `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|recreation_ground|common"](${bb});` +
+      `way["building"](${bb});` +
+      `relation["natural"="water"](${bb});` +
+      `relation["landuse"~"forest|reservoir|basin"](${bb});` +
+      `relation["leisure"~"park|nature_reserve"](${bb});` +
+      `);out geom 6000;`;
+
+    onProgress?.(0.1);
+    const url = `${OVERPASS_API}?data=${encodeURIComponent(q)}`;
+    const resp = await this._fetchWithTimeout(url, this._abortController?.signal, 35000);
+    if (!resp.ok) throw new Error(`Overpass ${resp.status}`);
+    const data = await resp.json();
+    onProgress?.(0.8);
+
+    const lines = [];
+    const areas = [];
+    const buildings = [];
+    const ringFrom = (geom) => geom.filter((g) => g && Number.isFinite(g.lat) && Number.isFinite(g.lon)).map((g) => [g.lat, g.lon]);
+
+    for (const el of data.elements || []) {
+      const tags = el.tags || {};
+      const cat = TerrainViewer._classifyFeature(tags);
+      if (!cat) continue;
+      const name = TerrainViewer._featureName(tags);
+
+      if (el.type === 'way' && Array.isArray(el.geometry)) {
+        const pts = ringFrom(el.geometry);
+        if (cat.group === 'line') {
+          if (pts.length >= 2) lines.push({ kind: cat.kind, cls: cat.cls, name, pts });
+        } else if (cat.group === 'building') {
+          if (pts.length >= 4) buildings.push({ name, ring: pts, h: TerrainViewer._buildingHeight(tags) });
+        } else {
+          if (pts.length >= 4) areas.push({ kind: cat.kind, cls: cat.cls, name, rings: [pts] });
+        }
+      } else if (el.type === 'relation' && Array.isArray(el.members) && cat.group === 'area') {
+        const outers = [];
+        const inners = [];
+        for (const m of el.members) {
+          if (m.type !== 'way' || !Array.isArray(m.geometry)) continue;
+          const r = ringFrom(m.geometry);
+          if (r.length >= 4) (m.role === 'inner' ? inners : outers).push(r);
+        }
+        for (const outer of outers) areas.push({ kind: cat.kind, cls: cat.cls, name, rings: [outer, ...inners] });
+      }
+    }
+
+    onProgress?.(1);
+    return { lines, areas, buildings };
+  }
+
+  // --- Clip vector features to the terrain bbox -------------------------------
+  // Overpass returns the full geometry of any way/relation that merely touches
+  // the query box, so features routinely extend far past the downloaded area.
+  // Draping those out-of-bounds vertices samples clamped edge elevations, so
+  // they sprawl beyond the terrain mesh and badly distort the scene. Clipping
+  // every line/ring to the bbox keeps the rendered features inside the model and
+  // makes their footprint match the 2D map. Coordinates are [lat, lng]; the box
+  // is lat∈[minLat,maxLat], lng∈[minLng,maxLng].
+
+  // Liang–Barsky clip of one segment a→b. Returns the clipped endpoints plus
+  // whether each end was cut (so a polyline can be split into runs at the
+  // boundary), or null when the segment lies entirely outside the box.
+  _clipSegmentToBbox(a, b, bbox) {
+    const x0 = a[1], y0 = a[0];
+    const dx = b[1] - a[1], dy = b[0] - a[0];
+    const p = [-dx, dx, -dy, dy];
+    const q = [x0 - bbox.minLng, bbox.maxLng - x0, y0 - bbox.minLat, bbox.maxLat - y0];
+    let t0 = 0, t1 = 1;
+    for (let k = 0; k < 4; k++) {
+      if (p[k] === 0) {
+        if (q[k] < 0) return null; // parallel to this edge and on its outside
+      } else {
+        const r = q[k] / p[k];
+        if (p[k] < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+        else { if (r < t0) return null; if (r < t1) t1 = r; }
+      }
+    }
+    return {
+      a2: [a[0] + dy * t0, a[1] + dx * t0],
+      b2: [a[0] + dy * t1, a[1] + dx * t1],
+      enter: t0 > 0,
+      exit: t1 < 1,
+    };
+  }
+
+  // Clip a polyline to the bbox, returning an array of in-bounds sub-polylines
+  // (a line can leave and re-enter the rectangle).
+  _clipPolylineToBbox(pts, bbox) {
+    const runs = [];
+    let cur = null;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const seg = this._clipSegmentToBbox(pts[i], pts[i + 1], bbox);
+      if (!seg) { if (cur && cur.length >= 2) runs.push(cur); cur = null; continue; }
+      if (!cur || seg.enter) {
+        if (cur && cur.length >= 2) runs.push(cur);
+        cur = [seg.a2, seg.b2];
+      } else {
+        cur.push(seg.b2);
+      }
+      if (seg.exit) { if (cur.length >= 2) runs.push(cur); cur = null; }
+    }
+    if (cur && cur.length >= 2) runs.push(cur);
+    return runs;
+  }
+
+  // Sutherland–Hodgman clip of a polygon ring (open, list of [lat,lng]) against
+  // the bbox rectangle. Returns the clipped ring (possibly empty).
+  _clipRingToBbox(ring, bbox) {
+    if (!ring || ring.length < 3) return [];
+    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    const clip = (poly, inside, cross) => {
+      if (!poly.length) return poly;
+      const out = [];
+      for (let i = 0; i < poly.length; i++) {
+        const cur = poly[i];
+        const prev = poly[(i + poly.length - 1) % poly.length];
+        const curIn = inside(cur), prevIn = inside(prev);
+        if (curIn) {
+          if (!prevIn) out.push(cross(prev, cur));
+          out.push(cur);
+        } else if (prevIn) {
+          out.push(cross(prev, cur));
+        }
+      }
+      return out;
+    };
+    let p = ring;
+    p = clip(p, (q) => q[1] >= bbox.minLng, (a, b) => lerp(a, b, (bbox.minLng - a[1]) / (b[1] - a[1])));
+    p = clip(p, (q) => q[1] <= bbox.maxLng, (a, b) => lerp(a, b, (bbox.maxLng - a[1]) / (b[1] - a[1])));
+    p = clip(p, (q) => q[0] >= bbox.minLat, (a, b) => lerp(a, b, (bbox.minLat - a[0]) / (b[0] - a[0])));
+    p = clip(p, (q) => q[0] <= bbox.maxLat, (a, b) => lerp(a, b, (bbox.maxLat - a[0]) / (b[0] - a[0])));
+    return p;
+  }
+
+  // Render the parsed map features into this.featureGroup (geometry) and
+  // this.featureLabelGroup (names). Everything is draped onto the rendered
+  // terrain surface so it sits on the ground.
+  _buildMapFeatures(data, bbox) {
+    if (!data || !this.scene) return;
+    this.featureGroup = new THREE.Group();
+    this.featureLabelGroup = new THREE.Group();
+    this.scene.add(this.featureGroup);
+    this.scene.add(this.featureLabelGroup);
+
+    const ms = this._markerScale || 1;
+    const range = Math.max(1, this._fieldMaxV - this._fieldMinV);
+    const baseLift = Math.max(2, range * 0.004);
+    const dLatCell = (bbox.maxLat - bbox.minLat) / (FIELD_SIZE - 1);
+    const dLngCell = (bbox.maxLng - bbox.minLng) / (FIELD_SIZE - 1);
+
+    // Drape a lat/lng onto the terrain surface.
+    const world = (lat, lng, lift) => {
+      const elev = this._sampleGridElevation(lat, lng);
+      const p = this._latLngToLocal(lat, lng, elev + lift, bbox);
+      return new THREE.Vector3(p.x, p.y, p.z);
+    };
+
+    // ----- Lines (roads + waterways), batched per style for few draw calls -----
+    const LINE_STYLE = {
+      major:  { color: 0xf2b134, width: 3.0, opacity: 0.95, lift: baseLift * 1.6 },
+      minor:  { color: 0xe9e3d4, width: 2.0, opacity: 0.9,  lift: baseLift * 1.4 },
+      trail:  { color: 0xcf8a4a, width: 1.6, opacity: 0.85, lift: baseLift * 1.3 },
+      river:  { color: 0x35a3ff, width: 2.8, opacity: 0.92, lift: baseLift * 0.9 },
+      stream: { color: 0x73c2ff, width: 1.7, opacity: 0.85, lift: baseLift * 0.9 },
+    };
+    const buckets = {};
+    const drapeLine = (pts, lift) => {
+      const out = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [la, lo] = pts[i];
+        const [lb, lob] = pts[i + 1];
+        const steps = Math.min(14, Math.max(1, Math.ceil(Math.max(Math.abs(lb - la) / dLatCell, Math.abs(lob - lo) / dLngCell))));
+        for (let st = 0; st < steps; st++) {
+          const t = st / steps;
+          out.push(world(la + (lb - la) * t, lo + (lob - lo) * t, lift));
+        }
+      }
+      out.push(world(pts[pts.length - 1][0], pts[pts.length - 1][1], lift));
+      return out;
+    };
+    const labelCands = [];
+    const pushLabelCand = (name, pos, color, pri) => {
+      if (name) labelCands.push({ name, pos, color, pri });
+    };
+
+    for (const ln of (data.lines || [])) {
+      const style = LINE_STYLE[ln.cls] || LINE_STYLE.minor;
+      const key = ln.cls;
+      let labelMid = null;
+      let labelLen = -1;
+      // Clip to the terrain box so a road/river only partly inside the area
+      // doesn't shoot a long segment off the edge of the model, then break the
+      // clipped run at any terrain holes so nothing drapes across blank tiles.
+      const clippedRuns = this._clipPolylineToBbox(ln.pts, bbox)
+        .flatMap((run) => this._splitPolylineAtHoles(run));
+      for (const run of clippedRuns) {
+        const w = drapeLine(run, style.lift);
+        if (w.length < 2) continue;
+        const verts = (buckets[key] = buckets[key] || []);
+        for (let i = 0; i < w.length - 1; i++) {
+          verts.push(w[i].x, w[i].y, w[i].z, w[i + 1].x, w[i + 1].y, w[i + 1].z);
+        }
+        if (w.length > labelLen) { labelLen = w.length; labelMid = w[Math.floor(w.length / 2)]; }
+      }
+      if (labelMid) {
+        const pri = ln.kind === 'water' ? (ln.cls === 'river' ? 1 : 7) : (ln.cls === 'major' ? 3 : (ln.cls === 'trail' ? 7 : 5));
+        pushLabelCand(ln.name, labelMid.clone().setY(labelMid.y + 10 * ms), ln.kind === 'water' ? 0x9fd8ff : 0xffd27a, pri);
+      }
+    }
+    for (const key of Object.keys(buckets)) {
+      const verts = buckets[key];
+      if (!verts.length) continue;
+      const style = LINE_STYLE[key];
+      const geo = new LineSegmentsGeometry();
+      geo.setPositions(verts);
+      const mat = new LineMaterial({ color: style.color, linewidth: style.width, transparent: true, opacity: style.opacity });
+      const seg = new LineSegments2(geo, mat);
+      seg.computeLineDistances();
+      this.featureGroup.add(seg);
+      this._lineMaterials.push(mat);
+    }
+
+    // ----- Areas (water / green / waste) draped + filled translucently -----
+    // Higher fill opacity than before so each land-cover type keeps its own
+    // colour (green stays green, waste stays sandy) instead of being washed
+    // toward the terrain tint underneath, while still letting the relief show.
+    const AREA_STYLE = {
+      water: { color: 0x2b86d9, opacity: 0.62, outline: 0x6fc0ff, lift: baseLift * 0.6, labelColor: 0x9fd8ff, pri: 0 },
+      forest:{ color: 0x2f7d3a, opacity: 0.7,  outline: 0x4caf50, lift: baseLift * 0.8, labelColor: 0x9be07a, pri: 2 },
+      grass: { color: 0x6fb84a, opacity: 0.62, outline: 0x8bd45f, lift: baseLift * 0.8, labelColor: 0xc7f29a, pri: 2 },
+      waste: { color: 0xc2a86e, opacity: 0.6,  outline: 0xd0bb86, lift: baseLift * 0.8, labelColor: 0xe6d3a0, pri: 4 },
+      // Urban/built-up: a low, subtle grey-beige wash like the 2D map's town blocks.
+      urban: { color: 0xb0a89c, opacity: 0.4,  outline: 0xc4bcae, lift: baseLift * 0.7, labelColor: 0xe2dccf, pri: 5 },
+    };
+    const localXZ = (lat, lng) => {
+      const p = this._latLngToLocal(lat, lng, 0, bbox);
+      return new THREE.Vector2(p.x, p.z); // ground-plane (x, z) for triangulation
+    };
+    for (const ar of (data.areas || [])) {
+      const style = AREA_STYLE[ar.cls] || AREA_STYLE.grass;
+      const rings = ar.rings || [];
+      if (!rings.length || rings[0].length < 3) continue;
+
+      // Build the 2D contour + holes (deduping a closed ring's repeated last pt).
+      const toShape2D = (ring) => {
+        const r = ring.slice();
+        if (r.length > 1) {
+          const a = r[0], b = r[r.length - 1];
+          if (a[0] === b[0] && a[1] === b[1]) r.pop();
+        }
+        return r;
+      };
+      // Clip the outer contour and any holes to the terrain box so the fill
+      // doesn't spill past the model onto clamped edge elevations.
+      const outer = this._clipRingToBbox(toShape2D(rings[0]), bbox);
+      if (outer.length < 3) continue;
+      const holes = rings.slice(1)
+        .map((r) => this._clipRingToBbox(toShape2D(r), bbox))
+        .filter((h) => h.length >= 3);
+
+      const contour2D = outer.map(([la, lo]) => localXZ(la, lo));
+      const holes2D = holes.map((h) => h.map(([la, lo]) => localXZ(la, lo)));
+      let faces;
+      try { faces = THREE.ShapeUtils.triangulateShape(contour2D, holes2D); } catch { faces = null; }
+      if (!faces || !faces.length) continue;
+
+      // Combined vertex list (contour then holes), draped per-vertex so the fill
+      // hugs the terrain; translucent so any interior bump reads naturally.
+      const combinedLL = [...outer, ...holes.flat()];
+      const verts3D = combinedLL.map(([la, lo]) => world(la, lo, style.lift));
+      // Per-vertex hole flags: any triangle touching a terrain hole is dropped so
+      // the fill stops at the real terrain edge instead of sheeting down to the
+      // basin floor across blank tiles.
+      const combinedHole = combinedLL.map(([la, lo]) => this._isOverHole(la, lo));
+      const positions = [];
+      for (const f of faces) {
+        if (f.some((idx) => combinedHole[idx])) continue;
+        for (const idx of f) {
+          const v = verts3D[idx];
+          if (v) positions.push(v.x, v.y, v.z);
+        }
+      }
+      if (positions.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geo.computeVertexNormals();
+        const mat = new THREE.MeshStandardMaterial({
+          color: style.color, transparent: true, opacity: style.opacity,
+          roughness: 0.95, metalness: 0, side: THREE.DoubleSide,
+          depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 1;
+        this.featureGroup.add(mesh);
+      }
+
+      // Outline — split at holes so it traces only the on-terrain part of the ring.
+      const ov = [];
+      for (const seg of this._splitPolylineAtHoles([...outer, outer[0]])) {
+        const ow = drapeLine(seg, style.lift + baseLift * 0.4);
+        for (let i = 0; i < ow.length - 1; i++) ov.push(ow[i].x, ow[i].y, ow[i].z, ow[i + 1].x, ow[i + 1].y, ow[i + 1].z);
+      }
+      if (ov.length >= 6) {
+        const geo = new LineSegmentsGeometry();
+        geo.setPositions(ov);
+        const mat = new LineMaterial({ color: style.outline, linewidth: 1.4, transparent: true, opacity: 0.65 });
+        const seg = new LineSegments2(geo, mat);
+        seg.computeLineDistances();
+        this.featureGroup.add(seg);
+        this._lineMaterials.push(mat);
+      }
+
+      // Label at the ring centroid (skipped if that point is over a hole).
+      let cla = 0, clo = 0;
+      for (const [la, lo] of outer) { cla += la; clo += lo; }
+      cla /= outer.length; clo /= outer.length;
+      if (!this._isOverHole(cla, clo)) {
+        pushLabelCand(ar.name, world(cla, clo, style.lift + 14 * ms), style.labelColor, style.pri);
+      }
+    }
+
+    // ----- Buildings: extruded footprints, largest first, capped -----
+    const ringArea = (ring) => {
+      let a = 0;
+      for (let i = 0; i < ring.length - 1; i++) a += ring[i][1] * ring[i + 1][0] - ring[i + 1][1] * ring[i][0];
+      return Math.abs(a) / 2;
+    };
+    const blds = (data.buildings || [])
+      .map((b) => ({ ...b, _a: ringArea(b.ring) }))
+      .sort((a, b) => b._a - a._a)
+      .slice(0, 350);
+    const bldMat = new THREE.MeshStandardMaterial({ color: 0x9a948a, roughness: 0.9, metalness: 0, flatShading: true, side: THREE.DoubleSide });
+    for (const b of blds) {
+      let ring = b.ring.slice();
+      if (ring.length > 1) {
+        const a = ring[0], z = ring[ring.length - 1];
+        if (a[0] === z[0] && a[1] === z[1]) ring.pop();
+      }
+      // Drop / clip footprints that fall outside the terrain box.
+      ring = this._clipRingToBbox(ring, bbox);
+      if (ring.length < 3) continue;
+      // Drop footprints over a terrain hole — there's no ground to stand on, so
+      // they'd otherwise float at the basin floor in blank space.
+      if (ring.some(([la, lo]) => this._isOverHole(la, lo))) continue;
+      // Shape in (x, -z) so after rotateX(-90°) it stands upright facing north.
+      const shape = new THREE.Shape();
+      let baseY = Infinity;
+      ring.forEach(([la, lo], i) => {
+        const p = this._latLngToLocal(la, lo, 0, bbox);
+        if (i === 0) shape.moveTo(p.x, -p.z); else shape.lineTo(p.x, -p.z);
+        const e = this._sampleGridElevation(la, lo) - (this._elevBase || 0);
+        if (e < baseY) baseY = e;
+      });
+      if (!Number.isFinite(baseY)) continue;
+      let geo;
+      try { geo = new THREE.ExtrudeGeometry(shape, { depth: b.h, bevelEnabled: false }); } catch { continue; }
+      geo.rotateX(-Math.PI / 2);
+      geo.translate(0, baseY, 0);
+      const mesh = new THREE.Mesh(geo, bldMat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.featureGroup.add(mesh);
+
+      if (b.name && b._a > 0) {
+        let cla = 0, clo = 0;
+        for (const [la, lo] of ring) { cla += la; clo += lo; }
+        cla /= ring.length; clo /= ring.length;
+        const top = this._latLngToLocal(cla, clo, this._sampleGridElevation(cla, clo) + b.h + 4 * ms, bbox);
+        pushLabelCand(b.name, new THREE.Vector3(top.x, top.y, top.z), 0xcfcabf, 6);
+      }
+    }
+
+    // ----- Labels: dedupe by name, prioritise, cap, then build sprites -----
+    const seen = new Set();
+    labelCands.sort((a, b) => a.pri - b.pri);
+    let made = 0;
+    for (const c of labelCands) {
+      if (made >= 70) break;
+      const key = c.name.trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const label = this._createLabel(key, c.pos.x, c.pos.y, c.pos.z, c.color);
+      label.scale.set(46 * ms, 15 * ms, 1);
+      this._registerLabel(label);
+      this.featureLabelGroup.add(label);
+      made++;
+    }
+
+    this.featureGroup.visible = this._featuresVisible;
+    this.featureLabelGroup.visible = this._featuresVisible;
+    this._updateLineResolutions();
+  }
+
   _setupPlayer(coords, elevations, bbox) {
     if (!coords || coords.length < 2) return;
     const ms = this._markerScale || 1;
@@ -1652,9 +2334,9 @@ export class TerrainViewer {
     this._cursorCone = cone;
     this.scene.add(this._cursorGroup);
 
-    // Animated hiker sprite riding just above the cursor cone (half size).
-    this._person = this._createPersonSprite();
-    this._person.scale.set(20 * ms, 26 * ms, 1);
+    // Animated gingerbread/clay figure standing on the cursor cone. Built from
+    // primitives with pivoting limbs so it can actually run.
+    this._person = this._createPersonFigure(ms);
     this.scene.add(this._person);
 
     // Progress ring (half size).
@@ -1685,41 +2367,110 @@ export class TerrainViewer {
     this.scene.add(this._playerLight);
   }
 
-  // A canvas-drawn hiker that always faces the camera. Drawn once; the gait is
-  // produced by bobbing/leaning the sprite, so it stays light and never blocks
-  // the terrain behind it.
-  _createPersonSprite() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 96;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.font = '84px "Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🚶', canvas.width / 2, canvas.height / 2 + 6);
-    // Guaranteed vector fallback for renderers without colour emoji.
-    const rendered = ctx.getImageData(0, 0, canvas.width, canvas.height).data.some((v, i) => i % 4 === 3 && v > 0);
-    if (!rendered) {
-      const cx = canvas.width / 2;
-      ctx.fillStyle = '#ff8a3c';
-      ctx.strokeStyle = '#ff8a3c';
-      ctx.lineWidth = 9;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.arc(cx, 30, 14, 0, Math.PI * 2); ctx.fill();          // head
-      ctx.beginPath(); ctx.moveTo(cx, 44); ctx.lineTo(cx, 86); ctx.stroke();      // torso
-      ctx.beginPath(); ctx.moveTo(cx, 56); ctx.lineTo(cx - 20, 74);              // arms
-      ctx.moveTo(cx, 56); ctx.lineTo(cx + 20, 70); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, 86); ctx.lineTo(cx - 18, 116);            // legs (mid-stride)
-      ctx.moveTo(cx, 86); ctx.lineTo(cx + 16, 116); ctx.stroke();
+  // A small gingerbread/clay figure built from primitives, with shoulder/hip
+  // pivots so the arms and legs can swing for a real running gait. Feet sit at
+  // the group origin (y=0) and the body grows upward; the group is placed on top
+  // of the cursor cone and yawed to face the direction of travel. Dimensions are
+  // in world units, scaled by the terrain's marker scale (ms).
+  _createPersonFigure(ms) {
+    const group = new THREE.Group();
+    group.rotation.order = 'YXZ'; // yaw (face travel) before forward lean
+
+    // Warm clay/gingerbread body with a touch of emissive so it stays readable
+    // at night, plus white "icing" trims and small face/button details.
+    const dough = new THREE.MeshStandardMaterial({ color: 0xb5742f, roughness: 0.85, metalness: 0.0, emissive: 0x4a2c10, emissiveIntensity: 0.3 });
+    const icing = new THREE.MeshStandardMaterial({ color: 0xfff3e0, roughness: 0.55, emissive: 0x4a3a2a, emissiveIntensity: 0.2 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, roughness: 0.6 });
+    const candy = new THREE.MeshStandardMaterial({ color: 0xd64545, roughness: 0.5, emissive: 0x3a0e0e, emissiveIntensity: 0.2 });
+
+    const add = (mesh) => { mesh.castShadow = true; return mesh; };
+
+    // Dimensions.
+    const legR = 1.5 * ms, legLen = 6 * ms, legFull = legLen + legR * 2;
+    const armR = 1.2 * ms, armLen = 5.5 * ms, armFull = armLen + armR * 2;
+    // Shorter torso so the body no longer towers over the legs (was 7).
+    const torsoR = 2.6 * ms, torsoLen = 3.6 * ms, torsoFull = torsoLen + torsoR * 2;
+    const headR = 3.2 * ms;
+
+    const hipY = legFull;                       // hips sit one leg-length up
+    const shoulderY = hipY + torsoFull;         // top of torso
+    const headY = shoulderY + headR * 0.75;
+
+    // A limb that hangs from a pivot group placed at the joint, so rotating the
+    // pivot about X swings the limb fore/aft.
+    const makeLimb = (rad, len, mat) => {
+      const pivot = new THREE.Group();
+      const full = len + rad * 2;
+      const mesh = add(new THREE.Mesh(new THREE.CapsuleGeometry(rad, len, 4, 10), mat));
+      mesh.position.y = -full / 2; // top of capsule at the pivot
+      pivot.add(mesh);
+      return pivot;
+    };
+
+    // Legs. Tucked in a little closer together so their rounded tops sit under
+    // the pelvis below and there's no air gap at the hip.
+    const legX = 1.45 * ms;
+    const legL = makeLimb(legR, legLen, dough);
+    const legR2 = makeLimb(legR, legLen, dough);
+    legL.position.set(-legX, hipY, 0);
+    legR2.position.set(legX, hipY, 0);
+    // White icing cuffs at the feet.
+    const footL = add(new THREE.Mesh(new THREE.SphereGeometry(legR * 1.15, 10, 8), icing));
+    footL.position.y = -(legFull) + legR * 0.6; legL.add(footL);
+    const footR = add(new THREE.Mesh(new THREE.SphereGeometry(legR * 1.15, 10, 8), icing));
+    footR.position.y = -(legFull) + legR * 0.6; legR2.add(footR);
+    group.add(legL, legR2);
+
+    // Pelvis/hip bridging the torso bottom and the leg tops. Kept the SAME width
+    // as the torso (never wider) and pushed low with a strong vertical overlap of
+    // the torso's lower hemisphere, so the body→hip line reads as one continuous
+    // dough form instead of a protruding "butt" with a hard seam. A gentle
+    // vertical squash rounds the hips without bulging them out sideways.
+    const pelvis = add(new THREE.Mesh(new THREE.SphereGeometry(torsoR, 16, 12), dough));
+    pelvis.position.set(0, hipY + torsoR * 0.4, 0);
+    pelvis.scale.set(1.0, 0.82, 1.0);
+    group.add(pelvis);
+
+    // Torso. Its lower hemisphere overlaps the pelvis above for a seamless join.
+    const torso = add(new THREE.Mesh(new THREE.CapsuleGeometry(torsoR, torsoLen, 6, 14), dough));
+    torso.position.y = hipY + torsoFull / 2;
+    group.add(torso);
+
+    // Buttons down the front (+z faces travel direction).
+    for (let b = 0; b < 2; b++) {
+      const btn = add(new THREE.Mesh(new THREE.SphereGeometry(0.7 * ms, 8, 6), candy));
+      btn.position.set(0, hipY + torsoFull * (0.4 + b * 0.3), torsoR * 0.85);
+      group.add(btn);
     }
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
-    const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true, sizeAttenuation: true });
-    const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(34, 45, 1);
-    sprite.center.set(0.5, 0);
-    return sprite;
+
+    // Arms hanging from the shoulders.
+    const armL = makeLimb(armR, armLen, dough);
+    const armR3 = makeLimb(armR, armLen, dough);
+    const shoX = torsoR + armR * 0.4;
+    armL.position.set(-shoX, shoulderY - armR, 0);
+    armR3.position.set(shoX, shoulderY - armR, 0);
+    const handL = add(new THREE.Mesh(new THREE.SphereGeometry(armR * 1.1, 10, 8), icing));
+    handL.position.y = -(armFull) + armR * 0.6; armL.add(handL);
+    const handR = add(new THREE.Mesh(new THREE.SphereGeometry(armR * 1.1, 10, 8), icing));
+    handR.position.y = -(armFull) + armR * 0.6; armR3.add(handR);
+    group.add(armL, armR3);
+
+    // Head + face (eyes look toward +z, the travel direction).
+    const head = add(new THREE.Mesh(new THREE.SphereGeometry(headR, 16, 14), dough));
+    head.position.y = headY;
+    group.add(head);
+    for (const sx of [-1, 1]) {
+      const eye = add(new THREE.Mesh(new THREE.SphereGeometry(0.5 * ms, 8, 6), dark));
+      eye.position.set(sx * headR * 0.42, headY + headR * 0.12, headR * 0.82);
+      group.add(eye);
+    }
+    const smile = add(new THREE.Mesh(new THREE.TorusGeometry(headR * 0.4, 0.28 * ms, 6, 12, Math.PI), dark));
+    smile.rotation.x = Math.PI;            // open side up → a smile
+    smile.position.set(0, headY - headR * 0.28, headR * 0.78);
+    group.add(smile);
+
+    this._personParts = { group, legL, legR: legR2, armL, armR: armR3 };
+    return group;
   }
 
   _updatePlayerPosition() {
@@ -1738,11 +2489,33 @@ export class TerrainViewer {
     }
 
     if (this._person) {
-      const bob = Math.sin(this._personPhase * 8) * (this._playing ? 3 : 0) * ms;
-      const lean = Math.cos(this._personPhase * 8) * (this._playing ? 0.06 : 0);
-      // Ride just above the cursor cone.
-      this._person.position.set(pt.x, pt.y + coneH + 2 * ms + bob, pt.z);
-      this._person.material.rotation = lean;
+      const parts = this._personParts;
+      const phase = this._personPhase;
+      const moving = this._playing;
+      // Stride cadence rises with movement speed (personPhase advances by
+      // dt*speed in _animate), and amplitude grows from a gentle idle sway to a
+      // full run, so a faster route plays a faster gait.
+      const cadence = 11;
+      const amp = moving ? 0.95 : 0.06;
+      const swing = Math.sin(phase * cadence);
+      const bob = Math.abs(swing) * (moving ? 1.8 : 0.3) * ms;
+
+      // Stand on top of the cursor cone.
+      this._person.position.set(pt.x, pt.y + coneH + bob, pt.z);
+
+      // Face the direction of travel (path tangent).
+      const tan = this.playerPath.getTangentAt
+        ? this.playerPath.getTangentAt(this._clampU(this._progress))
+        : null;
+      if (tan && (tan.x || tan.z)) this._person.rotation.y = Math.atan2(tan.x, tan.z);
+      this._person.rotation.x = moving ? 0.2 : 0.0; // lean forward when running
+
+      if (parts) {
+        parts.legL.rotation.x = swing * amp;
+        parts.legR.rotation.x = -swing * amp;
+        parts.armL.rotation.x = -swing * amp * 0.9;
+        parts.armR.rotation.x = swing * amp * 0.9;
+      }
     }
 
     if (this.playerRing) {
@@ -1900,11 +2673,15 @@ export class TerrainViewer {
     this.contourLabelGroup = null;
     this.waypointLabelGroup = null;
     this.weatherGroup = null;
+    this.featureGroup = null;
+    this.featureLabelGroup = null;
+    this._labelSprites = [];
     this.playerMarker = null;
     this.playerRing = null;
     this.playerTrail = null;
     this.playerPath = null;
     this._person = null;
+    this._personParts = null;
     this._cursorGroup = null;
     this._cursorCone = null;
     this._cursorHeight = 0;

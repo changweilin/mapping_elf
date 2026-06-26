@@ -6921,6 +6921,41 @@ html.light-theme .panel-bottom-logo {
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
+.terrain-viewer-toolbar .tv-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.terrain-viewer-toolbar .tv-redraw-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.terrain-viewer-toolbar .tv-redraw-btn:hover:not(:disabled) {
+  background: rgba(0, 255, 127, 0.12);
+  border-color: var(--accent-primary, #00ff7f);
+  color: var(--text-primary);
+}
+.terrain-viewer-toolbar .tv-redraw-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.terrain-viewer-toolbar .tv-redraw-btn.tv-redraw-spin svg {
+  animation: tv-redraw-spin 0.8s linear infinite;
+}
+@keyframes tv-redraw-spin {
+  to { transform: rotate(360deg); }
+}
 .terrain-viewer-toolbar .tv-close-btn {
   background: none;
   border: 1px solid var(--border);
@@ -7364,6 +7399,7 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
 .terrain-viewer-overlay.tv-busy .tv-layer-controls,
 .terrain-viewer-overlay.tv-busy .tv-info-panel,
 .terrain-viewer-overlay.tv-busy .tv-live-hud,
+.terrain-viewer-overlay.tv-busy .tv-redraw-btn,
 .terrain-viewer-overlay.tv-busy .tv-close-btn {
   pointer-events: none;
   opacity: 0.45;
