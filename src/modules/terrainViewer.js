@@ -164,6 +164,14 @@ export class TerrainViewer {
     this._lightningT = 0;
     this._lightningTimer = 4 + Math.random() * 6;
 
+    // --- Animated weather marker icons ---
+    // Each weather marker keeps its own canvas/texture so, when 天氣特效 is on, the
+    // emoji icon is swapped for a live procedural weather animation (falling rain /
+    // snow, drifting clouds/fog, spinning sun, flashing lightning) redrawn per frame.
+    this._weatherIconEntries = [];
+    this._iconFxTime = 0;
+    this._weatherIconsAnimating = false;
+
     // --- Animated hiker ---
     this._person = null;
     this._personPhase = 0;
@@ -415,6 +423,12 @@ export class TerrainViewer {
     if (this._rain) this._rain.visible = false;
     if (this._snow) this._snow.visible = false;
     this._applyEnvironment(this._metricsAtProgress(this._progress));
+    // Swap weather markers between the static emoji and the live animation right
+    // away (the render loop keeps animating while it stays on).
+    this._weatherIconsAnimating = false;
+    for (const e of this._weatherIconEntries) {
+      this._paintWeatherLabel(e, this._iconFxTime, this._weatherFxEnabled);
+    }
   }
 
   isEnvironmentEnabled() {
@@ -2204,6 +2218,7 @@ export class TerrainViewer {
   }
 
   _createWeatherLabels(weatherPoints, bbox) {
+    this._weatherIconEntries = [];
     if (!weatherPoints || weatherPoints.length === 0) return;
 
     this.weatherGroup = new THREE.Group();
@@ -2219,16 +2234,34 @@ export class TerrainViewer {
       const p = this._latLngToLocal(lat, lng, surfElev + 18 * ms0, bbox);
 
       const icon = pt.weatherCode != null ? TerrainViewer.weatherIcon(pt.weatherCode) : '☀️';
-
+      const cat = pt.weatherCode != null ? TerrainViewer.weatherCategory(pt.weatherCode) : 'clear';
       const temp = pt.temperature != null ? `${Math.round(pt.temperature)}°C` : '';
-      const text = [icon, temp].filter(Boolean).join(' ');
-      if (!text) return;
 
-      const label = this._createLabel(text, p.x, p.y, p.z, 0x44aaff);
+      // Each marker owns a canvas/texture so its icon can be repainted per frame
+      // as a live weather animation when 天氣特效 is enabled.
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 80;
+      const ctx = canvas.getContext('2d');
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      const spriteMat = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: false,
+        sizeAttenuation: true,
+      });
+      const label = new THREE.Sprite(spriteMat);
+      label.position.set(p.x, p.y, p.z);
       // Scale to the terrain so the labels are legible (the default fixed size is
       // invisible on real-scale terrain).
       const ms = this._markerScale || 1;
       label.scale.set(60 * ms, 20 * ms, 1);
+
+      const entry = { sprite: label, canvas, ctx, texture, cat, icon, temp, phase: Math.random() * Math.PI * 2 };
+      // Paint the initial frame in whichever mode the 特效 toggle is currently in.
+      this._paintWeatherLabel(entry, this._iconFxTime, this._weatherFxEnabled);
+
       this._registerLabel(label);
       label.userData.detail = {
         type: 'weather',
@@ -2241,8 +2274,199 @@ export class TerrainViewer {
       };
       this.weatherGroup.add(label);
       this.weatherLabels.push(label);
+      this._weatherIconEntries.push(entry);
       this._pickables.push(label);
     });
+  }
+
+  // Paint one weather marker's canvas: a rounded badge with the temperature and,
+  // on the left, either the static emoji (animated=false) or a procedurally drawn,
+  // time-driven weather animation (animated=true). Called once on build and every
+  // frame from _updateWeatherIconAnimations while 天氣特效 is on.
+  _paintWeatherLabel(entry, t, animated) {
+    const { ctx, canvas, cat, icon, temp } = entry;
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.font = 'bold 32px Inter, "Noto Sans TC", sans-serif';
+    const tw = temp ? ctx.measureText(temp).width : 0;
+    const glyphW = 44;            // reserved width for the icon/animation
+    const gap = temp ? 10 : 0;
+    const pad = 16;
+    const bw = glyphW + gap + tw + pad * 2;
+    const bh = 50;
+    const bx = (W - bw) / 2;
+    const by = (H - bh) / 2;
+
+    // Rounded badge background (matches _createLabel's styling).
+    const r = 8;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by);
+    ctx.lineTo(bx + bw - r, by);
+    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + r);
+    ctx.lineTo(bx + bw, by + bh - r);
+    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - r, by + bh);
+    ctx.lineTo(bx + r, by + bh);
+    ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - r);
+    ctx.lineTo(bx, by + r);
+    ctx.quadraticCurveTo(bx, by, bx + r, by);
+    ctx.closePath();
+    ctx.fill();
+
+    const gcx = bx + pad + glyphW / 2;
+    const gcy = H / 2;
+    if (animated) {
+      this._drawWeatherGlyph(ctx, gcx, gcy, 15, cat, t + entry.phase);
+    } else {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '30px Inter, "Noto Sans TC", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(icon, gcx, gcy);
+    }
+
+    if (temp) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 32px Inter, "Noto Sans TC", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(temp, bx + pad + glyphW + gap, gcy);
+    }
+
+    entry.texture.needsUpdate = true;
+  }
+
+  // Draw an animated weather glyph centred at (cx, cy) with radius r. `t` is a
+  // free-running seconds clock (offset per marker so they don't move in lockstep).
+  _drawWeatherGlyph(ctx, cx, cy, r, cat, t) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const drawCloud = (oy, color) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx - r * 0.55, cy + oy + r * 0.1, r * 0.45, 0, Math.PI * 2);
+      ctx.arc(cx + r * 0.55, cy + oy + r * 0.1, r * 0.5, 0, Math.PI * 2);
+      ctx.arc(cx, cy + oy - r * 0.25, r * 0.6, 0, Math.PI * 2);
+      ctx.rect(cx - r, cy + oy - r * 0.05, r * 2, r * 0.6);
+      ctx.fill();
+    };
+
+    switch (cat) {
+      case 'clear': {
+        // Spinning sun rays around a solid disc.
+        ctx.strokeStyle = '#ffd34d';
+        ctx.lineWidth = 2.4;
+        const rays = 8;
+        for (let i = 0; i < rays; i++) {
+          const a = t * 1.1 + (i * Math.PI * 2) / rays;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * r * 0.95, cy + Math.sin(a) * r * 0.95);
+          ctx.lineTo(cx + Math.cos(a) * r * 1.4, cy + Math.sin(a) * r * 1.4);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#ffd34d';
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.68, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'cloudy': {
+        drawCloud(Math.sin(t * 0.9) * r * 0.12 + r * 0.1, '#dfe6ee');
+        break;
+      }
+      case 'fog': {
+        ctx.strokeStyle = '#cfd6de';
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 4; i++) {
+          const yy = cy - r * 0.7 + i * (r * 0.55);
+          const dx = Math.sin(t * 1.1 + i * 0.9) * r * 0.3;
+          ctx.beginPath();
+          ctx.moveTo(cx - r + dx, yy);
+          ctx.lineTo(cx + r + dx, yy);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'drizzle':
+      case 'rain':
+      case 'thunder': {
+        drawCloud(-r * 0.35, cat === 'thunder' ? '#9aa6b4' : '#cdd6e0');
+        const drops = cat === 'drizzle' ? 3 : 5;
+        const speed = cat === 'drizzle' ? 1.6 : 2.6;
+        ctx.strokeStyle = '#7fb4ff';
+        ctx.lineWidth = 2.4;
+        for (let i = 0; i < drops; i++) {
+          const dx = cx - r * 0.7 + (drops === 1 ? 0 : (i * r * 1.4) / (drops - 1));
+          const ph = ((t * speed + i * 0.45) % 1 + 1) % 1;
+          const y0 = cy + r * 0.25 + ph * r * 0.85;
+          ctx.beginPath();
+          ctx.moveTo(dx, y0);
+          ctx.lineTo(dx - r * 0.1, y0 + r * 0.4);
+          ctx.stroke();
+        }
+        if (cat === 'thunder') {
+          const flash = 0.45 + 0.55 * Math.max(0, Math.sin(t * 7));
+          ctx.globalAlpha = flash;
+          ctx.fillStyle = '#ffe14d';
+          ctx.beginPath();
+          ctx.moveTo(cx + r * 0.05, cy + r * 0.15);
+          ctx.lineTo(cx + r * 0.45, cy + r * 0.15);
+          ctx.lineTo(cx + r * 0.12, cy + r * 0.7);
+          ctx.lineTo(cx + r * 0.5, cy + r * 0.7);
+          ctx.lineTo(cx - r * 0.2, cy + r * 1.45);
+          ctx.lineTo(cx + r * 0.05, cy + r * 0.8);
+          ctx.lineTo(cx - r * 0.3, cy + r * 0.8);
+          ctx.closePath();
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        break;
+      }
+      case 'snow': {
+        drawCloud(-r * 0.35, '#e6edf5');
+        ctx.fillStyle = '#ffffff';
+        const flakes = 4;
+        for (let i = 0; i < flakes; i++) {
+          const ph = ((t * 0.9 + i * 0.55) % 1 + 1) % 1;
+          const baseX = cx - r * 0.7 + (i * r * 1.4) / (flakes - 1);
+          const dx = baseX + Math.sin((t + i) * 2) * r * 0.14;
+          const y = cy + r * 0.25 + ph * r * 0.9;
+          ctx.beginPath();
+          ctx.arc(dx, y, r * 0.11, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      default:
+        drawCloud(r * 0.1, '#dfe6ee');
+    }
+
+    ctx.restore();
+  }
+
+  // Per-frame repaint of the weather markers' icons. When 天氣特效 is off, paints
+  // the static emoji once and stops; when on, redraws each visible marker's
+  // animation. Skipped entirely when the 天氣 layer is hidden.
+  _updateWeatherIconAnimations(dt) {
+    if (!this._weatherIconEntries.length) return;
+    if (!this._weatherFxEnabled) {
+      if (this._weatherIconsAnimating) {
+        this._weatherIconsAnimating = false;
+        for (const e of this._weatherIconEntries) this._paintWeatherLabel(e, this._iconFxTime, false);
+      }
+      return;
+    }
+    if (!this.weatherGroup || !this.weatherGroup.visible) return;
+    this._weatherIconsAnimating = true;
+    this._iconFxTime += dt;
+    for (const e of this._weatherIconEntries) {
+      if (!e.sprite.visible) continue;
+      this._paintWeatherLabel(e, this._iconFxTime, true);
+    }
   }
 
   _createLabel(text, x, y, z, colorHex) {
@@ -3203,6 +3427,7 @@ export class TerrainViewer {
     });
     this.waypointMarkers = [];
     this.weatherLabels = [];
+    this._weatherIconEntries = [];
     this.terrainMesh = null;
     this.routeLine = null;
     this.routeTube = null;
@@ -3292,6 +3517,8 @@ export class TerrainViewer {
     // Weather keeps moving even while paused so a scrubbed-to frame still reads
     // as "raining/snowing", but stays subtle enough not to mask the terrain.
     this._updateWeatherParticles(dt);
+    // Animate the weather marker icons in lockstep with the sky FX.
+    this._updateWeatherIconAnimations(dt);
 
     this.renderer.render(this.scene, this.camera);
   }

@@ -2474,7 +2474,10 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       weatherPoints: weatherPointsData,
       routeStats,
       routeColors: buildTerrainRouteColors(routeCoords),
-      cachedTerrain: getTerrainCacheEntry(cacheKey),
+      // A forced rebuild (the toolbar 更新) ignores the cached elevation grid +
+      // 圖資 so the refresh genuinely re-downloads and re-runs the build from the
+      // start instead of replaying the cached scene from ~90%.
+      cachedTerrain: opts.forceRebuild ? null : getTerrainCacheEntry(cacheKey),
       timing: buildTerrainTiming(routeCoords, routeElevs),
       preserveView: !!opts.preserveView,
       // Bake the persisted normalization preference into the first build so the
@@ -2595,12 +2598,11 @@ function build3dForCurrentRoute() {
   openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
 }
 
-// Toolbar "更新" — redraw the open 3D model. The cache key is re-derived from the
-// CURRENT route so an edited track rebuilds the terrain (and its map features)
-// from scratch — downloading a fresh elevation grid + 圖資 for the new area —
-// instead of redrawing the new track over the stale cached grid of the route that
-// was open when the model was first built. An unchanged route yields the same key,
-// so it still hits the cache and only re-reads the latest departure date/weather.
+// Toolbar "更新" — redraw the open 3D model. A forced rebuild re-downloads a fresh
+// elevation grid + 圖資 and re-runs the whole build (real progress from the start),
+// so an edited track rebuilds from scratch and an unchanged one genuinely refreshes
+// the latest elevation/天氣/圖資 instead of replaying the cached scene from ~90%.
+// The camera pose and playback position are preserved so it still feels in-place.
 async function refreshTerrainViewer() {
   if (!terrainViewer || terrainViewerEl.classList.contains('hidden')) return;
   if (terrainViewer.isLoading()) return;
@@ -2613,7 +2615,7 @@ async function refreshTerrainViewer() {
   tvRedrawBtn?.classList.add('tv-redraw-spin');
   terrainRefreshing = true;
   try {
-    await openTerrainViewer(liveKey, { preserveView: true });
+    await openTerrainViewer(liveKey, { preserveView: true, forceRebuild: true });
   } finally {
     terrainRefreshing = false;
     tvRedrawBtn?.classList.remove('tv-redraw-spin');
@@ -2723,10 +2725,12 @@ function updateTerrainToggleAvailability() {
     tvToggleWeather.title = hasWeather ? '天氣標記' : '此路線沒有天氣標記';
   }
 
-  const hasFx = terrainViewer.routeHasWeatherFx?.() ?? false;
+  // 天氣特效 drives the animated weather marker icons (plus rain/snow/fog/sky for
+  // non-clear weather), so it's usable on any route that has weather markers —
+  // only a route with no weather data at all leaves it with nothing to animate.
   if (tvToggleWeatherFx) {
-    tvToggleWeatherFx.disabled = !hasFx;
-    tvToggleWeatherFx.title = hasFx ? '天氣特效（雨／雪／霧）' : '此路線天氣晴朗，無特效可顯示';
+    tvToggleWeatherFx.disabled = !hasWeather;
+    tvToggleWeatherFx.title = hasWeather ? '天氣特效（動態天氣圖示＋雨／雪／霧）' : '此路線沒有天氣資料，無特效可顯示';
   }
 
   const hasLabels = terrainViewer.hasContourLabels?.() ?? false;

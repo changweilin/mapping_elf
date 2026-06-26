@@ -34,10 +34,49 @@ async function mockElevation(page, { delayMs = 30 } = {}) {
   return state;
 }
 
+// A valid Open-Meteo forecast/archive payload echoing the requested date, so the
+// weather load actually completes (and its busy overlay clears) instead of hanging.
+function weatherPayloadForUrl(url) {
+  const date = new URL(url).searchParams.get('start_date') || '2026-04-20';
+  return {
+    daily: {
+      time: [date],
+      temperature_2m_max: [22], temperature_2m_min: [12], precipitation_sum: [0],
+      weathercode: [1], windspeed_10m_max: [12], windgusts_10m_max: [18],
+      sunrise: [`${date}T05:10`], sunset: [`${date}T18:30`], sunshine_duration: [18000],
+      precipitation_probability_max: [10], uv_index_max: [7], shortwave_radiation_sum: [19],
+    },
+    hourly: {
+      time: Array.from({ length: 24 }, (_, h) => `${date}T${String(h).padStart(2, '0')}:00`),
+      temperature_2m: Array.from({ length: 24 }, () => 18),
+      apparent_temperature: Array.from({ length: 24 }, () => 17),
+      relative_humidity_2m: Array.from({ length: 24 }, () => 65),
+      dewpoint_2m: Array.from({ length: 24 }, () => 11),
+      precipitation: Array.from({ length: 24 }, () => 0),
+      precipitation_probability: Array.from({ length: 24 }, () => 10),
+      weathercode: Array.from({ length: 24 }, () => 1),
+      windspeed_10m: Array.from({ length: 24 }, () => 9),
+      windgusts_10m: Array.from({ length: 24 }, () => 15),
+      uv_index: Array.from({ length: 24 }, () => 4),
+      visibility: Array.from({ length: 24 }, () => 10000),
+      cloudcover: Array.from({ length: 24 }, () => 25),
+    },
+    elevation: 100,
+  };
+}
+
 // Load the app and import the sample KML so a route + waypoints exist. The 3D
 // button (in the route-planning section) becomes enabled once a route is drawn.
-async function openWithRoute(page) {
-  await page.route(/api\.open-meteo\.com\/v1\/forecast/, (r) => r.abort());
+// By default the weather forecast is stubbed out (aborted); pass { weather: true }
+// to serve a valid forecast so the weather load completes.
+async function openWithRoute(page, { weather = false } = {}) {
+  if (weather) {
+    const serve = (r) => r.fulfill({ json: weatherPayloadForUrl(r.request().url()) });
+    await page.route(/api\.open-meteo\.com\/v1\/forecast/, serve);
+    await page.route(/archive-api\.open-meteo\.com\/v1\/archive/, serve);
+  } else {
+    await page.route(/api\.open-meteo\.com\/v1\/forecast/, (r) => r.abort());
+  }
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
@@ -188,6 +227,55 @@ test('3D terrain: the route caches its elevation grid so reopening skips the dow
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
   expect(elevation.count).toBe(firstRunRequests);
+});
+
+test('3D terrain: the 更新 redraw genuinely re-downloads and re-runs the build', async ({ page }) => {
+  const elevation = await mockElevation(page, { delayMs: 30 });
+  await openWithRoute(page, { weather: true });
+
+  // The 3D build and the 更新 redraw are both gated on weather finishing loading,
+  // so wait for its busy overlay to settle before each.
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 20_000 });
+
+  await open3dForCurrentRoute(page);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+  const firstRunRequests = elevation.count;
+  expect(firstRunRequests).toBeGreaterThan(0);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 20_000 });
+
+  // Unlike reopening (which reuses the cache), 更新 forces a fresh build: it
+  // re-downloads the elevation grid and re-runs the progress bar from the start
+  // rather than replaying the cached scene from ~90%.
+  await page.locator('#tv-redraw-btn').click();
+  await expect(page.locator('#tv-loading')).toBeVisible();
+  // Progress restarts low instead of jumping straight to the tail end.
+  await expect.poll(async () => (
+    page.locator('#tv-loading-fill').evaluate((el) => parseFloat(el.style.width) || 0)
+  ), { timeout: 15_000 }).toBeLessThan(85);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+  expect(elevation.count).toBeGreaterThan(firstRunRequests);
+});
+
+test('3D terrain: the 天氣特效 toggle is usable whenever the route has weather data', async ({ page }) => {
+  await mockElevation(page, { delayMs: 30 });
+  await openWithRoute(page, { weather: true });
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 20_000 });
+
+  await open3dForCurrentRoute(page);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+
+  // With weather markers present the 特效 button is enabled (not permanently
+  // locked) and on by default, and toggling it flips the active state.
+  const fx = page.locator('#tv-toggle-weatherfx');
+  await expect(fx).toBeEnabled();
+  await expect(fx).toHaveClass(/active/);
+  await fx.click();
+  await expect(fx).not.toHaveClass(/active/);
+  await fx.click();
+  await expect(fx).toHaveClass(/active/);
 });
 
 test('3D terrain: a favourite still builds via its per-favourite 3D button', async ({ page }) => {
