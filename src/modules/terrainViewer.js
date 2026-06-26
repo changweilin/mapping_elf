@@ -8,7 +8,14 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { haversineDistance, cumulativeDistances } from './utils.js';
 
 const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
-const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
+// Overpass mirrors tried in order — the main instance is frequently rate-limited
+// (429) or times out, which previously dropped the whole 圖資 layer. Falling
+// through to mirrors makes the map-feature download succeed far more often.
+const OVERPASS_APIS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
 const GRID_SIZE = 25;
 
 // The coarse downloaded grid is lightly smoothed and upsampled to a finer field
@@ -86,6 +93,8 @@ export class TerrainViewer {
     this._field = null;
     // Per-vertex land-cover family (FIELD_SIZE²) baked into the terrain colours.
     this._landCoverField = null;
+    // Per-vertex true slope (FIELD_SIZE²) used by the terrain colouring.
+    this._slopeField = null;
     this._fieldMinV = 0;
     this._fieldMaxV = 1;
     this._terrainInfo = null;
@@ -103,6 +112,9 @@ export class TerrainViewer {
     // that doesn't re-download anything.
     this._buildCtx = null;
     this._featuresData = null;
+    // Bbox the in-memory _featuresData were built for, so a redraw can safely
+    // reuse them as a fallback only when the area hasn't changed.
+    this._featuresDataBbox = null;
 
     this._playing = false;
     this._speed = 1;
@@ -116,6 +128,12 @@ export class TerrainViewer {
     this._onMetrics = null;
     this._onTerrainComputed = null;
     this._onFeaturesComputed = null;
+    // Fired once a background map-feature download finishes and drapes onto the
+    // model, so the UI can re-evaluate layer toggles (圖資 availability).
+    this._onFeaturesReady = null;
+    // Monotonic id of the current build; background feature loads carry the id
+    // they started under and bail if it no longer matches (model was rebuilt).
+    this._buildToken = 0;
 
     this._abortController = null;
     this._aborted = false;
@@ -228,6 +246,12 @@ export class TerrainViewer {
   // caller can persist it alongside the terrain cache. Not fired on a cache hit.
   onFeaturesComputed(cb) {
     this._onFeaturesComputed = cb;
+  }
+
+  // cb() — fired once a background map-feature download has been draped onto the
+  // model, so the UI can re-enable the 圖資 layer toggle now that features exist.
+  onFeaturesReady(cb) {
+    this._onFeaturesReady = cb;
   }
 
   isLoading() {
@@ -642,29 +666,29 @@ export class TerrainViewer {
     this._setupPlayer(coords, elevations, bbox);
     this._setupEnvironment();
 
-    // Map features (roads / rivers / water / land cover / buildings) draped on
-    // the terrain. Reuse cached vector data when present, otherwise download it
-    // from Overpass. A feature failure never blocks the (already built) model.
-    let featuresData = cachedTerrain && cachedTerrain.features ? cachedTerrain.features : null;
-    if (!featuresData && !this._aborted) {
-      this._emitLoad({ active: true, percent: 92, title: '建立地形模型', detail: '下載地圖圖資…' });
-      try {
-        featuresData = await this._fetchMapFeatures(bbox, (p) => {
-          this._emitLoad({ active: true, percent: 92 + p * 7, title: '建立地形模型', detail: '下載地圖圖資…' });
-        });
-      } catch { featuresData = null; }
-      if (featuresData && this._onFeaturesComputed) {
-        try { this._onFeaturesComputed({ features: featuresData, bbox }); } catch { /* noop */ }
-      }
+    // Map features (roads / rivers / water / land cover / buildings). Cached
+    // vector data builds synchronously (instant); a fresh Overpass download is
+    // slow and flaky, so it must NOT block the model from appearing — it's fetched
+    // in the background after the build completes and draped on once it arrives.
+    // Keep the previous build's features (same area) as a fallback so a flaky
+    // download doesn't blank the whole 圖資 layer on a redraw.
+    const prevFeatures = this._featuresData;
+    const prevFeaturesBbox = this._featuresDataBbox;
+    const cachedFeatures = cachedTerrain && cachedTerrain.features ? cachedTerrain.features : null;
+    if (cachedFeatures) {
+      try { this._buildMapFeatures(cachedFeatures, bbox); } catch (err) { console.warn('map features failed:', err); }
+      this._featuresData = cachedFeatures;
+      this._featuresDataBbox = bbox;
+    } else {
+      // Features arrive asynchronously; clear any stale ones so a rebuild in the
+      // meantime (e.g. the normalization toggle) doesn't drape the old area's data.
+      this._featuresData = null;
+      this._featuresDataBbox = null;
     }
-    if (featuresData) {
-      try { this._buildMapFeatures(featuresData, bbox); } catch (err) { console.warn('map features failed:', err); }
-    }
-
-    // Cache the source data so the normalization toggle can rebuild the geometry
-    // in place without re-downloading anything.
-    this._featuresData = featuresData || null;
     this._buildCtx = { coords, elevations, waypoints, weatherPoints, bbox };
+    // Token identifying THIS build so a background feature download that resolves
+    // after the user rebuilt/closed the model doesn't paint onto a stale scene.
+    const buildToken = (this._buildToken = (this._buildToken || 0) + 1);
 
     if (this._onInfo) this._onInfo(this._terrainInfo);
 
@@ -698,6 +722,44 @@ export class TerrainViewer {
     this._emitMetrics(true);
 
     this._emitLoad({ active: false, percent: 100 });
+
+    // Kick off the background map-feature download (only when the cache didn't
+    // already supply it). The model is already on screen; features drape on when
+    // ready. Failures fall back to the previous build's features for the same area.
+    if (!cachedFeatures && !this._aborted) {
+      this._loadMapFeaturesInBackground(bbox, buildToken, prevFeatures, prevFeaturesBbox);
+    }
+  }
+
+  // Download map features off the critical path and drape them onto the already
+  // visible model. Guarded by the build token so a download that resolves after
+  // the user rebuilt/closed the model is discarded instead of painting a stale
+  // scene. A failed download reuses the previous build's features (same area).
+  async _loadMapFeaturesInBackground(bbox, token, prevFeatures, prevFeaturesBbox) {
+    let featuresData = null;
+    try {
+      featuresData = await this._fetchMapFeatures(bbox);
+    } catch { featuresData = null; }
+    if (this._aborted || token !== this._buildToken || !this.scene) return;
+    if (!featuresData && prevFeatures && this._bboxApproxEqual(bbox, prevFeaturesBbox)) {
+      featuresData = prevFeatures;
+    }
+    if (!featuresData) return;
+    if (featuresData !== prevFeatures && this._onFeaturesComputed) {
+      try { this._onFeaturesComputed({ features: featuresData, bbox }); } catch { /* noop */ }
+    }
+    try { this._buildMapFeatures(featuresData, bbox); } catch (err) { console.warn('map features failed:', err); return; }
+    this._featuresData = featuresData;
+    this._featuresDataBbox = bbox;
+    // Apply the persisted label size + layer visibility to the freshly added
+    // feature objects, then let the UI re-evaluate toggles now that 圖資 exists.
+    this.setLabelScale(this._labelScale);
+    if (this.featureGroup) this.featureGroup.visible = this._featuresVisible;
+    if (this.featureLabelGroup) this.featureLabelGroup.visible = this._featuresVisible;
+    this._updateLineResolutions();
+    if (this._onFeaturesReady) {
+      try { this._onFeaturesReady(); } catch { /* noop */ }
+    }
   }
 
   _checkWebGL() {
@@ -908,15 +970,26 @@ export class TerrainViewer {
     const sunDist = Math.max(span * 4, 40000);
 
     if (!this._envEnabled) {
-      // Neutral, evenly-lit fallback.
-      this.scene.background = new THREE.Color(0x1a1a2e);
+      // Fixed bright-daytime look, independent of the route clock: same sky
+      // colour, sun colour/intensity, fill light and shadows as a high sun, so
+      // turning the day/night cycle off lights the scene like daytime instead of
+      // the old dim, shadowless neutral fallback.
+      const preset = this._skyPreset(55); // high midday sun
+      const target = this.controls?.target || new THREE.Vector3();
+      // Sun high overhead but tilted toward the south-east so the relief still
+      // casts legible shadows (a dead-overhead sun flattens them out).
+      const dir = new THREE.Vector3(0.32, 0.9, 0.28).normalize();
+      this.scene.background = preset.sky.clone();
       this.scene.fog = null;
-      this._sun.color.set(0xffeedd);
-      this._sun.intensity = 1.2;
-      this._sun.position.set(sunDist * 0.4, sunDist, sunDist * 0.4);
-      if (this._sunTarget) this._sunTarget.position.copy(this.controls?.target || new THREE.Vector3());
-      this._ambient.color.set(0x6a708a); this._ambient.intensity = 0.6;
-      this._hemi.color.set(0x87ceeb); this._hemi.groundColor.set(0x3a2a1a); this._hemi.intensity = 0.4;
+      if (this._sunTarget) this._sunTarget.position.copy(target);
+      this._sun.position.copy(target).add(dir.multiplyScalar(sunDist));
+      this._sun.color.copy(preset.sun);
+      this._sun.intensity = preset.sunI;
+      this._sun.castShadow = true;
+      this._ambient.color.copy(preset.amb); this._ambient.intensity = preset.ambI;
+      this._hemi.color.copy(preset.hemiS);
+      this._hemi.groundColor.copy(preset.hemiG);
+      this._hemi.intensity = preset.hemiI;
       if (this._moon) this._moon.intensity = 0.0;
       if (this._rain) this._rain.visible = false;
       if (this._snow) this._snow.visible = false;
@@ -1133,6 +1206,15 @@ export class TerrainViewer {
     return { minLat, maxLat, minLng, maxLng };
   }
 
+  // True when two bboxes describe essentially the same area (sub-metre tolerance
+  // in degrees), used to decide whether cached/in-memory map features still apply.
+  _bboxApproxEqual(a, b) {
+    if (!a || !b) return false;
+    const e = 1e-5; // ~1 m
+    return Math.abs(a.minLat - b.minLat) < e && Math.abs(a.maxLat - b.maxLat) < e
+      && Math.abs(a.minLng - b.minLng) < e && Math.abs(a.maxLng - b.maxLng) < e;
+  }
+
   _latLngToLocal(lat, lng, elev, bbox) {
     const cx = (bbox.minLng + bbox.maxLng) / 2;
     const cy = (bbox.minLat + bbox.maxLat) / 2;
@@ -1279,58 +1361,88 @@ export class TerrainViewer {
     return grid;
   }
 
-  // Sample a colour ramp (array of { t, c:[r,g,b] }) at normalised height t∈[0,1].
-  static _rampSample(stops, t) {
-    const u = t < 0 ? 0 : (t > 1 ? 1 : t);
-    let lo = stops[0], hi = stops[stops.length - 1];
+  // Sample a colour ramp whose stops are in ABSOLUTE units (metres of elevation).
+  // Clamps to the end stops.
+  static _rampSampleAbs(stops, x) {
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    if (x <= first.t) return first.c.slice();
+    if (x >= last.t) return last.c.slice();
+    let lo = first, hi = last;
     for (let i = 0; i < stops.length - 1; i++) {
-      if (u >= stops[i].t && u <= stops[i + 1].t) { lo = stops[i]; hi = stops[i + 1]; break; }
+      if (x >= stops[i].t && x <= stops[i + 1].t) { lo = stops[i]; hi = stops[i + 1]; break; }
     }
     const span = (hi.t - lo.t) || 1;
-    const f = (u - lo.t) / span;
+    const f = (x - lo.t) / span;
     return [lo.c[0] + (hi.c[0] - lo.c[0]) * f,
             lo.c[1] + (hi.c[1] - lo.c[1]) * f,
             lo.c[2] + (hi.c[2] - lo.c[2]) * f];
   }
 
-  // Natural (default green) elevation tint at normalised height t∈[0,1]: lowland
-  // green → upland tan → rocky grey → snow. Lightens with altitude so each
-  // land-cover palette keeps its own hue on the high ground.
-  static _terrainRampColor(t) {
-    return TerrainViewer._rampSample([
-      { t: 0.0,  c: [0.24, 0.44, 0.21] }, // valley forest green
-      { t: 0.35, c: [0.42, 0.51, 0.27] }, // green / olive
-      { t: 0.6,  c: [0.60, 0.58, 0.40] }, // grassy slope
-      { t: 0.8,  c: [0.63, 0.61, 0.56] }, // bare rock grey
-      { t: 1.0,  c: [0.93, 0.94, 0.96] }, // snow / peak
-    ], t);
+  // Vegetation (綠地) tint keyed on ABSOLUTE elevation (metres). Lowland and
+  // montane forest stay green well up the slopes; only beyond the (Taiwan)
+  // treeline does it fade to alpine grass, bare rock and finally a snow cap.
+  // Using true altitude — not the relief-normalised height the previous ramp
+  // used — keeps a low summit green instead of painting every local peak grey.
+  static _vegRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.29, 0.47, 0.24] }, // coastal / lowland green
+      { t: 700,  c: [0.23, 0.43, 0.20] }, // lush forest
+      { t: 1600, c: [0.30, 0.46, 0.25] }, // montane forest
+      { t: 2600, c: [0.43, 0.51, 0.32] }, // subalpine scrub (olive)
+      { t: 3200, c: [0.64, 0.62, 0.46] }, // treeline grass / tan
+      { t: 3500, c: [0.68, 0.66, 0.61] }, // bare alpine rock
+      { t: 3850, c: [0.94, 0.95, 0.97] }, // snow cap
+    ], elevM);
   }
 
-  // Per-land-cover elevation ramp. The terrain surface itself is tinted by the
-  // dominant land-cover family at each point (not a translucent overlay), and
-  // every family still gradients with altitude toward rock/snow at the top:
+  // Bare-ground (裸露地) tint: earthy brown → tan → pale rock with altitude.
+  static _soilRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.55, 0.45, 0.27] }, // earthy brown
+      { t: 1000, c: [0.63, 0.53, 0.35] }, // loam
+      { t: 2500, c: [0.73, 0.66, 0.51] }, // sandy
+      { t: 3400, c: [0.80, 0.77, 0.70] }, // pale rock
+      { t: 3800, c: [0.93, 0.93, 0.92] }, // light peak
+    ], elevM);
+  }
+
+  // Built-up (市區) tint: slate grey, lightening slightly with altitude.
+  static _urbanRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.45, 0.46, 0.49] }, // slate grey
+      { t: 1500, c: [0.55, 0.56, 0.59] }, // mid grey
+      { t: 3000, c: [0.66, 0.67, 0.70] }, // light grey
+      { t: 3800, c: [0.86, 0.87, 0.90] }, // near-white
+    ], elevM);
+  }
+
+  // Final per-vertex terrain colour from land-cover family + ABSOLUTE elevation +
+  // slope:
   //   green (default) → 山林色系 (forest / grassland / parks)
   //   soil            → 土黃色系 (bare ground / farmland / quarry / brownfield)
   //   urban           → 灰色系   (built-up / residential / commercial blocks)
-  static _terrainRampColorFor(family, t) {
-    if (family === 'soil') {
-      return TerrainViewer._rampSample([
-        { t: 0.0,  c: [0.55, 0.45, 0.27] }, // earthy brown
-        { t: 0.4,  c: [0.70, 0.59, 0.36] }, // tan / loam
-        { t: 0.7,  c: [0.79, 0.71, 0.50] }, // sandy
-        { t: 0.9,  c: [0.80, 0.75, 0.64] }, // pale rock
-        { t: 1.0,  c: [0.93, 0.93, 0.92] }, // light peak
-      ], t);
-    }
-    if (family === 'urban') {
-      return TerrainViewer._rampSample([
-        { t: 0.0,  c: [0.40, 0.41, 0.44] }, // dark slate grey
-        { t: 0.5,  c: [0.54, 0.55, 0.58] }, // mid grey
-        { t: 0.85, c: [0.67, 0.68, 0.71] }, // light grey
-        { t: 1.0,  c: [0.86, 0.87, 0.90] }, // near-white
-      ], t);
-    }
-    return TerrainViewer._terrainRampColor(t); // green default (山林色系)
+  // Green/default vegetation greens the low-and-mid ground and only turns to
+  // rock/snow on genuinely high or steep terrain; soil stays earthy; urban stays
+  // grey. Steep ground exposes bare rock (vegetation can't cling to cliffs), so
+  // ridges and peaks pick up natural rocky highlights while valleys and gentle
+  // slopes read green — instead of the old scheme that greyed every summit.
+  static _terrainColorFor(family, elevM, slope) {
+    if (family === 'urban') return TerrainViewer._urbanRampColor(elevM);
+    if (family === 'soil')  return TerrainViewer._soilRampColor(elevM);
+    const veg = TerrainViewer._vegRampColor(elevM);
+    const rock = [0.55, 0.53, 0.50];
+    const s = Number.isFinite(slope) ? slope : 0;
+    let rockAmt = Math.max(0, Math.min(1, (s - 0.7) / 1.0)); // ~35° starts, ~80° full
+    // OSM-confirmed vegetation resists the rock blend far more than unlabelled ground.
+    rockAmt *= (family === 'green') ? 0.3 : 0.75;
+    // Keep snow caps white rather than greying them on steep summits.
+    if (elevM > 3550) rockAmt *= 0.2;
+    return [
+      veg[0] + (rock[0] - veg[0]) * rockAmt,
+      veg[1] + (rock[1] - veg[1]) * rockAmt,
+      veg[2] + (rock[2] - veg[2]) * rockAmt,
+    ];
   }
 
   // OSM land-cover class → terrain colour family + raster priority (a higher
@@ -1365,7 +1477,7 @@ export class TerrainViewer {
   // the grid cells inside its lat/lng bounding box, so this stays cheap even with
   // hundreds of areas. Holes (rings[1..]) are subtracted so an inner lake/clearing
   // doesn't inherit the outer cover.
-  _buildLandCoverField(areas, bbox) {
+  _buildLandCoverField(areas, buildings, bbox) {
     const N = FIELD_SIZE;
     const fam = [];
     const pri = [];
@@ -1403,6 +1515,36 @@ export class TerrainViewer {
         }
       }
     }
+
+    // Built-up density: where several building footprints fall in one fine cell
+    // and no higher-priority cover (park / forest / farmland) claimed it, mark the
+    // ground urban (灰). This makes real townscapes read grey even where OSM has
+    // no landuse=residential polygon — the gap that previously left city blocks
+    // painted green.
+    if (Array.isArray(buildings) && buildings.length) {
+      const counts = [];
+      for (let i = 0; i < N; i++) counts.push(new Array(N).fill(0));
+      for (const b of buildings) {
+        const ring = b.ring;
+        if (!ring || ring.length < 3) continue;
+        let cla = 0, clo = 0;
+        for (const [la, lo] of ring) { cla += la; clo += lo; }
+        cla /= ring.length; clo /= ring.length;
+        const gi = Math.round((cla - bbox.minLat) / latSpan * (N - 1));
+        const gj = Math.round((clo - bbox.minLng) / lngSpan * (N - 1));
+        if (gi < 0 || gi >= N || gj < 0 || gj >= N) continue;
+        counts[gi][gj] += 1;
+      }
+      const urban = TerrainViewer._landCoverFamily('urban');
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          if (counts[i][j] >= 3 && urban.pri > pri[i][j]) {
+            fam[i][j] = urban.family;
+            pri[i][j] = urban.pri;
+          }
+        }
+      }
+    }
     return fam;
   }
 
@@ -1410,24 +1552,23 @@ export class TerrainViewer {
   // family's elevation ramp instead of the single default green ramp. Called once
   // the map features are available; the colours live on the terrain geometry, so
   // they persist regardless of the "圖資" overlay toggle.
-  _applyLandCoverColors(areas, bbox) {
+  _applyLandCoverColors(areas, buildings, bbox) {
     if (!this.terrainMesh || !this._field) return;
     const colorAttr = this.terrainMesh.geometry.getAttribute('color');
     if (!colorAttr) return;
-    const fam = this._buildLandCoverField(areas, bbox);
+    const fam = this._buildLandCoverField(areas, buildings, bbox);
     this._landCoverField = fam;
 
     const field = this._field;
     const N = FIELD_SIZE;
     const minElev = this._fieldMinV;
-    const range = Math.max(this._fieldMaxV - minElev, 1);
+    const slopes = this._slopeField || this._computeFieldSlopes(field, bbox, N);
     let idx = 0;
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
         const raw = field[i][j];
         const elev = this._isHole(raw) ? minElev : raw;
-        const t = (elev - minElev) / range;
-        const [r, g, b] = TerrainViewer._terrainRampColorFor(fam[i][j], t);
+        const [r, g, b] = TerrainViewer._terrainColorFor(fam[i][j], elev, slopes[i][j]);
         colorAttr.setXYZ(idx, r, g, b);
         idx++;
       }
@@ -1445,8 +1586,10 @@ export class TerrainViewer {
     const uvs = [];
 
     const minElev = this._fieldMinV;
-    const maxElev = this._fieldMaxV;
-    const elevRange = Math.max(maxElev - minElev, 1);
+    // Per-vertex true slope (independent of the vertical render scale) drives the
+    // rock-vs-vegetation blend so ridges/cliffs read rocky and valleys green.
+    const slopes = this._computeFieldSlopes(field, bbox, N);
+    this._slopeField = slopes;
 
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
@@ -1460,8 +1603,9 @@ export class TerrainViewer {
         vertices.push(p.x, p.y, p.z);
         uvs.push(j / (N - 1), i / (N - 1));
 
-        const t = (elev - minElev) / elevRange;
-        const [r, g, b] = TerrainViewer._terrainRampColor(t);
+        // Colour by absolute elevation + slope; land cover is painted in later by
+        // _applyLandCoverColors once the map features have downloaded.
+        const [r, g, b] = TerrainViewer._terrainColorFor(null, elev, slopes[i][j]);
         colors.push(r, g, b);
       }
     }
@@ -1560,6 +1704,41 @@ export class TerrainViewer {
       }
     }
     return normals;
+  }
+
+  // True-world slope magnitude (rise/run) per fine-field vertex, in the vertex
+  // order used by _createTerrain. Computed from ABSOLUTE elevations and true world
+  // spacing so it's independent of the vertical render scale — the "海拔歸一化"
+  // toggle exaggerates the relief but must not change the terrain colouring.
+  _computeFieldSlopes(field, bbox, N) {
+    const R = 6371000;
+    const toRad = Math.PI / 180;
+    const cy = (bbox.minLat + bbox.maxLat) / 2;
+    const dx = R * toRad * ((bbox.maxLng - bbox.minLng) / (N - 1)) * Math.cos(toRad * cy) || 1;
+    const dz = R * toRad * ((bbox.maxLat - bbox.minLat) / (N - 1)) || 1;
+    const at = (i, j) => {
+      const ii = i < 0 ? 0 : (i >= N ? N - 1 : i);
+      const jj = j < 0 ? 0 : (j >= N ? N - 1 : j);
+      const v = field[ii][jj];
+      return this._isHole(v) ? null : v;
+    };
+    const slopes = [];
+    for (let i = 0; i < N; i++) {
+      const row = new Array(N);
+      for (let j = 0; j < N; j++) {
+        const c = at(i, j);
+        const center = c == null ? 0 : c;
+        const hl = at(i, j - 1) ?? center;
+        const hr = at(i, j + 1) ?? center;
+        const hd = at(i - 1, j) ?? center;
+        const hu = at(i + 1, j) ?? center;
+        const gx = (hr - hl) / (2 * dx);
+        const gz = (hu - hd) / (2 * dz);
+        row[j] = Math.hypot(gx, gz);
+      }
+      slopes.push(row);
+    }
+    return slopes;
   }
 
   // --- Smoothed / upsampled height field -------------------------------------
@@ -2142,12 +2321,18 @@ export class TerrainViewer {
       if (/^(stream|ditch|drain|brook)$/.test(ww)) return { group: 'line', kind: 'water', cls: 'stream' };
     }
 
+    // 濕地 (沼澤 marsh / 潮間帶 intertidal flats) — a water-domain cover kept
+    // visually distinct from open water, classified before water/green so it wins.
+    if (tags.natural === 'wetland' || tags.natural === 'mud' || tags.natural === 'saltmarsh'
+      || tags.wetland || tags.tidal === 'yes' || tags.landuse === 'salt_pond') {
+      return { group: 'area', kind: 'water', cls: 'wetland' };
+    }
     if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir' || tags.landuse === 'basin') {
       return { group: 'area', kind: 'water', cls: 'water' };
     }
     if (tags.natural === 'wood' || tags.landuse === 'forest') return { group: 'area', kind: 'green', cls: 'forest' };
     if (/^(grass|meadow|village_green|recreation_ground|farmland|farmyard|orchard|cemetery|allotments|vineyard)$/.test(tags.landuse || '')
-      || /^(scrub|heath|grassland|fell|wetland)$/.test(tags.natural || '')
+      || /^(scrub|heath|grassland|fell)$/.test(tags.natural || '')
       || /^(park|garden|nature_reserve|golf_course|pitch|recreation_ground|common)$/.test(tags.leisure || '')) {
       return { group: 'area', kind: 'green', cls: 'grass' };
     }
@@ -2186,21 +2371,39 @@ export class TerrainViewer {
     const q = `[out:json][timeout:30];(` +
       `way["highway"](${bb});` +
       `way["waterway"](${bb});` +
-      `way["natural"~"water|wood|scrub|heath|grassland|wetland|bare_rock|scree|sand|shingle"](${bb});` +
+      `way["natural"~"water|wood|scrub|heath|grassland|wetland|mud|saltmarsh|bare_rock|scree|sand|shingle"](${bb});` +
       `way["water"](${bb});` +
+      `way["wetland"](${bb});` +
+      `way["tidal"="yes"](${bb});` +
       `way["landuse"](${bb});` +
       `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|recreation_ground|common"](${bb});` +
       `way["building"](${bb});` +
-      `relation["natural"="water"](${bb});` +
+      `relation["natural"~"water|wetland"](${bb});` +
       `relation["landuse"~"forest|reservoir|basin"](${bb});` +
       `relation["leisure"~"park|nature_reserve"](${bb});` +
       `);out geom 6000;`;
 
     onProgress?.(0.1);
-    const url = `${OVERPASS_API}?data=${encodeURIComponent(q)}`;
-    const resp = await this._fetchWithTimeout(url, this._abortController?.signal, 35000);
-    if (!resp.ok) throw new Error(`Overpass ${resp.status}`);
-    const data = await resp.json();
+    const encoded = encodeURIComponent(q);
+    // Try each Overpass mirror in turn so one being rate-limited / down doesn't
+    // blank the whole feature layer.
+    let data = null;
+    let lastErr = null;
+    for (const api of OVERPASS_APIS) {
+      if (this._aborted) throw new Error('aborted');
+      try {
+        // Per-mirror timeout kept modest so falling through several mirrors can't
+        // stall the (blocking) feature download for too long.
+        const resp = await this._fetchWithTimeout(`${api}?data=${encoded}`, this._abortController?.signal, 18000);
+        if (!resp.ok) { lastErr = new Error(`Overpass ${resp.status}`); continue; }
+        data = await resp.json();
+        break;
+      } catch (err) {
+        if (this._aborted) throw err;
+        lastErr = err;
+      }
+    }
+    if (!data) throw lastErr || new Error('Overpass failed');
     onProgress?.(0.8);
 
     const lines = [];
@@ -2415,15 +2618,18 @@ export class TerrainViewer {
     // Green (山林) / soil (土黃) / urban (灰) cover is painted directly INTO the
     // terrain surface (per-vertex, gradiented by altitude) by _applyLandCoverColors
     // — not as a translucent sheet over it — so the relief reads as coloured
-    // ground. Only water keeps a draped translucent surface (it isn't terrain).
-    this._applyLandCoverColors(data.areas, bbox);
+    // ground. Only water/wetland keep a draped translucent surface (they aren't
+    // terrain). Building footprints feed the urban-density classification too.
+    this._applyLandCoverColors(data.areas, data.buildings, bbox);
 
     const AREA_STYLE = {
-      water: { color: 0x2b86d9, opacity: 0.62, outline: 0x6fc0ff, lift: baseLift * 0.6, labelColor: 0x9fd8ff, pri: 0 },
-      forest:{ labelColor: 0x9be07a, pri: 2 },
-      grass: { labelColor: 0xc7f29a, pri: 2 },
-      waste: { labelColor: 0xe6d3a0, pri: 4 },
-      urban: { labelColor: 0xe2dccf, pri: 5 },
+      water:   { color: 0x2b86d9, opacity: 0.62, outline: 0x6fc0ff, lift: baseLift * 0.6,  labelColor: 0x9fd8ff, pri: 0 },
+      // 濕地 (潮間帶 / 沼澤) — a muddy teal-green, distinct from open blue water.
+      wetland: { color: 0x4f8f78, opacity: 0.5,  outline: 0x8fd6bb, lift: baseLift * 0.55, labelColor: 0xade8cf, pri: 1 },
+      forest:  { labelColor: 0x9be07a, pri: 2 },
+      grass:   { labelColor: 0xc7f29a, pri: 2 },
+      waste:   { labelColor: 0xe6d3a0, pri: 4 },
+      urban:   { labelColor: 0xe2dccf, pri: 5 },
     };
     const localXZ = (lat, lng) => {
       const p = this._latLngToLocal(lat, lng, 0, bbox);
@@ -3008,6 +3214,7 @@ export class TerrainViewer {
     this.featureLabelGroup = null;
     this._labelSprites = [];
     this._landCoverField = null;
+    this._slopeField = null;
     this.playerMarker = null;
     this.playerRing = null;
     this.playerTrail = null;

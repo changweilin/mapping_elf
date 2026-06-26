@@ -282,6 +282,9 @@ function updateRouteWeatherBusyOverlay() {
 
   syncBusyDisabledControls(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR, routeLocked, 'route-edit-control');
   syncBusyDisabledControls(WEATHER_CARD_BUSY_DISABLE_SELECTOR, weatherCardLocked, 'weather-edit-control');
+  // Re-evaluate the 3D button: it must stay locked while any route/weather task
+  // runs and re-enable as soon as they all finish.
+  if (typeof update3dButtonBadge === 'function') update3dButtonBadge();
 
   if (typeof mapManager !== 'undefined' && mapManager) {
     mapManager.setFrozen(!!importedTrackMode || routeLocked);
@@ -2019,10 +2022,6 @@ const tvLoadingPercent = document.getElementById('tv-loading-percent');
 const tvLoadingAbort = document.getElementById('tv-loading-abort');
 
 let terrainViewer = null;
-// Cache key of the route currently shown in the 3D viewer, so the toolbar's
-// "更新" (redraw) button can rebuild it — picking up the latest departure date
-// and weather — while reusing the cached elevation grid + map features.
-let terrainCurrentCacheKey = null;
 // True while the toolbar "更新" rebuild is running. A redraw must never kick the
 // user out of the viewer: if the rebuild fails or is aborted we keep the model
 // that's already on screen instead of closing back to the planning page.
@@ -2405,7 +2404,6 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     }
     // Build/refresh for the current route when no explicit cache key is given.
     if (!cacheKey) cacheKey = terrainRouteSignature();
-    terrainCurrentCacheKey = cacheKey;
 
     // Planned routes come from the routing engine (allAlternatives); imported
     // tracks skip routing, so fall back to the drawn track + elevation profile.
@@ -2523,6 +2521,12 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     terrainViewer.onFeaturesComputed(({ features }) => {
       if (cacheKey) saveTerrainFeaturesEntry(cacheKey, features);
     });
+    // Map features download in the background now, so re-evaluate the layer toggles
+    // (and re-apply the persisted 圖資 on/off) once they've draped onto the model.
+    terrainViewer.onFeaturesReady(() => {
+      applyTerrainDisplayToViewer();
+      updateTerrainToggleAvailability();
+    });
 
     renderTerrainInfoPanel(routeData);
     // Apply the persisted display settings to the toolbar buttons + the prefs the
@@ -2582,21 +2586,34 @@ function build3dForCurrentRoute() {
     showNotification('請先規劃路線', 'warning');
     return;
   }
+  // Don't build from track/weather data that's still being computed.
+  if (hasRouteWeatherBusyTasks()) {
+    showNotification('路線或天氣資料處理中，請待完成後再建立 3D 地形', 'warning');
+    return;
+  }
   const fav = findSavedCurrentRoute();
   openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
 }
 
-// Toolbar "更新" — rebuild the open 3D model from its cached elevation grid +
-// map features, but re-read the latest departure date (weather table) and
-// weather points so the day/night lighting, clock and weather markers refresh
-// without leaving the viewer.
+// Toolbar "更新" — redraw the open 3D model. The cache key is re-derived from the
+// CURRENT route so an edited track rebuilds the terrain (and its map features)
+// from scratch — downloading a fresh elevation grid + 圖資 for the new area —
+// instead of redrawing the new track over the stale cached grid of the route that
+// was open when the model was first built. An unchanged route yields the same key,
+// so it still hits the cache and only re-reads the latest departure date/weather.
 async function refreshTerrainViewer() {
   if (!terrainViewer || terrainViewerEl.classList.contains('hidden')) return;
   if (terrainViewer.isLoading()) return;
+  if (hasRouteWeatherBusyTasks()) {
+    showNotification('路線或天氣資料處理中，請待完成後再重繪', 'warning');
+    return;
+  }
+  const fav = findSavedCurrentRoute();
+  const liveKey = fav ? `fav:${fav.id}` : terrainRouteSignature();
   tvRedrawBtn?.classList.add('tv-redraw-spin');
   terrainRefreshing = true;
   try {
-    await openTerrainViewer(terrainCurrentCacheKey, { preserveView: true });
+    await openTerrainViewer(liveKey, { preserveView: true });
   } finally {
     terrainRefreshing = false;
     tvRedrawBtn?.classList.remove('tv-redraw-spin');
@@ -2628,10 +2645,13 @@ initTvLanguageSelect();
 // 3D viewer day/night UI style toggle (shares the homepage light-theme state).
 tvToggleTheme?.addEventListener('click', toggleAppTheme);
 
-// Enable the 3D button only when a route exists.
+// Enable the 3D button only when a route exists AND no route/weather processing
+// is in flight — building the model mid-calculation would snapshot half-ready
+// track/weather data, so the button stays locked until everything settles.
 function update3dButtonBadge() {
   const hasRoute = currentRouteCoords && currentRouteCoords.length >= 2;
-  if (btnOpen3d) btnOpen3d.disabled = !hasRoute;
+  const busy = hasRouteWeatherBusyTasks();
+  if (btnOpen3d) btnOpen3d.disabled = !hasRoute || busy;
 }
 
 // Hook into route update flow
