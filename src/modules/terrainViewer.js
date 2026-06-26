@@ -83,6 +83,8 @@ export class TerrainViewer {
     // Smoothed/upsampled height field shared by the surface mesh + contours, and
     // the valid (hole-excluded) elevation range over it.
     this._field = null;
+    // Per-vertex land-cover family (FIELD_SIZE²) baked into the terrain colours.
+    this._landCoverField = null;
     this._fieldMinV = 0;
     this._fieldMaxV = 1;
     this._terrainInfo = null;
@@ -211,6 +213,13 @@ export class TerrainViewer {
 
   isLoading() {
     return this._loading;
+  }
+
+  // True once a terrain model has been built and is still resident in the scene
+  // (it survives hide()/show()). Lets the caller re-show a cached model on
+  // re-entry instead of rebuilding it from scratch.
+  hasBuiltScene() {
+    return !!(this.scene && this.terrainMesh);
   }
 
   abort() {
@@ -474,6 +483,11 @@ export class TerrainViewer {
       this._centerLng = (bbox.minLng + bbox.maxLng) / 2;
       gridData = cachedTerrain.grid;
       this._emitLoad({ active: true, percent: 80, title: '建立地形模型', detail: '讀取暫存高程資料…' });
+      // The cached rebuild (e.g. a "更新" redraw) is otherwise synchronous, so
+      // yield one frame to let the progress bar + interrupt button actually paint
+      // and give the user a window to abort before the geometry is regenerated.
+      await new Promise((r) => setTimeout(r, 16));
+      if (this._aborted) { this._emitLoad({ active: false, percent: 0, aborted: true }); return; }
     } else {
       bbox = this._computeBbox(coords);
       this._centerLat = (bbox.minLat + bbox.maxLat) / 2;
@@ -1134,20 +1148,9 @@ export class TerrainViewer {
     return grid;
   }
 
-  // Natural elevation tint at normalised height t∈[0,1]: lowland green → upland
-  // tan → rocky grey → snow. Deliberately LIGHTENS with altitude instead of the
-  // old green→brown→near-black ramp, whose dark high ground muddied the
-  // translucent land-cover tints (green/waste) into brown/black. Keeping the
-  // high ground light lets each land-cover type keep its own colour.
-  static _terrainRampColor(t) {
+  // Sample a colour ramp (array of { t, c:[r,g,b] }) at normalised height t∈[0,1].
+  static _rampSample(stops, t) {
     const u = t < 0 ? 0 : (t > 1 ? 1 : t);
-    const stops = [
-      { t: 0.0,  c: [0.27, 0.45, 0.23] }, // valley green
-      { t: 0.35, c: [0.46, 0.52, 0.29] }, // olive
-      { t: 0.6,  c: [0.64, 0.58, 0.41] }, // tan / grassy slope
-      { t: 0.8,  c: [0.63, 0.61, 0.56] }, // bare rock grey
-      { t: 1.0,  c: [0.93, 0.94, 0.96] }, // snow / peak
-    ];
     let lo = stops[0], hi = stops[stops.length - 1];
     for (let i = 0; i < stops.length - 1; i++) {
       if (u >= stops[i].t && u <= stops[i + 1].t) { lo = stops[i]; hi = stops[i + 1]; break; }
@@ -1157,6 +1160,148 @@ export class TerrainViewer {
     return [lo.c[0] + (hi.c[0] - lo.c[0]) * f,
             lo.c[1] + (hi.c[1] - lo.c[1]) * f,
             lo.c[2] + (hi.c[2] - lo.c[2]) * f];
+  }
+
+  // Natural (default green) elevation tint at normalised height t∈[0,1]: lowland
+  // green → upland tan → rocky grey → snow. Lightens with altitude so each
+  // land-cover palette keeps its own hue on the high ground.
+  static _terrainRampColor(t) {
+    return TerrainViewer._rampSample([
+      { t: 0.0,  c: [0.24, 0.44, 0.21] }, // valley forest green
+      { t: 0.35, c: [0.42, 0.51, 0.27] }, // green / olive
+      { t: 0.6,  c: [0.60, 0.58, 0.40] }, // grassy slope
+      { t: 0.8,  c: [0.63, 0.61, 0.56] }, // bare rock grey
+      { t: 1.0,  c: [0.93, 0.94, 0.96] }, // snow / peak
+    ], t);
+  }
+
+  // Per-land-cover elevation ramp. The terrain surface itself is tinted by the
+  // dominant land-cover family at each point (not a translucent overlay), and
+  // every family still gradients with altitude toward rock/snow at the top:
+  //   green (default) → 山林色系 (forest / grassland / parks)
+  //   soil            → 土黃色系 (bare ground / farmland / quarry / brownfield)
+  //   urban           → 灰色系   (built-up / residential / commercial blocks)
+  static _terrainRampColorFor(family, t) {
+    if (family === 'soil') {
+      return TerrainViewer._rampSample([
+        { t: 0.0,  c: [0.55, 0.45, 0.27] }, // earthy brown
+        { t: 0.4,  c: [0.70, 0.59, 0.36] }, // tan / loam
+        { t: 0.7,  c: [0.79, 0.71, 0.50] }, // sandy
+        { t: 0.9,  c: [0.80, 0.75, 0.64] }, // pale rock
+        { t: 1.0,  c: [0.93, 0.93, 0.92] }, // light peak
+      ], t);
+    }
+    if (family === 'urban') {
+      return TerrainViewer._rampSample([
+        { t: 0.0,  c: [0.40, 0.41, 0.44] }, // dark slate grey
+        { t: 0.5,  c: [0.54, 0.55, 0.58] }, // mid grey
+        { t: 0.85, c: [0.67, 0.68, 0.71] }, // light grey
+        { t: 1.0,  c: [0.86, 0.87, 0.90] }, // near-white
+      ], t);
+    }
+    return TerrainViewer._terrainRampColor(t); // green default (山林色系)
+  }
+
+  // OSM land-cover class → terrain colour family + raster priority (a higher
+  // priority wins where polygons overlap, so a park inside a town reads green).
+  // Water is intentionally absent — it keeps its own translucent surface overlay
+  // instead of tinting the ground.
+  static _landCoverFamily(cls) {
+    switch (cls) {
+      case 'forest':
+      case 'grass':  return { family: 'green', pri: 3 };
+      case 'waste':  return { family: 'soil',  pri: 2 };
+      case 'urban':  return { family: 'urban', pri: 1 };
+      default:       return null;
+    }
+  }
+
+  // Even-odd ray-cast point-in-polygon test ([lat,lng] ring, lat=y, lng=x).
+  _pointInRing(lat, lng, ring) {
+    let inside = false;
+    for (let i = 0, k = ring.length - 1; i < ring.length; k = i++) {
+      const yi = ring[i][0], xi = ring[i][1];
+      const yj = ring[k][0], xj = ring[k][1];
+      const denom = (yj - yi) || 1e-12;
+      const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / denom + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  // Rasterise the area polygons onto the fine field grid, producing a per-vertex
+  // land-cover family (null → default green). Each polygon is only tested over
+  // the grid cells inside its lat/lng bounding box, so this stays cheap even with
+  // hundreds of areas. Holes (rings[1..]) are subtracted so an inner lake/clearing
+  // doesn't inherit the outer cover.
+  _buildLandCoverField(areas, bbox) {
+    const N = FIELD_SIZE;
+    const fam = [];
+    const pri = [];
+    for (let i = 0; i < N; i++) { fam.push(new Array(N).fill(null)); pri.push(new Array(N).fill(0)); }
+    const latSpan = (bbox.maxLat - bbox.minLat) || 1;
+    const lngSpan = (bbox.maxLng - bbox.minLng) || 1;
+
+    for (const ar of (areas || [])) {
+      const info = TerrainViewer._landCoverFamily(ar.cls);
+      if (!info) continue;
+      const rings = ar.rings || [];
+      const outer = rings[0];
+      if (!outer || outer.length < 3) continue;
+      const holes = rings.slice(1).filter((h) => h && h.length >= 3);
+
+      let rminLat = Infinity, rmaxLat = -Infinity, rminLng = Infinity, rmaxLng = -Infinity;
+      for (const [la, lo] of outer) {
+        if (la < rminLat) rminLat = la; if (la > rmaxLat) rmaxLat = la;
+        if (lo < rminLng) rminLng = lo; if (lo > rmaxLng) rmaxLng = lo;
+      }
+      const i0 = Math.max(0, Math.floor((rminLat - bbox.minLat) / latSpan * (N - 1)));
+      const i1 = Math.min(N - 1, Math.ceil((rmaxLat - bbox.minLat) / latSpan * (N - 1)));
+      const j0 = Math.max(0, Math.floor((rminLng - bbox.minLng) / lngSpan * (N - 1)));
+      const j1 = Math.min(N - 1, Math.ceil((rmaxLng - bbox.minLng) / lngSpan * (N - 1)));
+
+      for (let i = i0; i <= i1; i++) {
+        const lat = bbox.minLat + latSpan * i / (N - 1);
+        for (let j = j0; j <= j1; j++) {
+          if (info.pri <= pri[i][j]) continue;
+          const lng = bbox.minLng + lngSpan * j / (N - 1);
+          if (!this._pointInRing(lat, lng, outer)) continue;
+          if (holes.some((h) => this._pointInRing(lat, lng, h))) continue;
+          fam[i][j] = info.family;
+          pri[i][j] = info.pri;
+        }
+      }
+    }
+    return fam;
+  }
+
+  // Re-tint the (already built) terrain mesh so each vertex uses its land-cover
+  // family's elevation ramp instead of the single default green ramp. Called once
+  // the map features are available; the colours live on the terrain geometry, so
+  // they persist regardless of the "圖資" overlay toggle.
+  _applyLandCoverColors(areas, bbox) {
+    if (!this.terrainMesh || !this._field) return;
+    const colorAttr = this.terrainMesh.geometry.getAttribute('color');
+    if (!colorAttr) return;
+    const fam = this._buildLandCoverField(areas, bbox);
+    this._landCoverField = fam;
+
+    const field = this._field;
+    const N = FIELD_SIZE;
+    const minElev = this._fieldMinV;
+    const range = Math.max(this._fieldMaxV - minElev, 1);
+    let idx = 0;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const raw = field[i][j];
+        const elev = this._isHole(raw) ? minElev : raw;
+        const t = (elev - minElev) / range;
+        const [r, g, b] = TerrainViewer._terrainRampColorFor(fam[i][j], t);
+        colorAttr.setXYZ(idx, r, g, b);
+        idx++;
+      }
+    }
+    colorAttr.needsUpdate = true;
   }
 
   _createTerrain(bbox) {
@@ -2135,17 +2280,19 @@ export class TerrainViewer {
       this._lineMaterials.push(mat);
     }
 
-    // ----- Areas (water / green / waste) draped + filled translucently -----
-    // Higher fill opacity than before so each land-cover type keeps its own
-    // colour (green stays green, waste stays sandy) instead of being washed
-    // toward the terrain tint underneath, while still letting the relief show.
+    // ----- Land cover -----
+    // Green (山林) / soil (土黃) / urban (灰) cover is painted directly INTO the
+    // terrain surface (per-vertex, gradiented by altitude) by _applyLandCoverColors
+    // — not as a translucent sheet over it — so the relief reads as coloured
+    // ground. Only water keeps a draped translucent surface (it isn't terrain).
+    this._applyLandCoverColors(data.areas, bbox);
+
     const AREA_STYLE = {
       water: { color: 0x2b86d9, opacity: 0.62, outline: 0x6fc0ff, lift: baseLift * 0.6, labelColor: 0x9fd8ff, pri: 0 },
-      forest:{ color: 0x2f7d3a, opacity: 0.7,  outline: 0x4caf50, lift: baseLift * 0.8, labelColor: 0x9be07a, pri: 2 },
-      grass: { color: 0x6fb84a, opacity: 0.62, outline: 0x8bd45f, lift: baseLift * 0.8, labelColor: 0xc7f29a, pri: 2 },
-      waste: { color: 0xc2a86e, opacity: 0.6,  outline: 0xd0bb86, lift: baseLift * 0.8, labelColor: 0xe6d3a0, pri: 4 },
-      // Urban/built-up: a low, subtle grey-beige wash like the 2D map's town blocks.
-      urban: { color: 0xb0a89c, opacity: 0.4,  outline: 0xc4bcae, lift: baseLift * 0.7, labelColor: 0xe2dccf, pri: 5 },
+      forest:{ labelColor: 0x9be07a, pri: 2 },
+      grass: { labelColor: 0xc7f29a, pri: 2 },
+      waste: { labelColor: 0xe6d3a0, pri: 4 },
+      urban: { labelColor: 0xe2dccf, pri: 5 },
     };
     const localXZ = (lat, lng) => {
       const p = this._latLngToLocal(lat, lng, 0, bbox);
@@ -2153,6 +2300,9 @@ export class TerrainViewer {
     };
     for (const ar of (data.areas || [])) {
       const style = AREA_STYLE[ar.cls] || AREA_STYLE.grass;
+      // Families baked into the terrain skip the overlay fill + outline; they only
+      // contribute a name label. Water (and anything unbaked) draws a surface.
+      const baked = !!TerrainViewer._landCoverFamily(ar.cls);
       const rings = ar.rings || [];
       if (!rings.length || rings[0].length < 3) continue;
 
@@ -2173,56 +2323,58 @@ export class TerrainViewer {
         .map((r) => this._clipRingToBbox(toShape2D(r), bbox))
         .filter((h) => h.length >= 3);
 
-      const contour2D = outer.map(([la, lo]) => localXZ(la, lo));
-      const holes2D = holes.map((h) => h.map(([la, lo]) => localXZ(la, lo)));
-      let faces;
-      try { faces = THREE.ShapeUtils.triangulateShape(contour2D, holes2D); } catch { faces = null; }
-      if (!faces || !faces.length) continue;
-
-      // Combined vertex list (contour then holes), draped per-vertex so the fill
-      // hugs the terrain; translucent so any interior bump reads naturally.
-      const combinedLL = [...outer, ...holes.flat()];
-      const verts3D = combinedLL.map(([la, lo]) => world(la, lo, style.lift));
-      // Per-vertex hole flags: any triangle touching a terrain hole is dropped so
-      // the fill stops at the real terrain edge instead of sheeting down to the
-      // basin floor across blank tiles.
-      const combinedHole = combinedLL.map(([la, lo]) => this._isOverHole(la, lo));
-      const positions = [];
-      for (const f of faces) {
-        if (f.some((idx) => combinedHole[idx])) continue;
-        for (const idx of f) {
-          const v = verts3D[idx];
-          if (v) positions.push(v.x, v.y, v.z);
+      if (!baked) {
+        const contour2D = outer.map(([la, lo]) => localXZ(la, lo));
+        const holes2D = holes.map((h) => h.map(([la, lo]) => localXZ(la, lo)));
+        let faces;
+        try { faces = THREE.ShapeUtils.triangulateShape(contour2D, holes2D); } catch { faces = null; }
+        if (faces && faces.length) {
+          // Combined vertex list (contour then holes), draped per-vertex so the
+          // fill hugs the terrain; translucent so any interior bump reads.
+          const combinedLL = [...outer, ...holes.flat()];
+          const verts3D = combinedLL.map(([la, lo]) => world(la, lo, style.lift));
+          // Per-vertex hole flags: any triangle touching a terrain hole is dropped
+          // so the fill stops at the real terrain edge instead of sheeting down to
+          // the basin floor across blank tiles.
+          const combinedHole = combinedLL.map(([la, lo]) => this._isOverHole(la, lo));
+          const positions = [];
+          for (const f of faces) {
+            if (f.some((idx) => combinedHole[idx])) continue;
+            for (const idx of f) {
+              const v = verts3D[idx];
+              if (v) positions.push(v.x, v.y, v.z);
+            }
+          }
+          if (positions.length) {
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.computeVertexNormals();
+            const mat = new THREE.MeshStandardMaterial({
+              color: style.color, transparent: true, opacity: style.opacity,
+              roughness: 0.95, metalness: 0, side: THREE.DoubleSide,
+              depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.renderOrder = 1;
+            this.featureGroup.add(mesh);
+          }
         }
-      }
-      if (positions.length) {
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        geo.computeVertexNormals();
-        const mat = new THREE.MeshStandardMaterial({
-          color: style.color, transparent: true, opacity: style.opacity,
-          roughness: 0.95, metalness: 0, side: THREE.DoubleSide,
-          depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
-        });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.renderOrder = 1;
-        this.featureGroup.add(mesh);
-      }
 
-      // Outline — split at holes so it traces only the on-terrain part of the ring.
-      const ov = [];
-      for (const seg of this._splitPolylineAtHoles([...outer, outer[0]])) {
-        const ow = drapeLine(seg, style.lift + baseLift * 0.4);
-        for (let i = 0; i < ow.length - 1; i++) ov.push(ow[i].x, ow[i].y, ow[i].z, ow[i + 1].x, ow[i + 1].y, ow[i + 1].z);
-      }
-      if (ov.length >= 6) {
-        const geo = new LineSegmentsGeometry();
-        geo.setPositions(ov);
-        const mat = new LineMaterial({ color: style.outline, linewidth: 1.4, transparent: true, opacity: 0.65 });
-        const seg = new LineSegments2(geo, mat);
-        seg.computeLineDistances();
-        this.featureGroup.add(seg);
-        this._lineMaterials.push(mat);
+        // Outline — split at holes so it traces only the on-terrain part of the ring.
+        const ov = [];
+        for (const seg of this._splitPolylineAtHoles([...outer, outer[0]])) {
+          const ow = drapeLine(seg, style.lift + baseLift * 0.4);
+          for (let i = 0; i < ow.length - 1; i++) ov.push(ow[i].x, ow[i].y, ow[i].z, ow[i + 1].x, ow[i + 1].y, ow[i + 1].z);
+        }
+        if (ov.length >= 6) {
+          const geo = new LineSegmentsGeometry();
+          geo.setPositions(ov);
+          const mat = new LineMaterial({ color: style.outline, linewidth: 1.4, transparent: true, opacity: 0.65 });
+          const seg = new LineSegments2(geo, mat);
+          seg.computeLineDistances();
+          this.featureGroup.add(seg);
+          this._lineMaterials.push(mat);
+        }
       }
 
       // Label at the ring centroid (skipped if that point is over a hole).
@@ -2230,7 +2382,8 @@ export class TerrainViewer {
       for (const [la, lo] of outer) { cla += la; clo += lo; }
       cla /= outer.length; clo /= outer.length;
       if (!this._isOverHole(cla, clo)) {
-        pushLabelCand(ar.name, world(cla, clo, style.lift + 14 * ms), style.labelColor, style.pri);
+        const labelLift = (baked ? baseLift * 0.8 : style.lift) + 14 * ms;
+        pushLabelCand(ar.name, world(cla, clo, labelLift), style.labelColor, style.pri);
       }
     }
 
@@ -2676,6 +2829,7 @@ export class TerrainViewer {
     this.featureGroup = null;
     this.featureLabelGroup = null;
     this._labelSprites = [];
+    this._landCoverField = null;
     this.playerMarker = null;
     this.playerRing = null;
     this.playerTrail = null;

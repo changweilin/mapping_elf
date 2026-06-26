@@ -6905,26 +6905,49 @@ html.light-theme .panel-bottom-logo {
   z-index: 10;
 }
 .terrain-viewer-toolbar .tv-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
 }
-.terrain-viewer-toolbar .tv-title svg {
-  opacity: 0.7;
-}
-.terrain-viewer-toolbar .tv-title span {
-  background: linear-gradient(135deg, #00FF7F, #007BFF);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+/* Brand block matches the homepage toolbar (owl logo + gradient wordmark). */
+.terrain-viewer-toolbar .tv-title .app-logo { gap: 8px; }
+.terrain-viewer-toolbar .tv-title-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+  white-space: nowrap;
 }
 .terrain-viewer-toolbar .tv-toolbar-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.terrain-viewer-toolbar .tv-language-switcher {
+  height: 32px;
+  padding: 0 8px;
+}
+.terrain-viewer-toolbar .tv-language-switcher select {
+  width: 62px;
+}
+.terrain-viewer-toolbar .tv-theme-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.terrain-viewer-toolbar .tv-theme-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
 }
 .terrain-viewer-toolbar .tv-redraw-btn {
   background: none;
@@ -7213,6 +7236,14 @@ html.light-theme .tv-live-hud {
   .tv-info-panel { width: 190px; }
   .tv-layer-btn span { display: none; }
   .tv-layer-btn { padding: 8px; }
+  /* Keep the brand compact and drop the subtitle so the action cluster fits. */
+  .terrain-viewer-toolbar { padding: 0 10px; }
+  .terrain-viewer-toolbar .tv-title-sub { display: none; }
+  .terrain-viewer-toolbar .tv-redraw-btn span { display: none; }
+  .terrain-viewer-toolbar .tv-redraw-btn { padding: 0 9px; }
+  .terrain-viewer-toolbar .tv-toolbar-actions { gap: 6px; }
+  .terrain-viewer-toolbar .tv-language-switcher { padding: 0 6px; }
+  .terrain-viewer-toolbar .tv-language-switcher select { width: 48px; }
 }
 
 /* Position-driven live readout (HUD) */

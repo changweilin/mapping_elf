@@ -10,7 +10,7 @@ import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
 import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeTripStats, computeFatigueSeries, formatDuration, formatDurationHHMM, defaultSpeed, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
-import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
+import { applyTranslations, getLanguage, initI18n, LANGUAGES, setLanguage, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
 import { estimateMapPackTiles } from './modules/tileEstimator.js';
 import { buildWeatherPointsFromState } from './modules/weatherPointBuilder.js';
@@ -1921,16 +1921,17 @@ function returnToRouteAfterPanelUpdate({ closePanel = false } = {}) {
   });
 }
 
+const tvIconMoon = document.getElementById('tv-icon-moon');
+const tvIconSun = document.getElementById('tv-icon-sun');
+
 function updateThemeIcons() {
   const isLight = document.documentElement.classList.contains('light-theme');
   mapManager?.setTileTheme?.(isLight ? 'light' : 'dark');
-  if (isLight) {
-    if (iconMoon) iconMoon.style.display = 'none';
-    if (iconSun) iconSun.style.display = 'block';
-  } else {
-    if (iconMoon) iconMoon.style.display = 'block';
-    if (iconSun) iconSun.style.display = 'none';
-  }
+  // Toolbar (homepage) + 3D viewer theme buttons share the same moon/sun pair.
+  [[iconMoon, iconSun], [tvIconMoon, tvIconSun]].forEach(([moon, sun]) => {
+    if (moon) moon.style.display = isLight ? 'none' : 'block';
+    if (sun) sun.style.display = isLight ? 'block' : 'none';
+  });
 
   // Update Logos
   const suffix = isLight ? '' : '_dark';
@@ -1950,15 +1951,17 @@ function updateThemeIcons() {
     favicon.href = `./favicon${suffix}.svg`;
   }
 }
-// 初始設定 Icon
-if (btnToggleTheme) {
+// Day/night UI style toggle, shared by the homepage toolbar and the 3D viewer
+// toolbar so both stay in sync with the same `light-theme` class + persistence.
+function toggleAppTheme() {
+  const isLight = document.documentElement.classList.toggle('light-theme');
+  localStorage.setItem(LS_THEME_KEY, isLight ? 'light' : 'dark');
   updateThemeIcons();
-  btnToggleTheme.addEventListener('click', () => {
-    const isLight = document.documentElement.classList.toggle('light-theme');
-    localStorage.setItem(LS_THEME_KEY, isLight ? 'light' : 'dark');
-    updateThemeIcons();
-  });
 }
+// 初始設定 Icon
+updateThemeIcons();
+btnToggleTheme?.addEventListener('click', toggleAppTheme);
+// The 3D viewer's day/night toggle is wired further down, after its element refs.
 
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
 
@@ -1968,6 +1971,8 @@ const terrainViewerEl = document.getElementById('terrain-viewer');
 const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
 const tvCloseBtn = document.getElementById('tv-close-btn');
 const tvRedrawBtn = document.getElementById('tv-redraw-btn');
+const tvLanguageSelect = document.getElementById('tv-language-select');
+const tvToggleTheme = document.getElementById('tv-toggle-theme');
 const tpPlay = document.getElementById('tp-play');
 const tpSlider = document.getElementById('tp-slider');
 const tpProgressLabel = document.getElementById('tp-progress-label');
@@ -2019,6 +2024,14 @@ let terrainCurrentCacheKey = null;
 // user out of the viewer: if the rebuild fails or is aborted we keep the model
 // that's already on screen instead of closing back to the planning page.
 let terrainRefreshing = false;
+// Content signature (route + departure + weather) of the model currently resident
+// in the viewer. Re-opening the 3D page with an identical signature re-shows the
+// cached scene instantly instead of re-running the build/progress bar; it only
+// rebuilds when something actually changed or the user hits "更新" (redraw).
+let terrainBuiltSignature = null;
+// Set false by handleTerrainLoadState whenever a build aborts/errors, so a
+// failed redraw doesn't get its (new) signature recorded against the stale scene.
+let terrainLastLoadOk = true;
 
 // --- 3D terrain cache -----------------------------------------------------
 // The elevation-grid download is the slow part of building the 3D model, so the
@@ -2110,6 +2123,22 @@ function terrainRouteSignature() {
   return `route:${(h >>> 0).toString(36)}`;
 }
 
+// A signature of everything that changes what the built 3D model looks like:
+// the cache key (route geometry + mode), the departure timestamp (drives the
+// clock + day/night) and the weather points (markers + sky/FX). Two opens with
+// the same signature can share the already-built scene.
+function terrainContentSignature(cacheKey, routeData) {
+  const coords = routeData.coords || [];
+  const wx = routeData.weatherPoints || [];
+  const first = coords.length ? `${coords[0][0].toFixed(4)},${coords[0][1].toFixed(4)}` : '';
+  const last = coords.length ? `${coords[coords.length - 1][0].toFixed(4)},${coords[coords.length - 1][1].toFixed(4)}` : '';
+  const wxSig = wx.map((w) => {
+    const c = w.coords || [];
+    return `${(c[0] ?? '').toString().slice(0, 8)}:${w.weatherCode ?? ''}:${w.temperature ?? ''}`;
+  }).join(';');
+  return [cacheKey || '', String(routeData.timing?.startMs ?? ''), `n${coords.length}`, first, last, wxSig].join('#');
+}
+
 function setTerrainBusy(busy) {
   terrainViewerEl?.classList.toggle('tv-busy', busy);
   tvLoading?.classList.toggle('hidden', !busy);
@@ -2129,6 +2158,7 @@ function handleTerrainLoadState(state) {
   }
   // Finished, aborted, or errored.
   setTerrainBusy(false);
+  terrainLastLoadOk = !state.aborted && !state.error;
   if (state.aborted) {
     // A failed/aborted *refresh* keeps the existing model on screen; only the
     // initial open (nothing to fall back to) closes the viewer.
@@ -2418,6 +2448,22 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       preserveView: !!opts.preserveView,
     };
 
+    // Re-entry shortcut: if the same route (with the same departure + weather) is
+    // already built and resident in the viewer, just re-show it — no rebuild, no
+    // progress bar. A redraw (preserveView) or an explicit forceRebuild always
+    // rebuilds so "更新" still re-reads the latest date/weather.
+    const sig = terrainContentSignature(cacheKey, routeData);
+    if (!opts.preserveView && !opts.forceRebuild
+      && terrainViewer && terrainViewer.hasBuiltScene?.()
+      && sig === terrainBuiltSignature) {
+      hideTerrainMarkerDetail();
+      terrainViewerEl.classList.remove('hidden');
+      terrainViewer.show();
+      updateTerrainToggleAvailability();
+      updateTerrainPlayerUI();
+      return;
+    }
+
     if (!terrainViewer) {
       terrainViewer = new TerrainViewer(terrainCanvasWrap);
     }
@@ -2442,14 +2488,20 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
 
     renderTerrainInfoPanel(routeData);
     resetTerrainLayerToggles();
+    applyTerrainMobileDefaults();
     hideTerrainMarkerDetail();
 
     terrainViewerEl.classList.remove('hidden');
     terrainViewer.show();
+    terrainLastLoadOk = true;
     await terrainViewer.loadRouteData(routeData);
     terrainViewer.setContourPrecision(terrainContourState);
     updateTerrainToggleAvailability();
     updateTerrainPlayerUI();
+    // Remember what we just built so an unchanged re-entry can skip the rebuild —
+    // but only if the build actually finished (an aborted redraw keeps the old
+    // scene, which no longer matches this signature).
+    terrainBuiltSignature = (terrainLastLoadOk && terrainViewer.hasBuiltScene?.()) ? sig : null;
   } catch (err) {
     console.error('3D viewer error:', err);
     setTerrainBusy(false);
@@ -2513,6 +2565,27 @@ async function refreshTerrainViewer() {
 btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
 tvCloseBtn?.addEventListener('click', closeTerrainViewer);
 tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
+
+// 3D viewer language switcher — a sibling of the homepage one, kept in sync via
+// refreshLanguageSensitiveUi (the i18n onLanguageChange hook).
+function initTvLanguageSelect() {
+  if (!tvLanguageSelect || tvLanguageSelect.dataset.ready) return;
+  LANGUAGES.forEach(({ code, label }) => {
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = label;
+    tvLanguageSelect.appendChild(opt);
+  });
+  tvLanguageSelect.value = getLanguage();
+  tvLanguageSelect.addEventListener('change', () => setLanguage(tvLanguageSelect.value));
+  tvLanguageSelect.dataset.ready = '1';
+}
+function syncTvLanguageSelect() {
+  if (tvLanguageSelect) tvLanguageSelect.value = getLanguage();
+}
+initTvLanguageSelect();
+// 3D viewer day/night UI style toggle (shares the homepage light-theme state).
+tvToggleTheme?.addEventListener('click', toggleAppTheme);
 
 // Enable the 3D button only when a route exists.
 function update3dButtonBadge() {
@@ -2612,7 +2685,19 @@ function resetTerrainLayerToggles() {
     .forEach((b) => b?.classList.add('active'));
   if (tvToggleContourLabels) tvToggleContourLabels.disabled = false;
   applyTerrainContourState('high');
-  applyTerrainLabelState('large');
+  applyTerrainLabelState('none');
+}
+
+// On phones the route-info (路線資訊) and character-info (人物資訊) overlays cover
+// too much of a small canvas, so they open collapsed; on larger screens they
+// open expanded. Matches the 640px breakpoint the panels restyle at.
+function applyTerrainMobileDefaults() {
+  const collapsed = window.matchMedia('(max-width: 640px)').matches;
+  [[tvInfoPanel, tvInfoCollapse], [tvLiveHud, tvHudCollapse]].forEach(([panel, btn]) => {
+    if (!panel) return;
+    panel.classList.toggle('collapsed', collapsed);
+    btn?.setAttribute('aria-expanded', String(!collapsed));
+  });
 }
 
 tvToggleContour?.addEventListener('click', () => {
@@ -2641,10 +2726,10 @@ tvToggleFeatures?.addEventListener('click', () => {
   terrainViewer?.setFeaturesVisible(on);
 });
 
-// Label-size cycles: large (default) → small → none.
-const TERRAIN_LABEL_STATES = ['large', 'small', 'none'];
-const TERRAIN_LABEL_LABELS = { large: '字級·大', small: '字級·小', none: '字級·無' };
-let terrainLabelState = 'large';
+// On-terrain text (字體) cycles: 關 (off, default) → 大 → 小.
+const TERRAIN_LABEL_STATES = ['none', 'large', 'small'];
+const TERRAIN_LABEL_LABELS = { large: '字體·大', small: '字體·小', none: '字體·關' };
+let terrainLabelState = 'none';
 
 function applyTerrainLabelState(state) {
   terrainLabelState = TERRAIN_LABEL_STATES.includes(state) ? state : 'large';
@@ -10270,6 +10355,7 @@ function refreshLanguageSensitiveUi() {
   renderFavoritesList();
   refreshOpenWeatherCards();
   refreshKeywordSearchResults?.();
+  syncTvLanguageSelect();
   applyTranslations();
 }
 
