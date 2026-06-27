@@ -33,14 +33,14 @@ export class MapPackImporter {
   static async parse(file) {
     try {
       const zip = await JSZip.loadAsync(file);
-      return MapPackImporter._buildParsed(zip);
+      return MapPackImporter._buildParsed(zip, file?.name || '');
     } catch (err) {
       console.error('JSZip load failed:', err);
       throw new Error(`檔案解析失敗: ${err.message}`);
     }
   }
 
-  static async _buildParsed(zip) {
+  static async _buildParsed(zip, sourceFileName = '') {
     const manifestFile = zip.file('manifest.json');
     if (!manifestFile) throw new Error('manifest.json 缺失,不是有效的 .melmap 包');
     const manifest = JSON.parse(await manifestFile.async('string'));
@@ -55,6 +55,7 @@ export class MapPackImporter {
     return {
       zip,
       manifest,
+      sourceFileName,
       hasGpx: !!zip.file('route.gpx'),
       hasState: !!zip.file('state.json'),
       hasTiles: manifest.includes?.tiles && Object.keys(zip.files).some((n) => n.startsWith('tiles/')),
@@ -157,12 +158,16 @@ export class MapPackImporter {
         cachedTileCount: restoredTileEntries,
         tileBytes: restoredTileBytes || manifest.downloadedTileBytes || 0,
         provider: manifest.tileProvider || null,
+        route: manifest.route || null,
+        sharePreset: manifest.sharePreset || null,
+        sourceFileName: parsed.sourceFileName || null,
         tileUrls: [...cachedTileUrls],
       });
       result.tileCount = total;
       result.tileBytes = restoredTileBytes;
       result.layer = layer;
       result.tilePackId = pack?.id || null;
+      result.tilePack = pack || null;
     }
 
     return result;

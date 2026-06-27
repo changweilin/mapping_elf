@@ -15,8 +15,11 @@ export class KmlExporter {
    * @param {Array}    routeCoords - [[lat,lng], …] full track
    * @param {number[]} elevations  - elevation at each route coord
    * @param {string}   name
+   * @param {Object}   options
+   * @param {boolean}  options.includeWeather
    */
-  static generate(wpData, routeCoords, elevations = [], name = 'Mapping Elf Track') {
+  static generate(wpData, routeCoords, elevations = [], name = 'Mapping Elf Track', options = {}) {
+    const includeWeather = options.includeWeather !== false;
     let kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
@@ -56,7 +59,7 @@ export class KmlExporter {
       const styleId = pt.isWaypoint
         ? (pt.isReturn ? '#wpReturn' : '#wpGoing')
         : '#wpInterval';
-      const desc = this._buildDescription(pt);
+      const desc = this._buildDescription(pt, { includeWeather });
       let outLabel = pt.isWaypoint ? pt.label : `*_${pt.label}`;
       if (pt.isReturn && !outLabel.endsWith(' ↩')) {
         outLabel += ' ↩';
@@ -102,7 +105,8 @@ ${extData}      <Point>
     return kml;
   }
 
-  static _buildDescription(pt) {
+  static _buildDescription(pt, options = {}) {
+    const includeWeather = options.includeWeather !== false;
     const rows = [];
     if (pt.isReturn) rows.push(`<tr><td colspan="2" style="padding:2px 6px;color:#0077cc;font-weight:bold;">🔄 回程</td></tr>`);
     if (typeof pt.cum === 'number' && Number.isFinite(pt.cum)) {
@@ -111,10 +115,10 @@ ${extData}      <Point>
     if (typeof pt.ele === 'number' && Number.isFinite(pt.ele)) {
       rows.push(`<tr><td style="padding:2px 8px;color:#555;">高度</td><td style="padding:2px 8px;">${pt.ele.toFixed(0)} m</td></tr>`);
     }
-    if (pt.date)     rows.push(`<tr><td style="padding:2px 8px;color:#555;">日期</td><td style="padding:2px 8px;">${this._esc(pt.date)}</td></tr>`);
-    if (pt.time)     rows.push(`<tr><td style="padding:2px 8px;color:#555;">時間</td><td style="padding:2px 8px;">${this._esc(pt.time)}</td></tr>`);
+    if (includeWeather && pt.date) rows.push(`<tr><td style="padding:2px 8px;color:#555;">日期</td><td style="padding:2px 8px;">${this._esc(pt.date)}</td></tr>`);
+    if (includeWeather && pt.time) rows.push(`<tr><td style="padding:2px 8px;color:#555;">時間</td><td style="padding:2px 8px;">${this._esc(pt.time)}</td></tr>`);
 
-    const weatherEntries = pt.weather ? Object.entries(pt.weather) : [];
+    const weatherEntries = includeWeather && pt.weather ? Object.entries(pt.weather) : [];
     const hasWeather = weatherEntries.some(([, v]) => v.value && v.value !== '—');
     if (hasWeather) {
       rows.push(`<tr><td colspan="2" style="padding:6px 8px 2px;font-weight:bold;border-top:1px solid #ddd;">天氣資訊</td></tr>`);
@@ -125,7 +129,7 @@ ${extData}      <Point>
       });
     }
 
-    if (pt.windyUrl) {
+    if (includeWeather && pt.windyUrl) {
       rows.push(`<tr><td colspan="2" style="padding:6px 8px 2px;border-top:1px solid #ddd;"><a href="${pt.windyUrl}" style="color:#0077cc;">🌬️ Windy</a></td></tr>`);
     }
 

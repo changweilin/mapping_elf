@@ -13,6 +13,12 @@ import {
   deleteOfflineTilePack,
   readOfflineTileIndex,
 } from './offlineTileIndex.js';
+import {
+  addOfflineMapSource,
+  getOfflineMapSource,
+  readOfflineMapSourceIndex,
+  removeOfflineMapSource,
+} from './offlineMapSourceIndex.js';
 
 export class OfflineManager {
   constructor() {
@@ -22,12 +28,16 @@ export class OfflineManager {
     this._cacheInfo = document.getElementById('cache-info');
     this._packList = document.getElementById('offline-pack-list');
     this._clearCacheBtn = document.getElementById('btn-clear-offline-cache');
+    this._offlineMapSourceList = document.getElementById('offline-map-source-list');
+    this._importOfflineMapBtn = document.getElementById('btn-import-offline-map-source');
 
     this._unsubscribeNetworkStatus = platform.subscribeNetworkStatus?.((status) => {
       this._updateStatus(status.connected);
     }) || null;
     this._packList?.addEventListener('click', (event) => this._handlePackListClick(event));
     this._clearCacheBtn?.addEventListener('click', () => this._handleClearAllClick());
+    this._offlineMapSourceList?.addEventListener('click', (event) => this._handleOfflineMapSourceListClick(event));
+    this._importOfflineMapBtn?.addEventListener('click', () => this._handleImportOfflineMapClick());
 
     this._updateStatus(this.isOnline);
   }
@@ -57,6 +67,7 @@ export class OfflineManager {
     if (!('caches' in window)) {
       this._setCacheInfo('快取瓦片：不支援');
       this._renderTilePacks([], { unsupported: true, cachedTileEntries: 0 });
+      await this.updateOfflineMapSourceInfo();
       return;
     }
     try {
@@ -64,11 +75,13 @@ export class OfflineManager {
       const keys = await cache.keys();
       this._setCacheInfo(`快取瓦片：${keys.length} 個`);
       const index = await readOfflineTileIndex();
-      this._renderTilePacks(Object.values(index.packs || {}), { cachedTileEntries: keys.length });
+      const cachedUrls = new Set(keys.map((request) => request.url));
+      this._renderTilePacks(Object.values(index.packs || {}), { cachedTileEntries: keys.length, cachedUrls });
     } catch {
       this._setCacheInfo('快取瓦片：0 個');
       this._renderTilePacks([], { cachedTileEntries: 0 });
     }
+    await this.updateOfflineMapSourceInfo();
   }
 
   async clearCache() {
@@ -124,7 +137,115 @@ export class OfflineManager {
     }
   }
 
-  _renderTilePacks(packs, { unsupported = false, cachedTileEntries = 0 } = {}) {
+  async updateOfflineMapSourceInfo() {
+    if (!this._offlineMapSourceList && !this._importOfflineMapBtn) return;
+
+    const capabilities = await this._getOfflineMapImportCapabilities();
+    this._syncOfflineMapImportButton(capabilities);
+
+    try {
+      const index = await readOfflineMapSourceIndex();
+      this._renderOfflineMapSources(Object.values(index.sources || {}), capabilities);
+    } catch (err) {
+      console.error('Offline map source index render failed:', err);
+      this._renderOfflineMapSources([], capabilities);
+    }
+  }
+
+  async _getOfflineMapImportCapabilities() {
+    const fallback = {
+      supported: platform.supportsOfflineMapImport?.() === true,
+      platform: platform.getPlatform?.() || platform.name || 'web',
+      formats: ['mapsforge', 'mbtiles'],
+      renderFormats: [],
+    };
+    try {
+      return {
+        ...fallback,
+        ...(await platform.getOfflineMapImportCapabilities?.()),
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  _syncOfflineMapImportButton(capabilities = {}) {
+    if (!this._importOfflineMapBtn) return;
+    const supported = capabilities.supported === true;
+    this._importOfflineMapBtn.disabled = !supported;
+    this._importOfflineMapBtn.title = translatePhrase(
+      supported ? '匯入離線底圖來源' : '離線底圖匯入僅支援 Android App'
+    );
+  }
+
+  async _handleImportOfflineMapClick() {
+    if (!platform.supportsOfflineMapImport?.()) {
+      this._notify('離線底圖匯入僅支援 Android App', 'warning');
+      return;
+    }
+
+    if (this._importOfflineMapBtn) this._importOfflineMapBtn.disabled = true;
+    try {
+      const nativeSource = await platform.importOfflineMapSource();
+      if (nativeSource?.cancelled) return;
+      const source = await addOfflineMapSource({
+        ...nativeSource,
+        source: 'native-import',
+        platform: nativeSource?.platform || platform.getPlatform?.() || platform.name,
+      });
+      if (!source) throw new Error('不支援的離線底圖格式');
+      await this.updateOfflineMapSourceInfo();
+      this._notify(`已匯入離線底圖：${source.name}`, 'success');
+    } catch (err) {
+      console.error('Offline map source import failed:', err);
+      this._notify(err.message || '離線底圖匯入失敗', 'error');
+    } finally {
+      await this.updateOfflineMapSourceInfo();
+    }
+  }
+
+  async _handleOfflineMapSourceListClick(event) {
+    const activateButton = event.target.closest?.('[data-activate-offline-map-id]');
+    if (activateButton) {
+      const sourceId = activateButton.dataset.activateOfflineMapId;
+      if (!sourceId) return;
+      activateButton.disabled = true;
+      try {
+        const source = await getOfflineMapSource(sourceId);
+        if (!source) throw new Error('找不到離線底圖來源');
+        document.dispatchEvent(new CustomEvent('mapping-elf:offline-map-source-activate', {
+          detail: { source },
+        }));
+      } finally {
+        activateButton.disabled = false;
+      }
+      return;
+    }
+
+    const button = event.target.closest?.('[data-delete-offline-map-id]');
+    if (!button) return;
+    const sourceId = button.dataset.deleteOfflineMapId;
+    if (!sourceId) return;
+    button.disabled = true;
+    try {
+      const source = await getOfflineMapSource(sourceId);
+      if (source?.storage?.storedPath || source?.storage?.relativePath) {
+        await platform.deleteOfflineMapSource?.(source.storage);
+      }
+      await removeOfflineMapSource(sourceId);
+      document.dispatchEvent(new CustomEvent('mapping-elf:offline-map-source-delete', {
+        detail: { sourceId },
+      }));
+      await this.updateOfflineMapSourceInfo();
+      this._notify('已移除離線底圖來源', 'success');
+    } catch (err) {
+      console.error('Offline map source delete failed:', err);
+      this._notify('移除離線底圖來源失敗', 'error');
+      button.disabled = false;
+    }
+  }
+
+  _renderTilePacks(packs, { unsupported = false, cachedTileEntries = 0, cachedUrls = null } = {}) {
     if (!this._packList) return;
     this._packList.textContent = '';
     const sortedPacks = [...packs].sort((a, b) => {
@@ -147,7 +268,29 @@ export class OfflineManager {
       return;
     }
 
-    sortedPacks.forEach((pack) => this._packList.appendChild(this._createPackItem(pack)));
+    sortedPacks.forEach((pack) => this._packList.appendChild(this._createPackItem(pack, cachedUrls)));
+  }
+
+  _renderOfflineMapSources(sources, capabilities = {}) {
+    if (!this._offlineMapSourceList) return;
+    this._offlineMapSourceList.textContent = '';
+    const sortedSources = [...sources].sort((a, b) => {
+      const at = Date.parse(a.createdAt || '') || 0;
+      const bt = Date.parse(b.createdAt || '') || 0;
+      return bt - at;
+    });
+
+    if (sortedSources.length === 0) {
+      const message = capabilities.supported
+        ? '尚無離線底圖來源'
+        : 'Web 版不支援魯地圖離線底圖匯入';
+      this._offlineMapSourceList.appendChild(this._createEmptyPackMessage(message));
+      return;
+    }
+
+    sortedSources.forEach((source) => {
+      this._offlineMapSourceList.appendChild(this._createOfflineMapSourceItem(source, capabilities));
+    });
   }
 
   _createEmptyPackMessage(message) {
@@ -157,7 +300,7 @@ export class OfflineManager {
     return empty;
   }
 
-  _createPackItem(pack) {
+  _createPackItem(pack, cachedUrls = null) {
     const item = document.createElement('div');
     item.className = 'offline-pack-item';
     item.dataset.packId = pack.id || '';
@@ -171,7 +314,7 @@ export class OfflineManager {
 
     const meta = document.createElement('div');
     meta.className = 'offline-pack-meta';
-    meta.textContent = this._formatPackMeta(pack);
+    meta.textContent = this._formatPackMeta(pack, cachedUrls);
 
     content.append(title, meta);
     item.append(content, this._createDeleteButton(pack));
@@ -189,24 +332,87 @@ export class OfflineManager {
     return button;
   }
 
+  _createOfflineMapSourceItem(source, capabilities = {}) {
+    const item = document.createElement('div');
+    item.className = 'offline-pack-item offline-map-source-item';
+    item.dataset.offlineMapSourceId = source.id || '';
+
+    const content = document.createElement('div');
+    content.className = 'offline-pack-content';
+
+    const title = document.createElement('div');
+    title.className = 'offline-pack-title';
+    title.textContent = source.name || translatePhrase('離線底圖來源');
+
+    const meta = document.createElement('div');
+    meta.className = 'offline-pack-meta';
+    meta.textContent = this._formatOfflineMapSourceMeta(source);
+
+    const actions = document.createElement('div');
+    actions.className = 'offline-pack-inline-actions';
+    actions.append(
+      this._createOfflineMapSourceUseButton(source, capabilities),
+      this._createOfflineMapSourceDeleteButton(source)
+    );
+
+    content.append(title, meta);
+    item.append(content, actions);
+    return item;
+  }
+
+  _createOfflineMapSourceUseButton(source, capabilities = {}) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'icon-btn offline-map-source-use';
+    button.dataset.activateOfflineMapId = source.id || '';
+    const renderable = this._isOfflineMapSourceRenderable(source, capabilities);
+    button.disabled = !renderable;
+    button.title = translatePhrase(renderable ? '使用此離線底圖' : this._offlineMapRendererStatusLabel(source.rendererStatus));
+    button.setAttribute('aria-label', translatePhrase('使用此離線底圖'));
+    button.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3zm-1 14.6-3.3-3.3 1.4-1.4 1.9 1.9 4.9-4.9 1.4 1.4-6.3 6.3z" fill="currentColor"/></svg>';
+    return button;
+  }
+
+  _createOfflineMapSourceDeleteButton(source) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'icon-btn offline-pack-delete';
+    button.dataset.deleteOfflineMapId = source.id || '';
+    button.title = translatePhrase('移除此離線底圖來源');
+    button.setAttribute('aria-label', translatePhrase('移除此離線底圖來源'));
+    button.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor"/></svg>';
+    return button;
+  }
+
   _formatPackTitle(pack) {
+    const routeName = pack.route?.name;
+    if (routeName) return `${routeName} · ${this._sourceLabel(pack.source)}`;
     const providerName = pack.provider?.name || pack.layer || translatePhrase('未知圖層');
     return `${providerName} · ${this._sourceLabel(pack.source)}`;
   }
 
-  _formatPackMeta(pack) {
+  _formatPackMeta(pack, cachedUrls = null) {
     const expected = Number(pack.expectedTileCount || 0);
     const cached = Number(pack.cachedTileCount || 0);
     const urlCount = Number(pack.tileUrlCount || pack.tileUrls?.length || 0);
     const tileSize = this._formatByteSize(pack.tileBytes);
     const createdAt = this._formatPackDate(pack.createdAt);
+    const providerName = pack.provider?.name || pack.layer || translatePhrase('未知圖層');
+    const routeDistance = this._formatDistance(pack.route?.distanceM);
+    const waypointCount = Number(pack.route?.waypointCount || 0);
+    const routeParts = [
+      routeDistance,
+      waypointCount > 0 ? `${waypointCount} ${translatePhrase('航點')}` : '',
+    ].filter(Boolean);
     const parts = [
+      providerName,
+      ...(routeParts.length ? [routeParts.join(' / ')] : []),
       `${cached}/${expected} ${translatePhrase('張圖磚')}`,
       ...(tileSize ? [tileSize] : []),
       `${urlCount} URL`,
       createdAt,
+      this._packAvailabilityLabel(pack, cachedUrls),
     ];
-    if (pack.status === 'incomplete') parts.push(translatePhrase('不完整'));
     return parts.join(' · ');
   }
 
@@ -214,7 +420,63 @@ export class OfflineManager {
     if (!value) return translatePhrase('未知時間');
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return translatePhrase('未知時間');
-    return date.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
+    return date.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  _packAvailabilityLabel(pack, cachedUrls = null) {
+    if (!cachedUrls || !Array.isArray(pack.tileUrls) || pack.tileUrls.length === 0) {
+      return translatePhrase(pack.status === 'incomplete' ? '部分可用' : '可用');
+    }
+    const total = pack.tileUrls.length;
+    const available = pack.tileUrls.filter((url) => cachedUrls.has(url)).length;
+    if (available <= 0) return translatePhrase('已遺失');
+    if (available < total || pack.status === 'incomplete') return translatePhrase('部分可用');
+    return translatePhrase('可用');
+  }
+
+  _formatDistance(meters) {
+    const value = Number(meters || 0);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} km`;
+    return `${Math.round(value)} m`;
+  }
+
+  _formatOfflineMapSourceMeta(source) {
+    const parts = [
+      this._offlineMapFormatLabel(source.format),
+      this._formatByteSize(source.file?.sizeBytes),
+      this._formatPackDate(source.createdAt),
+      this._offlineMapRendererStatusLabel(source.rendererStatus),
+    ].filter(Boolean);
+    const checksum = source.file?.checksumSha256;
+    if (checksum) parts.push(`SHA-256 ${String(checksum).slice(0, 12)}`);
+    return parts.join(' · ');
+  }
+
+  _offlineMapFormatLabel(format) {
+    const labels = {
+      mapsforge: 'Mapsforge .map',
+      mbtiles: 'MBTiles',
+    };
+    return labels[format] || translatePhrase('離線底圖');
+  }
+
+  _offlineMapRendererStatusLabel(status) {
+    const labels = {
+      'pending-native-renderer': '待接原生渲染',
+      'unsupported-vector-tiles': '向量 MBTiles 尚未支援',
+      ready: '可用',
+      disabled: '停用',
+    };
+    return translatePhrase(labels[status] || '已匯入');
+  }
+
+  _isOfflineMapSourceRenderable(source, capabilities = {}) {
+    const renderFormats = new Set(capabilities.renderFormats || []);
+    return source?.rendererStatus === 'ready'
+      && source?.format
+      && renderFormats.has(source.format)
+      && platform.supportsOfflineMapRendering?.();
   }
 
   _sourceLabel(source) {

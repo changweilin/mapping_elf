@@ -349,6 +349,63 @@ export function computeCumulativeTimes(elevations, distances, activity, params =
 }
 
 /**
+ * Per-vertex fatigue fraction (0 = fresh, 1 = maximally fatigued) aligned to the
+ * route vertices. Mirrors the moving/rest integration of computePaceSegments but
+ * records the normalised fatigue (1 - efficiency) carried into each vertex, so a
+ * playback can show how tiredness builds and recovers across rest breaks.
+ */
+export function computeFatigueSeries(elevations, distances, activity, params = {}) {
+  const elevs = Array.isArray(elevations) ? elevations : [];
+  const dists = Array.isArray(distances) ? distances : [];
+  const n = Math.min(elevs.length, dists.length);
+  if (n < 2) return new Array(Math.max(n, 1)).fill(0);
+
+  const model = resolveModel(activity, params);
+  const series = [0];
+  if (!model.fatigue) {
+    for (let i = 1; i < n; i++) series.push(0);
+    return series;
+  }
+
+  const restH = model.restMinutes / 60;
+  const denom = Math.max(1e-6, 1 - model.fatigueFloor);
+  let movingH = 0;
+  let fatH = 0;
+  let nextRestH = model.restEveryH > 0 ? model.restEveryH : Infinity;
+
+  for (let i = 1; i < n; i++) {
+    const distKm = Math.max(0, (dists[i] - dists[i - 1]) / 1000);
+    const dElev = (elevs[i] ?? 0) - (elevs[i - 1] ?? 0);
+    let rawRemH = estimateBaseSegment(distKm, Math.max(0, dElev), Math.max(0, -dElev), model);
+
+    while (model.restEveryH > 0 && rawRemH > 0) {
+      const fm = fatigueMultiplier(model, fatH);
+      const movingRemH = rawRemH / Math.max(0.01, fm);
+      const toRestMovingH = nextRestH - movingH;
+      if (toRestMovingH > 0 && movingRemH >= toRestMovingH) {
+        const rawToRestH = toRestMovingH * Math.max(0.01, fm);
+        movingH += toRestMovingH;
+        fatH += toRestMovingH;
+        rawRemH -= rawToRestH;
+        fatH = Math.max(0, fatH - restH * 3);
+        nextRestH += model.restEveryH;
+      } else {
+        break;
+      }
+    }
+
+    const fm = fatigueMultiplier(model, fatH);
+    const moveH = rawRemH / Math.max(0.01, fm);
+    movingH += moveH;
+    fatH += moveH;
+
+    const frac = clamp((1 - fatigueMultiplier(model, fatH)) / denom, 0, 1);
+    series.push(frac);
+  }
+  return series;
+}
+
+/**
  * Linearly interpolate cumulative time at an arbitrary cumulative distance.
  */
 export function interpolateTimeAtDist(cumDistM, distances, cumulativeTimes) {

@@ -26,6 +26,8 @@ const packageLock = readJson('package-lock.json');
 const capacitorConfig = readJson('capacitor.config.json');
 const androidBuildGradle = readText('android/app/build.gradle');
 const androidManifest = readText('android/app/src/main/AndroidManifest.xml');
+const androidMainActivity = readText('android/app/src/main/java/com/mappingelf/app/MainActivity.java');
+const androidOfflineMapsPlugin = readText('android/app/src/main/java/com/mappingelf/app/OfflineMapsPlugin.java');
 const iosProject = readText('ios/App/App.xcodeproj/project.pbxproj');
 const iosInfoPlist = readText('ios/App/App/Info.plist');
 
@@ -40,9 +42,20 @@ assertIncludes(androidBuildGradle, 'versionCode 1', 'Android build.gradle');
 assertIncludes(androidBuildGradle, `versionName "${appVersion}"`, 'Android build.gradle');
 assertIncludes(androidBuildGradle, "def keystorePropertiesFile = rootProject.file('keystore.properties')", 'Android release signing config');
 assertIncludes(androidBuildGradle, 'signingConfigs.release', 'Android release signing config');
+assertIncludes(androidBuildGradle, 'org.mapsforge:mapsforge-map-android:0.25.0', 'Android Mapsforge renderer dependency');
+assertIncludes(androidBuildGradle, 'org.mapsforge:mapsforge-map-reader:0.25.0', 'Android Mapsforge map reader dependency');
 
 assertIncludes(androidManifest, 'android:allowBackup="false"', 'Android manifest privacy setting');
 assertIncludes(androidManifest, 'android.intent.action.VIEW', 'Android manifest file-open intent filter');
+assertIncludes(androidMainActivity, 'registerPlugin(OfflineMapsPlugin.class)', 'Android native offline maps plugin registration');
+assertIncludes(androidOfflineMapsPlugin, '@CapacitorPlugin(name = "OfflineMaps")', 'Android native offline maps plugin');
+assertIncludes(androidOfflineMapsPlugin, 'ACTION_OPEN_DOCUMENT', 'Android native offline maps picker');
+assertIncludes(androidOfflineMapsPlugin, 'OFFLINE_MAP_DIR = "offline_maps"', 'Android native offline maps private storage');
+assertIncludes(androidOfflineMapsPlugin, 'getOfflineMapTile', 'Android MBTiles tile bridge');
+assertIncludes(androidOfflineMapsPlugin, 'SQLiteDatabase.openDatabase', 'Android MBTiles SQLite reader');
+assertIncludes(androidOfflineMapsPlugin, 'renderFormats', 'Android offline map render capabilities');
+assertIncludes(androidOfflineMapsPlugin, 'DatabaseRenderer', 'Android Mapsforge tile renderer');
+assertIncludes(androidOfflineMapsPlugin, 'MapsforgeThemes.OSMARENDER', 'Android Mapsforge default render theme');
 [
   'application/gpx+xml',
   'application/vnd.google-earth.kml+xml',

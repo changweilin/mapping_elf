@@ -8,13 +8,14 @@ import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, interpolateRouteColor, interpolateReturnColor, tspOptimize } from './modules/utils.js';
-import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeTripStats, formatDuration, formatDurationHHMM, defaultSpeed, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
-import { applyTranslations, getLanguage, initI18n, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize } from './modules/utils.js';
+import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeTripStats, computeFatigueSeries, formatDuration, formatDurationHHMM, defaultSpeed, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
+import { applyTranslations, getLanguage, initI18n, LANGUAGES, setLanguage, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
 import { estimateMapPackTiles } from './modules/tileEstimator.js';
 import { buildWeatherPointsFromState } from './modules/weatherPointBuilder.js';
 import { platform } from './platform/index.js';
+import { TerrainViewer } from './modules/terrainViewer.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -238,6 +239,10 @@ function updateRouteWeatherBusyOverlay() {
   const fillEl = document.getElementById('route-weather-busy-fill');
   const barEl = overlay?.querySelector('.loading-bar');
   const brandEl = document.getElementById('route-weather-busy-brand');
+  const brandTextEl = brandEl?.querySelector('.route-busy-brand-text');
+  if (brandTextEl && !brandTextEl.dataset.defaultText) {
+    brandTextEl.dataset.defaultText = brandTextEl.textContent || '';
+  }
 
   if (overlay) overlay.classList.toggle('hidden', !busy);
   if (busy) {
@@ -248,6 +253,11 @@ function updateRouteWeatherBusyOverlay() {
     if (brandEl) {
       brandEl.classList.toggle('hidden', !showCenterBrand);
       brandEl.setAttribute('aria-hidden', showCenterBrand ? 'false' : 'true');
+    }
+    if (brandTextEl) {
+      brandTextEl.textContent = showCenterBrand
+        ? (task?.title || brandTextEl.dataset.defaultText || brandTextEl.textContent)
+        : (brandTextEl.dataset.defaultText || brandTextEl.textContent);
     }
     if (titleEl) titleEl.textContent = task?.title || '處理中';
     if (detailEl) detailEl.textContent = task?.detail || '請稍候...';
@@ -272,6 +282,9 @@ function updateRouteWeatherBusyOverlay() {
 
   syncBusyDisabledControls(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR, routeLocked, 'route-edit-control');
   syncBusyDisabledControls(WEATHER_CARD_BUSY_DISABLE_SELECTOR, weatherCardLocked, 'weather-edit-control');
+  // Re-evaluate the 3D button: it must stay locked while any route/weather task
+  // runs and re-enable as soon as they all finish.
+  if (typeof update3dButtonBadge === 'function') update3dButtonBadge();
 
   if (typeof mapManager !== 'undefined' && mapManager) {
     mapManager.setFrozen(!!importedTrackMode || routeLocked);
@@ -1281,6 +1294,8 @@ mapManager.onIntermediateSelect = (lat, lng) => {
 
 // =========== DOM Elements ===========
 const loadingScreen = document.getElementById('loading-screen');
+const INITIAL_LOADING_FADE_MS = 520;
+document.body.classList.add('app-initial-loading');
 const sidePanel = document.getElementById('side-panel');
 const waypointList = document.getElementById('waypoint-list');
 const alternativesList = document.getElementById('alternatives-list');
@@ -1909,16 +1924,17 @@ function returnToRouteAfterPanelUpdate({ closePanel = false } = {}) {
   });
 }
 
+const tvIconMoon = document.getElementById('tv-icon-moon');
+const tvIconSun = document.getElementById('tv-icon-sun');
+
 function updateThemeIcons() {
   const isLight = document.documentElement.classList.contains('light-theme');
   mapManager?.setTileTheme?.(isLight ? 'light' : 'dark');
-  if (isLight) {
-    if (iconMoon) iconMoon.style.display = 'none';
-    if (iconSun) iconSun.style.display = 'block';
-  } else {
-    if (iconMoon) iconMoon.style.display = 'block';
-    if (iconSun) iconSun.style.display = 'none';
-  }
+  // Toolbar (homepage) + 3D viewer theme buttons share the same moon/sun pair.
+  [[iconMoon, iconSun], [tvIconMoon, tvIconSun]].forEach(([moon, sun]) => {
+    if (moon) moon.style.display = isLight ? 'none' : 'block';
+    if (sun) sun.style.display = isLight ? 'block' : 'none';
+  });
 
   // Update Logos
   const suffix = isLight ? '' : '_dark';
@@ -1938,17 +1954,1012 @@ function updateThemeIcons() {
     favicon.href = `./favicon${suffix}.svg`;
   }
 }
-// 初始設定 Icon
-if (btnToggleTheme) {
+// Day/night UI style toggle, shared by the homepage toolbar and the 3D viewer
+// toolbar so both stay in sync with the same `light-theme` class + persistence.
+function toggleAppTheme() {
+  const isLight = document.documentElement.classList.toggle('light-theme');
+  localStorage.setItem(LS_THEME_KEY, isLight ? 'light' : 'dark');
   updateThemeIcons();
-  btnToggleTheme.addEventListener('click', () => {
-    const isLight = document.documentElement.classList.toggle('light-theme');
-    localStorage.setItem(LS_THEME_KEY, isLight ? 'light' : 'dark');
-    updateThemeIcons();
+}
+// 初始設定 Icon
+updateThemeIcons();
+btnToggleTheme?.addEventListener('click', toggleAppTheme);
+// The 3D viewer's day/night toggle is wired further down, after its element refs.
+
+btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+
+// =========== 3D Terrain Viewer ===========
+const btnOpen3d = document.getElementById('btn-open-3d-viewer');
+const terrainViewerEl = document.getElementById('terrain-viewer');
+const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
+const tvCloseBtn = document.getElementById('tv-close-btn');
+const tvRedrawBtn = document.getElementById('tv-redraw-btn');
+const tvLanguageSelect = document.getElementById('tv-language-select');
+const tvToggleTheme = document.getElementById('tv-toggle-theme');
+const tpPlay = document.getElementById('tp-play');
+const tpSlider = document.getElementById('tp-slider');
+const tpProgressLabel = document.getElementById('tp-progress-label');
+const tpTimeLabel = document.getElementById('tp-time-label');
+const tpSpeedBtns = document.querySelectorAll('.tp-speed-btn');
+const tvInfoPanel = document.getElementById('tv-info-panel');
+const tvInfoCollapse = document.getElementById('tv-info-collapse');
+const tvRouteStats = document.getElementById('tv-route-stats');
+const tvWpCount = document.getElementById('tv-wp-count');
+const tvWpList = document.getElementById('tv-wp-list');
+const tvToggleContour = document.getElementById('tv-toggle-contour');
+const tvContourLabel = document.getElementById('tv-contour-label');
+const tvToggleContourLabels = document.getElementById('tv-toggle-contour-labels');
+const tvToggleWeather = document.getElementById('tv-toggle-weather');
+const tvToggleDaynight = document.getElementById('tv-toggle-daynight');
+const tvToggleWeatherFx = document.getElementById('tv-toggle-weatherfx');
+const tvToggleFeatures = document.getElementById('tv-toggle-features');
+const tvToggleLabelSize = document.getElementById('tv-toggle-labelsize');
+const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
+const tvToggleView = document.getElementById('tv-toggle-view');
+const tvViewLabel = document.getElementById('tv-view-label');
+const tvToggleNormalize = document.getElementById('tv-toggle-normalize');
+const tvLiveHud = document.getElementById('tv-live-hud');
+const tvHudCollapse = document.getElementById('tv-hud-collapse');
+const tvMarkerDetail = document.getElementById('tv-marker-detail');
+const tvMarkerDetailBody = document.getElementById('tv-marker-detail-body');
+const tvMarkerDetailClose = document.getElementById('tv-marker-detail-close');
+const tvHudClock = document.getElementById('tv-hud-clock');
+const tvHudDate = document.getElementById('tv-hud-date');
+const tvHudWxIcon = document.getElementById('tv-hud-wx-icon');
+const tvHudWxTemp = document.getElementById('tv-hud-wx-temp');
+const tvHudDist = document.getElementById('tv-hud-dist');
+const tvHudElev = document.getElementById('tv-hud-elev');
+const tvHudSpeed = document.getElementById('tv-hud-speed');
+const tvHudGrade = document.getElementById('tv-hud-grade');
+const tvHudFatigueRow = document.getElementById('tv-hud-fatigue-row');
+const tvHudFatigueFill = document.getElementById('tv-hud-fatigue-fill');
+const tvHudFatiguePct = document.getElementById('tv-hud-fatigue-pct');
+const tvLoading = document.getElementById('tv-loading');
+const tvLoadingTitle = document.getElementById('tv-loading-title');
+const tvLoadingDetail = document.getElementById('tv-loading-detail');
+const tvLoadingFill = document.getElementById('tv-loading-fill');
+const tvLoadingPercent = document.getElementById('tv-loading-percent');
+const tvLoadingAbort = document.getElementById('tv-loading-abort');
+
+let terrainViewer = null;
+// True while the toolbar "更新" rebuild is running. A redraw must never kick the
+// user out of the viewer: if the rebuild fails or is aborted we keep the model
+// that's already on screen instead of closing back to the planning page.
+let terrainRefreshing = false;
+// Content signature (route + departure + weather) of the model currently resident
+// in the viewer. Re-opening the 3D page with an identical signature re-shows the
+// cached scene instantly instead of re-running the build/progress bar; it only
+// rebuilds when something actually changed or the user hits "更新" (redraw).
+let terrainBuiltSignature = null;
+// Set false by handleTerrainLoadState whenever a build aborts/errors, so a
+// failed redraw doesn't get its (new) signature recorded against the stale scene.
+let terrainLastLoadOk = true;
+
+// --- 3D terrain cache -----------------------------------------------------
+// The elevation-grid download is the slow part of building the 3D model, so the
+// result (grid + bbox) is cached and reused. Cache keys are either `fav:<id>`
+// (a saved favourite) or `route:<hash>` (the current / imported route). Reopening
+// the same route then loads instantly. Favourite entries are pruned when their
+// favourite is gone; route entries are capped to the most-recent few.
+const LS_TERRAIN_CACHE_KEY = 'mappingElf_terrain3dCache';
+const TERRAIN_ROUTE_CACHE_MAX = 8;
+
+// --- 3D viewer display settings (persisted across reloads) ----------------
+// The top-right display toggles (等高線/高程/天氣/日夜/特效/圖資/字體) plus the new
+// 海拔歸一化 toggle are remembered so reopening or reloading the 3D page keeps the
+// user's chosen look instead of snapping back to defaults.
+const LS_TERRAIN_DISPLAY_KEY = 'mappingElf_terrain3dDisplay';
+const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
+  contour: 'high',        // high | low | none
+  contourLabels: true,
+  weather: true,
+  daynight: true,
+  weatherfx: true,
+  features: true,
+  labelSize: 'none',      // none | large | small
+  elevNormalized: false,
+});
+
+function loadTerrainDisplaySettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_TERRAIN_DISPLAY_KEY) || '{}');
+    if (!saved || typeof saved !== 'object') return { ...TERRAIN_DISPLAY_DEFAULTS };
+    return { ...TERRAIN_DISPLAY_DEFAULTS, ...saved };
+  } catch { return { ...TERRAIN_DISPLAY_DEFAULTS }; }
+}
+
+let terrainDisplaySettings = loadTerrainDisplaySettings();
+
+function saveTerrainDisplaySettings() {
+  try { localStorage.setItem(LS_TERRAIN_DISPLAY_KEY, JSON.stringify(terrainDisplaySettings)); } catch (_) { }
+}
+
+function loadTerrainCache() {
+  try {
+    const obj = JSON.parse(localStorage.getItem(LS_TERRAIN_CACHE_KEY) || '{}');
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch { return {}; }
+}
+
+function getTerrainCacheEntry(key) {
+  if (!key) return null;
+  const entry = loadTerrainCache()[key];
+  if (entry && Array.isArray(entry.grid) && entry.bbox) return entry;
+  return null;
+}
+
+function pruneTerrainCache(cache) {
+  const validFavKeys = new Set(favorites.map((f) => `fav:${f.id}`));
+  Object.keys(cache).forEach((k) => {
+    if (k.startsWith('fav:') && !validFavKeys.has(k)) delete cache[k];
+  });
+  const routeKeys = Object.keys(cache)
+    .filter((k) => k.startsWith('route:'))
+    .sort((a, b) => (cache[b].savedAt || 0) - (cache[a].savedAt || 0));
+  routeKeys.slice(TERRAIN_ROUTE_CACHE_MAX).forEach((k) => delete cache[k]);
+}
+
+function saveTerrainCacheEntry(key, grid, bbox) {
+  if (!key || !Array.isArray(grid) || !bbox) return;
+  const cache = loadTerrainCache();
+  const prev = cache[key] || {};
+  cache[key] = { grid, bbox, features: prev.features, savedAt: Date.now() };
+  pruneTerrainCache(cache);
+  try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
+}
+
+// Persist the downloaded vector map features alongside the cached terrain grid so
+// reopening the same route doesn't re-hit Overpass. Skipped if the payload is too
+// big for localStorage to keep comfortably (the model still works without it).
+function saveTerrainFeaturesEntry(key, features) {
+  if (!key || !features) return;
+  let json;
+  try { json = JSON.stringify(features); } catch { return; }
+  if (!json || json.length > 1_500_000) return; // ~1.5 MB guard
+  const cache = loadTerrainCache();
+  const prev = cache[key];
+  if (!prev) return; // only attach to an existing terrain entry
+  prev.features = features;
+  prev.savedAt = Date.now();
+  try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
+}
+
+function clearTerrainCacheEntry(key) {
+  if (!key) return;
+  const cache = loadTerrainCache();
+  if (cache[key]) {
+    delete cache[key];
+    try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
+  }
+}
+
+// Stable cache key for the current/imported route, derived from its waypoints
+// (or a downsample of the drawn track when there are none) plus the routing
+// mode, so geometry changes invalidate the cache but reopening the same route
+// hits it.
+function terrainRouteSignature() {
+  const wps = mapManager.waypoints;
+  let basis;
+  if (wps && wps.length >= 2) {
+    basis = wps.map(([a, b]) => `${a.toFixed(5)},${b.toFixed(5)}`).join('|');
+  } else {
+    const c = currentRouteCoords || [];
+    const step = Math.max(1, Math.floor(c.length / 24));
+    const pts = [];
+    for (let i = 0; i < c.length; i += step) pts.push(`${c[i][0].toFixed(4)},${c[i][1].toFixed(4)}`);
+    basis = pts.join('|');
+  }
+  basis += `#${routeEngine.mode}|${roundTripMode ? 'rt' : ''}${oLoopMode ? 'ol' : ''}`;
+  let h = 5381;
+  for (let i = 0; i < basis.length; i++) h = ((h << 5) + h + basis.charCodeAt(i)) | 0;
+  return `route:${(h >>> 0).toString(36)}`;
+}
+
+// A signature of everything that changes what the built 3D model looks like:
+// the cache key (route geometry + mode), the departure timestamp (drives the
+// clock + day/night) and the weather points (markers + sky/FX). Two opens with
+// the same signature can share the already-built scene.
+function terrainContentSignature(cacheKey, routeData) {
+  const coords = routeData.coords || [];
+  const wx = routeData.weatherPoints || [];
+  const first = coords.length ? `${coords[0][0].toFixed(4)},${coords[0][1].toFixed(4)}` : '';
+  const last = coords.length ? `${coords[coords.length - 1][0].toFixed(4)},${coords[coords.length - 1][1].toFixed(4)}` : '';
+  const wxSig = wx.map((w) => {
+    const c = w.coords || [];
+    return `${(c[0] ?? '').toString().slice(0, 8)}:${w.weatherCode ?? ''}:${w.temperature ?? ''}`;
+  }).join(';');
+  return [cacheKey || '', String(routeData.timing?.startMs ?? ''), `n${coords.length}`, first, last, wxSig].join('#');
+}
+
+function setTerrainBusy(busy) {
+  terrainViewerEl?.classList.toggle('tv-busy', busy);
+  tvLoading?.classList.toggle('hidden', !busy);
+}
+
+function handleTerrainLoadState(state) {
+  if (state.active) {
+    setTerrainBusy(true);
+    const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
+    if (tvLoadingFill) tvLoadingFill.style.width = `${pct}%`;
+    if (tvLoadingPercent) tvLoadingPercent.textContent = `${pct}%`;
+    if (state.title && tvLoadingTitle) tvLoadingTitle.textContent = state.title;
+    if (state.detail && tvLoadingDetail) tvLoadingDetail.textContent = state.detail;
+    const bar = tvLoading?.querySelector('.loading-bar');
+    if (bar) bar.setAttribute('aria-valuenow', String(pct));
+    return;
+  }
+  // Finished, aborted, or errored.
+  setTerrainBusy(false);
+  terrainLastLoadOk = !state.aborted && !state.error;
+  if (state.aborted) {
+    // A failed/aborted *refresh* keeps the existing model on screen; only the
+    // initial open (nothing to fall back to) closes the viewer.
+    if (!terrainRefreshing) closeTerrainViewer();
+    showNotification('已終止 3D 地形建立', 'info');
+  } else if (state.error) {
+    if (!terrainRefreshing) closeTerrainViewer();
+    showNotification('3D 地形載入失敗: ' + (state.error.message || ''), 'error');
+  }
+}
+
+function tvEscapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function renderTerrainInfoPanel(routeData) {
+  if (!tvRouteStats) return;
+  const s = routeData.routeStats || {};
+  const fmtDist = (m) => (m == null ? '—' : (m < 1000 ? `${Math.round(m)}<span class="tv-stat-unit">m</span>` : `${(m / 1000).toFixed(2)}<span class="tv-stat-unit">km</span>`));
+  const fmtElev = (m) => (m == null ? '—' : `${Math.round(m)}<span class="tv-stat-unit">m</span>`);
+
+  const stats = [
+    { label: '距離', value: fmtDist(s.distance) },
+    { label: '總爬升', value: fmtElev(s.ascent) },
+    { label: '總下降', value: fmtElev(s.descent) },
+    { label: '最高點', value: fmtElev(s.maxElev) },
+    { label: '最低點', value: fmtElev(s.minElev) },
+  ];
+  tvRouteStats.innerHTML = stats.map(st =>
+    `<div class="tv-stat-item"><span class="tv-stat-label">${st.label}</span><span class="tv-stat-value">${st.value}</span></div>`
+  ).join('');
+
+  const wps = routeData.waypoints || [];
+  if (tvWpCount) tvWpCount.textContent = wps.length ? `(${wps.length})` : '';
+  if (tvWpList) {
+    tvWpList.innerHTML = wps.map((wp, i) => {
+      const color = wp.color || (i === 0 ? '#00ff88' : (i === wps.length - 1 ? '#ff4466' : '#ffaa44'));
+      const name = wp.label || `WP${i + 1}`;
+      const elev = wp.elevation != null ? `${Math.round(wp.elevation)} m` : '';
+      return `<li class="tv-wp-clickable" data-wp-index="${i}"><span class="tv-wp-dot" style="color:${color};background:${color}"></span><span class="tv-wp-name">${tvEscapeHtml(name)}</span><span class="tv-wp-elev">${elev}</span></li>`;
+    }).join('');
+    // Clicking a list row opens the same detail popup as the 3D billboard.
+    tvWpList.querySelectorAll('.tv-wp-clickable').forEach((li) => {
+      li.addEventListener('click', () => {
+        const wp = wps[Number(li.dataset.wpIndex)];
+        if (!wp) return;
+        const [lat, lng] = wp.coords || [];
+        renderTerrainMarkerDetail({
+          type: 'waypoint',
+          index: Number(li.dataset.wpIndex),
+          label: wp.label,
+          colorCss: wp.color || null,
+          elevation: wp.elevation ?? null,
+          lat, lng,
+          distanceM: wp.distanceM ?? null,
+          isStart: Number(li.dataset.wpIndex) === 0,
+          isEnd: Number(li.dataset.wpIndex) === wps.length - 1,
+        });
+      });
+    });
+  }
+}
+
+function renderTerrainContourInfo(info) {
+  if (!tvRouteStats || !info) return;
+  // Show the contour interval as an extra stat; refresh it when the precision
+  // (and therefore the interval) changes rather than appending duplicates.
+  const valueHtml = `${Math.round(info.contourInterval)}<span class="tv-stat-unit">m</span>`;
+  let item = tvRouteStats.querySelector('[data-contour]');
+  if (!item) {
+    item = document.createElement('div');
+    item.className = 'tv-stat-item';
+    item.setAttribute('data-contour', '');
+    tvRouteStats.appendChild(item);
+  }
+  item.innerHTML = `<span class="tv-stat-label">等高線間距</span><span class="tv-stat-value">${valueHtml}</span>`;
+}
+
+// Departure timestamp for the 3D playback: prefer the weather table's first
+// column (date + whole-hour), otherwise default to today at 08:00 local.
+function getTerrainStartMs() {
+  const container = document.getElementById('weather-table-container');
+  const dateStr = container?.querySelector('.wt-th-date[data-idx="0"] .wt-date-input')?.value || '';
+  if (dateStr) {
+    const hourStr = container?.querySelector('.wt-th-time[data-idx="0"] .wt-time-select')?.value;
+    const hour = parseInt(hourStr ?? '8');
+    const ms = new Date(`${dateStr}T00:00:00`).getTime() + (Number.isFinite(hour) ? hour : 8) * 3600000;
+    if (Number.isFinite(ms)) return ms;
+  }
+  const d = new Date();
+  d.setHours(8, 0, 0, 0);
+  return d.getTime();
+}
+
+// Build the per-vertex timing track (distance/time/fatigue) the 3D viewer uses
+// to drive the live readout and the day/night animation.
+function buildTerrainTiming(routeCoords, routeElevs) {
+  const distances = cumulativeDistances(routeCoords);
+  let times = null;
+  let fatigue = null;
+  if (Array.isArray(routeElevs) && routeElevs.length === routeCoords.length) {
+    try {
+      times = computeCumulativeTimes(routeElevs, distances, speedActivity, paceParams);
+      fatigue = computeFatigueSeries(routeElevs, distances, speedActivity, paceParams);
+    } catch (err) {
+      console.warn('terrain timing failed:', err);
+    }
+  }
+  return { distances, times, fatigue, startMs: getTerrainStartMs() };
+}
+
+// Per-vertex route gradient colours for the 3D track, mirroring the 2D map /
+// elevation chart: outbound spring-green→amber→orange-red→magenta→purple, and
+// (for round-trips / O-loops) a purple→blue→aqua return leg split at the
+// turnaround. Returns an array of [r,g,b] in 0..1 aligned to routeCoords.
+function buildTerrainRouteColors(routeCoords) {
+  const n = routeCoords?.length || 0;
+  if (n === 0) return [];
+  const dists = cumulativeDistances(routeCoords);
+  const totalD = dists[n - 1] || 1;
+  const tf = elevationProfile?.turnaroundFrac ?? null;
+  const isRT = !!elevationProfile?.isRoundTrip;
+  return routeCoords.map((_, i) => {
+    const xFrac = totalD > 0 ? dists[i] / totalD : 0;
+    let rgb;
+    if (tf != null && xFrac > tf) {
+      const denom = 1 - tf;
+      const tRet = denom > 0 ? (xFrac - tf) / denom : 0;
+      rgb = interpolateReturnColorRgb(Math.max(0, Math.min(1, tRet)));
+    } else if (tf != null) {
+      const tOut = tf > 0 ? xFrac / tf : 0;
+      rgb = interpolateRouteColorRgb(Math.max(0, Math.min(1, tOut)));
+    } else {
+      const tColor = isRT ? 1 - Math.abs(2 * xFrac - 1) : xFrac;
+      rgb = interpolateRouteColorRgb(tColor);
+    }
+    return [rgb.r / 255, rgb.g / 255, rgb.b / 255];
   });
 }
 
-btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
+function renderTerrainMetrics(m) {
+  if (!m) return;
+  const lang = getLanguage();
+
+  if (tvHudClock && tvHudDate) {
+    if (m.dateMs != null && Number.isFinite(m.dateMs)) {
+      const d = new Date(m.dateMs);
+      tvHudClock.textContent = d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hour12: false });
+      tvHudDate.textContent = d.toLocaleDateString(lang, { month: 'short', day: 'numeric', weekday: 'short' });
+    } else {
+      tvHudClock.textContent = '--:--';
+      tvHudDate.textContent = '—';
+    }
+  }
+
+  if (tvHudDist) {
+    const km = (m.distM || 0) / 1000;
+    const total = (m.totalDistM || 0) / 1000;
+    tvHudDist.innerHTML = `${km.toFixed(km < 10 ? 2 : 1)}<span class="tv-hud-unit">/${total.toFixed(total < 10 ? 1 : 0)}km</span>`;
+  }
+  if (tvHudElev) {
+    tvHudElev.innerHTML = m.elevM != null ? `${Math.round(m.elevM)}<span class="tv-hud-unit">m</span>` : '—';
+  }
+  if (tvHudSpeed) {
+    tvHudSpeed.innerHTML = m.speedKmh != null && Number.isFinite(m.speedKmh)
+      ? `${m.speedKmh.toFixed(1)}<span class="tv-hud-unit">km/h</span>` : '—';
+  }
+  if (tvHudGrade) {
+    if (m.gradePct != null && Number.isFinite(m.gradePct)) {
+      const g = m.gradePct;
+      const sign = g > 0.5 ? '↗' : (g < -0.5 ? '↘' : '→');
+      tvHudGrade.innerHTML = `${sign}${Math.abs(g).toFixed(1)}<span class="tv-hud-unit">%</span>`;
+    } else {
+      tvHudGrade.textContent = '—';
+    }
+  }
+
+  if (tvHudFatigueRow) {
+    const hasFatigue = m.fatiguePct != null && Number.isFinite(m.fatiguePct);
+    tvHudFatigueRow.style.display = hasFatigue ? '' : 'none';
+    if (hasFatigue) {
+      const pct = Math.max(0, Math.min(100, m.fatiguePct));
+      if (tvHudFatigueFill) tvHudFatigueFill.style.width = `${pct}%`;
+      if (tvHudFatiguePct) tvHudFatiguePct.textContent = `${Math.round(pct)}%`;
+    }
+  }
+
+  if (tvHudWxIcon && tvHudWxTemp) {
+    if (m.weather) {
+      tvHudWxIcon.textContent = m.weather.icon || '';
+      tvHudWxTemp.textContent = m.weather.temperature != null ? `${Math.round(m.weather.temperature)}°C` : '';
+    } else {
+      tvHudWxIcon.textContent = '';
+      tvHudWxTemp.textContent = '';
+    }
+  }
+
+  // Elapsed time on the player bar.
+  if (tpTimeLabel) {
+    tpTimeLabel.textContent = m.timeH != null ? formatDurationHHMM(m.timeH) : '--';
+  }
+}
+
+async function openTerrainViewer(cacheKey = null, opts = {}) {
+  try {
+    if (!currentRouteCoords || currentRouteCoords.length < 2) {
+      showNotification('請先規劃路線', 'warning');
+      return;
+    }
+    // Build/refresh for the current route when no explicit cache key is given.
+    if (!cacheKey) cacheKey = terrainRouteSignature();
+
+    // Planned routes come from the routing engine (allAlternatives); imported
+    // tracks skip routing, so fall back to the drawn track + elevation profile.
+    const route = allAlternatives[selectedAltIndex];
+    let routeCoords, routeElevs, routeStats;
+    if (route) {
+      routeCoords = route.coords;
+      routeElevs = route.fullElevations || route.elevations;
+      routeStats = {
+        distance: route.distance,
+        ascent: route.ascent,
+        descent: route.descent,
+        maxElev: route.maxElev,
+        minElev: route.minElev,
+      };
+    } else {
+      routeCoords = currentRouteCoords;
+      routeElevs = currentElevations;
+      const epStats = typeof elevationProfile?._calcStats === 'function' ? elevationProfile._calcStats() : {};
+      routeStats = {
+        distance: elevationProfile?.distances?.at?.(-1) || 0,
+        ascent: epStats.ascent,
+        descent: epStats.descent,
+        maxElev: epStats.maxElev,
+        minElev: epStats.minElev,
+      };
+    }
+
+    if (!routeCoords || routeCoords.length < 2) {
+      showNotification('路線資料尚未就緒', 'warning');
+      return;
+    }
+
+    const waypoints = mapManager.waypoints.map((wp, i) => {
+      const name = getWaypointLabel(i, wp[0], wp[1]);
+      let wpElev = 0;
+      if (routeElevs && routeCoords) {
+        let closest = 0;
+        let minDist = Infinity;
+        for (let j = 0; j < routeCoords.length; j++) {
+          const d = (routeCoords[j][0] - wp[0]) ** 2 + (routeCoords[j][1] - wp[1]) ** 2;
+          if (d < minDist) { minDist = d; closest = j; }
+        }
+        wpElev = routeElevs[closest] || 0;
+      }
+      // Reuse the 2D map's per-waypoint gradient colour so the pins match.
+      return {
+        coords: wp,
+        label: name,
+        elevation: wpElev,
+        color: waypointGradColors[i] || null,
+        distanceM: (Array.isArray(waypointCumDistM) ? waypointCumDistM[i] : null) ?? null,
+      };
+    });
+
+    const weatherPointsData = (weatherPoints || []).map((wp) => ({
+      coords: wp.coords || [wp.lat, wp.lng],
+      elevation: wp.elevation || 0,
+      weatherCode: wp.weatherCode || wp.weather_code,
+      temperature: wp.temperature || wp.temp,
+      label: wp.label || null,
+    }));
+
+    const routeData = {
+      coords: routeCoords,
+      elevations: routeElevs,
+      waypoints,
+      weatherPoints: weatherPointsData,
+      routeStats,
+      routeColors: buildTerrainRouteColors(routeCoords),
+      // A forced rebuild (the toolbar 更新) ignores the cached elevation grid +
+      // 圖資 so the refresh genuinely re-downloads and re-runs the build from the
+      // start instead of replaying the cached scene from ~90%.
+      cachedTerrain: opts.forceRebuild ? null : getTerrainCacheEntry(cacheKey),
+      timing: buildTerrainTiming(routeCoords, routeElevs),
+      preserveView: !!opts.preserveView,
+      // Bake the persisted normalization preference into the first build so the
+      // initial paint already uses the right vertical scale.
+      elevNormalized: !!terrainDisplaySettings.elevNormalized,
+    };
+
+    // Re-entry shortcut: if the same route (with the same departure + weather) is
+    // already built and resident in the viewer, just re-show it — no rebuild, no
+    // progress bar. A redraw (preserveView) or an explicit forceRebuild always
+    // rebuilds so "更新" still re-reads the latest date/weather.
+    const sig = terrainContentSignature(cacheKey, routeData);
+    if (!opts.preserveView && !opts.forceRebuild
+      && terrainViewer && terrainViewer.hasBuiltScene?.()
+      && sig === terrainBuiltSignature) {
+      hideTerrainMarkerDetail();
+      terrainViewerEl.classList.remove('hidden');
+      terrainViewer.show();
+      updateTerrainToggleAvailability();
+      updateTerrainPlayerUI();
+      return;
+    }
+
+    if (!terrainViewer) {
+      terrainViewer = new TerrainViewer(terrainCanvasWrap);
+    }
+
+    terrainViewer.onClose(() => closeTerrainViewer());
+    terrainViewer.onProgressChange((p) => {
+      tpSlider.value = p;
+      tpProgressLabel.textContent = `${Math.round(p * 100)}%`;
+    });
+    // Sync the play/pause button when playback auto-stops at the end of the route.
+    terrainViewer.onPlayStateChange(() => updateTerrainPlayerUI());
+    terrainViewer.onInfo((info) => renderTerrainContourInfo(info));
+    terrainViewer.onMetrics((m) => renderTerrainMetrics(m));
+    terrainViewer.onLoad((state) => handleTerrainLoadState(state));
+    terrainViewer.onMarkerClick((detail) => renderTerrainMarkerDetail(detail));
+    // Persist a freshly downloaded grid against this route/favourite for reuse.
+    terrainViewer.onTerrainComputed(({ grid, bbox }) => {
+      if (cacheKey) saveTerrainCacheEntry(cacheKey, grid, bbox);
+    });
+    // Persist freshly downloaded map features against the same cache entry.
+    terrainViewer.onFeaturesComputed(({ features }) => {
+      if (cacheKey) saveTerrainFeaturesEntry(cacheKey, features);
+    });
+    // Map features download in the background now, so re-evaluate the layer toggles
+    // (and re-apply the persisted 圖資 on/off) once they've draped onto the model.
+    terrainViewer.onFeaturesReady(() => {
+      applyTerrainDisplayToViewer();
+      updateTerrainToggleAvailability();
+    });
+
+    renderTerrainInfoPanel(routeData);
+    // Apply the persisted display settings to the toolbar buttons + the prefs the
+    // build reads (contour interval, label size); visibility toggles that need the
+    // built groups are applied after loadRouteData below.
+    syncTerrainDisplayToggleUI();
+    applyTerrainMobileDefaults();
+    hideTerrainMarkerDetail();
+
+    terrainViewerEl.classList.remove('hidden');
+    terrainViewer.show();
+    terrainLastLoadOk = true;
+    await terrainViewer.loadRouteData(routeData);
+    applyTerrainDisplayToViewer();
+    updateTerrainToggleAvailability();
+    updateTerrainPlayerUI();
+    // Remember what we just built so an unchanged re-entry can skip the rebuild —
+    // but only if the build actually finished (an aborted redraw keeps the old
+    // scene, which no longer matches this signature).
+    terrainBuiltSignature = (terrainLastLoadOk && terrainViewer.hasBuiltScene?.()) ? sig : null;
+  } catch (err) {
+    console.error('3D viewer error:', err);
+    setTerrainBusy(false);
+    showNotification('3D 地形載入失敗: ' + (err.message || ''), 'error');
+  }
+}
+
+function closeTerrainViewer() {
+  if (terrainViewer) {
+    if (terrainViewer.isLoading()) terrainViewer.abort();
+    terrainViewer.pause();
+    terrainViewer.hide();
+  }
+  setTerrainBusy(false);
+  terrainViewerEl.classList.add('hidden');
+  updateTerrainPlayerUI();
+}
+
+function updateTerrainPlayerUI() {
+  const playing = terrainViewer?.isPlaying() ?? false;
+  const playIcon = document.getElementById('tp-play-icon');
+  const pauseIcon = document.getElementById('tp-pause-icon');
+  if (playIcon) playIcon.style.display = playing ? 'none' : '';
+  if (pauseIcon) pauseIcon.style.display = playing ? '' : 'none';
+  tpPlay?.classList.toggle('active', playing);
+
+  const progress = terrainViewer?.getProgress() ?? 0;
+  if (tpSlider) tpSlider.value = progress;
+  if (tpProgressLabel) tpProgressLabel.textContent = `${Math.round(progress * 100)}%`;
+}
+
+// The route-planning 3D button builds the current/imported route's terrain.
+// If that route is a saved favourite, reuse the favourite's cache key so its
+// cached grid is shared; otherwise key the cache by the route signature.
+function build3dForCurrentRoute() {
+  if (!currentRouteCoords || currentRouteCoords.length < 2) {
+    showNotification('請先規劃路線', 'warning');
+    return;
+  }
+  // Don't build from track/weather data that's still being computed.
+  if (hasRouteWeatherBusyTasks()) {
+    showNotification('路線或天氣資料處理中，請待完成後再建立 3D 地形', 'warning');
+    return;
+  }
+  const fav = findSavedCurrentRoute();
+  openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
+}
+
+// Toolbar "更新" — redraw the open 3D model. A forced rebuild re-downloads a fresh
+// elevation grid + 圖資 and re-runs the whole build (real progress from the start),
+// so an edited track rebuilds from scratch and an unchanged one genuinely refreshes
+// the latest elevation/天氣/圖資 instead of replaying the cached scene from ~90%.
+// The camera pose and playback position are preserved so it still feels in-place.
+async function refreshTerrainViewer() {
+  if (!terrainViewer || terrainViewerEl.classList.contains('hidden')) return;
+  if (terrainViewer.isLoading()) return;
+  if (hasRouteWeatherBusyTasks()) {
+    showNotification('路線或天氣資料處理中，請待完成後再重繪', 'warning');
+    return;
+  }
+  const fav = findSavedCurrentRoute();
+  const liveKey = fav ? `fav:${fav.id}` : terrainRouteSignature();
+  tvRedrawBtn?.classList.add('tv-redraw-spin');
+  terrainRefreshing = true;
+  try {
+    await openTerrainViewer(liveKey, { preserveView: true, forceRebuild: true });
+  } finally {
+    terrainRefreshing = false;
+    tvRedrawBtn?.classList.remove('tv-redraw-spin');
+  }
+}
+
+btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
+tvCloseBtn?.addEventListener('click', closeTerrainViewer);
+tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
+
+// 3D viewer language switcher — a sibling of the homepage one, kept in sync via
+// refreshLanguageSensitiveUi (the i18n onLanguageChange hook).
+function initTvLanguageSelect() {
+  if (!tvLanguageSelect || tvLanguageSelect.dataset.ready) return;
+  LANGUAGES.forEach(({ code, label }) => {
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = label;
+    tvLanguageSelect.appendChild(opt);
+  });
+  tvLanguageSelect.value = getLanguage();
+  tvLanguageSelect.addEventListener('change', () => setLanguage(tvLanguageSelect.value));
+  tvLanguageSelect.dataset.ready = '1';
+}
+function syncTvLanguageSelect() {
+  if (tvLanguageSelect) tvLanguageSelect.value = getLanguage();
+}
+initTvLanguageSelect();
+// 3D viewer day/night UI style toggle (shares the homepage light-theme state).
+tvToggleTheme?.addEventListener('click', toggleAppTheme);
+
+// Enable the 3D button only when a route exists AND no route/weather processing
+// is in flight — building the model mid-calculation would snapshot half-ready
+// track/weather data, so the button stays locked until everything settles.
+function update3dButtonBadge() {
+  const hasRoute = currentRouteCoords && currentRouteCoords.length >= 2;
+  const busy = hasRouteWeatherBusyTasks();
+  if (btnOpen3d) btnOpen3d.disabled = !hasRoute || busy;
+}
+
+// Hook into route update flow
+const _origSetCurrentRouteData = setCurrentRouteData;
+setCurrentRouteData = function (coords, elevations) {
+  _origSetCurrentRouteData(coords, elevations);
+  update3dButtonBadge();
+};
+update3dButtonBadge();
+
+// Player controls
+tpPlay?.addEventListener('click', () => {
+  if (!terrainViewer) return;
+  if (terrainViewer.isPlaying()) {
+    terrainViewer.pause();
+  } else {
+    terrainViewer.play();
+  }
+  updateTerrainPlayerUI();
+});
+
+tpSlider?.addEventListener('input', () => {
+  if (!terrainViewer) return;
+  const val = parseFloat(tpSlider.value);
+  terrainViewer.setProgress(val);
+  tpProgressLabel.textContent = `${Math.round(val * 100)}%`;
+});
+
+tpSpeedBtns.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    tpSpeedBtns.forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const speed = parseFloat(btn.dataset.speed);
+    if (terrainViewer) terrainViewer.setSpeed(speed);
+  });
+});
+
+// Layer toggles (contours / elevation labels / weather / day-night / weather FX)
+// Contour precision cycles: high → low → none.
+const TERRAIN_CONTOUR_STATES = ['high', 'low', 'none'];
+const TERRAIN_CONTOUR_LABELS = { high: '等高線·高', low: '等高線·低', none: '等高線·無' };
+let terrainContourState = 'high';
+
+function applyTerrainContourState(state) {
+  terrainContourState = TERRAIN_CONTOUR_STATES.includes(state) ? state : 'high';
+  if (tvContourLabel) tvContourLabel.textContent = TERRAIN_CONTOUR_LABELS[terrainContourState];
+  if (tvToggleContour) {
+    tvToggleContour.dataset.contourState = terrainContourState;
+    tvToggleContour.classList.toggle('active', terrainContourState !== 'none');
+    tvToggleContour.classList.toggle('tv-contour-off', terrainContourState === 'none');
+  }
+  // Elevation-label button is only meaningful when contours are shown.
+  if (tvToggleContourLabels) tvToggleContourLabels.disabled = terrainContourState === 'none';
+  terrainViewer?.setContourPrecision(terrainContourState);
+  updateTerrainToggleAvailability();
+  terrainDisplaySettings.contour = terrainContourState;
+  saveTerrainDisplaySettings();
+}
+
+// Grey out layer toggles that can't do anything for the current route (no
+// weather points, clear-sky only, or no major-contour elevation labels) so a
+// no-op toggle doesn't look broken. Day/night always has an effect, so it stays.
+function updateTerrainToggleAvailability() {
+  if (!terrainViewer) return;
+
+  const hasWeather = terrainViewer.hasWeatherData?.() ?? false;
+  if (tvToggleWeather) {
+    tvToggleWeather.disabled = !hasWeather;
+    tvToggleWeather.title = hasWeather ? '天氣標記' : '此路線沒有天氣標記';
+  }
+
+  // 天氣特效 drives the animated weather marker icons (plus rain/snow/fog/sky for
+  // non-clear weather), so it's usable on any route that has weather markers —
+  // only a route with no weather data at all leaves it with nothing to animate.
+  if (tvToggleWeatherFx) {
+    tvToggleWeatherFx.disabled = !hasWeather;
+    tvToggleWeatherFx.title = hasWeather ? '天氣特效（動態天氣圖示＋雨／雪／霧）' : '此路線沒有天氣資料，無特效可顯示';
+  }
+
+  const hasLabels = terrainViewer.hasContourLabels?.() ?? false;
+  if (tvToggleContourLabels) {
+    tvToggleContourLabels.disabled = terrainContourState === 'none' || !hasLabels;
+  }
+
+  const hasFeatures = terrainViewer.hasMapFeatures?.() ?? false;
+  if (tvToggleFeatures) {
+    tvToggleFeatures.disabled = !hasFeatures;
+    tvToggleFeatures.title = hasFeatures
+      ? '地圖圖資（道路／河流／水體／綠地／荒地／建築）'
+      : '此區域沒有可顯示的地圖圖資';
+  }
+}
+
+// Apply the persisted display settings to the toolbar buttons + the build-time
+// prefs the model reads while building (contour interval, on-terrain label size).
+// Visibility toggles that need the built scene groups are applied separately by
+// applyTerrainDisplayToViewer() after loadRouteData.
+function syncTerrainDisplayToggleUI() {
+  const s = terrainDisplaySettings;
+  terrainContourState = TERRAIN_CONTOUR_STATES.includes(s.contour) ? s.contour : 'high';
+  if (tvContourLabel) tvContourLabel.textContent = TERRAIN_CONTOUR_LABELS[terrainContourState];
+  if (tvToggleContour) {
+    tvToggleContour.dataset.contourState = terrainContourState;
+    tvToggleContour.classList.toggle('active', terrainContourState !== 'none');
+    tvToggleContour.classList.toggle('tv-contour-off', terrainContourState === 'none');
+  }
+  tvToggleContourLabels?.classList.toggle('active', !!s.contourLabels);
+  if (tvToggleContourLabels) tvToggleContourLabels.disabled = terrainContourState === 'none';
+  tvToggleWeather?.classList.toggle('active', !!s.weather);
+  tvToggleDaynight?.classList.toggle('active', !!s.daynight);
+  tvToggleWeatherFx?.classList.toggle('active', !!s.weatherfx);
+  tvToggleFeatures?.classList.toggle('active', !!s.features);
+
+  terrainLabelState = TERRAIN_LABEL_STATES.includes(s.labelSize) ? s.labelSize : 'none';
+  if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
+  tvToggleLabelSize?.classList.toggle('active', terrainLabelState !== 'none');
+  // Set the build-time label scale before the model builds so labels come out at
+  // the persisted size with no post-build rescale flash.
+  terrainViewer?.setLabelScale(terrainLabelState);
+
+  syncTerrainNormalizeButton();
+}
+
+// Push the persisted visibility settings onto the freshly built model.
+function applyTerrainDisplayToViewer() {
+  if (!terrainViewer) return;
+  const s = terrainDisplaySettings;
+  terrainViewer.setContourPrecision(terrainContourState);
+  terrainViewer.setContourLabelsVisible(!!s.contourLabels);
+  terrainViewer.setWeatherVisible(!!s.weather);
+  terrainViewer.setEnvironmentEnabled(!!s.daynight);
+  terrainViewer.setWeatherFxEnabled(!!s.weatherfx);
+  terrainViewer.setFeaturesVisible(!!s.features);
+  terrainViewer.setLabelScale(terrainLabelState);
+  // Vertical normalization is baked into the build via routeData.elevNormalized;
+  // here we only keep the button state in sync.
+  syncTerrainNormalizeButton();
+}
+
+function syncTerrainNormalizeButton() {
+  if (tvToggleNormalize) {
+    tvToggleNormalize.classList.toggle('active', !!terrainDisplaySettings.elevNormalized);
+  }
+}
+
+// On phones the route-info (路線資訊) and character-info (人物資訊) overlays cover
+// too much of a small canvas, so they open collapsed; on larger screens they
+// open expanded. Matches the 640px breakpoint the panels restyle at.
+function applyTerrainMobileDefaults() {
+  const collapsed = window.matchMedia('(max-width: 640px)').matches;
+  [[tvInfoPanel, tvInfoCollapse], [tvLiveHud, tvHudCollapse]].forEach(([panel, btn]) => {
+    if (!panel) return;
+    panel.classList.toggle('collapsed', collapsed);
+    btn?.setAttribute('aria-expanded', String(!collapsed));
+  });
+}
+
+tvToggleContour?.addEventListener('click', () => {
+  const next = TERRAIN_CONTOUR_STATES[(TERRAIN_CONTOUR_STATES.indexOf(terrainContourState) + 1) % TERRAIN_CONTOUR_STATES.length];
+  applyTerrainContourState(next);
+});
+tvToggleContourLabels?.addEventListener('click', () => {
+  if (tvToggleContourLabels.disabled) return;
+  const on = tvToggleContourLabels.classList.toggle('active');
+  terrainViewer?.setContourLabelsVisible(on);
+  terrainDisplaySettings.contourLabels = on;
+  saveTerrainDisplaySettings();
+});
+tvToggleWeather?.addEventListener('click', () => {
+  const on = tvToggleWeather.classList.toggle('active');
+  terrainViewer?.setWeatherVisible(on);
+  terrainDisplaySettings.weather = on;
+  saveTerrainDisplaySettings();
+});
+tvToggleDaynight?.addEventListener('click', () => {
+  const on = tvToggleDaynight.classList.toggle('active');
+  terrainViewer?.setEnvironmentEnabled(on);
+  terrainDisplaySettings.daynight = on;
+  saveTerrainDisplaySettings();
+});
+tvToggleWeatherFx?.addEventListener('click', () => {
+  const on = tvToggleWeatherFx.classList.toggle('active');
+  terrainViewer?.setWeatherFxEnabled(on);
+  terrainDisplaySettings.weatherfx = on;
+  saveTerrainDisplaySettings();
+});
+tvToggleFeatures?.addEventListener('click', () => {
+  const on = tvToggleFeatures.classList.toggle('active');
+  terrainViewer?.setFeaturesVisible(on);
+  terrainDisplaySettings.features = on;
+  saveTerrainDisplaySettings();
+});
+
+// Camera view preset toggle: 45° oblique ⇄ straight-down, both north-up. Snaps
+// the camera but leaves OrbitControls free so the user can still orbit/tilt.
+// The label names the action the next click performs (e.g. "俯視" → click to go
+// top-down), so it never claims a preset that isn't actually active.
+const TERRAIN_VIEW_LABELS = { '45': '45°', top: '俯視' };
+let terrainViewNextMode = 'top'; // what clicking the button will switch to
+function syncTerrainViewButton() {
+  if (tvToggleView) tvToggleView.dataset.viewState = terrainViewNextMode;
+  if (tvViewLabel) tvViewLabel.textContent = TERRAIN_VIEW_LABELS[terrainViewNextMode] || '俯視';
+}
+tvToggleView?.addEventListener('click', () => {
+  const mode = terrainViewNextMode;
+  terrainViewer?.applyViewPreset(mode);
+  terrainViewNextMode = mode === 'top' ? '45' : 'top';
+  syncTerrainViewButton();
+});
+
+// 海拔高度歸一化 toggle — exaggerates relief so flat terrain reads as 3D. Persisted
+// and re-baked into the model on the next open; rebuilt in place when toggled live.
+tvToggleNormalize?.addEventListener('click', () => {
+  const on = !terrainDisplaySettings.elevNormalized;
+  terrainDisplaySettings.elevNormalized = on;
+  saveTerrainDisplaySettings();
+  syncTerrainNormalizeButton();
+  terrainViewer?.setElevationNormalized(on);
+});
+
+// On-terrain text (字體) cycles: 關 (off, default) → 大 → 小.
+const TERRAIN_LABEL_STATES = ['none', 'large', 'small'];
+const TERRAIN_LABEL_LABELS = { large: '字體·大', small: '字體·小', none: '字體·關' };
+let terrainLabelState = 'none';
+
+function applyTerrainLabelState(state) {
+  terrainLabelState = TERRAIN_LABEL_STATES.includes(state) ? state : 'large';
+  if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
+  if (tvToggleLabelSize) tvToggleLabelSize.classList.toggle('active', terrainLabelState !== 'none');
+  terrainViewer?.setLabelScale(terrainLabelState);
+  terrainDisplaySettings.labelSize = terrainLabelState;
+  saveTerrainDisplaySettings();
+}
+
+function cycleTerrainLabelState() {
+  const next = TERRAIN_LABEL_STATES[(TERRAIN_LABEL_STATES.indexOf(terrainLabelState) + 1) % TERRAIN_LABEL_STATES.length];
+  applyTerrainLabelState(next);
+}
+
+tvToggleLabelSize?.addEventListener('click', cycleTerrainLabelState);
+
+// Keyboard: 'L' cycles the on-terrain label size while the 3D viewer is open.
+window.addEventListener('keydown', (e) => {
+  if (terrainViewerEl?.classList.contains('hidden')) return;
+  const tag = (e.target?.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+  if (e.key === 'l' || e.key === 'L') {
+    e.preventDefault();
+    cycleTerrainLabelState();
+  }
+});
+
+tvInfoCollapse?.addEventListener('click', () => {
+  const collapsed = tvInfoPanel?.classList.toggle('collapsed');
+  tvInfoCollapse.setAttribute('aria-expanded', String(!collapsed));
+});
+
+tvHudCollapse?.addEventListener('click', () => {
+  const collapsed = tvLiveHud?.classList.toggle('collapsed');
+  tvHudCollapse.setAttribute('aria-expanded', String(!collapsed));
+});
+
+// ---- Marker / landmark detail popup ----
+function hideTerrainMarkerDetail() {
+  tvMarkerDetail?.classList.add('hidden');
+}
+
+function renderTerrainMarkerDetail(detail) {
+  if (!tvMarkerDetail || !tvMarkerDetailBody || !detail) return;
+  const colorCss = detail.colorCss || '#44aaff';
+  const rows = [];
+  const addRow = (label, value) => {
+    if (value === null || value === undefined || value === '') return;
+    rows.push(`<div class="tv-marker-detail-row"><span class="tv-md-label">${tvEscapeHtml(label)}</span><span class="tv-md-value">${tvEscapeHtml(value)}</span></div>`);
+  };
+
+  let title;
+  if (detail.type === 'weather') {
+    title = `${detail.icon || '🌡️'} ${detail.label || '天氣點'}`;
+    addRow('溫度', detail.temperature != null ? `${Math.round(detail.temperature)}°C` : null);
+    addRow('天氣', detail.weatherCode != null ? tWmo(detail.weatherCode) : null);
+  } else {
+    const tag = detail.isStart ? '（起點）' : (detail.isEnd ? '（終點）' : '');
+    title = `${detail.label || '航點'}${tag}`;
+    addRow('里程', detail.distanceM != null ? formatDistance(detail.distanceM) : null);
+  }
+  addRow('海拔', detail.elevation != null ? formatElevation(detail.elevation) : null);
+  if (detail.lat != null && detail.lng != null) {
+    addRow('座標', `${detail.lat.toFixed(5)}, ${detail.lng.toFixed(5)}`);
+  }
+
+  tvMarkerDetailBody.innerHTML = `
+    <div class="tv-marker-detail-title"><span class="tv-marker-detail-dot" style="color:${colorCss};background:${colorCss}"></span>${tvEscapeHtml(title)}</div>
+    <div class="tv-marker-detail-rows">${rows.join('') || '<div class="tv-marker-detail-row"><span class="tv-md-label">—</span></div>'}</div>`;
+  tvMarkerDetail.classList.remove('hidden');
+}
+
+tvMarkerDetailClose?.addEventListener('click', hideTerrainMarkerDetail);
+
+tvLoadingAbort?.addEventListener('click', () => {
+  if (terrainViewer?.isLoading()) {
+    terrainViewer.abort();
+  } else {
+    closeTerrainViewer();
+  }
+});
 
 btnPanelNarrow?.addEventListener('click', () => {
   applySidePanelWidth(getCurrentPanelWidth() - PANEL_WIDTH_STEP);
@@ -2379,10 +3390,11 @@ function formatByteSize(bytes) {
   return `${size.toFixed(digits)} ${units[unitIndex]}`;
 }
 
-async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
-  const includeRoute = document.getElementById('mappack-inc-route').checked;
-  const includeTiles = document.getElementById('mappack-inc-tiles').checked;
-  const includeState = document.getElementById('mappack-inc-state').checked;
+async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', plan = readExportPlan()) {
+  const includeRoute = plan.includeRoute;
+  const includeWeather = plan.includeWeather;
+  const includeTiles = plan.includeTiles;
+  const includeState = plan.includeState;
   if (includeTiles) {
     const tilePolicy = getOfflineTileExportPolicy();
     if (!tilePolicy.allowed) {
@@ -2404,8 +3416,15 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
   const { exportCoords, exportElevations } = getExportRouteData();
 
   const gpxXml = includeRoute
-    ? (await ensureRouteExporters()).GpxExporter.generate(collectExportData(), exportCoords, exportElevations, routeName)
+    ? (await ensureRouteExporters()).GpxExporter.generate(
+      collectExportData(),
+      exportCoords,
+      exportElevations,
+      routeName,
+      { includeWeather }
+    )
     : null;
+  const routeMeta = includeRoute ? buildExportRouteMeta(routeName, exportCoords) : null;
 
   progressContainer.classList.remove('hidden');
 
@@ -2423,8 +3442,11 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
       routeCoords: currentRouteCoords,
       layerInfo: layerInfo && { ...layerInfo, name: mapManager.currentLayerName },
       includeRoute,
+      includeWeather,
       includeTiles,
       includeState,
+      sharePreset: plan.preset,
+      routeMeta,
       gpxXml,
       filenameBase,
       onProgress: (cur, total, phase) => {
@@ -2435,13 +3457,14 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
         progressFill.style.width = `${pct}%`;
       },
     });
-    await platform.downloadFile({
+    await platform.shareFile({
       filename,
-      mimeType: 'application/zip',
+      mimeType: 'application/vnd.mappingelf.melmap+zip',
       content: blob,
     });
     const parts = [];
     if (includeRoute) parts.push('路線');
+    if (includeRoute && includeWeather) parts.push('天氣');
     if (includeTiles) {
       const tilePart = downloadedTileCount === tileCount
         ? `${tileCount} 張圖磚`
@@ -2449,9 +3472,9 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track') {
       const tileSize = downloadedTileBytes > 0 ? `圖磚 ${formatByteSize(downloadedTileBytes)}` : '';
       parts.push(tileSize ? `${tilePart} · ${tileSize}` : tilePart);
     }
-    if (includeState) parts.push('個人偏好');
+    if (includeState) parts.push('設定');
     const zipSize = zipBytes > 0 ? `，檔案 ${formatByteSize(zipBytes)}` : '';
-    showNotification(`離線地圖包已匯出 (${parts.join('、')}${zipSize})`, 'success');
+    showNotification(`分享包已建立 (${parts.join('、')}${zipSize})`, 'success');
   } catch (err) {
     showNotification(err.message || '匯出失敗', 'error');
     console.error(err);
@@ -2476,6 +3499,41 @@ function _closeMappackImportModal() {
 // });
 document.getElementById('btn-mappack-import-cancel')?.addEventListener('click', _closeMappackImportModal);
 
+function exportPresetLabel(preset) {
+  return EXPORT_PRESET_CONFIG[preset]?.label || preset || '自訂內容';
+}
+
+function formatManifestTileSummary(manifest = {}) {
+  const providerName = manifest.tileProvider?.name || manifest.resources?.tiles?.provider?.name || manifest.layer || '未知圖層';
+  const expected = Number(manifest.tileCount || manifest.resources?.tiles?.expectedTileCount || 0);
+  const cached = Number(manifest.downloadedTileCount || manifest.resources?.tiles?.cachedTileCount || expected || 0);
+  const bytes = Number(manifest.downloadedTileBytes || manifest.resources?.tiles?.tileBytes || 0);
+  const size = bytes > 0 ? `，${formatByteSize(bytes)}` : '';
+  return `${providerName}，${cached}/${expected} 張${size}`;
+}
+
+function formatMappackImportMeta(parsed) {
+  const manifest = parsed?.manifest || {};
+  const createdAt = manifest.createdAt ? new Date(manifest.createdAt).toLocaleString() : '—';
+  const parts = [
+    `來源:${manifest.generator || '—'}`,
+    `建立:${createdAt}`,
+  ];
+  if (manifest.sharePreset) parts.push(`Preset:${exportPresetLabel(manifest.sharePreset)}`);
+  if (parsed.hasGpx) {
+    const routeBits = [manifest.route?.name || '路線'];
+    if (manifest.route?.distanceM) routeBits.push(formatDistance(manifest.route.distanceM));
+    if (manifest.includes?.weather) routeBits.push('含天氣');
+    parts.push(`路線:${routeBits.join(' / ')}`);
+  }
+  if (parsed.hasTiles) parts.push(`離線包:${formatManifestTileSummary(manifest)}`);
+  if (parsed.hasState) {
+    const keyCount = manifest.resources?.state?.keyCount;
+    parts.push(`設定:${Number.isFinite(Number(keyCount)) ? `${keyCount} 項` : '可還原'}`);
+  }
+  return parts.join(' · ');
+}
+
 async function openMappackImportModal(file) {
   try {
     const { MapPackImporter } = await ensureMapPackModules();
@@ -2497,13 +3555,12 @@ async function openMappackImportModal(file) {
 
     const tilesInfo = document.getElementById('mappack-import-tiles-info');
     if (tilesInfo) tilesInfo.textContent = parsed.hasTiles
-      ? `（圖層:${parsed.manifest.layer},${parsed.manifest.tileCount} 張)`
+      ? `（${formatManifestTileSummary(parsed.manifest)}）`
       : '';
 
     const meta = document.getElementById('mappack-import-meta');
     if (meta) {
-      const t = parsed.manifest.createdAt ? new Date(parsed.manifest.createdAt).toLocaleString() : '—';
-      meta.textContent = `來源:${parsed.manifest.generator || '—'} · 建立:${t}`;
+      meta.textContent = formatMappackImportMeta(parsed);
     }
 
     document.body.classList.add('modal-open');
@@ -2575,8 +3632,11 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
 
     const parts = [];
     if (applied.gpxXml) parts.push('路線');
-    if (applied.tileCount) parts.push(`${applied.tileCount} 張圖磚`);
-    if (applied.stateApplied) parts.push('個人偏好');
+    if (applied.tileCount) {
+      const tileSize = applied.tileBytes ? `，${formatByteSize(applied.tileBytes)}` : '';
+      parts.push(`${applied.layer || '離線包'} ${applied.tileCount} 張圖磚${tileSize}`);
+    }
+    if (applied.stateApplied) parts.push('設定');
     showNotification(`離線地圖包匯入完成 (${parts.join('、') || '無'})`, 'success');
   } catch (err) {
     showNotification(err.message || '匯入失敗', 'error');
@@ -2613,6 +3673,28 @@ function applyLayerSelection(name) {
   const modal = document.getElementById('export-modal');
   if (modal && !modal.classList.contains('hidden')) updateMapPackTileOptionState();
 }
+
+document.addEventListener('mapping-elf:offline-map-source-activate', (event) => {
+  const source = event.detail?.source;
+  if (!source) return;
+  const activated = mapManager.activateOfflineMapSource(source);
+  if (!activated) {
+    showNotification('此離線底圖尚未支援顯示', 'warning');
+    return;
+  }
+  layerBtns.forEach((b) => b.classList.remove('active'));
+  showNotification(`已切換離線底圖：${source.name || 'MBTiles'}`, 'success');
+  const modal = document.getElementById('export-modal');
+  if (modal && !modal.classList.contains('hidden')) updateMapPackTileOptionState();
+});
+
+document.addEventListener('mapping-elf:offline-map-source-delete', (event) => {
+  const sourceId = event.detail?.sourceId;
+  if (!sourceId) return;
+  mapManager.removeOfflineMapSource(sourceId);
+  layerBtns.forEach((b) => b.classList.toggle('active', b.dataset.layer === mapManager.currentLayerName));
+});
+
 function cycleLayer(step) {
   const cur = mapManager.currentLayerName;
   const i = LAYER_CYCLE_ORDER.indexOf(cur);
@@ -2674,6 +3756,134 @@ routeModeRadios.forEach((radio) => {
 
 // =========== Core Logic ===========
 
+// --- Computed-route session cache -----------------------------------------
+// Re-planning on every page return (especially after a mobile background-kill
+// reload) is slow and needs the network. When the route geometry hasn't changed
+// we instead restore the previously computed alternatives from localStorage and
+// redraw them directly — no routing/elevation round-trips. Weather is rebuilt
+// from its own cache by renderWeatherPanel(), so it isn't duplicated here.
+const LS_ROUTE_RESULT_KEY = 'mappingElf_routeResult';
+const ROUTE_RESULT_MAX_BYTES = 3_000_000; // localStorage safety guard
+// Set during init when a cached result matches the restored waypoints; consumed
+// once by the next onWaypointsChanged so it restores instead of re-planning.
+let pendingRouteRestore = null;
+
+// Stable signature of everything that determines the routed geometry: the
+// waypoints plus the routing mode and round-trip / O-loop flags.
+function routeStateSignature(waypoints) {
+  const wps = (waypoints || []).map(([a, b]) => `${a.toFixed(5)},${b.toFixed(5)}`).join('|');
+  return `${wps}#${routeEngine.mode}|${roundTripMode ? 'rt' : ''}${oLoopMode ? 'ol' : ''}`;
+}
+
+// Keep only the fields the redraw/selection path actually reads, so the cached
+// payload stays as small as possible.
+function trimAlternativeForCache(r) {
+  return {
+    coords: r.coords,
+    sampledCoords: r.sampledCoords,
+    elevations: r.elevations,
+    fullElevations: r.fullElevations,
+    distance: r.distance,
+    ascent: r.ascent,
+    descent: r.descent,
+    maxElev: r.maxElev,
+    minElev: r.minElev,
+    startElev: r.startElev,
+    endElev: r.endElev,
+    turnaroundElev: r.turnaroundElev,
+    score: r.score,
+    label: r.label,
+    index: r.index,
+  };
+}
+
+function persistRouteResult() {
+  try {
+    // Imported tracks restore via their own session (LS_IMPORTED_TRACK_KEY).
+    if (importedTrackMode) return;
+    const wps = mapManager.waypoints;
+    if (!wps || wps.length < 2 || !allAlternatives.length) {
+      localStorage.removeItem(LS_ROUTE_RESULT_KEY);
+      return;
+    }
+    const signature = routeStateSignature(wps);
+    const full = allAlternatives.map(trimAlternativeForCache);
+    const selected = full[selectedAltIndex] ? [full[selectedAltIndex]] : full.slice(0, 1);
+    // Prefer caching all alternatives; fall back to just the selected route if the
+    // full set is too large for localStorage; give up if even that's too big.
+    const variants = [
+      { alternatives: full, selectedAltIndex },
+      { alternatives: selected, selectedAltIndex: 0 },
+    ];
+    for (const v of variants) {
+      const payload = JSON.stringify({ signature, savedAt: Date.now(), ...v });
+      if (payload.length <= ROUTE_RESULT_MAX_BYTES) {
+        localStorage.setItem(LS_ROUTE_RESULT_KEY, payload);
+        return;
+      }
+    }
+    localStorage.removeItem(LS_ROUTE_RESULT_KEY);
+  } catch (_) {
+    try { localStorage.removeItem(LS_ROUTE_RESULT_KEY); } catch (__) { /* noop */ }
+  }
+}
+
+function clearRouteResultCache() {
+  try { localStorage.removeItem(LS_ROUTE_RESULT_KEY); } catch (_) { /* noop */ }
+}
+
+// Return the cached computed route iff it matches these waypoints, else null.
+function loadMatchingRouteResult(waypoints) {
+  try {
+    const raw = localStorage.getItem(LS_ROUTE_RESULT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.alternatives) || !data.alternatives.length) return null;
+    if (data.signature !== routeStateSignature(waypoints)) return null;
+    return data;
+  } catch { return null; }
+}
+
+// Compute the round-trip / O-loop turnaround the same way the planning path does.
+function computeTurnaroundLatLng(wps) {
+  const isLoop = wps.length >= 3 && haversineDistance(wps[0], wps[wps.length - 1]) < 0.1;
+  const actualOLoop = oLoopMode || (isLoop && !roundTripMode);
+  if (roundTripMode && wps.length >= 2) return wps[wps.length - 1];
+  if (actualOLoop && wps.length >= 2) {
+    if (isLoop) {
+      let maxD = 0;
+      let turn = null;
+      for (let i = 1; i < wps.length - 1; i++) {
+        const d = haversineDistance(wps[0], wps[i]);
+        if (d > maxD) { maxD = d; turn = wps[i]; }
+      }
+      return turn || wps[Math.floor(wps.length / 2)];
+    }
+    return wps[wps.length - 1];
+  }
+  return null;
+}
+
+// Redraw a cached computed route without re-planning. Falls back to a normal
+// re-plan if anything is missing or throws, so the worst case is current behaviour.
+async function applyRestoredRouteResult(restore) {
+  try {
+    allAlternatives = Array.isArray(restore.alternatives) ? restore.alternatives : [];
+    if (!allAlternatives.length) { debouncedCalculateRoute(mapManager.waypoints); return; }
+    selectedAltIndex = Math.min(Math.max(0, restore.selectedAltIndex || 0), allAlternatives.length - 1);
+
+    const turnaround = computeTurnaroundLatLng(mapManager.waypoints);
+    mapManager.drawMultipleRoutes(allAlternatives, selectedAltIndex, roundTripMode, turnaround);
+    renderAlternatives(allAlternatives, selectedAltIndex);
+    const ok = await selectAlternative(selectedAltIndex);
+    if (!ok) debouncedCalculateRoute(mapManager.waypoints);
+    else showNotification('已沿用先前規劃的路線', 'info', 1500);
+  } catch (err) {
+    console.warn('route restore failed, re-planning:', err);
+    debouncedCalculateRoute(mapManager.waypoints);
+  }
+}
+
 async function onWaypointsChanged(waypoints) {
   cancelWeatherFetchForRouteReplan();
   ensureWaypointIds();
@@ -2729,6 +3939,9 @@ async function onWaypointsChanged(waypoints) {
   if (!skipAutoGeocode) geocodeWaypoints(waypoints);
 
   if (waypoints.length < 2) {
+    // No routable geometry anymore — drop any cached computed route.
+    pendingRouteRestore = null;
+    clearRouteResultCache();
     if (waypoints.length === 1) {
       // Just 1 point, no route, but we still want to show weather
       mapManager.clearRoute();
@@ -2757,6 +3970,17 @@ async function onWaypointsChanged(waypoints) {
       if (_wc) _wc.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「更新天氣」</p></div>';
     }
     return;
+  }
+
+  // Page-return shortcut: if a cached computed route matches these exact
+  // waypoints (set up by the init restore), redraw it instead of re-planning.
+  if (pendingRouteRestore) {
+    const restore = pendingRouteRestore;
+    pendingRouteRestore = null;
+    if (restore.signature === routeStateSignature(waypoints)) {
+      applyRestoredRouteResult(restore);
+      return;
+    }
   }
 
   // Use debounced version for the heavy OSRM calculation
@@ -2845,6 +4069,8 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
           ? `找到 ${allAlternatives.length} 組建議路徑`
           : '已規劃最佳路徑';
         showNotification(altMsg, 'success', 2000);
+        // Cache the computed result so a later page return can skip re-planning.
+        persistRouteResult();
       }
     } else if (!isRoutePlanSnapshotStale(routePlanSnapshot)) {
       showNotification('找不到合適路徑', 'warning');
@@ -2967,6 +4193,9 @@ function renderAlternatives(routes, selectedIdx) {
     card.addEventListener('click', () => {
       const idx = parseInt(card.dataset.index);
       selectAlternative(idx);
+      // selectedAltIndex is updated synchronously at the top of selectAlternative,
+      // so persist the new selection for the page-return shortcut.
+      persistRouteResult();
     });
   });
 }
@@ -3817,6 +5046,153 @@ const exportModal = document.getElementById('export-modal');
 const btnExportConfirm = document.getElementById('btn-export-confirm');
 const btnExportCancel = document.getElementById('btn-export-cancel');
 
+const EXPORT_PRESET_CONFIG = Object.freeze({
+  'route-only': {
+    label: '只分享路線',
+    includeRoute: true,
+    includeWeather: false,
+    includeState: false,
+    includeTiles: false,
+    requiresMelmap: false,
+  },
+  'with-weather': {
+    label: '含天氣',
+    includeRoute: true,
+    includeWeather: true,
+    includeState: false,
+    includeTiles: false,
+    requiresMelmap: false,
+  },
+  'with-settings': {
+    label: '含設定',
+    includeRoute: true,
+    includeWeather: true,
+    includeState: true,
+    includeTiles: false,
+    requiresMelmap: true,
+  },
+  'with-offline': {
+    label: '含離線包',
+    includeRoute: true,
+    includeWeather: true,
+    includeState: true,
+    includeTiles: true,
+    requiresMelmap: true,
+  },
+});
+
+const EXPORT_FORMAT_LABELS = Object.freeze({
+  gpx: 'GPX · 戶外 / GPS App',
+  kml: 'KML · 地圖工具',
+  all: 'GPX + KML · 通用格式',
+  melmap: '.melmap · Mapping Elf 完整還原',
+});
+
+function getCheckedExportValue(name, fallback) {
+  return exportModal?.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
+}
+
+function setCheckedExportValue(name, value) {
+  const input = exportModal?.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (input) input.checked = true;
+}
+
+function getSelectedExportPreset() {
+  return getCheckedExportValue('export-preset', 'with-weather');
+}
+
+function getSelectedExportFormat() {
+  return getCheckedExportValue('export-fmt', 'gpx');
+}
+
+function applyExportPresetToDetailControls(preset = getSelectedExportPreset()) {
+  const config = EXPORT_PRESET_CONFIG[preset] || EXPORT_PRESET_CONFIG['with-weather'];
+  const route = document.getElementById('mappack-inc-route');
+  const weather = document.getElementById('mappack-inc-weather');
+  const state = document.getElementById('mappack-inc-state');
+  const tiles = document.getElementById('mappack-inc-tiles');
+  if (route) route.checked = config.includeRoute;
+  if (weather) weather.checked = config.includeWeather;
+  if (state) state.checked = config.includeState;
+  if (tiles) tiles.checked = config.includeTiles;
+  syncMelmapWeatherOption();
+}
+
+function syncMelmapWeatherOption() {
+  const route = document.getElementById('mappack-inc-route');
+  const weather = document.getElementById('mappack-inc-weather');
+  const option = weather?.closest('.export-option');
+  if (!weather) return;
+  const hasRoute = route?.checked !== false;
+  weather.disabled = !hasRoute;
+  if (!hasRoute) weather.checked = false;
+  option?.classList.toggle('is-disabled', !hasRoute);
+}
+
+function syncExportModalState() {
+  let fmt = getSelectedExportFormat();
+  let preset = getSelectedExportPreset();
+  const presetConfig = EXPORT_PRESET_CONFIG[preset] || EXPORT_PRESET_CONFIG['with-weather'];
+
+  if (presetConfig.requiresMelmap && fmt !== 'melmap') {
+    fmt = 'melmap';
+    setCheckedExportValue('export-fmt', 'melmap');
+  }
+
+  if (fmt !== 'melmap' && presetConfig.requiresMelmap) {
+    preset = 'with-weather';
+    setCheckedExportValue('export-preset', preset);
+    applyExportPresetToDetailControls(preset);
+  }
+
+  const sub = document.getElementById('melmap-sub-options');
+  if (sub) sub.style.display = fmt === 'melmap' ? '' : 'none';
+
+  syncMelmapWeatherOption();
+  if (fmt === 'melmap') updateMapPackTileOptionState();
+  updateExportPlanSummary();
+}
+
+function readExportPlan() {
+  const fmt = getSelectedExportFormat();
+  const preset = getSelectedExportPreset();
+  const config = EXPORT_PRESET_CONFIG[preset] || EXPORT_PRESET_CONFIG['with-weather'];
+
+  if (fmt !== 'melmap') {
+    return {
+      format: fmt,
+      preset,
+      includeRoute: true,
+      includeWeather: config.includeWeather !== false,
+      includeState: false,
+      includeTiles: false,
+    };
+  }
+
+  const includeRoute = document.getElementById('mappack-inc-route')?.checked === true;
+  return {
+    format: fmt,
+    preset,
+    includeRoute,
+    includeWeather: includeRoute && document.getElementById('mappack-inc-weather')?.checked === true,
+    includeState: document.getElementById('mappack-inc-state')?.checked === true,
+    includeTiles: document.getElementById('mappack-inc-tiles')?.checked === true,
+  };
+}
+
+function updateExportPlanSummary() {
+  const summary = document.getElementById('export-plan-summary');
+  if (!summary) return;
+  const plan = readExportPlan();
+  const content = [];
+  if (plan.includeRoute) content.push('路線');
+  if (plan.includeRoute && plan.includeWeather) content.push('天氣');
+  if (plan.includeState) content.push('設定');
+  if (plan.includeTiles) content.push('離線包');
+  if (content.length === 0) content.push('尚未選擇內容');
+  summary.textContent = `${EXPORT_FORMAT_LABELS[plan.format] || '匯出'} · ${content.join('、')}`;
+}
+
 function openExportModal() {
   const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
   // For non-melmap formats, a route is required. For melmap, we gate per-option
@@ -3833,19 +5209,39 @@ function openExportModal() {
     nameInput.value = buildDefaultRouteName();
   }
 
+  applyExportPresetToDetailControls(getSelectedExportPreset());
+  syncExportModalState();
   document.body.classList.add('modal-open');
   exportModal.classList.remove('hidden');
 }
 
-// Toggle melmap sub-options visibility when fmt radio changes.
+// Toggle .melmap detail visibility and preset-driven content.
 exportModal?.querySelectorAll('input[name="export-fmt"]').forEach((r) => {
   r.addEventListener('change', () => {
-    const sub = document.getElementById('melmap-sub-options');
-    if (sub) sub.style.display = r.checked && r.value === 'melmap' ? '' : sub.style.display;
-    // Hide if a non-melmap radio is now checked.
-    const checked = exportModal.querySelector('input[name="export-fmt"]:checked')?.value;
-    if (sub) sub.style.display = checked === 'melmap' ? '' : 'none';
-    if (checked === 'melmap') updateMapPackTileOptionState();
+    if (r.checked && r.value !== 'melmap') {
+      const preset = getSelectedExportPreset();
+      if (EXPORT_PRESET_CONFIG[preset]?.requiresMelmap) {
+        setCheckedExportValue('export-preset', 'with-weather');
+        applyExportPresetToDetailControls('with-weather');
+      }
+    }
+    syncExportModalState();
+  });
+});
+
+exportModal?.querySelectorAll('input[name="export-preset"]').forEach((r) => {
+  r.addEventListener('change', () => {
+    if (!r.checked) return;
+    applyExportPresetToDetailControls(r.value);
+    syncExportModalState();
+  });
+});
+
+['mappack-inc-route', 'mappack-inc-weather', 'mappack-inc-state', 'mappack-inc-tiles'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('change', () => {
+    syncMelmapWeatherOption();
+    if (id === 'mappack-inc-tiles') updateMapPackTileOptionState();
+    updateExportPlanSummary();
   });
 });
 
@@ -3925,6 +5321,53 @@ function buildExportFilenameBase() {
   return `${namePart}_${ts}`;
 }
 
+function distanceForCoords(coords = []) {
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    total += haversineDistance(coords[i - 1], coords[i]);
+  }
+  return total;
+}
+
+function boundsForCoordsObject(coords = []) {
+  if (!coords.length) return null;
+  const lats = coords.map(([lat]) => lat).filter(Number.isFinite);
+  const lngs = coords.map(([, lng]) => lng).filter(Number.isFinite);
+  if (!lats.length || !lngs.length) return null;
+  return {
+    north: Math.max(...lats),
+    south: Math.min(...lats),
+    east: Math.max(...lngs),
+    west: Math.min(...lngs),
+  };
+}
+
+function routeFingerprintForCoords(coords = []) {
+  let hash = 2166136261;
+  const text = coords
+    .map(([lat, lng]) => `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`)
+    .join('|');
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `route-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function buildExportRouteMeta(routeName, coords = currentRouteCoords) {
+  if (!coords?.length) return null;
+  const fingerprint = routeFingerprintForCoords(coords);
+  return {
+    id: fingerprint,
+    fingerprint,
+    name: routeName || buildDefaultRouteName() || 'Mapping Elf Track',
+    distanceM: distanceForCoords(coords),
+    pointCount: coords.length,
+    waypointCount: mapManager.waypoints.length,
+    bounds: boundsForCoordsObject(coords),
+  };
+}
+
 function closeExportModal() {
   document.body.classList.remove('modal-open');
   exportModal.classList.add('hidden');
@@ -3937,12 +5380,9 @@ function closeExportModal() {
 // });
 btnExportCancel?.addEventListener('click', closeExportModal);
 btnExportConfirm?.addEventListener('click', async () => {
-  const fmt = exportModal.querySelector('input[name="export-fmt"]:checked')?.value || 'gpx';
-  if (fmt === 'melmap') {
-    const includeRoute = document.getElementById('mappack-inc-route').checked;
-    const includeTiles = document.getElementById('mappack-inc-tiles').checked;
-    const includeState = document.getElementById('mappack-inc-state').checked;
-    if (includeTiles) {
+  const plan = readExportPlan();
+  if (plan.format === 'melmap') {
+    if (plan.includeTiles) {
       const tilePolicy = getOfflineTileExportPolicy();
       if (!tilePolicy.allowed) {
         showNotification(tilePolicy.reason || OFFLINE_TILE_EXPORT_UNAVAILABLE_MESSAGE, 'warning');
@@ -3950,11 +5390,11 @@ btnExportConfirm?.addEventListener('click', async () => {
         return;
       }
     }
-    if (!includeRoute && !includeTiles && !includeState) {
+    if (!plan.includeRoute && !plan.includeTiles && !plan.includeState) {
       showNotification('請至少勾選一項離線地圖包內容', 'warning');
       return;
     }
-    if ((includeRoute || includeTiles) && currentRouteCoords.length === 0) {
+    if ((plan.includeRoute || plan.includeTiles) && currentRouteCoords.length === 0) {
       showNotification('匯出路線/圖磚前請先建立路線', 'warning');
       return;
     }
@@ -3963,12 +5403,12 @@ btnExportConfirm?.addEventListener('click', async () => {
     const routeName = nameInput ? nameInput.value.trim() : buildDefaultRouteName();
 
     closeExportModal();
-    await doExportMapPack(buildExportFilenameBase(), routeName);
+    await doExportMapPack(buildExportFilenameBase(), routeName, plan);
     return;
   }
   closeExportModal();
   try {
-    await doExport(fmt);
+    await doExport(plan.format, plan);
   } catch (err) {
     console.error(err);
     showNotification('匯出失敗', 'error');
@@ -3978,11 +5418,25 @@ btnExportConfirm?.addEventListener('click', async () => {
 // =========== Favorites ===========
 
 const favoritesReplaceModal = document.getElementById('favorites-replace-modal');
+let favoriteExportRequestSeq = 0;
 
 function _escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
+}
+
+const ROUTE_LIBRARY_ACTION_ICONS = Object.freeze({
+  load: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M10 17l5-5-5-5v4H3v2h12v4l-5 0zM19 3h-8v2h8v14h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" fill="currentColor"/></svg>',
+  terrain: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M21 5v14H3V5h18zm-2 2H5v3h14V7zm0 5H5v5h14v-5z" fill="currentColor" opacity="0.7"/><path d="M7 10l2-3h6l2 3-5 4-5-4z" fill="currentColor" opacity="0.9"/></svg>',
+  export: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>',
+  delete: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor"/></svg>',
+});
+
+function routeLibraryActionButton({ action, id, label, icon, className = '' }) {
+  const safeId = _escapeHtml(id);
+  const safeLabel = _escapeHtml(label);
+  return `<button type="button" class="btn-secondary route-library-mini-btn route-library-icon-action ${className}" data-favorite-${action}="${safeId}" title="${safeLabel}" aria-label="${safeLabel}">${ROUTE_LIBRARY_ACTION_ICONS[icon]}</button>`;
 }
 
 const ROUTE_MODE_LABELS = {
@@ -4058,6 +5512,8 @@ function updateRouteLibraryCurrent() {
     btn.title = canSaveRoute ? (saved ? '已加入最愛' : '加到最愛') : '至少需 2 個航點才能加到最愛';
   });
   if (exportButton) exportButton.disabled = !hasRoute;
+  // 3D terrain is favourite-only; keep the toolbar badge in sync with save state.
+  if (typeof update3dButtonBadge === 'function') update3dButtonBadge();
 }
 
 function persistFavorites() {
@@ -4239,13 +5695,108 @@ function loadFavorite(fav) {
 }
 
 function deleteFavorite(id) {
+  favoriteExportRequestSeq += 1;
   const n = favorites.length;
   favorites = favorites.filter(f => f.id !== id);
   if (favorites.length !== n) {
+    clearTerrainCacheEntry(`fav:${id}`);
     persistFavorites();
     renderFavoritesList();
     showNotification('已從最愛移除', 'info', 1200);
   }
+}
+
+function waitForFavoriteRouteReady(fav, requestId, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let sawRoutePlanning = isProcessing || isRouteWeatherBusy();
+
+    const check = () => {
+      if (requestId !== favoriteExportRequestSeq) {
+        resolve(false);
+        return;
+      }
+
+      const currentMatchesFavorite = waypointsMatch(fav?.waypoints, mapManager.waypoints);
+      sawRoutePlanning ||= isProcessing || isRouteWeatherBusy();
+
+      if (currentMatchesFavorite && currentRouteCoords.length >= 2 && !isProcessing && !isRouteWeatherBusy()) {
+        resolve(true);
+        return;
+      }
+
+      if (
+        sawRoutePlanning
+        && currentMatchesFavorite
+        && !isProcessing
+        && !isRouteWeatherBusy()
+        && !pendingUpdate
+        && currentRouteCoords.length < 2
+      ) {
+        resolve(false);
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+
+      setTimeout(check, 250);
+    };
+
+    check();
+  });
+}
+
+async function exportFavorite(fav) {
+  if (!fav || !Array.isArray(fav.waypoints) || fav.waypoints.length < 2) {
+    showNotification('最愛路線資料無效', 'error');
+    return;
+  }
+
+  const requestId = ++favoriteExportRequestSeq;
+  loadFavorite(fav);
+  const ready = await waitForFavoriteRouteReady(fav, requestId);
+  if (requestId !== favoriteExportRequestSeq) return;
+
+  if (!ready) {
+    showNotification('找不到合適路徑', 'warning');
+    return;
+  }
+
+  openExportModal();
+  const nameInput = document.getElementById('export-filename-input');
+  if (nameInput && fav.name) {
+    nameInput.value = fav.name;
+    updateExportPlanSummary();
+  }
+}
+
+// Build (or reuse the cached) 3D terrain for a favourite. Loads the favourite's
+// route first if it isn't already the current one, then opens the viewer keyed
+// to the favourite id so its elevation grid is cached for next time.
+async function open3dForFavorite(fav) {
+  if (!fav || !Array.isArray(fav.waypoints) || fav.waypoints.length < 2) {
+    showNotification('最愛路線資料無效', 'error');
+    return;
+  }
+
+  const alreadyCurrent = waypointsMatch(fav.waypoints, mapManager.waypoints)
+    && currentRouteCoords.length >= 2;
+
+  if (!alreadyCurrent) {
+    const requestId = ++favoriteExportRequestSeq;
+    loadFavorite(fav);
+    const ready = await waitForFavoriteRouteReady(fav, requestId);
+    if (requestId !== favoriteExportRequestSeq) return;
+    if (!ready) {
+      showNotification('找不到合適路徑', 'warning');
+      return;
+    }
+  }
+
+  await openTerrainViewer(`fav:${fav.id}`);
 }
 
 function closeReplaceModal() {
@@ -4271,8 +5822,10 @@ function renderFavoritesContainer(container) {
           <div class="fav-meta">${count} 個航點 · ${_escapeHtml(dateStr)}</div>
         </div>
         <div class="route-library-inline-actions">
-          <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-load="${_escapeHtml(f.id)}">載入</button>
-          <button type="button" class="btn-secondary route-library-mini-btn" data-favorite-delete="${_escapeHtml(f.id)}">刪除</button>
+          ${routeLibraryActionButton({ action: 'load', id: f.id, label: '載入', icon: 'load' })}
+          ${routeLibraryActionButton({ action: 'terrain', id: f.id, label: '3D 地形', icon: 'terrain' })}
+          ${routeLibraryActionButton({ action: 'export', id: f.id, label: '匯出', icon: 'export' })}
+          ${routeLibraryActionButton({ action: 'delete', id: f.id, label: '刪除', icon: 'delete', className: 'danger' })}
         </div>
       </div>`;
   }).join('');
@@ -4288,8 +5841,23 @@ function _bindFavoriteItemInteractions(container) {
   container.querySelectorAll('[data-favorite-load]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      favoriteExportRequestSeq += 1;
       const fav = favorites.find(f => f.id === btn.dataset.favoriteLoad);
       if (fav) loadFavorite(fav);
+    });
+  });
+  container.querySelectorAll('[data-favorite-terrain]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fav = favorites.find(f => f.id === btn.dataset.favoriteTerrain);
+      if (fav) open3dForFavorite(fav);
+    });
+  });
+  container.querySelectorAll('[data-favorite-export]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fav = favorites.find(f => f.id === btn.dataset.favoriteExport);
+      if (fav) exportFavorite(fav);
     });
   });
   container.querySelectorAll('[data-favorite-delete]').forEach(btn => {
@@ -4301,12 +5869,14 @@ function _bindFavoriteItemInteractions(container) {
   container.querySelectorAll('.favorite-item').forEach(item => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
+      favoriteExportRequestSeq += 1;
       const fav = favorites.find(f => f.id === item.dataset.id);
       if (fav) loadFavorite(fav);
     });
     item.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       e.preventDefault();
+      favoriteExportRequestSeq += 1;
       const fav = favorites.find(f => f.id === item.dataset.id);
       if (fav) loadFavorite(fav);
     });
@@ -4342,6 +5912,7 @@ function openReplaceFlow(pendingName) {
     </button>`).join('');
   list.querySelectorAll('.replace-target').forEach(btn => btn.addEventListener('click', (e) => {
     const id = e.currentTarget.dataset.id;
+    clearTerrainCacheEntry(`fav:${id}`);
     favorites = favorites.map(f => f.id === id ? pending : f);
     persistFavorites();
     renderFavoritesList();
@@ -4452,27 +6023,28 @@ function collectSegmentDates() {
   return result;
 }
 
-async function doExport(fmt) {
+async function doExport(fmt, plan = readExportPlan()) {
   const nameInput = document.getElementById('export-filename-input');
   const routeName = (nameInput ? nameInput.value.trim() : null) || buildDefaultRouteName() || 'Mapping Elf Track';
   const filename = buildExportFilenameBase();
+  const includeWeather = plan.includeWeather !== false;
 
   const wpData = collectExportData();
   const { exportCoords, exportElevations } = getExportRouteData();
   const { GpxExporter, KmlExporter } = await ensureRouteExporters();
 
   if (fmt === 'gpx' || fmt === 'all') {
-    const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName);
-    await platform.downloadFile(GpxExporter.createDownloadPayload(gpx, `${filename}.gpx`));
+    const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
+    await platform.shareFile(GpxExporter.createDownloadPayload(gpx, `${filename}.gpx`));
   }
 
   if (fmt === 'kml' || fmt === 'all') {
-    const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName);
-    await platform.downloadFile(KmlExporter.createDownloadPayload(kml, `${filename}.kml`));
+    const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
+    await platform.shareFile(KmlExporter.createDownloadPayload(kml, `${filename}.kml`));
   }
 
   const label = fmt === 'all' ? 'GPX + KML' : fmt.toUpperCase();
-  showNotification(`${label} 檔案已匯出`, 'success');
+  showNotification(`${label} 檔案已準備分享${includeWeather ? '（含天氣）' : '（只含路線）'}`, 'success');
 }
 
 /**
@@ -9080,6 +10652,7 @@ function refreshLanguageSensitiveUi() {
   renderFavoritesList();
   refreshOpenWeatherCards();
   refreshKeywordSearchResults?.();
+  syncTvLanguageSelect();
   applyTranslations();
 }
 
@@ -9496,6 +11069,10 @@ async function init() {
   if (savedWaypoints && savedWaypoints.length > 0) {
     initialWeatherLoadPending = true;
     skipAutoGeocode = true;
+    // If a previously computed route still matches these waypoints, arm the
+    // page-return shortcut so onWaypointsChanged redraws it instead of re-planning
+    // (no routing/elevation network round-trips on return).
+    pendingRouteRestore = loadMatchingRouteResult(savedWaypoints);
     const savedWaypointIds = getPersistedWaypointIds();
     mapManager.setWaypointsFromImport(savedWaypoints, savedWaypointIds.map(waypointId => ({ waypointId })));
     ensureWaypointIds(savedWaypointIds);
@@ -9526,6 +11103,10 @@ async function init() {
 
   setTimeout(() => {
     loadingScreen.classList.add('hidden');
+    setTimeout(() => {
+      document.body.classList.remove('app-initial-loading');
+      document.body.classList.add('app-loading-ready');
+    }, INITIAL_LOADING_FADE_MS);
   }, 800);
 
   // Seed undo/redo history with the restored state as the baseline.

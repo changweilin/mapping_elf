@@ -67,11 +67,13 @@ const TILE_LAYERS = {
 const DEFAULT_CENTER = [23.5, 121.0];
 const DEFAULT_ZOOM = 8;
 const MAP_TILE_THEMES = new Set(['dark', 'light']);
+const OFFLINE_LAYER_PREFIX = 'offline:';
 const TILE_LAYER_PERFORMANCE_OPTIONS = {
   updateWhenZooming: false,
   updateInterval: 180,
   keepBuffer: 3,
 };
+const TRANSPARENT_TILE_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
 function normalizeMapTileTheme(themeName) {
   return MAP_TILE_THEMES.has(themeName) ? themeName : 'dark';
@@ -216,6 +218,7 @@ export class MapManager {
     this._weatherPopups = new Map(); // Inline marker weather cards (colIdx -> { marker, badge, slot })
     this._weatherPopupCloseTimers = new Map();
     this._clickTimeout = null; // Global debunking for map/track clicks to avoid dual triggering with dblclick
+    this._lastDblclickAt = 0;  // Timestamp of the last dblclick/double-tap, to suppress the trailing single click
     this._waypointClickTimeout = null; // Delay waypoint click selection so dblclick can cancel it first
     // Map cursor — placed by GPS button (goToMyLocation). Long-press / click
     // on the cursor opens an action menu (set as waypoint / copy coords / weather).
@@ -240,7 +243,9 @@ export class MapManager {
     });
 
     this.tileLayers = {};
-    for (const [name, config] of Object.entries(TILE_LAYERS)) {
+    this.tileLayerConfigs = { ...TILE_LAYERS };
+    this.offlineMapSources = {};
+    for (const [name, config] of Object.entries(this.tileLayerConfigs)) {
       this.tileLayers[name] = L.tileLayer(config.url, {
         ...config.options,
         ...TILE_LAYER_PERFORMANCE_OPTIONS,
@@ -273,18 +278,29 @@ export class MapManager {
       }
       if (Date.now() - this._lastMultiTouchAt < 700) return;
       if (this.ignoreMapClick) return;
+      // A double-tap that just fired (zoom) sometimes still delivers a trailing
+      // single `click`; ignore clicks landing within the double-tap window after
+      // a dblclick so the second tap doesn't drop a stray waypoint.
+      if (Date.now() - this._lastDblclickAt < WAYPOINT_SINGLE_TAP_DELAY_MS) return;
       if (this._clickTimeout) {
+        // Second click of a quick pair → treat as a double tap, drop both.
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
-      } else {
-        this._clickTimeout = setTimeout(() => {
-          this._clickTimeout = null;
-          this.addWaypoint(e.latlng.lat, e.latlng.lng);
-        }, 300);
+        return;
       }
+      const latlng = e.latlng;
+      // Defer the waypoint commit past the double-tap window (rather than the old
+      // 300 ms, which fired before Leaflet's ~360 ms double-tap detection closed),
+      // and re-check no dblclick fired in the meantime.
+      this._clickTimeout = setTimeout(() => {
+        this._clickTimeout = null;
+        if (Date.now() - this._lastDblclickAt < WAYPOINT_SINGLE_TAP_DELAY_MS) return;
+        this.addWaypoint(latlng.lat, latlng.lng);
+      }, WAYPOINT_SINGLE_TAP_DELAY_MS);
     });
 
-    this.map.on('dblclick', (e) => {
+    this.map.on('dblclick', () => {
+      this._lastDblclickAt = Date.now();
       if (this._clickTimeout) {
         clearTimeout(this._clickTimeout);
         this._clickTimeout = null;
@@ -916,9 +932,54 @@ export class MapManager {
 
   switchLayer(layerName) {
     if (!this.tileLayers[layerName]) return;
-    this.map.removeLayer(this.tileLayers[this.currentLayerName]);
+    if (this.tileLayers[this.currentLayerName]) {
+      this.map.removeLayer(this.tileLayers[this.currentLayerName]);
+    }
     this.tileLayers[layerName].addTo(this.map);
     this.currentLayerName = layerName;
+    this._syncTileLayerClassNames();
+  }
+
+  registerOfflineMapSources(sources = []) {
+    const renderableSources = (sources || []).filter((source) => this._canRenderOfflineMapSource(source));
+    const nextLayerNames = new Set(renderableSources.map((source) => this._offlineLayerName(source.id)));
+
+    Object.keys(this.tileLayers).forEach((layerName) => {
+      if (!layerName.startsWith(OFFLINE_LAYER_PREFIX) || nextLayerNames.has(layerName)) return;
+      if (this.map.hasLayer(this.tileLayers[layerName])) this.map.removeLayer(this.tileLayers[layerName]);
+      delete this.tileLayers[layerName];
+      delete this.tileLayerConfigs[layerName];
+      delete this.offlineMapSources[layerName];
+      if (this.currentLayerName === layerName) this.switchLayer('topo');
+    });
+
+    renderableSources.forEach((source) => {
+      const layerName = this._offlineLayerName(source.id);
+      this.offlineMapSources[layerName] = source;
+      this.tileLayerConfigs[layerName] = this._offlineLayerConfig(source);
+      if (!this.tileLayers[layerName]) {
+        this.tileLayers[layerName] = this._createOfflineMapTileLayer(source, layerName);
+      }
+    });
+
+    this._syncTileLayerClassNames();
+  }
+
+  activateOfflineMapSource(source) {
+    if (!this._canRenderOfflineMapSource(source)) return false;
+    this.registerOfflineMapSources([source]);
+    this.switchLayer(this._offlineLayerName(source.id));
+    return true;
+  }
+
+  removeOfflineMapSource(sourceId) {
+    const layerName = this._offlineLayerName(sourceId);
+    if (!this.tileLayers[layerName]) return;
+    if (this.currentLayerName === layerName) this.switchLayer('topo');
+    if (this.map.hasLayer(this.tileLayers[layerName])) this.map.removeLayer(this.tileLayers[layerName]);
+    delete this.tileLayers[layerName];
+    delete this.tileLayerConfigs[layerName];
+    delete this.offlineMapSources[layerName];
     this._syncTileLayerClassNames();
   }
 
@@ -934,7 +995,9 @@ export class MapManager {
 
   _syncTileLayerClassNames() {
     for (const [name, layer] of Object.entries(this.tileLayers)) {
-      const className = tileLayerClassName(name, TILE_LAYERS[name], this.currentTileTheme);
+      const config = this.tileLayerConfigs[name];
+      if (!config) continue;
+      const className = tileLayerClassName(name, config, this.currentTileTheme);
       layer.options.className = className;
       const container = layer.getContainer?.() || layer._container;
       if (!container) continue;
@@ -3855,16 +3918,87 @@ export class MapManager {
 
   getCurrentLayerInfo() {
     const layer = this.tileLayers[this.currentLayerName];
-    const config = TILE_LAYERS[this.currentLayerName];
+    const config = this.tileLayerConfigs[this.currentLayerName];
     if (layer) {
       return {
+        name: this.currentLayerName,
         urlTemplate: layer._url,
         maxZoom: layer.options.maxZoom || 18,
         attribution: layer.options.attribution || config?.provider?.attribution || null,
         provider: config?.provider ? { ...config.provider } : null,
+        offlineMapSource: this.offlineMapSources[this.currentLayerName] || null,
       };
     }
     return null;
+  }
+
+  _offlineLayerName(sourceId) {
+    return `${OFFLINE_LAYER_PREFIX}${sourceId}`;
+  }
+
+  _canRenderOfflineMapSource(source) {
+    const nativeRenderableFormats = new Set(['mapsforge', 'mbtiles']);
+    return !!source?.id
+      && nativeRenderableFormats.has(source.format)
+      && source.rendererStatus === 'ready'
+      && platform.supportsOfflineMapRendering?.();
+  }
+
+  _offlineLayerConfig(source) {
+    return {
+      cssClass: 'map-tiles-offline map-tiles-native',
+      provider: {
+        id: `offline-${source.id}`,
+        name: source.name || 'Offline map',
+        attribution: source.attribution || '',
+        homepage: null,
+        offlineTileExport: {
+          allowed: false,
+          reason: 'App 離線底圖暫不支援匯出為 .melmap 圖磚',
+        },
+      },
+      options: {
+        attribution: source.attribution || source.name || 'Offline map',
+        minZoom: source.minZoom ?? 0,
+        maxZoom: source.maxZoom ?? 22,
+      },
+    };
+  }
+
+  _createOfflineMapTileLayer(source, layerName) {
+    const config = this._offlineLayerConfig(source);
+    const OfflineMapTileLayer = L.GridLayer.extend({
+      createTile(coords, done) {
+        const tile = document.createElement('img');
+        tile.alt = '';
+        tile.setAttribute('role', 'presentation');
+        tile.decoding = 'async';
+        tile.src = TRANSPARENT_TILE_DATA_URL;
+        platform.getOfflineMapTile?.({
+          ...source.storage,
+          format: source.format,
+          tileMimeType: source.tileMimeType || '',
+          z: coords.z,
+          x: coords.x,
+          y: coords.y,
+        }).then((result) => {
+          tile.src = result?.dataUrl || TRANSPARENT_TILE_DATA_URL;
+          done(null, tile);
+        }).catch((err) => {
+          console.warn('Offline map tile read failed:', err);
+          tile.src = TRANSPARENT_TILE_DATA_URL;
+          done(null, tile);
+        });
+        return tile;
+      },
+    });
+
+    return new OfflineMapTileLayer({
+      ...config.options,
+      ...TILE_LAYER_PERFORMANCE_OPTIONS,
+      className: tileLayerClassName(layerName, config, this.currentTileTheme),
+      tileSize: 256,
+    });
   }
 
   /** Reset all waypoint markers to their resting z-index offset and remove

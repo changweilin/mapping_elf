@@ -16,7 +16,7 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 - Current verified debug AAB: `android/app/build/outputs/bundle/debug/app-debug.aab`
 - Current verified release AAB: `android/app/build/outputs/bundle/release/app-release.aab`
 - Current app version: `1.0.0` (`versionCode 1`)
-- Current verified result: `BUILD SUCCESSFUL` on 2026-05-19
+- Current verified result: `BUILD SUCCESSFUL` on 2026-05-25
 - Local build note: this Windows workspace uses an ignored `android/local.properties` with `sdk.dir=C:\tmp\android-sdk`.
 
 ## Local Device Availability Check
@@ -40,6 +40,10 @@ Use this checklist after `npm run android:build:debug` or an iOS simulator/devic
 | Network status | Toggle device airplane mode or network | File-management status updates online/offline. |
 | Haptics | Long-press or drag waypoint interactions | Device vibration happens where supported; no error where unsupported. |
 | Offline tiles | Export/import tile-enabled `.melmap`, then disable network | Cached tiles remain usable for the exported area; tile pack delete and clear-all work. |
+| Offline basemap import | In Android App, open `我的最愛 > 離線包`, tap `匯入底圖`, choose a Lu map/Rudy map `.map` or an `.mbtiles` file | The file is copied into app-private storage, appears in `App 離線底圖來源`, shows format/size/checksum metadata, and can be removed. |
+| MBTiles display | Import a small raster `.mbtiles`, then tap the source's use button | Map switches to the native offline MBTiles layer and shows tiles without network. Vector MBTiles should be rejected as unsupported for display. |
+| Mapsforge display | Import a Lu map/Rudy map Mapsforge `.map` file, then tap the source's use button | Map switches to the native offline Mapsforge layer and renders tiles without network. |
+| Web basemap guard | In a web build, open `我的最愛 > 離線包` | `匯入底圖` stays disabled and the list explains that web import is unsupported. |
 | OS backup | Check Android app backup settings where visible | Mapping Elf should not offer OS cloud backup for local route/cache data. |
 
 ## Release Readiness Gaps Mirrored In TODO.md

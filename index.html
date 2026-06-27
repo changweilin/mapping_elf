@@ -268,6 +268,12 @@
                 fill="currentColor" />
             </svg>
           </button>
+          <button class="icon-btn" id="btn-open-3d-viewer" title="建立 3D 地形" aria-label="建立 3D 地形" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path d="M21 5v14H3V5h18zm-2 2H5v3h14V7zm0 5H5v5h14v-5z" fill="currentColor" opacity="0.7"/>
+              <path d="M7 10l2-3h6l2 3-5 4-5-4z" fill="currentColor" opacity="0.9"/>
+            </svg>
+          </button>
           <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
@@ -615,6 +621,23 @@
                   <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor" />
                 </svg>
                 <span>清除全部圖磚</span>
+              </button>
+            </div>
+          </div>
+          <div class="offline-map-source-panel">
+            <div class="offline-panel-heading">
+              <div class="offline-panel-title">App 離線底圖來源</div>
+              <div class="offline-panel-note">魯地圖 .map / MBTiles</div>
+            </div>
+            <div class="offline-pack-list" id="offline-map-source-list" aria-live="polite">
+              <div class="offline-pack-empty">Web 版不支援魯地圖離線底圖匯入</div>
+            </div>
+            <div class="settings-actions-btn-row offline-pack-actions">
+              <button class="btn-secondary file-action-btn" id="btn-import-offline-map-source" title="匯入離線底圖來源">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                </svg>
+                <span>匯入底圖</span>
               </button>
             </div>
           </div>
@@ -1110,44 +1133,69 @@
   <!-- Save / Share Modal -->
   <div id="export-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 class="modal-title">匯出</h3>
-      <div class="export-options">
-        <label class="export-option">
+      <h3 class="modal-title">匯出與分享</h3>
+      <div class="export-section-label">分享方案</div>
+      <div class="export-options export-format-options">
+        <label class="export-option export-option-card">
           <input type="radio" name="export-fmt" value="gpx" checked>
-          <span>GPX <small>（GPS / 戶外 App，含天氣資訊）</small></span>
+          <span><strong>GPX</strong><small>給戶外 / GPS App，保留可匯入的軌跡與航點</small></span>
         </label>
-        <label class="export-option">
+        <label class="export-option export-option-card">
           <input type="radio" name="export-fmt" value="kml">
-          <span>KML <small>（Google Maps / Earth）</small></span>
+          <span><strong>KML</strong><small>給 Google Earth / 地圖工具，方便檢視路線與標註</small></span>
         </label>
-        <label class="export-option">
-          <input type="radio" name="export-fmt" value="all">
-          <span>GPX + KML <small>（同時匯出兩份）</small></span>
-        </label>
-        <label class="export-option">
+        <label class="export-option export-option-card">
           <input type="radio" name="export-fmt" value="melmap">
-          <span>.melmap 完整包 <small>（Mapping Elf 專用）</small></span>
+          <span><strong>.melmap</strong><small>給 Mapping Elf 完整還原路線、天氣、設定與離線包</small></span>
+        </label>
+        <label class="export-option export-option-card compact">
+          <input type="radio" name="export-fmt" value="all">
+          <span><strong>GPX + KML</strong><small>同時產出兩份通用格式</small></span>
         </label>
       </div>
+      <div class="export-section-label">內容 preset</div>
+      <div class="export-preset-grid" id="export-preset-options">
+        <label class="export-preset">
+          <input type="radio" name="export-preset" value="route-only">
+          <span>只分享路線</span>
+        </label>
+        <label class="export-preset">
+          <input type="radio" name="export-preset" value="with-weather" checked>
+          <span>含天氣</span>
+        </label>
+        <label class="export-preset">
+          <input type="radio" name="export-preset" value="with-settings">
+          <span>含設定</span>
+        </label>
+        <label class="export-preset">
+          <input type="radio" name="export-preset" value="with-offline">
+          <span>含離線包</span>
+        </label>
+      </div>
+      <div class="export-plan-summary" id="export-plan-summary" aria-live="polite"></div>
       <div class="export-name-entry" style="margin-top: 16px; padding: 0 4px;">
         <label for="export-filename-input"
           style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">路線名稱</label>
         <input type="text" id="export-filename-input" class="search-input" placeholder="輸入路線名稱..."
           style="width: 100%; box-sizing: border-box; height: 38px; font-size: 14px;">
       </div>
-      <div id="melmap-sub-options" class="export-options"
-        style="display:none; margin-left: 24px; border-left: 2px solid var(--border, #ccc); padding-left: 12px;">
+      <div id="melmap-sub-options" class="export-options melmap-detail-options"
+        style="display:none;">
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-route" checked>
-          <span>路線與航點 <small>（含高度與天氣）</small></span>
+          <span>路線與航點 <small>（含高度資料）</small></span>
+        </label>
+        <label class="export-option">
+          <input type="checkbox" id="mappack-inc-weather" checked>
+          <span>天氣資料 <small>（GPX/KML 擴充欄位與 Mapping Elf 天氣表）</small></span>
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-tiles" checked>
-          <span>離線地圖 <small id="mappack-tiles-info"></small></span>
+          <span>離線包 <small id="mappack-tiles-info"></small></span>
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-inc-state">
-          <span>我的設定 <small>（天氣快取、配速參數、UI 設定）</small></span>
+          <span>設定 <small>（配速參數、圖層、偏好與 UI 狀態）</small></span>
         </label>
       </div>
       <div class="modal-actions">
@@ -1160,7 +1208,7 @@
   <!-- Map Pack Import Modal -->
   <div id="mappack-import-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box">
-      <h3 class="modal-title">匯入離線地圖包</h3>
+      <h3 class="modal-title">匯入 .melmap</h3>
       <div class="export-options" id="mappack-import-options">
         <label class="export-option">
           <input type="checkbox" id="mappack-restore-route" checked>
@@ -1168,11 +1216,11 @@
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-restore-tiles" checked>
-          <span>圖磚 <small id="mappack-import-tiles-info"></small></span>
+          <span>離線包 <small id="mappack-import-tiles-info"></small></span>
         </label>
         <label class="export-option">
           <input type="checkbox" id="mappack-restore-state">
-          <span>個人偏好</span>
+          <span>設定與偏好</span>
         </label>
       </div>
       <div id="mappack-import-meta" style="font-size: 12px; color: var(--text-dim, #888); margin: 8px 0;"></div>
@@ -1200,6 +1248,176 @@
 
   <!-- Hidden file input for route / .melmap import -->
   <input type="file" id="gpx-file-input" accept=".gpx,.kml,.melmap,.zip" style="display:none" />
+
+  <!-- 3D Terrain Viewer -->
+  <div id="terrain-viewer" class="terrain-viewer-overlay hidden">
+    <div class="terrain-viewer-toolbar">
+      <div class="tv-title">
+        <div class="app-logo">
+          <img src="./simple_owl_cursor.svg" alt="" width="26" height="26" class="app-logo-icon owl-logo-simple" />
+          <span class="app-title">Mapping Elf</span>
+        </div>
+        <span class="tv-title-sub">3D 地形導航</span>
+      </div>
+      <div class="tv-toolbar-actions">
+        <label class="language-switcher tv-language-switcher" title="語言">
+          <span class="language-switcher-icon" aria-hidden="true">文</span>
+          <select id="tv-language-select" aria-label="語言"></select>
+        </label>
+        <button type="button" class="tv-theme-btn" id="tv-toggle-theme" title="切換深淺色（日／夜 UI 風格）">
+          <svg id="tv-icon-moon" viewBox="0 0 24 24" width="18" height="18" style="display: block;">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor" />
+          </svg>
+          <svg id="tv-icon-sun" viewBox="0 0 24 24" width="18" height="18" style="display: none;">
+            <circle cx="12" cy="12" r="5" fill="currentColor" />
+            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button type="button" class="tv-redraw-btn" id="tv-redraw-btn" title="重新繪製並更新日期／天氣">
+          <svg viewBox="0 0 24 24" width="16" height="16">
+            <path d="M17.65 6.35A7.95 7.95 0 0012 4a8 8 0 108 8h-2a6 6 0 11-1.76-4.24L13 11h7V4l-2.35 2.35z" fill="currentColor"/>
+          </svg>
+          <span>更新</span>
+        </button>
+        <button type="button" class="tv-close-btn" id="tv-close-btn" title="關閉">
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="terrain-viewer-canvas-wrap" id="terrain-canvas-wrap">
+      <!-- Track + waypoint info panel -->
+      <div class="tv-info-panel" id="tv-info-panel">
+        <button class="tv-panel-header" id="tv-info-collapse" title="收合/展開" aria-expanded="true">
+          <span class="tv-panel-header-title">路線資訊</span>
+          <svg class="tv-panel-chevron" viewBox="0 0 24 24" width="16" height="16"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
+        </button>
+        <div class="tv-info-body" id="tv-info-body">
+          <div class="tv-info-section">
+            <div class="tv-stat-grid" id="tv-route-stats"></div>
+          </div>
+          <div class="tv-info-section">
+            <div class="tv-info-title">航點 <span class="tv-wp-count" id="tv-wp-count"></span></div>
+            <ol class="tv-wp-list" id="tv-wp-list"></ol>
+          </div>
+        </div>
+      </div>
+      <!-- Marker detail popup (waypoints / landmarks) -->
+      <div class="tv-marker-detail hidden" id="tv-marker-detail">
+        <button class="tv-marker-detail-close" id="tv-marker-detail-close" title="關閉" aria-label="關閉">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>
+        </button>
+        <div class="tv-marker-detail-body" id="tv-marker-detail-body"></div>
+      </div>
+      <!-- Layer toggle controls -->
+      <div class="tv-layer-controls">
+        <button class="tv-layer-btn active" id="tv-toggle-contour" title="等高線精度（高/低/無）" data-contour-state="high">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 14c3-4 6-4 9 0s6 4 9 0M3 9c3-4 6-4 9 0s6 4 9 0M3 19c3-4 6-4 9 0s6 4 9 0" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span id="tv-contour-label">等高線·高</span>
+        </button>
+        <button class="tv-layer-btn active" id="tv-toggle-contour-labels" title="高程標記">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 17h16M4 7h10" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="14" y="11" font-size="9" fill="currentColor">m</text></svg>
+          <span>高程</span>
+        </button>
+        <button class="tv-layer-btn active" id="tv-toggle-weather" title="天氣標記">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 16a4 4 0 010-8 5 5 0 019.6 1.5A3.5 3.5 0 0117 16H7z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span>天氣</span>
+        </button>
+        <button class="tv-layer-btn active" id="tv-toggle-daynight" title="日夜光照">
+          <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span>日夜</span>
+        </button>
+        <button class="tv-layer-btn active" id="tv-toggle-weatherfx" title="天氣特效">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 14a4 4 0 010-8 5 5 0 019.6 1.5A3.5 3.5 0 0117 14H7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 17l-1 3M12 17l-1 3M16 17l-1 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span>特效</span>
+        </button>
+        <button class="tv-layer-btn active" id="tv-toggle-features" title="地圖圖資（道路／河流／水體／綠地／荒地／建築）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 7l6-2 6 2 6-2v12l-6 2-6-2-6 2V7z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 5v12M15 7v12" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span>圖資</span>
+        </button>
+        <button class="tv-layer-btn" id="tv-toggle-labelsize" title="標示字體（關／大／小）— 快捷鍵 L">
+          <svg viewBox="0 0 24 24" width="14" height="14"><text x="2" y="18" font-size="15" fill="currentColor">A</text><text x="13" y="18" font-size="10" fill="currentColor">a</text></svg>
+          <span id="tv-labelsize-label">字體·關</span>
+        </button>
+        <button class="tv-layer-btn" id="tv-toggle-view" title="視角切換（垂直俯視／45°，正北方朝上）" data-view-state="top">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 3l9 5-9 5-9-5 9-5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 2.4V6M12 2.4l-1.6 1.8M12 2.4l1.6 1.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12l9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" opacity="0.6"/></svg>
+          <span id="tv-view-label">俯視</span>
+        </button>
+        <button class="tv-layer-btn" id="tv-toggle-normalize" title="海拔高度歸一化（誇大地形起伏，讓平緩地形更立體）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 20l5-9 4 5 3-4 6 8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M20 3v7M20 3l-1.6 1.8M20 3l1.6 1.8M20 10l-1.6-1.8M20 10l1.6-1.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="tv-normalize-label">歸一</span>
+        </button>
+      </div>
+      <!-- Position-driven live readout (date/time, mileage, altitude, speed, grade, fatigue, weather) -->
+      <div class="tv-live-hud" id="tv-live-hud">
+        <button class="tv-panel-header" id="tv-hud-collapse" title="收合/展開" aria-expanded="true">
+          <span class="tv-panel-header-title">人物資訊</span>
+          <svg class="tv-panel-chevron" viewBox="0 0 24 24" width="16" height="16"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
+        </button>
+        <div class="tv-hud-body" id="tv-hud-body">
+        <div class="tv-hud-head">
+          <div class="tv-hud-time">
+            <span class="tv-hud-clock" id="tv-hud-clock">--:--</span>
+            <span class="tv-hud-date" id="tv-hud-date">—</span>
+          </div>
+          <div class="tv-hud-weather" id="tv-hud-weather">
+            <span class="tv-hud-wx-icon" id="tv-hud-wx-icon"></span>
+            <span class="tv-hud-wx-temp" id="tv-hud-wx-temp"></span>
+          </div>
+        </div>
+        <div class="tv-hud-stats">
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">里程</span><span class="tv-hud-stat-value" id="tv-hud-dist">—</span></div>
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">海拔</span><span class="tv-hud-stat-value" id="tv-hud-elev">—</span></div>
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">速度</span><span class="tv-hud-stat-value" id="tv-hud-speed">—</span></div>
+          <div class="tv-hud-stat"><span class="tv-hud-stat-label">坡度</span><span class="tv-hud-stat-value" id="tv-hud-grade">—</span></div>
+        </div>
+        <div class="tv-hud-fatigue" id="tv-hud-fatigue-row">
+          <span class="tv-hud-stat-label">疲勞</span>
+          <div class="tv-hud-fatigue-bar"><div class="tv-hud-fatigue-fill" id="tv-hud-fatigue-fill"></div></div>
+          <span class="tv-hud-fatigue-pct" id="tv-hud-fatigue-pct">—</span>
+        </div>
+        </div>
+      </div>
+      <!-- Loading overlay (terrain computation) -->
+      <div class="tv-loading-overlay hidden" id="tv-loading" aria-live="polite">
+        <div class="tv-loading-card">
+          <div class="tv-loading-spinner" aria-hidden="true">
+            <svg viewBox="0 0 50 50" width="44" height="44">
+              <circle class="tv-loading-track" cx="25" cy="25" r="20" fill="none" stroke-width="4"/>
+              <circle class="tv-loading-arc" cx="25" cy="25" r="20" fill="none" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="tv-loading-title" id="tv-loading-title">建立地形模型</div>
+          <div class="tv-loading-detail" id="tv-loading-detail">下載高程資料中…</div>
+          <div class="loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="loading-bar-fill tv-loading-fill" id="tv-loading-fill" style="width:0%"></div>
+          </div>
+          <div class="tv-loading-percent" id="tv-loading-percent">0%</div>
+          <button class="tv-loading-abort" id="tv-loading-abort">終止</button>
+        </div>
+      </div>
+    </div>
+    <div class="terrain-player-bar">
+      <button class="tp-btn" id="tp-play" title="播放/暫停">
+        <svg id="tp-play-icon" viewBox="0 0 24 24" width="18" height="18">
+          <path d="M8 5v14l11-7z" fill="currentColor"/>
+        </svg>
+        <svg id="tp-pause-icon" viewBox="0 0 24 24" width="18" height="18" style="display:none">
+          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" fill="currentColor"/>
+        </svg>
+      </button>
+      <button class="tp-speed-btn" data-speed="0.25">0.25x</button>
+      <button class="tp-speed-btn" data-speed="0.5">0.5x</button>
+      <button class="tp-speed-btn active" data-speed="1">1x</button>
+      <button class="tp-speed-btn" data-speed="2">2x</button>
+      <button class="tp-speed-btn" data-speed="4">4x</button>
+      <input type="range" class="tp-slider" id="tp-slider" min="0" max="1" step="0.001" value="0">
+      <span class="tp-label" id="tp-progress-label">0%</span>
+      <span class="tp-time" id="tp-time-label">--</span>
+    </div>
+  </div>
 
   <script type="module" src="./src/main.js"></script>
 </body>

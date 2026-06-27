@@ -18,6 +18,11 @@ export default defineConfig(({ mode }) => ({
               priority: 20,
             },
             {
+              name: 'three',
+              test: /node_modules[\\/]three/,
+              priority: 25,
+            },
+            {
               name: 'zip',
               test: /node_modules[\\/]jszip/,
               priority: 20,

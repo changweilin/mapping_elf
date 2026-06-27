@@ -1,6 +1,6 @@
 # Offline Tile Strategy
 
-Reviewed: 2026-05-20
+Reviewed: 2026-05-25
 
 > Management note: technical boundaries stay here, but release status, provider-term blockers, and next actions are centralized in [`../TODO.md`](../TODO.md).
 
@@ -11,6 +11,8 @@ This note turns the pre-app optimization offline-map item into an implementation
 - Offline tiles live in the Cache API cache named `mapping-elf-tiles`.
 - `.melmap` export can include route GPX and allow-listed `localStorage` state. Raster tile export is implemented, but the bundled public providers are currently disabled for public release until offline redistribution permission is confirmed.
 - `.melmap` route/state export stays available for every map layer, but tile export is disabled when the current provider is outside the offline export allow-list.
+- Native app offline basemap imports are managed separately from `.melmap`: Android can register copied Mapsforge `.map` and MBTiles files in the Cache API index named `mapping-elf-offline-map-sources`; web builds expose the registry state but do not enable import.
+- Android can render raster MBTiles and Mapsforge `.map` sources through the native `OfflineMaps.getOfflineMapTile` bridge and a Leaflet `GridLayer`. Vector MBTiles remain marked `unsupported-vector-tiles`.
 - Tile exports use the route bounds padded by 5%, then enumerate zoom levels from `8` through `min(17, layerInfo.maxZoom)` until the 8000-tile cap is reached.
 - Exported tile files are stored as `tiles/{layer}/{z}/{x}/{y}.png`.
 - Import restores tiles into `mapping-elf-tiles` and expands subdomain/retina URL variants so Leaflet can hit the cache regardless of the chosen subdomain.
@@ -27,6 +29,8 @@ Relevant code:
 - `src/modules/mapPackImporter.js`: manifest validation, tile restore, subdomain expansion.
 - `src/modules/offlineTileIndex.js`: Cache API pack index, pack add/delete helpers, shared cache names.
 - `src/modules/offlineManager.js`: service worker registration, cache count display, full cache clearing.
+- `src/modules/offlineMapSourceIndex.js`: app-only offline basemap source registry for native imports.
+- `android/app/src/main/java/com/mappingelf/app/OfflineMapsPlugin.java`: Android document-picker bridge that copies `.map` and `.mbtiles` files into app-private storage, reads raster MBTiles tiles through SQLite, and renders Mapsforge `.map` tiles through Mapsforge's Android renderer.
 
 ## Size Estimation
 
@@ -126,3 +130,41 @@ Source checks used for this note:
 - `.melmap` manifest includes attribution/provider metadata when tiles are included.
 - If a provider is not allow-listed for offline export, keep route/state export enabled but disable the tile checkbox with a clear reason. This is now implemented for the bundled streets, topo, and satellite layers.
 - Re-check provider terms before each store release that changes map layers or offline behavior.
+
+## Native Basemap Source Imports
+
+This is distinct from `.melmap` tile packs. `.melmap` remains a route/state/share format and must not embed full-size third-party basemap files such as Lu map/Rudy map `.map` files.
+
+Current contract:
+
+```json
+{
+  "version": 1,
+  "sources": {
+    "offline-map-mapsforge-example": {
+      "source": "native-import",
+      "platform": "android",
+      "name": "MOI_OSM_Taiwan_TOPO_Lite.map",
+      "format": "mapsforge",
+      "rendererStatus": "ready",
+      "tileMimeType": "image/png",
+      "storage": {
+        "kind": "app-private-file",
+        "relativePath": "offline_maps/MOI_OSM_Taiwan_TOPO_Lite.map"
+      },
+      "file": {
+        "sizeBytes": 123456789,
+        "checksumSha256": "..."
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- Android import copies selected `.map` or `.mbtiles` files into app-private `offline_maps/` storage and records size/checksum metadata.
+- Web import stays disabled because browsers cannot reliably persist and render these native basemap files.
+- Raster MBTiles imports are marked `ready` and can be activated as a native offline Leaflet layer. Vector MBTiles are marked `unsupported-vector-tiles`.
+- Mapsforge `.map` imports are marked `ready` on Android and render as PNG tiles through a cached native Mapsforge renderer.
+- Deleting a source should remove both the registry entry and the app-private file when native storage is available.

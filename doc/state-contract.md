@@ -29,6 +29,7 @@ Not exported in `.melmap` state:
 - `mappingElf_waypoints`, `mappingElf_waypointIds`, and `mappingElf_importedTrack`; route geometry is exported through `route.gpx`.
 - `mappingElf_pendingGpx`; this is an internal reload bridge.
 - `mappingElf_favorites`; favorites are a user collection and should not be overwritten by route packs.
+- Native offline basemap sources; Android `.map` / `.mbtiles` imports are indexed in Cache API storage (`mapping-elf-offline-map-sources`) and are not `.melmap` route/share state.
 
 ## Key Groups
 
@@ -76,9 +77,17 @@ Not exported in `.melmap` state:
 | Session | `mappingElf_pendingGpx` | GPX XML string | none | no | yes |
 | User collection | `mappingElf_favorites` | JSON favorite route list | `[]` | no | no |
 
+## Non-localStorage Durable Indexes
+
+| Index | Storage | Format | Default/Fallback | `.melmap` | Reset |
+| --- | --- | --- | --- | --- | --- |
+| Offline tile packs | Cache API `mapping-elf-tile-index` | JSON `{ version, packs }` | empty index | no | clear only through offline cache controls |
+| Native offline basemap sources | Cache API `mapping-elf-offline-map-sources` | JSON `{ version, sources }`; source records include `format`, app-private storage path, size, checksum, zoom range, tile MIME type, and renderer status. Android Mapsforge `.map` and raster MBTiles sources use `rendererStatus: "ready"`; vector MBTiles use `unsupported-vector-tiles`. | empty index; web import disabled | no | no |
+
 ## Import And Reset Rules
 
 - `.melmap` import may restore `state.json` only through `MELMAP_STATE_KEYS`.
 - `.melmap` route restore should use `route.gpx` and the regular GPX importer, not raw route-session keys.
 - Reset defaults clears `RESET_STATE_KEYS`; favorites remain intact.
+- Reset defaults does not delete offline tile packs or native offline basemap sources; those remain explicit file-management actions.
 - Any new durable key must be added to exactly one group in `STATE_KEY_GROUPS`, then evaluated for `.melmap` export and reset behavior.
