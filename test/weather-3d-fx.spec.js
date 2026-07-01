@@ -22,6 +22,15 @@ async function mockElevation(page) {
   });
 }
 
+// Empty 圖資 (map features) so the background download resolves fast — the
+// loading indicator now continues through this phase (see terrain-3d.spec.js),
+// so leaving Overpass unmocked would make #tv-loading-hidden waits slow/flaky.
+async function mockFeatures(page) {
+  await page.route(/\/interpreter\?/, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elements: [] }) });
+  });
+}
+
 // Forecast whose hourly weather codes cycle through every visual category, so the
 // route's weather points build a mix of 3D rigs — sun, cloud, fog, drizzle, rain,
 // snow and (crucially) thunder, exercising the lightning/flash path.
@@ -66,6 +75,7 @@ test('3D weather: volumetric rigs build, animate and rebuild without errors', as
   page.on('console', (msg) => { if (msg.type() === 'error') pageErrors.push(msg.text()); });
 
   await mockElevation(page);
+  await mockFeatures(page);
   const serve = (r) => r.fulfill({ json: variedWeatherPayload(r.request().url()) });
   await page.route(/api\.open-meteo\.com\/v1\/forecast/, serve);
   await page.route(/archive-api\.open-meteo\.com\/v1\/archive/, serve);
@@ -121,14 +131,19 @@ test('3D weather: volumetric rigs build, animate and rebuild without errors', as
   });
   expect(nonBg).toBeGreaterThan(0);
 
-  // Toggling 天氣特效 off then on flips rig visibility (exercises the visibility path).
-  const fx = page.locator('#tv-toggle-weatherfx');
-  await expect(fx).toBeEnabled();
-  await fx.click();
-  await expect(fx).not.toHaveClass(/active/);
+  // Cycling 天氣 through its animation states (on → noAnim → off → on) flips the
+  // volumetric rigs' visibility (exercises the same path the old 天氣特效 toggle
+  // used to, now decoupled from the 地標裝飾/效果 button).
+  const weatherBtn = page.locator('#tv-toggle-weather');
+  const weatherLabel = page.locator('#tv-weather-label');
+  await expect(weatherBtn).toBeEnabled();
+  await expect(weatherLabel).toHaveText('天氣·開');
+  await weatherBtn.click(); // on -> noAnim: rigs stop animating
+  await expect(weatherLabel).toHaveText('天氣·靜態');
   await page.waitForTimeout(300);
-  await fx.click();
-  await expect(fx).toHaveClass(/active/);
+  await weatherBtn.click(); // noAnim -> off
+  await weatherBtn.click(); // off -> on: rigs reappear
+  await expect(weatherLabel).toHaveText('天氣·開');
   await page.waitForTimeout(300);
 
   // 海拔歸一化 forces an in-place rebuild → disposes the old rigs and grows fresh

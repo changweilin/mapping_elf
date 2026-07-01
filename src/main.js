@@ -1994,8 +1994,9 @@ const tvToggleContour = document.getElementById('tv-toggle-contour');
 const tvContourLabel = document.getElementById('tv-contour-label');
 const tvToggleContourLabels = document.getElementById('tv-toggle-contour-labels');
 const tvToggleWeather = document.getElementById('tv-toggle-weather');
+const tvWeatherLabel = document.getElementById('tv-weather-label');
 const tvToggleDaynight = document.getElementById('tv-toggle-daynight');
-const tvToggleWeatherFx = document.getElementById('tv-toggle-weatherfx');
+const tvToggleEffects = document.getElementById('tv-toggle-effects');
 const tvToggleFeatures = document.getElementById('tv-toggle-features');
 const tvToggleLabelSize = document.getElementById('tv-toggle-labelsize');
 const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
@@ -2026,9 +2027,6 @@ const tvLoadingDetail = document.getElementById('tv-loading-detail');
 const tvLoadingFill = document.getElementById('tv-loading-fill');
 const tvLoadingPercent = document.getElementById('tv-loading-percent');
 const tvLoadingAbort = document.getElementById('tv-loading-abort');
-const tvFeaturesProgress = document.getElementById('tv-features-progress');
-const tvFeaturesProgressFill = document.getElementById('tv-features-progress-fill');
-const tvFeaturesProgressPercent = document.getElementById('tv-features-progress-percent');
 
 let terrainViewer = null;
 // True while the toolbar "更新" rebuild is running. A redraw must never kick the
@@ -2053,17 +2051,28 @@ let terrainLastLoadOk = true;
 const LS_TERRAIN_CACHE_KEY = 'mappingElf_terrain3dCache';
 const TERRAIN_ROUTE_CACHE_MAX = 8;
 
+// The downloaded vector map features (圖資: roads/rivers/water/land cover/
+// buildings) are cached separately via the Cache API instead of localStorage —
+// a dense urban bbox easily produces a multi-MB payload that would blow past
+// localStorage's ~5 MB quota (and used to be skipped outright past 1.5 MB), so
+// reopening the 3D page would silently re-hit Overpass every time. The Cache
+// API shares the browser's much larger storage-quota budget, so 圖資 now
+// reliably survives a page reload/reopen.
+const TERRAIN_FEATURES_CACHE_NAME = 'mapping-elf-terrain3d-features-v1';
+const TERRAIN_FEATURES_URL_PREFIX = 'https://mapping-elf.local/terrain-features/';
+
 // --- 3D viewer display settings (persisted across reloads) ----------------
 // The top-right display toggles (等高線/高程/天氣/日夜/特效/圖資/字體) plus the new
 // 海拔歸一化 toggle are remembered so reopening or reloading the 3D page keeps the
 // user's chosen look instead of snapping back to defaults.
 const LS_TERRAIN_DISPLAY_KEY = 'mappingElf_terrain3dDisplay';
+const TERRAIN_WEATHER_STATES = ['on', 'noAnim', 'off'];
 const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
   contour: 'high',        // high | low | none
   contourLabels: true,
-  weather: true,
+  weather: 'on',          // on (hints+動畫) | noAnim (hints only) | off (all off)
   daynight: true,
-  weatherfx: true,
+  effects: true,          // 地標裝飾（峰頂／樹木／高塔／觀景點／紀念碑模型）
   features: true,
   labelSize: 'none',      // none | large | small
   elevNormalized: false,
@@ -2075,7 +2084,14 @@ function loadTerrainDisplaySettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_TERRAIN_DISPLAY_KEY) || '{}');
     if (!saved || typeof saved !== 'object') return { ...TERRAIN_DISPLAY_DEFAULTS };
-    return { ...TERRAIN_DISPLAY_DEFAULTS, ...saved };
+    const merged = { ...TERRAIN_DISPLAY_DEFAULTS, ...saved };
+    // Migrate the pre-3-state boolean 天氣 toggle and the old 特效(weatherfx,
+    // which used to also drive weather animation) flag.
+    if (typeof saved.weather === 'boolean') merged.weather = saved.weather ? 'on' : 'off';
+    if (!TERRAIN_WEATHER_STATES.includes(merged.weather)) merged.weather = 'on';
+    if (saved.effects === undefined && typeof saved.weatherfx === 'boolean') merged.effects = saved.weatherfx;
+    delete merged.weatherfx;
+    return merged;
   } catch { return { ...TERRAIN_DISPLAY_DEFAULTS }; }
 }
 
@@ -2099,39 +2115,56 @@ function getTerrainCacheEntry(key) {
   return null;
 }
 
+// Cache-API-backed 圖資 store, keyed the same way as the grid cache above.
+async function loadTerrainFeaturesEntry(key) {
+  if (!key || !('caches' in window)) return null;
+  try {
+    const cache = await caches.open(TERRAIN_FEATURES_CACHE_NAME);
+    const resp = await cache.match(TERRAIN_FEATURES_URL_PREFIX + encodeURIComponent(key));
+    if (!resp) return null;
+    return await resp.json();
+  } catch { return null; }
+}
+
+// Persist the downloaded vector map features so reopening the same route/
+// favourite doesn't re-hit Overpass. Only attached once a grid entry exists for
+// the key (a features-only entry with no terrain to drape onto is useless).
+async function saveTerrainFeaturesEntry(key, features) {
+  if (!key || !features || !('caches' in window)) return;
+  if (!loadTerrainCache()[key]) return;
+  try {
+    const cache = await caches.open(TERRAIN_FEATURES_CACHE_NAME);
+    const body = JSON.stringify(features);
+    await cache.put(TERRAIN_FEATURES_URL_PREFIX + encodeURIComponent(key), new Response(body, {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  } catch { /* storage full / unsupported — 圖資 just re-downloads next time */ }
+}
+
+async function clearTerrainFeaturesEntry(key) {
+  if (!key || !('caches' in window)) return;
+  try {
+    const cache = await caches.open(TERRAIN_FEATURES_CACHE_NAME);
+    await cache.delete(TERRAIN_FEATURES_URL_PREFIX + encodeURIComponent(key));
+  } catch { /* noop */ }
+}
+
 function pruneTerrainCache(cache) {
   const validFavKeys = new Set(favorites.map((f) => `fav:${f.id}`));
   Object.keys(cache).forEach((k) => {
-    if (k.startsWith('fav:') && !validFavKeys.has(k)) delete cache[k];
+    if (k.startsWith('fav:') && !validFavKeys.has(k)) { delete cache[k]; clearTerrainFeaturesEntry(k); }
   });
   const routeKeys = Object.keys(cache)
     .filter((k) => k.startsWith('route:'))
     .sort((a, b) => (cache[b].savedAt || 0) - (cache[a].savedAt || 0));
-  routeKeys.slice(TERRAIN_ROUTE_CACHE_MAX).forEach((k) => delete cache[k]);
+  routeKeys.slice(TERRAIN_ROUTE_CACHE_MAX).forEach((k) => { delete cache[k]; clearTerrainFeaturesEntry(k); });
 }
 
 function saveTerrainCacheEntry(key, grid, bbox) {
   if (!key || !Array.isArray(grid) || !bbox) return;
   const cache = loadTerrainCache();
-  const prev = cache[key] || {};
-  cache[key] = { grid, bbox, features: prev.features, savedAt: Date.now() };
+  cache[key] = { grid, bbox, savedAt: Date.now() };
   pruneTerrainCache(cache);
-  try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
-}
-
-// Persist the downloaded vector map features alongside the cached terrain grid so
-// reopening the same route doesn't re-hit Overpass. Skipped if the payload is too
-// big for localStorage to keep comfortably (the model still works without it).
-function saveTerrainFeaturesEntry(key, features) {
-  if (!key || !features) return;
-  let json;
-  try { json = JSON.stringify(features); } catch { return; }
-  if (!json || json.length > 1_500_000) return; // ~1.5 MB guard
-  const cache = loadTerrainCache();
-  const prev = cache[key];
-  if (!prev) return; // only attach to an existing terrain entry
-  prev.features = features;
-  prev.savedAt = Date.now();
   try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
 }
 
@@ -2142,6 +2175,7 @@ function clearTerrainCacheEntry(key) {
     delete cache[key];
     try { localStorage.setItem(LS_TERRAIN_CACHE_KEY, JSON.stringify(cache)); } catch (_) { }
   }
+  clearTerrainFeaturesEntry(key);
 }
 
 // Stable cache key for the current/imported route, derived from its waypoints
@@ -2182,14 +2216,24 @@ function terrainContentSignature(cacheKey, routeData) {
   return [cacheKey || '', String(routeData.timing?.startMs ?? ''), `n${coords.length}`, first, last, wxSig].join('#');
 }
 
+// tv-busy locks the panels/toolbar (pointer-events) for the blocking part of a
+// build. The 圖資 phase runs with blocking:false (see handleTerrainLoadState)
+// so it never engages this lock — the model stays interactive throughout.
 function setTerrainBusy(busy) {
   terrainViewerEl?.classList.toggle('tv-busy', busy);
-  tvLoading?.classList.toggle('hidden', !busy);
 }
 
+// Single progress readout for the whole 3D build: elevation download + mesh/
+// contour build (blocking, full-screen) continues seamlessly into the
+// background 圖資 (map features) download (non-blocking, small pill) via the
+// same bar instead of resetting into a second widget — driven by
+// state.blocking from terrainViewer's unified onLoad channel.
 function handleTerrainLoadState(state) {
   if (state.active) {
-    setTerrainBusy(true);
+    const blocking = state.blocking !== false;
+    setTerrainBusy(blocking);
+    tvLoading?.classList.remove('hidden');
+    tvLoading?.classList.toggle('tv-loading-bg', !blocking);
     const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
     if (tvLoadingFill) tvLoadingFill.style.width = `${pct}%`;
     if (tvLoadingPercent) tvLoadingPercent.textContent = `${pct}%`;
@@ -2201,6 +2245,8 @@ function handleTerrainLoadState(state) {
   }
   // Finished, aborted, or errored.
   setTerrainBusy(false);
+  tvLoading?.classList.add('hidden');
+  tvLoading?.classList.remove('tv-loading-bg');
   terrainLastLoadOk = !state.aborted && !state.error;
   if (state.aborted) {
     // A failed/aborted *refresh* keeps the existing model on screen; only the
@@ -2211,22 +2257,6 @@ function handleTerrainLoadState(state) {
     if (!terrainRefreshing) closeTerrainViewer();
     showNotification('3D 地形載入失敗: ' + (state.error.message || ''), 'error');
   }
-}
-
-// Background 圖資 (map features: 道路／河流／水體／建築／地標) download progress —
-// unlike handleTerrainLoadState's full-screen overlay, this is a small corner
-// pill since the terrain model is already interactive while 圖資 re-downloads
-// (on first open and on every 更新 redraw).
-function handleTerrainFeaturesProgress(state) {
-  if (!tvFeaturesProgress) return;
-  const active = !!state?.active;
-  tvFeaturesProgress.classList.toggle('hidden', !active);
-  if (!active) return;
-  const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
-  if (tvFeaturesProgressFill) tvFeaturesProgressFill.style.width = `${pct}%`;
-  if (tvFeaturesProgressPercent) tvFeaturesProgressPercent.textContent = `${pct}%`;
-  const bar = tvFeaturesProgress.querySelector('.loading-bar');
-  if (bar) bar.setAttribute('aria-valuenow', String(pct));
 }
 
 function tvEscapeHtml(str) {
@@ -2506,6 +2536,15 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       })
       .filter((pt) => pt.weatherCode != null);
 
+    // Grid/bbox live in localStorage; 圖資 (map features) live in the Cache API
+    // (see saveTerrainFeaturesEntry) since they can be much larger — merge them
+    // back into one cachedTerrain object for loadRouteData.
+    let cachedTerrain = opts.forceRebuild ? null : getTerrainCacheEntry(cacheKey);
+    if (cachedTerrain) {
+      const cachedFeatures = await loadTerrainFeaturesEntry(cacheKey);
+      if (cachedFeatures) cachedTerrain = { ...cachedTerrain, features: cachedFeatures };
+    }
+
     const routeData = {
       coords: routeCoords,
       elevations: routeElevs,
@@ -2516,7 +2555,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       // A forced rebuild (the toolbar 更新) ignores the cached elevation grid +
       // 圖資 so the refresh genuinely re-downloads and re-runs the build from the
       // start instead of replaying the cached scene from ~90%.
-      cachedTerrain: opts.forceRebuild ? null : getTerrainCacheEntry(cacheKey),
+      cachedTerrain,
       timing: buildTerrainTiming(routeCoords, routeElevs),
       preserveView: !!opts.preserveView,
       // Bake the persisted normalization preference into the first build so the
@@ -2569,7 +2608,6 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       applyTerrainDisplayToViewer();
       updateTerrainToggleAvailability();
     });
-    terrainViewer.onFeaturesProgress((state) => handleTerrainFeaturesProgress(state));
 
     renderTerrainInfoPanel(routeData);
     // Apply the persisted display settings to the toolbar buttons + the prefs the
@@ -2593,6 +2631,8 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
   } catch (err) {
     console.error('3D viewer error:', err);
     setTerrainBusy(false);
+    tvLoading?.classList.add('hidden');
+    tvLoading?.classList.remove('tv-loading-bg');
     showNotification('3D 地形載入失敗: ' + (err.message || ''), 'error');
   }
 }
@@ -2604,7 +2644,8 @@ function closeTerrainViewer() {
     terrainViewer.hide();
   }
   setTerrainBusy(false);
-  tvFeaturesProgress?.classList.add('hidden');
+  tvLoading?.classList.add('hidden');
+  tvLoading?.classList.remove('tv-loading-bg');
   terrainViewerEl.classList.add('hidden');
   closeTerrainExportMenu();
   updateTerrainPlayerUI();
@@ -2806,6 +2847,28 @@ function applyTerrainContourState(state) {
   saveTerrainDisplaySettings();
 }
 
+// 天氣 button cycles 3 states: on (hints + 動畫) → noAnim (hints only) → off (all
+// off) → on. Replaces the old pair of independent 天氣/特效 booleans — 特效 no
+// longer touches weather at all (see applyTerrainEffectsState below).
+const TERRAIN_WEATHER_LABELS = { on: '天氣·開', noAnim: '天氣·靜態', off: '天氣·關' };
+let terrainWeatherState = 'on';
+
+function applyTerrainWeatherState(state) {
+  terrainWeatherState = TERRAIN_WEATHER_STATES.includes(state) ? state : 'on';
+  const hintsVisible = terrainWeatherState !== 'off';
+  const animEnabled = terrainWeatherState === 'on';
+  if (tvWeatherLabel) tvWeatherLabel.textContent = TERRAIN_WEATHER_LABELS[terrainWeatherState];
+  if (tvToggleWeather) {
+    tvToggleWeather.dataset.weatherState = terrainWeatherState;
+    tvToggleWeather.classList.toggle('active', hintsVisible);
+    tvToggleWeather.classList.toggle('tv-weather-off', !hintsVisible);
+  }
+  terrainViewer?.setWeatherVisible(hintsVisible);
+  terrainViewer?.setWeatherAnimEnabled(animEnabled);
+  terrainDisplaySettings.weather = terrainWeatherState;
+  saveTerrainDisplaySettings();
+}
+
 // Grey out layer toggles that can't do anything for the current route (no
 // weather points, clear-sky only, or no major-contour elevation labels) so a
 // no-op toggle doesn't look broken. Day/night always has an effect, so it stays.
@@ -2815,19 +2878,18 @@ function updateTerrainToggleAvailability() {
   const hasWeather = terrainViewer.hasWeatherData?.() ?? false;
   if (tvToggleWeather) {
     tvToggleWeather.disabled = !hasWeather;
-    tvToggleWeather.title = hasWeather ? '天氣標記' : '此路線沒有天氣標記';
+    tvToggleWeather.title = hasWeather ? '天氣（循環：開啟→關閉動畫→關閉提示）' : '此路線沒有天氣標記';
   }
 
-  // 特效 drives the animated weather marker icons (plus rain/snow/fog/sky for
-  // non-clear weather) AND declutters the point-landmark models (peaks/trees/
-  // towers/viewpoints), so it's usable whenever either exists — only a route
-  // with neither weather data nor landmarks leaves it with nothing to toggle.
+  // 特效 purely declutters the point-landmark models (peaks/trees/towers/
+  // viewpoints/monuments) — independent of weather — so it's only usable when
+  // this route actually has landmarks.
   const hasLandmarks = terrainViewer.hasLandmarks?.() ?? false;
-  if (tvToggleWeatherFx) {
-    tvToggleWeatherFx.disabled = !hasWeather && !hasLandmarks;
-    tvToggleWeatherFx.title = (hasWeather || hasLandmarks)
-      ? '特效（立體天氣現象：雲／雨／雪／霧／雷電＋地標模型）'
-      : '此路線沒有天氣資料或地標，無特效可顯示';
+  if (tvToggleEffects) {
+    tvToggleEffects.disabled = !hasLandmarks;
+    tvToggleEffects.title = hasLandmarks
+      ? '地標裝飾（峰頂／樹木／高塔／觀景點／紀念碑模型）'
+      : '此區域沒有地標可顯示';
   }
 
   const hasLabels = terrainViewer.hasContourLabels?.() ?? false;
@@ -2863,9 +2925,15 @@ function syncTerrainDisplayToggleUI() {
   }
   tvToggleContourLabels?.classList.toggle('active', !!s.contourLabels);
   if (tvToggleContourLabels) tvToggleContourLabels.disabled = terrainContourState === 'none';
-  tvToggleWeather?.classList.toggle('active', !!s.weather);
+  terrainWeatherState = TERRAIN_WEATHER_STATES.includes(s.weather) ? s.weather : 'on';
+  if (tvWeatherLabel) tvWeatherLabel.textContent = TERRAIN_WEATHER_LABELS[terrainWeatherState];
+  if (tvToggleWeather) {
+    tvToggleWeather.dataset.weatherState = terrainWeatherState;
+    tvToggleWeather.classList.toggle('active', terrainWeatherState !== 'off');
+    tvToggleWeather.classList.toggle('tv-weather-off', terrainWeatherState === 'off');
+  }
   tvToggleDaynight?.classList.toggle('active', !!s.daynight);
-  tvToggleWeatherFx?.classList.toggle('active', !!s.weatherfx);
+  tvToggleEffects?.classList.toggle('active', !!s.effects);
   tvToggleFeatures?.classList.toggle('active', !!s.features);
   tvToggleAbsolute?.classList.toggle('active', !!s.absElev);
   tvToggleTrail?.classList.toggle('active', !!s.trailReveal);
@@ -2886,9 +2954,10 @@ function applyTerrainDisplayToViewer() {
   const s = terrainDisplaySettings;
   terrainViewer.setContourPrecision(terrainContourState);
   terrainViewer.setContourLabelsVisible(!!s.contourLabels);
-  terrainViewer.setWeatherVisible(!!s.weather);
+  terrainViewer.setWeatherVisible(terrainWeatherState !== 'off');
   terrainViewer.setEnvironmentEnabled(!!s.daynight);
-  terrainViewer.setWeatherFxEnabled(!!s.weatherfx);
+  terrainViewer.setWeatherAnimEnabled(terrainWeatherState === 'on');
+  terrainViewer.setEffectsEnabled(!!s.effects);
   terrainViewer.setFeaturesVisible(!!s.features);
   terrainViewer.setLabelScale(terrainLabelState);
   terrainViewer.setAbsoluteElevation(!!s.absElev);
@@ -2928,10 +2997,9 @@ tvToggleContourLabels?.addEventListener('click', () => {
   saveTerrainDisplaySettings();
 });
 tvToggleWeather?.addEventListener('click', () => {
-  const on = tvToggleWeather.classList.toggle('active');
-  terrainViewer?.setWeatherVisible(on);
-  terrainDisplaySettings.weather = on;
-  saveTerrainDisplaySettings();
+  if (tvToggleWeather.disabled) return;
+  const next = TERRAIN_WEATHER_STATES[(TERRAIN_WEATHER_STATES.indexOf(terrainWeatherState) + 1) % TERRAIN_WEATHER_STATES.length];
+  applyTerrainWeatherState(next);
 });
 tvToggleDaynight?.addEventListener('click', () => {
   const on = tvToggleDaynight.classList.toggle('active');
@@ -2939,10 +3007,13 @@ tvToggleDaynight?.addEventListener('click', () => {
   terrainDisplaySettings.daynight = on;
   saveTerrainDisplaySettings();
 });
-tvToggleWeatherFx?.addEventListener('click', () => {
-  const on = tvToggleWeatherFx.classList.toggle('active');
-  terrainViewer?.setWeatherFxEnabled(on);
-  terrainDisplaySettings.weatherfx = on;
+// 特效: purely declutters the decorative landmark models (peaks/trees/towers/
+// viewpoints/monuments) — independent of the 天氣 button above.
+tvToggleEffects?.addEventListener('click', () => {
+  if (tvToggleEffects.disabled) return;
+  const on = tvToggleEffects.classList.toggle('active');
+  terrainViewer?.setEffectsEnabled(on);
+  terrainDisplaySettings.effects = on;
   saveTerrainDisplaySettings();
 });
 tvToggleFeatures?.addEventListener('click', () => {

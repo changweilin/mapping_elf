@@ -7043,14 +7043,30 @@ html.light-theme .panel-bottom-logo {
 }
 .tv-panel-header:hover { color: var(--text-primary); }
 .tv-panel-header-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-panel-icon { flex-shrink: 0; opacity: 0.85; }
 .tv-panel-chevron { flex-shrink: 0; transition: transform var(--transition-fast); }
 .tv-info-panel.collapsed .tv-info-body,
 .tv-live-hud.collapsed .tv-hud-body {
   display: none;
 }
+/* Collapsed panels shrink to just the leading icon (title + chevron hidden)
+   instead of keeping the full-width header bar — saves canvas space, most
+   noticeably on phones where these panels otherwise eat a big chunk of a
+   small viewport. */
+.tv-info-panel.collapsed,
+.tv-live-hud.collapsed {
+  width: auto;
+}
+.tv-info-panel.collapsed .tv-panel-header,
+.tv-live-hud.collapsed .tv-panel-header {
+  padding: 9px 10px;
+  gap: 0;
+}
+.tv-info-panel.collapsed .tv-panel-header-title,
+.tv-live-hud.collapsed .tv-panel-header-title,
 .tv-info-panel.collapsed .tv-panel-chevron,
 .tv-live-hud.collapsed .tv-panel-chevron {
-  transform: rotate(-90deg);
+  display: none;
 }
 .tv-info-body {
   padding: 0 14px 12px;
@@ -7226,6 +7242,14 @@ html.light-theme .panel-bottom-logo {
   background: rgba(10, 12, 18, 0.92);
 }
 .tv-layer-btn.tv-contour-off svg { opacity: 0.5; }
+/* 天氣 button's "off" state (hints + animation both off) — same muted treatment
+   as tv-contour-off. The middle "noAnim" state stays .active (hints visible). */
+.tv-layer-btn.tv-weather-off {
+  color: #c2c8d2;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(10, 12, 18, 0.92);
+}
+.tv-layer-btn.tv-weather-off svg { opacity: 0.5; }
 
 /* 3D-print export button + dropdown menu (STL / 3MF). */
 .tv-export-wrap { position: relative; display: inline-flex; }
@@ -7467,45 +7491,45 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
   color: #ff8a9c;
 }
 
-/* Non-blocking 圖資 (map features) background-update progress pill — small and
-   corner-anchored so it never blocks interaction with the already-visible model. */
-.tv-features-progress {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  z-index: 25;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
-  background: rgba(20, 23, 31, 0.88);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+/* Non-blocking phase (background 圖資/map-features download): the SAME loading
+   overlay + bar continues counting up (see handleTerrainLoadState/state.blocking
+   in main.js) but shrinks from the full-screen card into a small corner pill and
+   stops blocking interaction — the terrain model stays interactive underneath. */
+.tv-loading-overlay.tv-loading-bg {
+  align-items: flex-end;
+  padding-bottom: 18px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   pointer-events: none;
 }
-.tv-features-progress.hidden { display: none; }
-.tv-features-progress-label {
+.tv-loading-overlay.tv-loading-bg .tv-loading-card {
+  flex-direction: row;
+  width: auto;
+  padding: 7px 14px;
+  gap: 8px;
+  border-radius: 999px;
+  background: rgba(20, 23, 31, 0.88);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.tv-loading-overlay.tv-loading-bg .tv-loading-spinner,
+.tv-loading-overlay.tv-loading-bg .tv-loading-title,
+.tv-loading-overlay.tv-loading-bg .tv-loading-abort {
+  display: none;
+}
+.tv-loading-overlay.tv-loading-bg .tv-loading-detail {
   font-size: 12px;
-  color: var(--text-secondary);
+  min-height: 0;
   white-space: nowrap;
 }
-.tv-features-progress-bar.loading-bar {
+.tv-loading-overlay.tv-loading-bg .loading-bar {
   width: 90px;
   height: 5px;
 }
-.tv-features-progress-fill {
-  animation: none;
-  transition: width 0.2s ease;
-}
-.tv-features-progress-percent {
+.tv-loading-overlay.tv-loading-bg .tv-loading-percent {
   font-size: 11px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 28px;
 }
-html.light-theme .tv-features-progress { background: rgba(255,255,255,0.94); }
+html.light-theme .tv-loading-overlay.tv-loading-bg .tv-loading-card { background: rgba(255,255,255,0.94); }
 
 /* Locked state while terrain is computing */
 .terrain-viewer-overlay.tv-busy .terrain-player-bar,

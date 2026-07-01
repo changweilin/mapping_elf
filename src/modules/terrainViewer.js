@@ -149,10 +149,6 @@ export class TerrainViewer {
     // Fired once a background map-feature download finishes and drapes onto the
     // model, so the UI can re-evaluate layer toggles (圖資 availability).
     this._onFeaturesReady = null;
-    // cb({ active, percent }) — background 圖資 (map features) download progress,
-    // separate from the blocking terrain-build overlay since the model is already
-    // interactive while this runs.
-    this._onFeaturesProgress = null;
     // Monotonic id of the current build; background feature loads carry the id
     // they started under and bail if it no longer matches (model was rebuilt).
     this._buildToken = 0;
@@ -174,7 +170,8 @@ export class TerrainViewer {
 
     // --- Environment (day/night + weather) ---
     this._envEnabled = true;
-    this._weatherFxEnabled = true;
+    this._weatherAnimEnabled = true; // rain/snow/sky-tint + volumetric weather rigs
+    this._effectsEnabled = true;     // decorative landmark models (peaks/trees/towers/…)
     this._sun = null;
     this._sunTarget = null;
     this._moon = null;
@@ -191,7 +188,8 @@ export class TerrainViewer {
     // at-a-glance reading and click-to-inspect). The actual animation is no longer
     // a flat icon: a volumetric 3D weather rig (drifting cloud banks, falling rain
     // shafts, swirling snow, ground fog, a pulsing sun, forked lightning) grows in
-    // world space at each point — see WeatherFx3D — gated by the 天氣 + 特效 toggles.
+    // world space at each point — see WeatherFx3D — gated by the 3-state 天氣
+    // toggle (on: animates; noAnim/off: hidden).
     this._weatherIconEntries = [];
     this._weather3d = null;
 
@@ -285,18 +283,6 @@ export class TerrainViewer {
     this._onFeaturesReady = cb;
   }
 
-  // cb({ active, percent }) — background 圖資 download/redraw progress, for a
-  // small non-blocking indicator (the model stays interactive throughout).
-  onFeaturesProgress(cb) {
-    this._onFeaturesProgress = cb;
-  }
-
-  _emitFeaturesProgress(state) {
-    if (this._onFeaturesProgress) {
-      try { this._onFeaturesProgress(state); } catch { /* noop */ }
-    }
-  }
-
   isLoading() {
     return this._loading;
   }
@@ -316,8 +302,11 @@ export class TerrainViewer {
     }
   }
 
+  // state.blocking === false marks a non-blocking phase (e.g. the background 圖資
+  // download): the model stays interactive and isLoading() reads false, even
+  // though the same progress channel keeps counting up toward 100.
   _emitLoad(state) {
-    this._loading = !!state.active;
+    this._loading = !!state.active && state.blocking !== false;
     if (this._onLoad) this._onLoad(state);
   }
 
@@ -395,10 +384,10 @@ export class TerrainViewer {
   }
 
   // Landmarks need BOTH layers on: 圖資 gates them as map-derived content, 特效
-  // additionally lets the user declutter these decorative models without
-  // touching the weather FX itself.
+  // additionally lets the user declutter these decorative models independently
+  // of the weather layer/animation.
   _applyLandmarkVisibility() {
-    if (this.landmarkGroup) this.landmarkGroup.visible = this._featuresVisible && this._weatherFxEnabled;
+    if (this.landmarkGroup) this.landmarkGroup.visible = this._featuresVisible && this._effectsEnabled;
   }
 
   // Contour precision: 'high' (dense bands) | 'low' (sparse bands) | 'none'.
@@ -453,16 +442,19 @@ export class TerrainViewer {
     this._onMarkerClick = cb;
   }
 
+  // Toggles the weather badge/label layer (the 3-state 天氣 button's "hints").
+  // Turning hints off also implies no animation (nothing left to animate).
   setWeatherVisible(visible) {
     this._weatherVisible = !!visible;
     if (this.weatherGroup) this.weatherGroup.visible = this._weatherVisible;
     this._applyWeather3DVisibility();
   }
 
-  // The 3D weather phenomena are the weather layer's FX: shown only when BOTH the
-  // 天氣 layer (data present) and 天氣特效 (effects) are on.
+  // The 3D weather phenomena are the weather layer's animation: shown only when
+  // BOTH the 天氣 hints are visible AND the animation state is on (the 3-state
+  // 天氣 button's middle state keeps hints but drops this).
   _applyWeather3DVisibility() {
-    if (this._weather3d) this._weather3d.setVisible(this._weatherVisible && this._weatherFxEnabled);
+    if (this._weather3d) this._weather3d.setVisible(this._weatherVisible && this._weatherAnimEnabled);
   }
 
   // Day/night + directional sunlight driven by the route time. When off, the
@@ -472,19 +464,22 @@ export class TerrainViewer {
     this._applyEnvironment(this._metricsAtProgress(this._progress));
   }
 
-  // Precipitation / fog effects. When off, particle systems and weather fog are
-  // hidden so nothing obscures the terrain. Also declutters the point-landmark
-  // models (peaks/trees/towers/viewpoints/monuments) — they're decoration on top
-  // of the base 圖資 layer, not the map data itself, so 特效 can hide them without
-  // touching the gingerbread hiker or the route waypoints.
-  setWeatherFxEnabled(enabled) {
-    this._weatherFxEnabled = !!enabled;
+  // Weather animation: precipitation particles, weather-driven sky/fog tint, and
+  // the volumetric 3D weather rigs. Driven by the 3-state 天氣 button (on / no
+  // animation / off) — independent of the 特效 (landmark decoration) toggle.
+  setWeatherAnimEnabled(enabled) {
+    this._weatherAnimEnabled = !!enabled;
     if (this._rain) this._rain.visible = false;
     if (this._snow) this._snow.visible = false;
     this._applyEnvironment(this._metricsAtProgress(this._progress));
-    // Show/hide the volumetric 3D weather rigs to match the 特效 toggle (they keep
-    // animating from the render loop while shown).
     this._applyWeather3DVisibility();
+  }
+
+  // 特效: declutters the point-landmark models (peaks/trees/towers/viewpoints/
+  // monuments) — they're decoration on top of the base 圖資 layer, not the map
+  // data itself, so this can hide them without touching weather or the route.
+  setEffectsEnabled(enabled) {
+    this._effectsEnabled = !!enabled;
     this._applyLandmarkVisibility();
   }
 
@@ -492,8 +487,12 @@ export class TerrainViewer {
     return this._envEnabled;
   }
 
-  isWeatherFxEnabled() {
-    return this._weatherFxEnabled;
+  isWeatherAnimEnabled() {
+    return this._weatherAnimEnabled;
+  }
+
+  isEffectsEnabled() {
+    return this._effectsEnabled;
   }
 
   // --- Layer availability: lets the UI grey out toggles that can't do anything
@@ -792,13 +791,16 @@ export class TerrainViewer {
     this._updatePlayerPosition();
     this._emitMetrics(true);
 
-    this._emitLoad({ active: false, percent: 100 });
-
     // Kick off the background map-feature download (only when the cache didn't
-    // already supply it). The model is already on screen; features drape on when
-    // ready. Failures fall back to the previous build's features for the same area.
+    // already supply it) before closing out the load state, so the same progress
+    // channel keeps counting up through the 圖資 phase instead of hiding and a
+    // separate widget reopening at 0%. blocking: false keeps the model
+    // interactive throughout — only the readout is shared, not the busy-lock.
     if (!cachedFeatures && !this._aborted) {
+      this._emitLoad({ active: true, percent: 90, blocking: false, title: '建立地形模型', detail: '更新圖資中…' });
       this._loadMapFeaturesInBackground(bbox, buildToken, prevFeatures, prevFeaturesBbox);
+    } else {
+      this._emitLoad({ active: false, percent: 100 });
     }
   }
 
@@ -806,23 +808,24 @@ export class TerrainViewer {
   // visible model. Guarded by the build token so a download that resolves after
   // the user rebuilt/closed the model is discarded instead of painting a stale
   // scene. A failed download reuses the previous build's features (same area).
+  // Progress (90→100, blocking: false) rides the same onLoad channel as the
+  // terrain build so the UI shows one continuous bar rather than a second one.
   async _loadMapFeaturesInBackground(bbox, token, prevFeatures, prevFeaturesBbox) {
-    this._emitFeaturesProgress({ active: true, percent: 0 });
     let featuresData = null;
     try {
       featuresData = await this._fetchMapFeatures(bbox, (p) => {
-        this._emitFeaturesProgress({ active: true, percent: Math.round(p * 100) });
+        this._emitLoad({ active: true, percent: 90 + p * 10, blocking: false, detail: '更新圖資中…' });
       });
     } catch { featuresData = null; }
     if (this._aborted || token !== this._buildToken || !this.scene) {
-      this._emitFeaturesProgress({ active: false, percent: 100 });
+      this._emitLoad({ active: false, percent: 100 });
       return;
     }
     if (!featuresData && prevFeatures && this._bboxApproxEqual(bbox, prevFeaturesBbox)) {
       featuresData = prevFeatures;
     }
     if (!featuresData) {
-      this._emitFeaturesProgress({ active: false, percent: 100 });
+      this._emitLoad({ active: false, percent: 100 });
       return;
     }
     if (featuresData !== prevFeatures && this._onFeaturesComputed) {
@@ -830,7 +833,7 @@ export class TerrainViewer {
     }
     try { this._buildMapFeatures(featuresData, bbox); } catch (err) {
       console.warn('map features failed:', err);
-      this._emitFeaturesProgress({ active: false, percent: 100 });
+      this._emitLoad({ active: false, percent: 100 });
       return;
     }
     this._featuresData = featuresData;
@@ -842,7 +845,7 @@ export class TerrainViewer {
     if (this.featureLabelGroup) this.featureLabelGroup.visible = this._featuresVisible;
     this._applyLandmarkVisibility();
     this._updateLineResolutions();
-    this._emitFeaturesProgress({ active: false, percent: 100 });
+    this._emitLoad({ active: false, percent: 100 });
     if (this._onFeaturesReady) {
       try { this._onFeaturesReady(); } catch { /* noop */ }
     }
@@ -1200,7 +1203,7 @@ export class TerrainViewer {
     const preset = this._skyPreset(sun.elevationDeg);
 
     // Weather dims/colours the sky and softens shadows.
-    const cat = (this._weatherFxEnabled && metrics?.weather?.cat) ? metrics.weather.cat : 'clear';
+    const cat = (this._weatherAnimEnabled && metrics?.weather?.cat) ? metrics.weather.cat : 'clear';
     this._currentWeatherCat = cat;
     const wx = this._weatherModifier(cat);
 
@@ -1233,8 +1236,8 @@ export class TerrainViewer {
     }
 
     // Toggle the right precipitation system.
-    const wantRain = this._weatherFxEnabled && (cat === 'rain' || cat === 'drizzle' || cat === 'thunder');
-    const wantSnow = this._weatherFxEnabled && cat === 'snow';
+    const wantRain = this._weatherAnimEnabled && (cat === 'rain' || cat === 'drizzle' || cat === 'thunder');
+    const wantSnow = this._weatherAnimEnabled && cat === 'snow';
     if (this._rain) {
       this._rain.visible = wantRain;
       this._rain.material.opacity = cat === 'thunder' ? 0.5 : (cat === 'drizzle' ? 0.28 : 0.42);
@@ -1322,7 +1325,7 @@ export class TerrainViewer {
   }
 
   _updateWeatherParticles(dt) {
-    const active = this._weatherFxEnabled
+    const active = this._weatherAnimEnabled
       ? (this._currentWeatherCat === 'snow' ? this._snow
         : (['rain', 'drizzle', 'thunder'].includes(this._currentWeatherCat) ? this._rain : null))
       : null;
