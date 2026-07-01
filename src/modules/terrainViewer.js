@@ -24,8 +24,8 @@ const GRID_SIZE = 25;
 // faceted (kills the regular diagonal "corduroy" artefact) and keeps the
 // contours hugging the same surface so they no longer break through it. Missing
 // elevation (holes) propagates through, so blank tiles aren't drawn.
-const SUBDIV = 4;
-const FIELD_SIZE = (GRID_SIZE - 1) * SUBDIV + 1; // 97
+const SUBDIV = 6;
+const FIELD_SIZE = (GRID_SIZE - 1) * SUBDIV + 1; // 145
 
 export class TerrainViewer {
   constructor(container) {
@@ -2038,19 +2038,42 @@ export class TerrainViewer {
 
     const hasGradient = !!(this._routeColors && this._routeColors.length === coords.length);
     const legacyColor = new THREE.Color(0x00d4ff);
+    // Dynamic minor draping offset (Plan §II): lift the track a small,
+    // relief-proportional amount above the surface instead of a fixed +5 m. On a
+    // tall model +5 m disappears into the terrain (Z-fighting / track sinking);
+    // scaling with the elevation range keeps a consistent visible float at any
+    // model size while never lifting the track conspicuously off the ground.
+    const relief = Math.max(1, this._fieldMaxV - this._fieldMinV);
+    const routeLift = Math.max(5, relief * 0.01);
     const pts = coords.map(([lat, lng], i) => {
       const elev = elevations?.[i] ?? 0;
-      const p = this._latLngToLocal(lat, lng, elev + 5, bbox);
+      const p = this._latLngToLocal(lat, lng, elev + routeLift, bbox);
       return new THREE.Vector3(p.x, p.y, p.z);
     });
 
-    const curve = new THREE.CatmullRomCurve3(pts);
+    // Centripetal Catmull-Rom curve (Plan §II): centripetal parameterisation
+    // never overshoots or loops at sharp turns the way the uniform variant does,
+    // so tight switchbacks read as smooth curves rather than cusps. The curve is
+    // then resampled at an even arc-length spacing dense enough that both the 3D
+    // tube AND the overlay line follow the real bends instead of cutting the
+    // corner between sparsely-sampled GPS vertices (the "straight-line cutting"
+    // artefact). Sample count scales with the track's on-model length, clamped.
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    let curveLen = 0;
+    try { curveLen = curve.getLength(); } catch { curveLen = 0; }
+    const targetSpacing = Math.max(6, (this._worldSpan || 2000) / 500);
+    const segCount = Math.max(
+      pts.length * 2,
+      Math.min(4000, Math.round((curveLen || pts.length * targetSpacing) / targetSpacing))
+    );
+    // Arc-length-even samples: even tube rings + gradient fraction == distance
+    // fraction, so the resampled colours line up with the 2D route gradient.
+    const sampled = curve.getSpacedPoints(segCount);
 
-    // Tube geometry gives the track a shaded 3D body. Radius doubled for a
-    // noticeably thicker track. Gradient colours are applied ring-by-ring so it
-    // reads like the 2D route line.
-    const tubularSegments = Math.min(pts.length * 2, 200);
-    const radialSegments = 6;
+    // Tube geometry gives the track a shaded 3D body. Gradient colours are applied
+    // ring-by-ring so it reads like the 2D route line.
+    const tubularSegments = segCount;
+    const radialSegments = 8;
     const tubeGeo = new THREE.TubeGeometry(curve, tubularSegments, 6, radialSegments, false);
     const tubeMat = new THREE.MeshStandardMaterial({
       color: hasGradient ? 0xffffff : legacyColor,
@@ -2080,15 +2103,18 @@ export class TerrainViewer {
     this.scene.add(this.routeTube);
 
     // Bright always-on overlay line carrying the same gradient. A wide (pixel
-    // width) Line2 so the track stays clearly visible and thick at any zoom.
+    // width) Line2 so the track stays clearly visible and thick at any zoom. It
+    // follows the SAME resampled smooth curve as the tube, so the visible line no
+    // longer cuts across corners at sparsely-sampled sharp turns.
     const positions = [];
-    for (const v of pts) positions.push(v.x, v.y, v.z);
+    for (const v of sampled) positions.push(v.x, v.y, v.z);
     const lineGeo = new LineGeometry();
     lineGeo.setPositions(positions);
     if (hasGradient) {
       const lineColors = [];
-      for (let i = 0; i < coords.length; i++) {
-        const col = this._routeColors[i];
+      const denom = Math.max(1, sampled.length - 1);
+      for (let i = 0; i < sampled.length; i++) {
+        const col = this._routeColorAtFrac(i / denom);
         lineColors.push(col.r, col.g, col.b);
       }
       lineGeo.setColors(lineColors);
@@ -2530,6 +2556,10 @@ export class TerrainViewer {
   static _classifyFeature(tags) {
     if (!tags) return null;
     if (tags.building && tags.building !== 'no') return { group: 'building', kind: 'building', cls: 'building' };
+    // building:part lets one complex landmark be modelled as several stacked/offset
+    // blocks (Plan §III). Parsed alongside the parent footprint so towers on a
+    // podium, wings and stepped massing render as distinct volumes.
+    if (tags['building:part'] && tags['building:part'] !== 'no') return { group: 'building', kind: 'building', cls: 'part' };
 
     const hw = tags.highway;
     if (hw && tags.area !== 'yes') {
@@ -2577,12 +2607,80 @@ export class TerrainViewer {
     return tags['name:zh'] || tags['name:zh-Hant'] || tags.name || tags['name:en'] || null;
   }
 
+  // Parse an OSM length that may carry a unit ("18", "18 m", "60'"). Returns a
+  // value in metres, or NaN.
+  static _parseLengthM(v) {
+    if (v == null) return NaN;
+    const s = String(v).trim();
+    let m = /^([\d.]+)\s*(m|meter|metre|metres|meters)?$/i.exec(s);
+    if (m) return parseFloat(m[1]);
+    m = /^([\d.]+)\s*(ft|feet|foot|')$/i.exec(s);        // imperial fallback
+    if (m) return parseFloat(m[1]) * 0.3048;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  // Building height derivation hierarchy (Plan §III):
+  //   1) explicit `height` / `building:height` (metres, unit-aware)
+  //   2) `building:levels` (+ `roof:levels`) × 3 m per level
+  //   3) a regional-statistical default keyed on the building/type tag, so an
+  //      untagged footprint gets a plausible mass instead of a flat 6 m slab.
   static _buildingHeight(tags) {
-    const h = parseFloat(tags.height || tags['building:height']);
-    if (Number.isFinite(h)) return Math.max(2, h);
-    const lv = parseFloat(tags['building:levels'] || tags.levels);
-    if (Number.isFinite(lv)) return Math.max(2, lv * 3.2);
-    return 6;
+    const h = TerrainViewer._parseLengthM(tags.height ?? tags['building:height']);
+    if (Number.isFinite(h) && h > 0) return Math.max(2, h);
+
+    const lv = parseFloat(tags['building:levels'] ?? tags.levels);
+    if (Number.isFinite(lv) && lv > 0) {
+      const roofLv = parseFloat(tags['roof:levels']);
+      const levels = lv + (Number.isFinite(roofLv) ? roofLv : 0);
+      return Math.max(2.5, levels * 3);       // Plan §III: 3 m / level
+    }
+
+    // Statistical fallback by building class (metres). Low houses stay low;
+    // apartments/offices/landmarks rise. Keyed off the building=* value.
+    const kind = String(tags.building || tags['building:part'] || 'yes').toLowerCase();
+    const H = {
+      house: 6, detached: 6, semidetached_house: 6, bungalow: 4, cabin: 4, hut: 3,
+      terrace: 8, garage: 3, garages: 3, shed: 3, roof: 3, carport: 3, greenhouse: 4,
+      apartments: 15, residential: 12, dormitory: 15, hotel: 18,
+      commercial: 11, retail: 8, office: 20, supermarket: 9,
+      industrial: 9, warehouse: 10, manufacture: 10,
+      church: 14, cathedral: 22, chapel: 9, mosque: 14, temple: 12, shrine: 6,
+      school: 9, university: 14, college: 14, hospital: 16, public: 11,
+      civic: 12, government: 14, stadium: 24, train_station: 12,
+    };
+    return H[kind] ?? 7;
+  }
+
+  // Base offset of a building (or building:part) above the ground — lets a floor
+  // that starts partway up (min_height) or a raised part float on a podium.
+  static _buildingMinHeight(tags) {
+    const mh = TerrainViewer._parseLengthM(tags.min_height ?? tags['building:min_height']);
+    if (Number.isFinite(mh) && mh > 0) return mh;
+    const ml = parseFloat(tags['building:min_level'] ?? tags.min_level);
+    if (Number.isFinite(ml) && ml > 0) return ml * 3;
+    return 0;
+  }
+
+  // Roof descriptor for pitched-roof modelling (Plan §III). Only tagged roofs
+  // (`roof:shape`) get a 3D cap; untagged buildings stay flat-topped as before,
+  // so the common case is unchanged and this only ever adds detail.
+  static _roofInfo(tags) {
+    const shape = (tags['roof:shape'] || '').toLowerCase();
+    const pitched = /^(pyramidal|hipped|gabled|round|dome|conical|cone|mansard|half-hipped|gambrel|skillion)$/.test(shape);
+    if (!pitched) return null;
+    let h = TerrainViewer._parseLengthM(tags['roof:height']);
+    const rl = parseFloat(tags['roof:levels']);
+    if (!Number.isFinite(h) && Number.isFinite(rl) && rl > 0) h = rl * 2.5;
+    const colour = TerrainViewer._parseHexColour(tags['roof:colour'] || tags['roof:color']);
+    return { shape, height: Number.isFinite(h) && h > 0 ? h : null, colour };
+  }
+
+  // Parse a CSS-style hex colour ("#a0522d") to a 0xRRGGBB int, or null.
+  static _parseHexColour(v) {
+    if (!v) return null;
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(v).trim());
+    return m ? parseInt(m[1], 16) : null;
   }
 
   // Download vector map features inside the terrain bbox from Overpass. Returns a
@@ -2602,6 +2700,7 @@ export class TerrainViewer {
       `way["landuse"](${bb});` +
       `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|recreation_ground|common"](${bb});` +
       `way["building"](${bb});` +
+      `way["building:part"](${bb});` +
       `relation["natural"~"water|wetland"](${bb});` +
       `relation["landuse"~"forest|reservoir|basin"](${bb});` +
       `relation["leisure"~"park|nature_reserve"](${bb});` +
@@ -2646,7 +2745,13 @@ export class TerrainViewer {
         if (cat.group === 'line') {
           if (pts.length >= 2) lines.push({ kind: cat.kind, cls: cat.cls, name, pts });
         } else if (cat.group === 'building') {
-          if (pts.length >= 4) buildings.push({ name, ring: pts, h: TerrainViewer._buildingHeight(tags) });
+          if (pts.length >= 4) buildings.push({
+            name, ring: pts,
+            h: TerrainViewer._buildingHeight(tags),
+            minH: TerrainViewer._buildingMinHeight(tags),
+            roof: TerrainViewer._roofInfo(tags),
+            part: cat.cls === 'part',
+          });
         } else {
           if (pts.length >= 4) areas.push({ kind: cat.kind, cls: cat.cls, name, rings: [pts] });
         }
@@ -2958,7 +3063,23 @@ export class TerrainViewer {
       .map((b) => ({ ...b, _a: ringArea(b.ring) }))
       .sort((a, b) => b._a - a._a)
       .slice(0, 350);
+    // OSM "Simple 3D Buildings" rule: when a footprint is broken into building:part
+    // volumes, the parent building=* outline must NOT be extruded too (the parts
+    // define the 3D mass), otherwise the full-height parent box double-renders
+    // behind them and z-fights. Collect part centroids once; a parent whose
+    // footprint contains any part is rendered as a label only.
+    const ringCentroidLL = (ring) => {
+      let la = 0, lo = 0;
+      for (const [a, o] of ring) { la += a; lo += o; }
+      return [la / ring.length, lo / ring.length];
+    };
+    const partCentroids = blds.filter((b) => b.part).map((b) => ringCentroidLL(b.ring));
+    const hasSubParts = (ring) => partCentroids.length > 0 && partCentroids.some(([la, lo]) => this._pointInRing(la, lo, ring));
     const bldMat = new THREE.MeshStandardMaterial({ color: 0x9a948a, roughness: 0.9, metalness: 0, flatShading: true, side: THREE.DoubleSide });
+    // Default roof material for tagged pitched roofs (Plan §III) — a muted clay
+    // that reads distinctly from the grey walls. Coloured roofs get their own.
+    const roofMatDefault = new THREE.MeshStandardMaterial({ color: 0x8f6b57, roughness: 0.85, metalness: 0, flatShading: true, side: THREE.DoubleSide });
+    const elevScale = this._elevScale || 1;
     for (const b of blds) {
       let ring = b.ring.slice();
       if (ring.length > 1) {
@@ -2971,31 +3092,92 @@ export class TerrainViewer {
       // Drop footprints over a terrain hole — there's no ground to stand on, so
       // they'd otherwise float at the basin floor in blank space.
       if (ring.some(([la, lo]) => this._isOverHole(la, lo))) continue;
-      // Shape in (x, -z) so after rotateX(-90°) it stands upright facing north.
+
+      // Parent shell that is subdivided into building:parts → render only its
+      // label; the parts (looped separately) carry the 3D mass.
+      const shellOnly = !b.part && hasSubParts(ring);
+
+      // Precompute footprint world (x, z), the shape (in x,-z), the ground datum
+      // and the footprint's smallest plan dimension (for a default roof pitch).
       const shape = new THREE.Shape();
+      const worldXZ = [];
       let baseY = Infinity;
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      let cx = 0, cz = 0;
       ring.forEach(([la, lo], i) => {
         const p = this._latLngToLocal(la, lo, 0, bbox);
         if (i === 0) shape.moveTo(p.x, -p.z); else shape.lineTo(p.x, -p.z);
+        worldXZ.push([p.x, p.z]);
+        cx += p.x; cz += p.z;
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+        // Elevation datum uses TRUE metres; the ground the building stands on is
+        // that datum lifted by the vertical render scale (so normalised terrain
+        // doesn't bury the footprint), while the building keeps its true height.
         const e = this._sampleGridElevation(la, lo) - (this._elevBase || 0);
         if (e < baseY) baseY = e;
       });
       if (!Number.isFinite(baseY)) continue;
-      let geo;
-      try { geo = new THREE.ExtrudeGeometry(shape, { depth: b.h, bevelEnabled: false }); } catch { continue; }
-      geo.rotateX(-Math.PI / 2);
-      geo.translate(0, baseY, 0);
-      const mesh = new THREE.Mesh(geo, bldMat);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.featureGroup.add(mesh);
+      cx /= worldXZ.length; cz /= worldXZ.length;
+      const groundY = baseY * elevScale;
 
-      if (b.name && b._a > 0) {
-        let cla = 0, clo = 0;
-        for (const [la, lo] of ring) { cla += la; clo += lo; }
-        cla /= ring.length; clo /= ring.length;
-        const top = this._latLngToLocal(cla, clo, this._sampleGridElevation(cla, clo) + b.h + 4 * ms, bbox);
-        pushLabelCand(b.name, new THREE.Vector3(top.x, top.y, top.z), 0xcfcabf, 6);
+      // Stepped massing: a raised part / upper floor starts at min_height and the
+      // walls rise to the roof spring line (or the full height when flat-topped).
+      const totalH = Math.max(2, b.h);
+      const minH = Math.max(0, Math.min(b.minH || 0, totalH - 1));
+      const roof = b.roof || null;
+      const planDim = Math.max(1, Math.min(maxX - minX, maxZ - minZ));
+      let roofH = 0;
+      if (roof) {
+        roofH = Number.isFinite(roof.height) && roof.height > 0
+          ? roof.height
+          : Math.max(2, Math.min(planDim * 0.35, 8));   // default pitch from footprint
+        roofH = Math.min(roofH, (totalH - minH) * 0.6);  // never eat the whole wall
+      }
+      const wallTopM = totalH - roofH;                   // spring line (metres above ground)
+      const wallDepth = Math.max(0.5, wallTopM - minH);
+
+      if (!shellOnly) {
+        let geo = null;
+        try { geo = new THREE.ExtrudeGeometry(shape, { depth: wallDepth, bevelEnabled: false }); } catch { geo = null; }
+        if (geo) {
+          geo.rotateX(-Math.PI / 2);
+          geo.translate(0, groundY + minH, 0);
+          const mesh = new THREE.Mesh(geo, bldMat);
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          this.featureGroup.add(mesh);
+
+          // Pitched roof (Plan §III): a hip/pyramidal cap — a triangle fan from
+          // every wall-top edge up to a single apex over the footprint centroid.
+          // Valid for any simple footprint and never self-intersects, so it can't
+          // produce the artefacts a full straight-skeleton would risk on messy
+          // OSM polygons.
+          if (roofH > 0.5 && worldXZ.length >= 3) {
+            const springY = groundY + wallTopM;
+            const apexY = groundY + totalH;
+            const pos = [];
+            for (let i = 0; i < worldXZ.length; i++) {
+              const [ax, az] = worldXZ[i];
+              const [bx, bz] = worldXZ[(i + 1) % worldXZ.length];
+              pos.push(ax, springY, az,  bx, springY, bz,  cx, apexY, cz);
+            }
+            const rgeo = new THREE.BufferGeometry();
+            rgeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            rgeo.computeVertexNormals();
+            const rmat = roof.colour != null
+              ? new THREE.MeshStandardMaterial({ color: roof.colour, roughness: 0.85, metalness: 0, flatShading: true, side: THREE.DoubleSide })
+              : roofMatDefault;
+            const rmesh = new THREE.Mesh(rgeo, rmat);
+            rmesh.castShadow = true;
+            rmesh.receiveShadow = true;
+            this.featureGroup.add(rmesh);
+          }
+        }
+      }
+
+      if (b.name && b._a > 0 && !b.part) {
+        pushLabelCand(b.name, new THREE.Vector3(cx, groundY + totalH + 4 * ms, cz), 0xcfcabf, 6);
       }
     }
 
