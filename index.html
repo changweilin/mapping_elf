@@ -1274,6 +1274,23 @@
               stroke="currentColor" stroke-width="2" stroke-linecap="round" />
           </svg>
         </button>
+        <div class="tv-export-wrap">
+          <button type="button" class="tv-redraw-btn" id="tv-export-btn" title="匯出 3D 列印模型（STL／3MF）" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M12 12v9M4 7.5l8 4.5 8-4.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" opacity="0.7"/>
+            </svg>
+            <span>列印</span>
+          </button>
+          <div class="tv-export-menu hidden" id="tv-export-menu" role="menu">
+            <button type="button" class="tv-export-opt" id="tv-export-stl" role="menuitem">
+              <strong>STL</strong><span>單色實體（含軌跡凸脊）</span>
+            </button>
+            <button type="button" class="tv-export-opt" id="tv-export-3mf" role="menuitem">
+              <strong>3MF</strong><span>多色分區（水體／植被／軌跡，支援 AMS）</span>
+            </button>
+          </div>
+        </div>
         <button type="button" class="tv-redraw-btn" id="tv-redraw-btn" title="重新繪製並更新日期／天氣">
           <svg viewBox="0 0 24 24" width="16" height="16">
             <path d="M17.65 6.35A7.95 7.95 0 0012 4a8 8 0 108 8h-2a6 6 0 11-1.76-4.24L13 11h7V4l-2.35 2.35z" fill="currentColor"/>
@@ -1290,7 +1307,8 @@
     <div class="terrain-viewer-canvas-wrap" id="terrain-canvas-wrap">
       <!-- Track + waypoint info panel -->
       <div class="tv-info-panel" id="tv-info-panel">
-        <button class="tv-panel-header" id="tv-info-collapse" title="收合/展開" aria-expanded="true">
+        <button class="tv-panel-header" id="tv-info-collapse" title="路線資訊（收合/展開）" aria-expanded="true">
+          <svg class="tv-panel-icon" viewBox="0 0 24 24" width="14" height="14"><circle cx="5" cy="6" r="2" fill="currentColor"/><circle cx="19" cy="18" r="2" fill="currentColor"/><path d="M5 8c0 6 14 2 14 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <span class="tv-panel-header-title">路線資訊</span>
           <svg class="tv-panel-chevron" viewBox="0 0 24 24" width="16" height="16"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
         </button>
@@ -1321,17 +1339,17 @@
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 17h16M4 7h10" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="14" y="11" font-size="9" fill="currentColor">m</text></svg>
           <span>高程</span>
         </button>
-        <button class="tv-layer-btn active" id="tv-toggle-weather" title="天氣標記">
+        <button class="tv-layer-btn active" id="tv-toggle-weather" title="天氣（循環：開啟→關閉動畫→關閉提示）" data-weather-state="on">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 16a4 4 0 010-8 5 5 0 019.6 1.5A3.5 3.5 0 0117 16H7z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-          <span>天氣</span>
+          <span id="tv-weather-label">天氣</span>
         </button>
         <button class="tv-layer-btn active" id="tv-toggle-daynight" title="日夜光照">
           <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
           <span>日夜</span>
         </button>
-        <button class="tv-layer-btn active" id="tv-toggle-weatherfx" title="天氣特效">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 14a4 4 0 010-8 5 5 0 019.6 1.5A3.5 3.5 0 0117 14H7z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 17l-1 3M12 17l-1 3M16 17l-1 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          <span>特效</span>
+        <button class="tv-layer-btn active" id="tv-toggle-effects" title="地標裝飾（峰頂／樹木／高塔／觀景點／紀念碑模型）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 3v4M9 7h6l-1.2 12h-3.6L9 7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 21h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span>地標</span>
         </button>
         <button class="tv-layer-btn active" id="tv-toggle-features" title="地圖圖資（道路／河流／水體／綠地／荒地／建築）">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 7l6-2 6 2 6-2v12l-6 2-6-2-6 2V7z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 5v12M15 7v12" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
@@ -1349,10 +1367,19 @@
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 20l5-9 4 5 3-4 6 8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M20 3v7M20 3l-1.6 1.8M20 3l1.6 1.8M20 10l-1.6-1.8M20 10l1.6-1.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span id="tv-normalize-label">歸一</span>
         </button>
+        <button class="tv-layer-btn" id="tv-toggle-absolute" title="絕對海拔懸空（軌跡以真實海拔懸空顯示，並向地表投下垂直支柱）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 18c3-3 6-3 9-6s6-6 9-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M6 15.5V21M12 12.5V21M18 6.5V21" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity="0.7"/></svg>
+          <span>懸空</span>
+        </button>
+        <button class="tv-layer-btn" id="tv-toggle-trail" title="軌跡時序揭示（依播放進度逐步顯示走過的軌跡）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 17c3 0 4-8 8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 9c3 0 3 4 6 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="1 3" opacity="0.6"/><circle cx="12" cy="9" r="2" fill="currentColor"/></svg>
+          <span>揭示</span>
+        </button>
       </div>
       <!-- Position-driven live readout (date/time, mileage, altitude, speed, grade, fatigue, weather) -->
       <div class="tv-live-hud" id="tv-live-hud">
-        <button class="tv-panel-header" id="tv-hud-collapse" title="收合/展開" aria-expanded="true">
+        <button class="tv-panel-header" id="tv-hud-collapse" title="人物資訊（收合/展開）" aria-expanded="true">
+          <svg class="tv-panel-icon" viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="7" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5 20c0-4 3-6.5 7-6.5s7 2.5 7 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <span class="tv-panel-header-title">人物資訊</span>
           <svg class="tv-panel-chevron" viewBox="0 0 24 24" width="16" height="16"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
         </button>
@@ -1380,7 +1407,10 @@
         </div>
         </div>
       </div>
-      <!-- Loading overlay (terrain computation) -->
+      <!-- Loading overlay: elevation download + mesh build (blocking, full-screen),
+           then continues as a small non-blocking corner pill (.tv-loading-bg) while
+           圖資/map features re-download in the background — one continuous bar
+           instead of two separate widgets. -->
       <div class="tv-loading-overlay hidden" id="tv-loading" aria-live="polite">
         <div class="tv-loading-card">
           <div class="tv-loading-spinner" aria-hidden="true">
@@ -1408,11 +1438,25 @@
           <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" fill="currentColor"/>
         </svg>
       </button>
-      <button class="tp-speed-btn" data-speed="0.25">0.25x</button>
-      <button class="tp-speed-btn" data-speed="0.5">0.5x</button>
-      <button class="tp-speed-btn active" data-speed="1">1x</button>
-      <button class="tp-speed-btn" data-speed="2">2x</button>
-      <button class="tp-speed-btn" data-speed="4">4x</button>
+      <div class="tp-speed-wrap" id="tp-speed-wrap">
+        <button type="button" class="tp-speed-toggle" id="tp-speed-toggle" title="播放速度（點擊展開選單／滑鼠懸浮滾輪／觸控上下拖曳調整）" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M4 15.5a8 8 0 1116 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 15.5l4-5.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="15.5" r="1.4" fill="currentColor"/></svg>
+          <span id="tp-speed-value">1x</span>
+        </button>
+        <div class="tp-speed-menu hidden" id="tp-speed-menu" role="menu">
+          <button type="button" class="tp-speed-opt" data-speed="0.25" role="menuitem">0.25x</button>
+          <button type="button" class="tp-speed-opt" data-speed="0.5" role="menuitem">0.5x</button>
+          <button type="button" class="tp-speed-opt active" data-speed="1" role="menuitem">1x</button>
+          <button type="button" class="tp-speed-opt" data-speed="2" role="menuitem">2x</button>
+          <button type="button" class="tp-speed-opt" data-speed="4" role="menuitem">4x</button>
+        </div>
+      </div>
+      <div class="tp-playlist-wrap" id="tp-playlist-wrap">
+        <button type="button" class="tp-btn" id="tp-playlist-btn" title="切換 3D 路線（目前路線／最愛路線）" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 6h11M4 12h11M4 18h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M17 14.3l4.5 2.7-4.5 2.7v-5.4z" fill="currentColor"/></svg>
+        </button>
+        <div class="tp-playlist-menu hidden" id="tp-playlist-menu" role="menu"></div>
+      </div>
       <input type="range" class="tp-slider" id="tp-slider" min="0" max="1" step="0.001" value="0">
       <span class="tp-label" id="tp-progress-label">0%</span>
       <span class="tp-time" id="tp-time-label">--</span>

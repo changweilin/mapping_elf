@@ -7043,14 +7043,30 @@ html.light-theme .panel-bottom-logo {
 }
 .tv-panel-header:hover { color: var(--text-primary); }
 .tv-panel-header-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-panel-icon { flex-shrink: 0; opacity: 0.85; }
 .tv-panel-chevron { flex-shrink: 0; transition: transform var(--transition-fast); }
 .tv-info-panel.collapsed .tv-info-body,
 .tv-live-hud.collapsed .tv-hud-body {
   display: none;
 }
+/* Collapsed panels shrink to just the leading icon (title + chevron hidden)
+   instead of keeping the full-width header bar — saves canvas space, most
+   noticeably on phones where these panels otherwise eat a big chunk of a
+   small viewport. */
+.tv-info-panel.collapsed,
+.tv-live-hud.collapsed {
+  width: auto;
+}
+.tv-info-panel.collapsed .tv-panel-header,
+.tv-live-hud.collapsed .tv-panel-header {
+  padding: 9px 10px;
+  gap: 0;
+}
+.tv-info-panel.collapsed .tv-panel-header-title,
+.tv-live-hud.collapsed .tv-panel-header-title,
 .tv-info-panel.collapsed .tv-panel-chevron,
 .tv-live-hud.collapsed .tv-panel-chevron {
-  transform: rotate(-90deg);
+  display: none;
 }
 .tv-info-body {
   padding: 0 14px 12px;
@@ -7226,6 +7242,56 @@ html.light-theme .panel-bottom-logo {
   background: rgba(10, 12, 18, 0.92);
 }
 .tv-layer-btn.tv-contour-off svg { opacity: 0.5; }
+/* 天氣 button's "off" state (hints + animation both off) — same muted treatment
+   as tv-contour-off. The middle "noAnim" state stays .active (hints visible). */
+.tv-layer-btn.tv-weather-off {
+  color: #c2c8d2;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(10, 12, 18, 0.92);
+}
+.tv-layer-btn.tv-weather-off svg { opacity: 0.5; }
+
+/* 3D-print export button + dropdown menu (STL / 3MF). */
+.tv-export-wrap { position: relative; display: inline-flex; }
+.tv-export-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  padding: 6px;
+  background: rgba(12, 14, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+}
+.tv-export-menu.hidden { display: none; }
+.tv-export-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: #e7ebf2;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.tv-export-opt:hover { background: rgba(255, 255, 255, 0.1); }
+.tv-export-opt strong { font-size: 13px; font-weight: 700; }
+.tv-export-opt span { font-size: 11px; opacity: 0.72; }
+.tv-export-opt:disabled { opacity: 0.45; cursor: default; }
+.tv-export-opt:disabled:hover { background: transparent; }
+html.light-theme .tv-export-menu { background: rgba(255, 255, 255, 0.98); }
+html.light-theme .tv-export-opt { color: #1a2230; }
+html.light-theme .tv-export-opt:hover { background: rgba(0, 0, 0, 0.06); }
 
 html.light-theme .tv-info-panel,
 html.light-theme .tv-live-hud {
@@ -7425,6 +7491,46 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
   color: #ff8a9c;
 }
 
+/* Non-blocking phase (background 圖資/map-features download): the SAME loading
+   overlay + bar continues counting up (see handleTerrainLoadState/state.blocking
+   in main.js) but shrinks from the full-screen card into a small corner pill and
+   stops blocking interaction — the terrain model stays interactive underneath. */
+.tv-loading-overlay.tv-loading-bg {
+  align-items: flex-end;
+  padding-bottom: 18px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  pointer-events: none;
+}
+.tv-loading-overlay.tv-loading-bg .tv-loading-card {
+  flex-direction: row;
+  width: auto;
+  padding: 7px 14px;
+  gap: 8px;
+  border-radius: 999px;
+  background: rgba(20, 23, 31, 0.88);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.tv-loading-overlay.tv-loading-bg .tv-loading-spinner,
+.tv-loading-overlay.tv-loading-bg .tv-loading-title,
+.tv-loading-overlay.tv-loading-bg .tv-loading-abort {
+  display: none;
+}
+.tv-loading-overlay.tv-loading-bg .tv-loading-detail {
+  font-size: 12px;
+  min-height: 0;
+  white-space: nowrap;
+}
+.tv-loading-overlay.tv-loading-bg .loading-bar {
+  width: 90px;
+  height: 5px;
+}
+.tv-loading-overlay.tv-loading-bg .tv-loading-percent {
+  font-size: 11px;
+}
+html.light-theme .tv-loading-overlay.tv-loading-bg .tv-loading-card { background: rgba(255,255,255,0.94); }
+
 /* Locked state while terrain is computing */
 .terrain-viewer-overlay.tv-busy .terrain-player-bar,
 .terrain-viewer-overlay.tv-busy .tv-layer-controls,
@@ -7450,6 +7556,11 @@ html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   z-index: 10;
+  /* NOT overflow-x:auto — the speed/playlist popovers open *above* this bar
+     (bottom: 100%+), and any non-visible overflow here (even just on the X
+     axis; the two axes can't be split) would clip them against the canvas
+     underneath instead of just scrolling the row. Mobile fit instead comes
+     from shrinking the controls themselves (media query below). */
 }
 .terrain-player-bar .tp-btn {
   background: none;
@@ -7478,7 +7589,13 @@ html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
 .terrain-player-bar .tp-btn.active:hover {
   background: #00d16b;
 }
-.terrain-player-bar .tp-speed-btn {
+/* Speed control: a single toggle button (current rate) that expands a small
+   menu of preset rates. The toggle itself also responds to mouse-wheel while
+   hovered and vertical touch-drag, so the menu is one of three ways to change
+   speed, not the only one. */
+.tp-speed-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.terrain-player-bar .tp-speed-toggle,
+.terrain-player-bar .tp-speed-opt {
   background: none;
   border: 1px solid var(--border);
   color: var(--text-secondary);
@@ -7488,21 +7605,118 @@ html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
   font-size: 11px;
   font-weight: 500;
   transition: all var(--transition-fast);
-  flex-shrink: 0;
   font-family: inherit;
 }
-.terrain-player-bar .tp-speed-btn:hover {
+.terrain-player-bar .tp-speed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  touch-action: none;
+}
+.terrain-player-bar .tp-speed-toggle:hover,
+.terrain-player-bar .tp-speed-toggle[aria-expanded="true"] {
   background: rgba(255,255,255,0.06);
   color: var(--text-primary);
 }
-.terrain-player-bar .tp-speed-btn.active {
+.terrain-player-bar .tp-speed-opt:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+}
+.terrain-player-bar .tp-speed-opt.active {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
   color: #000;
 }
+.tp-speed-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 88px;
+  padding: 6px;
+  background: rgba(12, 14, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+}
+.tp-speed-menu.hidden { display: none; }
+.tp-speed-menu .tp-speed-opt { text-align: center; width: 100%; }
+html.light-theme .tp-speed-menu { background: rgba(255, 255, 255, 0.98); }
+html.light-theme .terrain-player-bar .tp-speed-opt { color: #1a2230; }
+
+/* Playlist: switch the 3D scene between the current route and a saved
+   favourite without leaving the viewer. */
+.tp-playlist-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.tp-playlist-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+  background: rgba(12, 14, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+}
+.tp-playlist-menu.hidden { display: none; }
+.tp-playlist-title {
+  padding: 4px 8px 6px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.tp-playlist-opt {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: #e7ebf2;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--transition-fast);
+}
+.tp-playlist-opt:hover { background: rgba(255, 255, 255, 0.1); }
+.tp-playlist-opt.active {
+  background: rgba(0, 255, 127, 0.14);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+.tp-playlist-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.tp-playlist-empty {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+html.light-theme .tp-playlist-menu { background: rgba(255, 255, 255, 0.98); }
+html.light-theme .tp-playlist-opt { color: #1a2230; }
+html.light-theme .tp-playlist-opt:hover { background: rgba(0, 0, 0, 0.06); }
 
 .terrain-player-bar .tp-slider {
   flex: 1;
+  min-width: 60px;
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
@@ -7556,6 +7770,20 @@ html.light-theme .terrain-player-bar {
 }
 html.light-theme .terrain-player-bar .tp-slider::-webkit-slider-thumb {
   border-color: #fff;
+}
+
+/* The player bar used to hold 5 always-visible speed buttons + slider + two
+   labels, whose combined min-content width overflowed a phone-width viewport
+   with no way to reach the clipped right-hand controls. Collapsing speed into
+   one toggle (above) already frees most of that space; tighten the remaining
+   paddings/gaps/min-widths too so everything fits at once. */
+@media (max-width: 640px) {
+  .terrain-player-bar { gap: 6px; padding: 8px 10px; }
+  .terrain-player-bar .tp-btn { width: 32px; height: 32px; }
+  .terrain-player-bar .tp-speed-toggle { padding: 4px 7px; font-size: 10px; }
+  .terrain-player-bar .tp-slider { min-width: 40px; }
+  .terrain-player-bar .tp-label { min-width: 30px; font-size: 10px; }
+  .terrain-player-bar .tp-time { min-width: 40px; font-size: 10px; }
 }
 
 /* Open 3D viewer button */
