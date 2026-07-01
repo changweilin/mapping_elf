@@ -1974,6 +1974,10 @@ const terrainViewerEl = document.getElementById('terrain-viewer');
 const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
 const tvCloseBtn = document.getElementById('tv-close-btn');
 const tvRedrawBtn = document.getElementById('tv-redraw-btn');
+const tvExportBtn = document.getElementById('tv-export-btn');
+const tvExportMenu = document.getElementById('tv-export-menu');
+const tvExportStl = document.getElementById('tv-export-stl');
+const tvExport3mf = document.getElementById('tv-export-3mf');
 const tvLanguageSelect = document.getElementById('tv-language-select');
 const tvToggleTheme = document.getElementById('tv-toggle-theme');
 const tpPlay = document.getElementById('tp-play');
@@ -1998,6 +2002,8 @@ const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
 const tvToggleView = document.getElementById('tv-toggle-view');
 const tvViewLabel = document.getElementById('tv-view-label');
 const tvToggleNormalize = document.getElementById('tv-toggle-normalize');
+const tvToggleAbsolute = document.getElementById('tv-toggle-absolute');
+const tvToggleTrail = document.getElementById('tv-toggle-trail');
 const tvLiveHud = document.getElementById('tv-live-hud');
 const tvHudCollapse = document.getElementById('tv-hud-collapse');
 const tvMarkerDetail = document.getElementById('tv-marker-detail');
@@ -2020,6 +2026,9 @@ const tvLoadingDetail = document.getElementById('tv-loading-detail');
 const tvLoadingFill = document.getElementById('tv-loading-fill');
 const tvLoadingPercent = document.getElementById('tv-loading-percent');
 const tvLoadingAbort = document.getElementById('tv-loading-abort');
+const tvFeaturesProgress = document.getElementById('tv-features-progress');
+const tvFeaturesProgressFill = document.getElementById('tv-features-progress-fill');
+const tvFeaturesProgressPercent = document.getElementById('tv-features-progress-percent');
 
 let terrainViewer = null;
 // True while the toolbar "更新" rebuild is running. A redraw must never kick the
@@ -2058,6 +2067,8 @@ const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
   features: true,
   labelSize: 'none',      // none | large | small
   elevNormalized: false,
+  absElev: false,         // 絕對海拔懸空（軌跡懸空＋支柱）
+  trailReveal: false,     // 軌跡時序揭示（依播放進度）
 });
 
 function loadTerrainDisplaySettings() {
@@ -2200,6 +2211,22 @@ function handleTerrainLoadState(state) {
     if (!terrainRefreshing) closeTerrainViewer();
     showNotification('3D 地形載入失敗: ' + (state.error.message || ''), 'error');
   }
+}
+
+// Background 圖資 (map features: 道路／河流／水體／建築／地標) download progress —
+// unlike handleTerrainLoadState's full-screen overlay, this is a small corner
+// pill since the terrain model is already interactive while 圖資 re-downloads
+// (on first open and on every 更新 redraw).
+function handleTerrainFeaturesProgress(state) {
+  if (!tvFeaturesProgress) return;
+  const active = !!state?.active;
+  tvFeaturesProgress.classList.toggle('hidden', !active);
+  if (!active) return;
+  const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
+  if (tvFeaturesProgressFill) tvFeaturesProgressFill.style.width = `${pct}%`;
+  if (tvFeaturesProgressPercent) tvFeaturesProgressPercent.textContent = `${pct}%`;
+  const bar = tvFeaturesProgress.querySelector('.loading-bar');
+  if (bar) bar.setAttribute('aria-valuenow', String(pct));
 }
 
 function tvEscapeHtml(str) {
@@ -2459,13 +2486,25 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       };
     });
 
-    const weatherPointsData = (weatherPoints || []).map((wp) => ({
-      coords: wp.coords || [wp.lat, wp.lng],
-      elevation: wp.elevation || 0,
-      weatherCode: wp.weatherCode || wp.weather_code,
-      temperature: wp.temperature || wp.temp,
-      label: wp.label || null,
-    }));
+    // Whether a point's weather icon shows in 3D follows the same 主航點/中繼點
+    // checkboxes as the 2D map; the WMO code + temperature themselves live in the
+    // weather cache (weatherPoints entries don't carry them directly), same as
+    // what feeds the 2D marker badges.
+    const weatherPointsData = (weatherPoints || [])
+      .filter((wp) => (wp.isWaypoint ? showWpIcon : showImIcon))
+      .map((wp) => {
+        const cells = getSavedWeatherCells(wp);
+        const code = cells?._weatherCode;
+        const tempNum = cells?.temp != null ? parseFloat(cells.temp) : NaN;
+        return {
+          coords: wp.coords || [wp.lat, wp.lng],
+          elevation: wp.elevation || 0,
+          weatherCode: Number.isFinite(code) ? code : null,
+          temperature: Number.isFinite(tempNum) ? tempNum : null,
+          label: wp.label || null,
+        };
+      })
+      .filter((pt) => pt.weatherCode != null);
 
     const routeData = {
       coords: routeCoords,
@@ -2530,6 +2569,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       applyTerrainDisplayToViewer();
       updateTerrainToggleAvailability();
     });
+    terrainViewer.onFeaturesProgress((state) => handleTerrainFeaturesProgress(state));
 
     renderTerrainInfoPanel(routeData);
     // Apply the persisted display settings to the toolbar buttons + the prefs the
@@ -2564,7 +2604,9 @@ function closeTerrainViewer() {
     terrainViewer.hide();
   }
   setTerrainBusy(false);
+  tvFeaturesProgress?.classList.add('hidden');
   terrainViewerEl.classList.add('hidden');
+  closeTerrainExportMenu();
   updateTerrainPlayerUI();
 }
 
@@ -2625,6 +2667,57 @@ async function refreshTerrainViewer() {
 btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
 tvCloseBtn?.addEventListener('click', closeTerrainViewer);
 tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
+
+// ---- 3D-print export (STL / 3MF) — Plan §IV ----
+function closeTerrainExportMenu() {
+  if (!tvExportMenu) return;
+  tvExportMenu.classList.add('hidden');
+  tvExportBtn?.setAttribute('aria-expanded', 'false');
+}
+
+let terrainExportBusy = false;
+async function exportTerrainModel(format) {
+  closeTerrainExportMenu();
+  if (terrainExportBusy) return;
+  if (!terrainViewer || !terrainViewer.hasExportableModel?.()) {
+    showNotification('尚無可匯出的 3D 模型', 'warning');
+    return;
+  }
+  const source = terrainViewer.getExportSource({ sizeMm: 150 });
+  if (!source) { showNotification('無法建立匯出資料', 'error'); return; }
+  const base = (buildDefaultRouteName?.() || 'mapping-elf-terrain')
+    .replace(/[^\w一-龥-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'mapping-elf-terrain';
+  terrainExportBusy = true;
+  tvExportBtn?.classList.add('tv-redraw-spin');
+  try {
+    showNotification(`正在產生 ${format.toUpperCase()} 列印模型…`, 'info');
+    const { TerrainExporter } = await import('./modules/terrainExporter.js');
+    const payload = await TerrainExporter.export(source, format, base);
+    await TerrainExporter.download(payload);
+    showNotification(`已匯出 ${payload.filename}`, 'success');
+  } catch (err) {
+    console.error('3D export failed:', err);
+    showNotification(`匯出失敗：${err?.message || err}`, 'error');
+  } finally {
+    terrainExportBusy = false;
+    tvExportBtn?.classList.remove('tv-redraw-spin');
+  }
+}
+
+tvExportBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (tvExportBtn.disabled || !tvExportMenu) return;
+  const open = tvExportMenu.classList.toggle('hidden');
+  tvExportBtn.setAttribute('aria-expanded', String(!open));
+});
+tvExportStl?.addEventListener('click', () => exportTerrainModel('stl'));
+tvExport3mf?.addEventListener('click', () => exportTerrainModel('3mf'));
+// Dismiss the menu on any outside click.
+document.addEventListener('click', (e) => {
+  if (!tvExportMenu || tvExportMenu.classList.contains('hidden')) return;
+  if (e.target.closest('.tv-export-wrap')) return;
+  closeTerrainExportMenu();
+});
 
 // 3D viewer language switcher — a sibling of the homepage one, kept in sync via
 // refreshLanguageSensitiveUi (the i18n onLanguageChange hook).
@@ -2725,12 +2818,16 @@ function updateTerrainToggleAvailability() {
     tvToggleWeather.title = hasWeather ? '天氣標記' : '此路線沒有天氣標記';
   }
 
-  // 天氣特效 drives the animated weather marker icons (plus rain/snow/fog/sky for
-  // non-clear weather), so it's usable on any route that has weather markers —
-  // only a route with no weather data at all leaves it with nothing to animate.
+  // 特效 drives the animated weather marker icons (plus rain/snow/fog/sky for
+  // non-clear weather) AND declutters the point-landmark models (peaks/trees/
+  // towers/viewpoints), so it's usable whenever either exists — only a route
+  // with neither weather data nor landmarks leaves it with nothing to toggle.
+  const hasLandmarks = terrainViewer.hasLandmarks?.() ?? false;
   if (tvToggleWeatherFx) {
-    tvToggleWeatherFx.disabled = !hasWeather;
-    tvToggleWeatherFx.title = hasWeather ? '天氣特效（動態天氣圖示＋雨／雪／霧）' : '此路線沒有天氣資料，無特效可顯示';
+    tvToggleWeatherFx.disabled = !hasWeather && !hasLandmarks;
+    tvToggleWeatherFx.title = (hasWeather || hasLandmarks)
+      ? '特效（立體天氣現象：雲／雨／雪／霧／雷電＋地標模型）'
+      : '此路線沒有天氣資料或地標，無特效可顯示';
   }
 
   const hasLabels = terrainViewer.hasContourLabels?.() ?? false;
@@ -2745,6 +2842,10 @@ function updateTerrainToggleAvailability() {
       ? '地圖圖資（道路／河流／水體／綠地／荒地／建築）'
       : '此區域沒有可顯示的地圖圖資';
   }
+
+  // 3D-print export is available once a terrain solid exists.
+  const canExport = terrainViewer.hasExportableModel?.() ?? false;
+  if (tvExportBtn) tvExportBtn.disabled = !canExport;
 }
 
 // Apply the persisted display settings to the toolbar buttons + the build-time
@@ -2766,6 +2867,8 @@ function syncTerrainDisplayToggleUI() {
   tvToggleDaynight?.classList.toggle('active', !!s.daynight);
   tvToggleWeatherFx?.classList.toggle('active', !!s.weatherfx);
   tvToggleFeatures?.classList.toggle('active', !!s.features);
+  tvToggleAbsolute?.classList.toggle('active', !!s.absElev);
+  tvToggleTrail?.classList.toggle('active', !!s.trailReveal);
 
   terrainLabelState = TERRAIN_LABEL_STATES.includes(s.labelSize) ? s.labelSize : 'none';
   if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
@@ -2788,6 +2891,8 @@ function applyTerrainDisplayToViewer() {
   terrainViewer.setWeatherFxEnabled(!!s.weatherfx);
   terrainViewer.setFeaturesVisible(!!s.features);
   terrainViewer.setLabelScale(terrainLabelState);
+  terrainViewer.setAbsoluteElevation(!!s.absElev);
+  terrainViewer.setRouteRevealMode(!!s.trailReveal);
   // Vertical normalization is baked into the build via routeData.elevNormalized;
   // here we only keep the button state in sync.
   syncTerrainNormalizeButton();
@@ -2872,6 +2977,24 @@ tvToggleNormalize?.addEventListener('click', () => {
   saveTerrainDisplaySettings();
   syncTerrainNormalizeButton();
   terrainViewer?.setElevationNormalized(on);
+});
+
+// 絕對海拔懸空 toggle (Plan §II-4) — shows the track floating at true elevation
+// with vertical support stems to the ground. Visibility flip only; no rebuild.
+tvToggleAbsolute?.addEventListener('click', () => {
+  const on = tvToggleAbsolute.classList.toggle('active');
+  terrainViewer?.setAbsoluteElevation(on);
+  terrainDisplaySettings.absElev = on;
+  saveTerrainDisplaySettings();
+});
+
+// 軌跡時序揭示 toggle (Plan §II-1) — reveals the track progressively as playback
+// advances (CZML-Path style) instead of drawing the whole line at once.
+tvToggleTrail?.addEventListener('click', () => {
+  const on = tvToggleTrail.classList.toggle('active');
+  terrainViewer?.setRouteRevealMode(on);
+  terrainDisplaySettings.trailReveal = on;
+  saveTerrainDisplaySettings();
 });
 
 // On-terrain text (字體) cycles: 關 (off, default) → 大 → 小.

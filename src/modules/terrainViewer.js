@@ -6,6 +6,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { haversineDistance, cumulativeDistances } from './utils.js';
+import { WeatherFx3D } from './weatherFx3D.js';
 
 const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
 // Overpass mirrors tried in order — the main instance is frequently rate-limited
@@ -44,6 +45,19 @@ export class TerrainViewer {
     this.terrainMesh = null;
     this.routeLine = null;
     this.routeTube = null;
+    // Vertical drop-line "stems" connecting a suspended (absolute-elevation) track
+    // to the terrain surface below it (Plan §II-4). Built with the route, hidden
+    // unless the 絕對海拔 (suspended) mode is on.
+    this._routeStemGroup = null;
+    this._absoluteElevation = false;
+    // Time-dynamic trail reveal (Plan §II-1): when on, the tube + overlay line are
+    // progressively revealed up to the player's current position (CZML-Path style)
+    // instead of drawn whole. These cache the geometry's segment counts so the
+    // per-frame draw-range/instance-count update is cheap.
+    this._routeReveal = false;
+    this._routeTubeSegs = 0;
+    this._routeTubeRadial = 8;
+    this._routeLineSegs = 0;
     this.waypointMarkers = [];
     this.weatherLabels = [];
     this.playerMarker = null;
@@ -72,6 +86,10 @@ export class TerrainViewer {
     this.featureLabelGroup = null;
     this._featuresVisible = true;
     this._weatherVisible = true;
+    // Point-landmark models (peaks/trees/towers/viewpoints/monuments) are visual
+    // embellishments rather than base map imagery, so 特效 (effects) can declutter
+    // them independently of 圖資 — visible only when BOTH 圖資 and 特效 are on.
+    this.landmarkGroup = null;
 
     // --- Clickable 3D markers (billboard signboards) ---
     this._onMarkerClick = null;
@@ -131,6 +149,10 @@ export class TerrainViewer {
     // Fired once a background map-feature download finishes and drapes onto the
     // model, so the UI can re-evaluate layer toggles (圖資 availability).
     this._onFeaturesReady = null;
+    // cb({ active, percent }) — background 圖資 (map features) download progress,
+    // separate from the blocking terrain-build overlay since the model is already
+    // interactive while this runs.
+    this._onFeaturesProgress = null;
     // Monotonic id of the current build; background feature loads carry the id
     // they started under and bail if it no longer matches (model was rebuilt).
     this._buildToken = 0;
@@ -164,13 +186,14 @@ export class TerrainViewer {
     this._lightningT = 0;
     this._lightningTimer = 4 + Math.random() * 6;
 
-    // --- Animated weather marker icons ---
-    // Each weather marker keeps its own canvas/texture so, when 天氣特效 is on, the
-    // emoji icon is swapped for a live procedural weather animation (falling rain /
-    // snow, drifting clouds/fog, spinning sun, flashing lightning) redrawn per frame.
+    // --- Weather marker badges + real 3D weather phenomena ---
+    // Each weather point gets a compact static badge (emoji + temperature, for
+    // at-a-glance reading and click-to-inspect). The actual animation is no longer
+    // a flat icon: a volumetric 3D weather rig (drifting cloud banks, falling rain
+    // shafts, swirling snow, ground fog, a pulsing sun, forked lightning) grows in
+    // world space at each point — see WeatherFx3D — gated by the 天氣 + 特效 toggles.
     this._weatherIconEntries = [];
-    this._iconFxTime = 0;
-    this._weatherIconsAnimating = false;
+    this._weather3d = null;
 
     // --- Animated hiker ---
     this._person = null;
@@ -262,6 +285,18 @@ export class TerrainViewer {
     this._onFeaturesReady = cb;
   }
 
+  // cb({ active, percent }) — background 圖資 download/redraw progress, for a
+  // small non-blocking indicator (the model stays interactive throughout).
+  onFeaturesProgress(cb) {
+    this._onFeaturesProgress = cb;
+  }
+
+  _emitFeaturesProgress(state) {
+    if (this._onFeaturesProgress) {
+      try { this._onFeaturesProgress(state); } catch { /* noop */ }
+    }
+  }
+
   isLoading() {
     return this._loading;
   }
@@ -342,6 +377,7 @@ export class TerrainViewer {
     this._featuresVisible = !!visible;
     if (this.featureGroup) this.featureGroup.visible = this._featuresVisible;
     if (this.featureLabelGroup) this.featureLabelGroup.visible = this._featuresVisible;
+    this._applyLandmarkVisibility();
   }
 
   isFeaturesVisible() {
@@ -350,6 +386,19 @@ export class TerrainViewer {
 
   hasMapFeatures() {
     return !!(this.featureGroup && this.featureGroup.children.length);
+  }
+
+  // True once a point-landmark model (peak/tree/tower/viewpoint/monument) exists,
+  // so the 特效 toggle's expanded scope has something to show/hide.
+  hasLandmarks() {
+    return !!(this.landmarkGroup && this.landmarkGroup.children.length);
+  }
+
+  // Landmarks need BOTH layers on: 圖資 gates them as map-derived content, 特效
+  // additionally lets the user declutter these decorative models without
+  // touching the weather FX itself.
+  _applyLandmarkVisibility() {
+    if (this.landmarkGroup) this.landmarkGroup.visible = this._featuresVisible && this._weatherFxEnabled;
   }
 
   // Contour precision: 'high' (dense bands) | 'low' (sparse bands) | 'none'.
@@ -407,6 +456,13 @@ export class TerrainViewer {
   setWeatherVisible(visible) {
     this._weatherVisible = !!visible;
     if (this.weatherGroup) this.weatherGroup.visible = this._weatherVisible;
+    this._applyWeather3DVisibility();
+  }
+
+  // The 3D weather phenomena are the weather layer's FX: shown only when BOTH the
+  // 天氣 layer (data present) and 天氣特效 (effects) are on.
+  _applyWeather3DVisibility() {
+    if (this._weather3d) this._weather3d.setVisible(this._weatherVisible && this._weatherFxEnabled);
   }
 
   // Day/night + directional sunlight driven by the route time. When off, the
@@ -417,18 +473,19 @@ export class TerrainViewer {
   }
 
   // Precipitation / fog effects. When off, particle systems and weather fog are
-  // hidden so nothing obscures the terrain.
+  // hidden so nothing obscures the terrain. Also declutters the point-landmark
+  // models (peaks/trees/towers/viewpoints/monuments) — they're decoration on top
+  // of the base 圖資 layer, not the map data itself, so 特效 can hide them without
+  // touching the gingerbread hiker or the route waypoints.
   setWeatherFxEnabled(enabled) {
     this._weatherFxEnabled = !!enabled;
     if (this._rain) this._rain.visible = false;
     if (this._snow) this._snow.visible = false;
     this._applyEnvironment(this._metricsAtProgress(this._progress));
-    // Swap weather markers between the static emoji and the live animation right
-    // away (the render loop keeps animating while it stays on).
-    this._weatherIconsAnimating = false;
-    for (const e of this._weatherIconEntries) {
-      this._paintWeatherLabel(e, this._iconFxTime, this._weatherFxEnabled);
-    }
+    // Show/hide the volumetric 3D weather rigs to match the 特效 toggle (they keep
+    // animating from the render loop while shown).
+    this._applyWeather3DVisibility();
+    this._applyLandmarkVisibility();
   }
 
   isEnvironmentEnabled() {
@@ -750,19 +807,32 @@ export class TerrainViewer {
   // the user rebuilt/closed the model is discarded instead of painting a stale
   // scene. A failed download reuses the previous build's features (same area).
   async _loadMapFeaturesInBackground(bbox, token, prevFeatures, prevFeaturesBbox) {
+    this._emitFeaturesProgress({ active: true, percent: 0 });
     let featuresData = null;
     try {
-      featuresData = await this._fetchMapFeatures(bbox);
+      featuresData = await this._fetchMapFeatures(bbox, (p) => {
+        this._emitFeaturesProgress({ active: true, percent: Math.round(p * 100) });
+      });
     } catch { featuresData = null; }
-    if (this._aborted || token !== this._buildToken || !this.scene) return;
+    if (this._aborted || token !== this._buildToken || !this.scene) {
+      this._emitFeaturesProgress({ active: false, percent: 100 });
+      return;
+    }
     if (!featuresData && prevFeatures && this._bboxApproxEqual(bbox, prevFeaturesBbox)) {
       featuresData = prevFeatures;
     }
-    if (!featuresData) return;
+    if (!featuresData) {
+      this._emitFeaturesProgress({ active: false, percent: 100 });
+      return;
+    }
     if (featuresData !== prevFeatures && this._onFeaturesComputed) {
       try { this._onFeaturesComputed({ features: featuresData, bbox }); } catch { /* noop */ }
     }
-    try { this._buildMapFeatures(featuresData, bbox); } catch (err) { console.warn('map features failed:', err); return; }
+    try { this._buildMapFeatures(featuresData, bbox); } catch (err) {
+      console.warn('map features failed:', err);
+      this._emitFeaturesProgress({ active: false, percent: 100 });
+      return;
+    }
     this._featuresData = featuresData;
     this._featuresDataBbox = bbox;
     // Apply the persisted label size + layer visibility to the freshly added
@@ -770,7 +840,9 @@ export class TerrainViewer {
     this.setLabelScale(this._labelScale);
     if (this.featureGroup) this.featureGroup.visible = this._featuresVisible;
     if (this.featureLabelGroup) this.featureLabelGroup.visible = this._featuresVisible;
+    this._applyLandmarkVisibility();
     this._updateLineResolutions();
+    this._emitFeaturesProgress({ active: false, percent: 100 });
     if (this._onFeaturesReady) {
       try { this._onFeaturesReady(); } catch { /* noop */ }
     }
@@ -781,6 +853,116 @@ export class TerrainViewer {
       const canvas = document.createElement('canvas');
       return !!(canvas.getContext('webgl') || canvas.getContext('webgl2'));
     } catch { return false; }
+  }
+
+  // True once a terrain height field exists, so the 3D-print export (STL / 3MF)
+  // has something to build a solid from.
+  hasExportableModel() {
+    return !!(this._field && this._bbox);
+  }
+
+  // Build a compact, print-oriented description of the current model for the
+  // STL / 3MF exporter (Plan §IV). Coordinates are millimetres in a Z-up frame
+  // (X east, Y north, Z up) scaled so the horizontal span == sizeMm; the on-screen
+  // vertical scale (incl. 海拔歸一化) is preserved so the print matches the view.
+  // Terrain holes are filled flat (min elevation) so the exported solid stays
+  // watertight, and a per-grid land-cover family drives 3MF colour blocking (§IV-3).
+  getExportSource({ sizeMm = 150, baseThicknessMm = 4 } = {}) {
+    if (!this._field || !this._bbox) return null;
+    const N = FIELD_SIZE;
+    const bbox = this._bbox;
+    const field = this._field;
+    const minElev = this._fieldMinV;
+    const span = Math.max(1, this._worldSpan || 2000);
+    const k = sizeMm / span;
+
+    const X = new Float32Array(N * N);
+    const Y = new Float32Array(N * N);
+    const Z = new Float32Array(N * N);
+    let minZ = Infinity;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const lat = bbox.minLat + (bbox.maxLat - bbox.minLat) * i / (N - 1);
+        const lng = bbox.minLng + (bbox.maxLng - bbox.minLng) * j / (N - 1);
+        const raw = field[i][j];
+        const elev = this._isHole(raw) ? minElev : raw;    // holes filled flat for a manifold solid
+        const p = this._latLngToLocal(lat, lng, elev, bbox);
+        const idx = i * N + j;
+        X[idx] = p.x * k; Y[idx] = p.z * k; Z[idx] = p.y * k;
+        if (Z[idx] < minZ) minZ = Z[idx];
+      }
+    }
+
+    // Per-grid land-cover family for colour blocking: land / green / soil / urban,
+    // plus a water overlay (water is excluded from the terrain-colour field, so it
+    // is rasterised separately here).
+    const areas = (this._featuresData && this._featuresData.areas) || [];
+    const buildings = (this._featuresData && this._featuresData.buildings) || [];
+    const famGrid = this._buildLandCoverField(areas, buildings, bbox);
+    const FAM = { land: 0, green: 1, soil: 2, urban: 3, water: 4 };
+    const family = new Uint8Array(N * N);
+    const latSpan = (bbox.maxLat - bbox.minLat) || 1;
+    const lngSpan = (bbox.maxLng - bbox.minLng) || 1;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const f = famGrid[i][j];
+        family[i * N + j] = f === 'green' ? FAM.green : f === 'soil' ? FAM.soil : f === 'urban' ? FAM.urban : FAM.land;
+      }
+    }
+    for (const ar of areas) {
+      if (ar.cls !== 'water' && ar.cls !== 'wetland') continue;
+      const rings = ar.rings || [];
+      const outer = rings[0];
+      if (!outer || outer.length < 3) continue;
+      const holes = rings.slice(1).filter((h) => h && h.length >= 3);
+      let rminLat = Infinity, rmaxLat = -Infinity, rminLng = Infinity, rmaxLng = -Infinity;
+      for (const [la, lo] of outer) { if (la < rminLat) rminLat = la; if (la > rmaxLat) rmaxLat = la; if (lo < rminLng) rminLng = lo; if (lo > rmaxLng) rmaxLng = lo; }
+      const i0 = Math.max(0, Math.floor((rminLat - bbox.minLat) / latSpan * (N - 1)));
+      const i1 = Math.min(N - 1, Math.ceil((rmaxLat - bbox.minLat) / latSpan * (N - 1)));
+      const j0 = Math.max(0, Math.floor((rminLng - bbox.minLng) / lngSpan * (N - 1)));
+      const j1 = Math.min(N - 1, Math.ceil((rmaxLng - bbox.minLng) / lngSpan * (N - 1)));
+      for (let i = i0; i <= i1; i++) {
+        const lat = bbox.minLat + latSpan * i / (N - 1);
+        for (let j = j0; j <= j1; j++) {
+          const lng = bbox.minLng + lngSpan * j / (N - 1);
+          if (!this._pointInRing(lat, lng, outer)) continue;
+          if (holes.some((h) => this._pointInRing(lat, lng, h))) continue;
+          family[i * N + j] = FAM.water;
+        }
+      }
+    }
+
+    return {
+      N, X, Y, Z, family,
+      route: this._exportRouteSamples(bbox, k),
+      baseZ: minZ - Math.max(0.5, baseThicknessMm),
+      sizeMm,
+    };
+  }
+
+  // Route polyline draped onto the terrain SURFACE (not the GPS elevation) in
+  // print millimetres, densified so the exported ridge (Plan §IV-1) hugs the
+  // printed relief smoothly.
+  _exportRouteSamples(bbox, k) {
+    const coords = this.routePoints;
+    if (!coords || coords.length < 2) return [];
+    const dLatCell = (bbox.maxLat - bbox.minLat) / (FIELD_SIZE - 1);
+    const dLngCell = (bbox.maxLng - bbox.minLng) / (FIELD_SIZE - 1);
+    const out = [];
+    const drape = (lat, lng) => {
+      const elev = this._sampleGridElevation(lat, lng);
+      const p = this._latLngToLocal(lat, lng, elev, bbox);
+      return [p.x * k, p.z * k, p.y * k];
+    };
+    for (let i = 0; i < coords.length - 1; i++) {
+      const [la, lo] = coords[i];
+      const [lb, lob] = coords[i + 1];
+      const steps = Math.min(20, Math.max(1, Math.ceil(Math.max(Math.abs(lb - la) / dLatCell, Math.abs(lob - lo) / dLngCell))));
+      for (let s = 0; s < steps; s++) { const t = s / steps; out.push(drape(la + (lb - la) * t, lo + (lob - lo) * t)); }
+    }
+    const last = coords[coords.length - 1];
+    out.push(drape(last[0], last[1]));
+    return out;
   }
 
   _initScene() {
@@ -2101,6 +2283,10 @@ export class TerrainViewer {
     this.routeTube = new THREE.Mesh(tubeGeo, tubeMat);
     this.routeTube.castShadow = true;
     this.scene.add(this.routeTube);
+    // Cache the tube's tubular/radial segment counts so the trail-reveal mode can
+    // clamp the index draw-range to the traveled portion (Plan §II-1).
+    this._routeTubeSegs = tubularSegments;
+    this._routeTubeRadial = radialSegments;
 
     // Bright always-on overlay line carrying the same gradient. A wide (pixel
     // width) Line2 so the track stays clearly visible and thick at any zoom. It
@@ -2130,6 +2316,102 @@ export class TerrainViewer {
     this.routeLine.computeLineDistances();
     this.scene.add(this.routeLine);
     this._lineMaterials.push(lineMat);
+    // Number of segment instances in the overlay line (one per gap between
+    // resampled points) — the reveal mode limits instanceCount to this fraction.
+    this._routeLineSegs = Math.max(1, sampled.length - 1);
+
+    // ----- Suspended-absolute drop stems (Plan §II-4) -----
+    // Thin vertical lines from the track down to the terrain surface beneath each
+    // (subsampled) route vertex, making the track's suspension in 3D space legible
+    // when the 絕對海拔 mode is on. Built once, hidden until toggled.
+    this._buildRouteStems(coords, elevations, routeLift, bbox);
+
+    // Honour a persisted trail-reveal preference for the freshly built geometry.
+    this._applyRouteReveal();
+  }
+
+  // Build the vertical drop-lines connecting the suspended track to the ground.
+  // Subsampled so a dense track doesn't spawn thousands of stems. Stems are
+  // skipped where the track barely floats (< ~4 m above terrain) or over a hole.
+  _buildRouteStems(coords, elevations, routeLift, bbox) {
+    if (!coords || coords.length < 2) return;
+    const step = Math.max(1, Math.floor(coords.length / 80));
+    const verts = [];
+    const pushStem = (i) => {
+      const [lat, lng] = coords[i];
+      if (this._isOverHole(lat, lng)) return;
+      const routeElev = (elevations?.[i] ?? 0) + routeLift;
+      const groundElev = this._sampleGridElevation(lat, lng);
+      if (routeElev - groundElev < 4) return; // barely floating → no stem needed
+      const top = this._latLngToLocal(lat, lng, routeElev, bbox);
+      const bot = this._latLngToLocal(lat, lng, groundElev, bbox);
+      verts.push(top.x, top.y, top.z, bot.x, bot.y, bot.z);
+    };
+    for (let i = 0; i < coords.length; i += step) pushStem(i);
+    pushStem(coords.length - 1);
+    if (verts.length < 6) return;
+
+    const geo = new LineSegmentsGeometry();
+    geo.setPositions(verts);
+    const mat = new LineMaterial({ color: 0xffb066, linewidth: 1.2, transparent: true, opacity: 0.55 });
+    const stems = new LineSegments2(geo, mat);
+    stems.computeLineDistances();
+    stems.visible = this._absoluteElevation;
+    this._routeStemGroup = stems;
+    this.scene.add(stems);
+    this._lineMaterials.push(mat);
+  }
+
+  // Suspended-absolute mode (Plan §II-4): show the drop stems so the track reads
+  // as floating at its true elevation above the terrain. Geometry is prebuilt, so
+  // this just flips visibility — no rebuild.
+  setAbsoluteElevation(on) {
+    this._absoluteElevation = !!on;
+    if (this._routeStemGroup) this._routeStemGroup.visible = this._absoluteElevation;
+  }
+
+  isAbsoluteElevation() {
+    return this._absoluteElevation;
+  }
+
+  // Time-dynamic trail reveal (Plan §II-1): when on, the tube + overlay line only
+  // draw up to the player's progress; when off, the whole track is shown.
+  setRouteRevealMode(on) {
+    this._routeReveal = !!on;
+    this._applyRouteReveal();
+  }
+
+  isRouteRevealMode() {
+    return this._routeReveal;
+  }
+
+  // Clamp the route geometry's drawn extent to the traveled fraction (reveal on)
+  // or restore it in full (reveal off). Cheap — no geometry rebuild — so it can be
+  // called every frame from _updatePlayerPosition.
+  _applyRouteReveal() {
+    const tube = this.routeTube;
+    const line = this.routeLine;
+    if (tube && tube.geometry) {
+      const idx = tube.geometry.index;
+      if (idx) {
+        if (!this._routeReveal) {
+          tube.geometry.setDrawRange(0, idx.count);
+        } else {
+          const segs = this._routeTubeSegs || 0;
+          const radial = this._routeTubeRadial || 8;
+          const shown = Math.max(1, Math.round(this._clampU(this._progress) * segs));
+          tube.geometry.setDrawRange(0, Math.min(idx.count, shown * radial * 6));
+        }
+      }
+    }
+    if (line && line.geometry) {
+      if (!this._routeReveal) {
+        line.geometry.instanceCount = Infinity;
+      } else {
+        const segs = this._routeLineSegs || 0;
+        line.geometry.instanceCount = Math.max(1, Math.round(this._clampU(this._progress) * segs));
+      }
+    }
   }
 
   _createWaypoints(waypoints, bbox) {
@@ -2159,6 +2441,16 @@ export class TerrainViewer {
         isEnd: i === waypoints.length - 1,
       };
 
+      // Colour-matched flag-on-pole planted at the waypoint itself (旗幟標示),
+      // echoing the 2D map's pin colour so the ground point reads clearly even
+      // when the floating name plaque is scrolled/zoomed out of legibility.
+      const flag = this._buildWaypointFlag(colorCss, ms);
+      flag.position.set(p.x, p.y, p.z);
+      flag.userData.detail = detail;
+      this.scene.add(flag);
+      this.waypointMarkers.push(flag);
+      this._pickables.push(flag);
+
       // Signboard billboard whose downward pin points at the waypoint — no ground
       // sphere. Half the previous size. Click → detail.
       const sign = this._createBillboard(name, colorCss);
@@ -2171,6 +2463,33 @@ export class TerrainViewer {
       this.waypointMarkers.push(sign);
       this._pickables.push(sign);
     });
+  }
+
+  // A small flag-on-pole marker (旗幟標示) planted at a route waypoint's ground
+  // point, coloured to match the 2D map's per-waypoint pin. Feet sit at y = 0;
+  // the caller positions the group at the waypoint's world coordinate.
+  _buildWaypointFlag(colorCss, ms) {
+    const g = new THREE.Group();
+    const poleH = 11 * ms;
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.32 * ms, 0.38 * ms, poleH, 6),
+      new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.5 })
+    );
+    pole.position.y = poleH / 2;
+    pole.castShadow = true;
+    g.add(pole);
+
+    const flagW = 5 * ms;
+    const flagH = 3.2 * ms;
+    const flagMat = new THREE.MeshStandardMaterial({
+      color: colorCss, side: THREE.DoubleSide, roughness: 0.7,
+      emissive: colorCss, emissiveIntensity: 0.18,
+    });
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(flagW, flagH), flagMat);
+    flag.position.set(flagW / 2, poleH - flagH / 2, 0);
+    flag.castShadow = true;
+    g.add(flag);
+    return g;
   }
 
   _roundRectPath(ctx, x, y, w, h, r) {
@@ -2245,10 +2564,15 @@ export class TerrainViewer {
 
   _createWeatherLabels(weatherPoints, bbox) {
     this._weatherIconEntries = [];
+    // A rebuild disposes the old rigs before growing fresh ones for this build.
+    if (this._weather3d) { this._weather3d.dispose(); this._weather3d = null; }
     if (!weatherPoints || weatherPoints.length === 0) return;
 
     this.weatherGroup = new THREE.Group();
     this.scene.add(this.weatherGroup);
+
+    // World-space anchors for the volumetric 3D weather rigs, one per point.
+    const rigPoints = [];
 
     const ms0 = this._markerScale || 1;
     weatherPoints.forEach((pt) => {
@@ -2284,11 +2608,17 @@ export class TerrainViewer {
       const ms = this._markerScale || 1;
       label.scale.set(60 * ms, 20 * ms, 1);
 
-      const entry = { sprite: label, canvas, ctx, texture, cat, icon, temp, phase: Math.random() * Math.PI * 2 };
-      // Paint the initial frame in whichever mode the 特效 toggle is currently in.
-      this._paintWeatherLabel(entry, this._iconFxTime, this._weatherFxEnabled);
+      const entry = { sprite: label, canvas, ctx, texture, cat, icon, temp };
+      // The badge is a static reference chip now — the animation is the 3D rig.
+      this._paintWeatherLabel(entry);
 
-      this._registerLabel(label);
+      // Anchor the 3D weather rig on the terrain surface directly under the badge.
+      const surf = this._latLngToLocal(lat, lng, surfElev, bbox);
+      rigPoints.push({ pos: new THREE.Vector3(surf.x, surf.y, surf.z), cat });
+
+      // Not registered with _registerLabel: the weather icon/temperature badge is
+      // content gated by the 天氣／特效 toggles, not the 字體 (text label size)
+      // control, so it must stay visible even when 字體 is set to 關 (none).
       label.userData.detail = {
         type: 'weather',
         label: pt.label || '天氣點',
@@ -2303,14 +2633,18 @@ export class TerrainViewer {
       this._weatherIconEntries.push(entry);
       this._pickables.push(label);
     });
+
+    // Grow the volumetric 3D weather phenomena in world space at each point.
+    this._weather3d = new WeatherFx3D(this.scene, { scale: ms0, worldSpan: this._worldSpan });
+    this._weather3d.build(rigPoints);
+    this._applyWeather3DVisibility();
   }
 
-  // Paint one weather marker's canvas: a rounded badge with the temperature and,
-  // on the left, either the static emoji (animated=false) or a procedurally drawn,
-  // time-driven weather animation (animated=true). Called once on build and every
-  // frame from _updateWeatherIconAnimations while 天氣特效 is on.
-  _paintWeatherLabel(entry, t, animated) {
-    const { ctx, canvas, cat, icon, temp } = entry;
+  // Paint one weather marker's canvas: a compact rounded badge with the emoji and
+  // temperature. Drawn once on build — the moving weather is now the volumetric
+  // 3D rig (WeatherFx3D), so the badge stays a static, legible reference chip.
+  _paintWeatherLabel(entry) {
+    const { ctx, canvas, icon, temp } = entry;
     const W = canvas.width;
     const H = canvas.height;
     ctx.clearRect(0, 0, W, H);
@@ -2343,15 +2677,11 @@ export class TerrainViewer {
 
     const gcx = bx + pad + glyphW / 2;
     const gcy = H / 2;
-    if (animated) {
-      this._drawWeatherGlyph(ctx, gcx, gcy, 15, cat, t + entry.phase);
-    } else {
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '30px Inter, "Noto Sans TC", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(icon, gcx, gcy);
-    }
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '30px Inter, "Noto Sans TC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(icon, gcx, gcy);
 
     if (temp) {
       ctx.fillStyle = '#ffffff';
@@ -2362,137 +2692,6 @@ export class TerrainViewer {
     }
 
     entry.texture.needsUpdate = true;
-  }
-
-  // Draw an animated weather glyph centred at (cx, cy) with radius r. `t` is a
-  // free-running seconds clock (offset per marker so they don't move in lockstep).
-  _drawWeatherGlyph(ctx, cx, cy, r, cat, t) {
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    const drawCloud = (oy, color) => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(cx - r * 0.55, cy + oy + r * 0.1, r * 0.45, 0, Math.PI * 2);
-      ctx.arc(cx + r * 0.55, cy + oy + r * 0.1, r * 0.5, 0, Math.PI * 2);
-      ctx.arc(cx, cy + oy - r * 0.25, r * 0.6, 0, Math.PI * 2);
-      ctx.rect(cx - r, cy + oy - r * 0.05, r * 2, r * 0.6);
-      ctx.fill();
-    };
-
-    switch (cat) {
-      case 'clear': {
-        // Spinning sun rays around a solid disc.
-        ctx.strokeStyle = '#ffd34d';
-        ctx.lineWidth = 2.4;
-        const rays = 8;
-        for (let i = 0; i < rays; i++) {
-          const a = t * 1.1 + (i * Math.PI * 2) / rays;
-          ctx.beginPath();
-          ctx.moveTo(cx + Math.cos(a) * r * 0.95, cy + Math.sin(a) * r * 0.95);
-          ctx.lineTo(cx + Math.cos(a) * r * 1.4, cy + Math.sin(a) * r * 1.4);
-          ctx.stroke();
-        }
-        ctx.fillStyle = '#ffd34d';
-        ctx.beginPath();
-        ctx.arc(cx, cy, r * 0.68, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-      }
-      case 'cloudy': {
-        drawCloud(Math.sin(t * 0.9) * r * 0.12 + r * 0.1, '#dfe6ee');
-        break;
-      }
-      case 'fog': {
-        ctx.strokeStyle = '#cfd6de';
-        ctx.lineWidth = 3;
-        for (let i = 0; i < 4; i++) {
-          const yy = cy - r * 0.7 + i * (r * 0.55);
-          const dx = Math.sin(t * 1.1 + i * 0.9) * r * 0.3;
-          ctx.beginPath();
-          ctx.moveTo(cx - r + dx, yy);
-          ctx.lineTo(cx + r + dx, yy);
-          ctx.stroke();
-        }
-        break;
-      }
-      case 'drizzle':
-      case 'rain':
-      case 'thunder': {
-        drawCloud(-r * 0.35, cat === 'thunder' ? '#9aa6b4' : '#cdd6e0');
-        const drops = cat === 'drizzle' ? 3 : 5;
-        const speed = cat === 'drizzle' ? 1.6 : 2.6;
-        ctx.strokeStyle = '#7fb4ff';
-        ctx.lineWidth = 2.4;
-        for (let i = 0; i < drops; i++) {
-          const dx = cx - r * 0.7 + (drops === 1 ? 0 : (i * r * 1.4) / (drops - 1));
-          const ph = ((t * speed + i * 0.45) % 1 + 1) % 1;
-          const y0 = cy + r * 0.25 + ph * r * 0.85;
-          ctx.beginPath();
-          ctx.moveTo(dx, y0);
-          ctx.lineTo(dx - r * 0.1, y0 + r * 0.4);
-          ctx.stroke();
-        }
-        if (cat === 'thunder') {
-          const flash = 0.45 + 0.55 * Math.max(0, Math.sin(t * 7));
-          ctx.globalAlpha = flash;
-          ctx.fillStyle = '#ffe14d';
-          ctx.beginPath();
-          ctx.moveTo(cx + r * 0.05, cy + r * 0.15);
-          ctx.lineTo(cx + r * 0.45, cy + r * 0.15);
-          ctx.lineTo(cx + r * 0.12, cy + r * 0.7);
-          ctx.lineTo(cx + r * 0.5, cy + r * 0.7);
-          ctx.lineTo(cx - r * 0.2, cy + r * 1.45);
-          ctx.lineTo(cx + r * 0.05, cy + r * 0.8);
-          ctx.lineTo(cx - r * 0.3, cy + r * 0.8);
-          ctx.closePath();
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-        break;
-      }
-      case 'snow': {
-        drawCloud(-r * 0.35, '#e6edf5');
-        ctx.fillStyle = '#ffffff';
-        const flakes = 4;
-        for (let i = 0; i < flakes; i++) {
-          const ph = ((t * 0.9 + i * 0.55) % 1 + 1) % 1;
-          const baseX = cx - r * 0.7 + (i * r * 1.4) / (flakes - 1);
-          const dx = baseX + Math.sin((t + i) * 2) * r * 0.14;
-          const y = cy + r * 0.25 + ph * r * 0.9;
-          ctx.beginPath();
-          ctx.arc(dx, y, r * 0.11, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        break;
-      }
-      default:
-        drawCloud(r * 0.1, '#dfe6ee');
-    }
-
-    ctx.restore();
-  }
-
-  // Per-frame repaint of the weather markers' icons. When 天氣特效 is off, paints
-  // the static emoji once and stops; when on, redraws each visible marker's
-  // animation. Skipped entirely when the 天氣 layer is hidden.
-  _updateWeatherIconAnimations(dt) {
-    if (!this._weatherIconEntries.length) return;
-    if (!this._weatherFxEnabled) {
-      if (this._weatherIconsAnimating) {
-        this._weatherIconsAnimating = false;
-        for (const e of this._weatherIconEntries) this._paintWeatherLabel(e, this._iconFxTime, false);
-      }
-      return;
-    }
-    if (!this.weatherGroup || !this.weatherGroup.visible) return;
-    this._weatherIconsAnimating = true;
-    this._iconFxTime += dt;
-    for (const e of this._weatherIconEntries) {
-      if (!e.sprite.visible) continue;
-      this._paintWeatherLabel(e, this._iconFxTime, true);
-    }
   }
 
   _createLabel(text, x, y, z, colorHex) {
@@ -2607,6 +2806,23 @@ export class TerrainViewer {
     return tags['name:zh'] || tags['name:zh-Hant'] || tags.name || tags['name:en'] || null;
   }
 
+  // Classify an OSM point (node) into a landmark render category, or null to
+  // ignore (Plan §III-1). Drives which procedural 3D model _buildMapFeatures spawns.
+  static _classifyPoint(tags) {
+    if (!tags) return null;
+    const nat = tags.natural;
+    if (nat === 'peak' || nat === 'volcano') return { cls: 'peak' };
+    if (nat === 'saddle') return { cls: 'saddle' };
+    if (nat === 'tree') return { cls: 'tree' };
+    const mm = tags.man_made;
+    if (mm && /^(tower|mast|communications_tower|water_tower|lighthouse|chimney)$/.test(mm)) {
+      return { cls: mm === 'lighthouse' ? 'lighthouse' : 'tower' };
+    }
+    if (tags.tourism && /^(viewpoint|attraction|artwork)$/.test(tags.tourism)) return { cls: 'viewpoint' };
+    if (tags.historic && /^(monument|memorial|castle|ruins|archaeological_site)$/.test(tags.historic)) return { cls: 'monument' };
+    return null;
+  }
+
   // Parse an OSM length that may carry a unit ("18", "18 m", "60'"). Returns a
   // value in metres, or NaN.
   static _parseLengthM(v) {
@@ -2676,6 +2892,71 @@ export class TerrainViewer {
     return { shape, height: Number.isFinite(h) && h > 0 ? h : null, colour };
   }
 
+  // Roof surface triangles (Plan §III-4). Returns a flat [x,y,z,…] position array
+  // capping a footprint's wall top (springY) with a pitched roof up to apexY,
+  // specialised by roof shape:
+  //   • gabled/gambrel → a ridge along the footprint's long axis (PCA), so the
+  //     long sides slope up to the ridge and the ends form triangular gables — a
+  //     simplified straight-skeleton for the common rectangular case.
+  //   • skillion       → a single mono-pitch plane sloping along the long axis.
+  //   • hipped / pyramidal / dome / conical / mansard / (default) → a hip apex
+  //     fan to a single peak over the centroid (never self-intersects).
+  static _roofPositions(shape, worldXZ, springY, apexY, cx, cz) {
+    const n = worldXZ.length;
+    const pos = [];
+    const roofH = apexY - springY;
+
+    // Footprint principal axis (direction of maximum spread) via the 2×2
+    // covariance eigen-angle — the ridge/slope runs along this long axis.
+    const principalAxis = () => {
+      let sxx = 0, szz = 0, sxz = 0;
+      for (const [x, z] of worldXZ) { const dx = x - cx, dz = z - cz; sxx += dx * dx; szz += dz * dz; sxz += dx * dz; }
+      const theta = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+      return [Math.cos(theta), Math.sin(theta)];
+    };
+    const projRange = (dx, dz) => {
+      let tMin = Infinity, tMax = -Infinity;
+      for (const [x, z] of worldXZ) { const t = (x - cx) * dx + (z - cz) * dz; if (t < tMin) tMin = t; if (t > tMax) tMax = t; }
+      return [tMin, tMax];
+    };
+
+    if (shape === 'gabled' || shape === 'gambrel') {
+      const [dx, dz] = principalAxis();
+      const [tMin, tMax] = projRange(dx, dz);
+      for (let i = 0; i < n; i++) {
+        const [ax, az] = worldXZ[i];
+        const [bx, bz] = worldXZ[(i + 1) % n];
+        const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+        let t = (mx - cx) * dx + (mz - cz) * dz;
+        t = Math.max(tMin, Math.min(tMax, t));       // ridge point above the edge
+        pos.push(ax, springY, az, bx, springY, bz, cx + dx * t, apexY, cz + dz * t);
+      }
+      return pos;
+    }
+
+    if (shape === 'skillion') {
+      const [dx, dz] = principalAxis();
+      const [tMin, tMax] = projRange(dx, dz);
+      const span = (tMax - tMin) || 1;
+      const hAt = (x, z) => springY + (((x - cx) * dx + (z - cz) * dz) - tMin) / span * roofH;
+      const cH = springY + roofH * 0.5;
+      for (let i = 0; i < n; i++) {
+        const [ax, az] = worldXZ[i];
+        const [bx, bz] = worldXZ[(i + 1) % n];
+        pos.push(ax, hAt(ax, az), az, bx, hAt(bx, bz), bz, cx, cH, cz);
+      }
+      return pos;
+    }
+
+    // Hip / pyramidal / dome / conical / mansard / default: apex fan to one peak.
+    for (let i = 0; i < n; i++) {
+      const [ax, az] = worldXZ[i];
+      const [bx, bz] = worldXZ[(i + 1) % n];
+      pos.push(ax, springY, az, bx, springY, bz, cx, apexY, cz);
+    }
+    return pos;
+  }
+
   // Parse a CSS-style hex colour ("#a0522d") to a 0xRRGGBB int, or null.
   static _parseHexColour(v) {
     if (!v) return null;
@@ -2701,6 +2982,12 @@ export class TerrainViewer {
       `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|recreation_ground|common"](${bb});` +
       `way["building"](${bb});` +
       `way["building:part"](${bb});` +
+      // Point landmarks (Plan §III-1): peaks, notable trees, towers/masts,
+      // viewpoints and monuments become directional 3D models.
+      `node["natural"~"peak|volcano|saddle|tree"](${bb});` +
+      `node["man_made"~"tower|mast|communications_tower|water_tower|lighthouse|chimney"](${bb});` +
+      `node["tourism"~"viewpoint|attraction|artwork"](${bb});` +
+      `node["historic"~"monument|memorial|castle|ruins|archaeological_site"](${bb});` +
       `relation["natural"~"water|wetland"](${bb});` +
       `relation["landuse"~"forest|reservoir|basin"](${bb});` +
       `relation["leisure"~"park|nature_reserve"](${bb});` +
@@ -2732,13 +3019,29 @@ export class TerrainViewer {
     const lines = [];
     const areas = [];
     const buildings = [];
+    const points = [];
     const ringFrom = (geom) => geom.filter((g) => g && Number.isFinite(g.lat) && Number.isFinite(g.lon)).map((g) => [g.lat, g.lon]);
 
     for (const el of data.elements || []) {
       const tags = el.tags || {};
+      const name = TerrainViewer._featureName(tags);
+
+      // Point landmarks (nodes) are classified separately — _classifyFeature only
+      // handles line/area/building ways, so nodes must be routed before it.
+      if (el.type === 'node') {
+        if (!Number.isFinite(el.lat) || !Number.isFinite(el.lon)) continue;
+        const pcat = TerrainViewer._classifyPoint(tags);
+        if (pcat) {
+          points.push({
+            cls: pcat.cls, name, lat: el.lat, lon: el.lon,
+            h: TerrainViewer._parseLengthM(tags.height ?? tags['building:height']),
+          });
+        }
+        continue;
+      }
+
       const cat = TerrainViewer._classifyFeature(tags);
       if (!cat) continue;
-      const name = TerrainViewer._featureName(tags);
 
       if (el.type === 'way' && Array.isArray(el.geometry)) {
         const pts = ringFrom(el.geometry);
@@ -2768,7 +3071,7 @@ export class TerrainViewer {
     }
 
     onProgress?.(1);
-    return { lines, areas, buildings };
+    return { lines, areas, buildings, points };
   }
 
   // --- Clip vector features to the terrain bbox -------------------------------
@@ -2855,6 +3158,85 @@ export class TerrainViewer {
     return p;
   }
 
+  // Build a small procedural 3D model for an OSM point landmark (Plan §III-1).
+  // Feet sit at the group origin (y = 0) and the model grows upward; the caller
+  // drapes it onto the terrain. Symbolic (marker-scale, ms) rather than physically
+  // sized, matching the viewer's other markers so it stays visible at any zoom.
+  _buildPointModel(cls, ms, realH) {
+    const g = new THREE.Group();
+    const add = (mesh, y) => { mesh.castShadow = true; if (y != null) mesh.position.y = y; g.add(mesh); return mesh; };
+
+    if (cls === 'tree') {
+      const trunkH = 5 * ms;
+      add(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.8 * ms, 1.1 * ms, trunkH, 8),
+        new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 0.9 })
+      ), trunkH / 2);
+      const foliMat = new THREE.MeshStandardMaterial({ color: 0x3f7d34, roughness: 0.85, flatShading: true });
+      add(new THREE.Mesh(new THREE.ConeGeometry(4 * ms, 7 * ms, 9), foliMat), trunkH + 2.5 * ms);
+      add(new THREE.Mesh(new THREE.ConeGeometry(2.8 * ms, 5 * ms, 9), foliMat), trunkH + 6 * ms);
+      return g;
+    }
+
+    if (cls === 'peak' || cls === 'saddle') {
+      const cairnH = (cls === 'peak' ? 7 : 4) * ms;
+      add(new THREE.Mesh(
+        new THREE.ConeGeometry(4 * ms, cairnH, 6),
+        new THREE.MeshStandardMaterial({ color: 0x8a8079, roughness: 0.95, flatShading: true })
+      ), cairnH / 2);
+      const poleH = 6 * ms;
+      add(new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35 * ms, 0.35 * ms, poleH, 6),
+        new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.5 })
+      ), cairnH + poleH / 2);
+      // Triangular red pennant near the pole top.
+      const flag = new THREE.Mesh(
+        new THREE.ConeGeometry(2 * ms, 3.4 * ms, 3),
+        new THREE.MeshStandardMaterial({ color: 0xe23b3b, emissive: 0x3a0000, emissiveIntensity: 0.3, side: THREE.DoubleSide })
+      );
+      flag.rotation.z = -Math.PI / 2;
+      flag.position.set(1.6 * ms, cairnH + poleH - 1.4 * ms, 0);
+      flag.castShadow = true;
+      g.add(flag);
+      return g;
+    }
+
+    if (cls === 'tower' || cls === 'lighthouse' || cls === 'chimney') {
+      // Height nudged by a tagged real height but kept in a visible symbolic band.
+      const h = Math.max(12 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.3 : 16 * ms, 30 * ms));
+      const isLh = cls === 'lighthouse';
+      add(new THREE.Mesh(
+        new THREE.CylinderGeometry(1.4 * ms, 2.2 * ms, h, 12),
+        new THREE.MeshStandardMaterial({ color: isLh ? 0xf2f2f2 : 0x9aa0a8, roughness: 0.7, flatShading: true })
+      ), h / 2);
+      if (isLh) {
+        // Red band + an emissive lamp on top.
+        add(new THREE.Mesh(
+          new THREE.CylinderGeometry(1.55 * ms, 1.7 * ms, h * 0.18, 12),
+          new THREE.MeshStandardMaterial({ color: 0xd63b3b, roughness: 0.6 })
+        ), h * 0.6);
+        add(new THREE.Mesh(
+          new THREE.SphereGeometry(1.5 * ms, 12, 8),
+          new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffcc44, emissiveIntensity: 0.9 })
+        ), h + 1.2 * ms);
+      }
+      return g;
+    }
+
+    // Generic signpost (viewpoint / attraction / artwork / monument).
+    const poleH = 8 * ms;
+    add(new THREE.Mesh(
+      new THREE.CylinderGeometry(0.4 * ms, 0.4 * ms, poleH, 6),
+      new THREE.MeshStandardMaterial({ color: 0xb08a5a, roughness: 0.8 })
+    ), poleH / 2);
+    const sign = add(new THREE.Mesh(
+      new THREE.BoxGeometry(6 * ms, 3.2 * ms, 0.5 * ms),
+      new THREE.MeshStandardMaterial({ color: 0x3f6f8f, emissive: 0x0a1a26, emissiveIntensity: 0.25, roughness: 0.6 })
+    ), poleH + 1.2 * ms);
+    sign.position.z = 0; // faces +z (travel/view direction)
+    return g;
+  }
+
   // Render the parsed map features into this.featureGroup (geometry) and
   // this.featureLabelGroup (names). Everything is draped onto the rendered
   // terrain surface so it sits on the ground.
@@ -2862,8 +3244,10 @@ export class TerrainViewer {
     if (!data || !this.scene) return;
     this.featureGroup = new THREE.Group();
     this.featureLabelGroup = new THREE.Group();
+    this.landmarkGroup = new THREE.Group();
     this.scene.add(this.featureGroup);
     this.scene.add(this.featureLabelGroup);
+    this.scene.add(this.landmarkGroup);
 
     const ms = this._markerScale || 1;
     const range = Math.max(1, this._fieldMaxV - this._fieldMinV);
@@ -3148,20 +3532,14 @@ export class TerrainViewer {
           mesh.receiveShadow = true;
           this.featureGroup.add(mesh);
 
-          // Pitched roof (Plan §III): a hip/pyramidal cap — a triangle fan from
-          // every wall-top edge up to a single apex over the footprint centroid.
-          // Valid for any simple footprint and never self-intersects, so it can't
-          // produce the artefacts a full straight-skeleton would risk on messy
-          // OSM polygons.
+          // Pitched roof (Plan §III-4): shape-specialised cap — a ridge for
+          // gabled roofs, a mono-pitch plane for skillion, else a hip/pyramidal
+          // apex fan. All are built from the wall-top ring so they stay valid on
+          // messy OSM footprints without a full straight-skeleton's artefacts.
           if (roofH > 0.5 && worldXZ.length >= 3) {
             const springY = groundY + wallTopM;
             const apexY = groundY + totalH;
-            const pos = [];
-            for (let i = 0; i < worldXZ.length; i++) {
-              const [ax, az] = worldXZ[i];
-              const [bx, bz] = worldXZ[(i + 1) % worldXZ.length];
-              pos.push(ax, springY, az,  bx, springY, bz,  cx, apexY, cz);
-            }
+            const pos = TerrainViewer._roofPositions(roof.shape, worldXZ, springY, apexY, cx, cz);
             const rgeo = new THREE.BufferGeometry();
             rgeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             rgeo.computeVertexNormals();
@@ -3178,6 +3556,30 @@ export class TerrainViewer {
 
       if (b.name && b._a > 0 && !b.part) {
         pushLabelCand(b.name, new THREE.Vector3(cx, groundY + totalH + 4 * ms, cz), 0xcfcabf, 6);
+      }
+    }
+
+    // ----- Point landmarks: peaks / trees / towers / viewpoints (Plan §III-1) -----
+    // Each mapped node becomes a small directional 3D model draped on the terrain.
+    // Totals are capped (and trees capped harder) so a park full of individually
+    // mapped trees can't spawn thousands of meshes.
+    const allPoints = data.points || [];
+    const nonTree = allPoints.filter((p) => p.cls !== 'tree');
+    const trees = allPoints.filter((p) => p.cls === 'tree');
+    for (const p of [...nonTree.slice(0, 120), ...trees.slice(0, 60)]) {
+      const { lat, lon } = p;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      if (lat < bbox.minLat || lat > bbox.maxLat || lon < bbox.minLng || lon > bbox.maxLng) continue;
+      if (this._isOverHole(lat, lon)) continue;
+      const model = this._buildPointModel(p.cls, ms, p.h);
+      if (!model) continue;
+      model.position.copy(world(lat, lon, baseLift));
+      this.landmarkGroup.add(model);
+      // Label named landmarks (skip trees — they'd flood the label layer).
+      if (p.name && p.cls !== 'tree') {
+        const color = (p.cls === 'peak' || p.cls === 'saddle') ? 0xffd9a0 : 0xd8e0ea;
+        const pri = (p.cls === 'peak') ? 2 : 6;
+        pushLabelCand(p.name, model.position.clone().setY(model.position.y + 16 * ms), color, pri);
       }
     }
 
@@ -3199,6 +3601,7 @@ export class TerrainViewer {
 
     this.featureGroup.visible = this._featuresVisible;
     this.featureLabelGroup.visible = this._featuresVisible;
+    this._applyLandmarkVisibility();
     this._updateLineResolutions();
   }
 
@@ -3439,6 +3842,9 @@ export class TerrainViewer {
       this._playerLight.position.copy(pt);
     }
 
+    // Reveal the track up to the current position when trail mode is on.
+    if (this._routeReveal) this._applyRouteReveal();
+
     const metrics = this._metricsAtProgress(this._progress);
     this._applyEnvironment(metrics);
     this._emitMetrics(false, metrics);
@@ -3579,6 +3985,7 @@ export class TerrainViewer {
     if (this.weatherGroup) this.weatherGroup.visible = this._weatherVisible;
     if (this.featureGroup) this.featureGroup.visible = this._featuresVisible;
     if (this.featureLabelGroup) this.featureLabelGroup.visible = this._featuresVisible;
+    this._applyLandmarkVisibility();
 
     if (prevView) {
       this.controls.target.copy(prevView.target);
@@ -3613,12 +4020,16 @@ export class TerrainViewer {
     this.terrainMesh = null;
     this.routeLine = null;
     this.routeTube = null;
+    this._routeStemGroup = null;
+    this._routeTubeSegs = 0;
+    this._routeLineSegs = 0;
     this.contourGroup = null;
     this.contourLabelGroup = null;
     this.waypointLabelGroup = null;
     this.weatherGroup = null;
     this.featureGroup = null;
     this.featureLabelGroup = null;
+    this.landmarkGroup = null;
     this._labelSprites = [];
     this._landCoverField = null;
     this._slopeField = null;
@@ -3640,6 +4051,9 @@ export class TerrainViewer {
     this._hemi = null;
     this._rain = null;
     this._snow = null;
+    // The rigs' GPU resources were freed by the traversal above; drop the handle
+    // so update() no-ops until the next build grows fresh rigs.
+    this._weather3d = null;
     this._playerLight = null;
     if (this.scene) this.scene.fog = null;
   }
@@ -3699,8 +4113,10 @@ export class TerrainViewer {
     // Weather keeps moving even while paused so a scrubbed-to frame still reads
     // as "raining/snowing", but stays subtle enough not to mask the terrain.
     this._updateWeatherParticles(dt);
-    // Animate the weather marker icons in lockstep with the sky FX.
-    this._updateWeatherIconAnimations(dt);
+    // Drive the volumetric 3D weather phenomena anchored at each weather point
+    // (cloud drift, falling rain/snow, swirling fog, lightning). Distant rigs are
+    // culled inside update() so a long route stays cheap.
+    if (this._weather3d) this._weather3d.update(dt, this.camera);
 
     this.renderer.render(this.scene, this.camera);
   }
