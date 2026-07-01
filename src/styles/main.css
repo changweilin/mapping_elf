@@ -7556,6 +7556,11 @@ html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   z-index: 10;
+  /* NOT overflow-x:auto — the speed/playlist popovers open *above* this bar
+     (bottom: 100%+), and any non-visible overflow here (even just on the X
+     axis; the two axes can't be split) would clip them against the canvas
+     underneath instead of just scrolling the row. Mobile fit instead comes
+     from shrinking the controls themselves (media query below). */
 }
 .terrain-player-bar .tp-btn {
   background: none;
@@ -7584,7 +7589,13 @@ html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
 .terrain-player-bar .tp-btn.active:hover {
   background: #00d16b;
 }
-.terrain-player-bar .tp-speed-btn {
+/* Speed control: a single toggle button (current rate) that expands a small
+   menu of preset rates. The toggle itself also responds to mouse-wheel while
+   hovered and vertical touch-drag, so the menu is one of three ways to change
+   speed, not the only one. */
+.tp-speed-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.terrain-player-bar .tp-speed-toggle,
+.terrain-player-bar .tp-speed-opt {
   background: none;
   border: 1px solid var(--border);
   color: var(--text-secondary);
@@ -7594,21 +7605,118 @@ html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
   font-size: 11px;
   font-weight: 500;
   transition: all var(--transition-fast);
-  flex-shrink: 0;
   font-family: inherit;
 }
-.terrain-player-bar .tp-speed-btn:hover {
+.terrain-player-bar .tp-speed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  touch-action: none;
+}
+.terrain-player-bar .tp-speed-toggle:hover,
+.terrain-player-bar .tp-speed-toggle[aria-expanded="true"] {
   background: rgba(255,255,255,0.06);
   color: var(--text-primary);
 }
-.terrain-player-bar .tp-speed-btn.active {
+.terrain-player-bar .tp-speed-opt:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+}
+.terrain-player-bar .tp-speed-opt.active {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
   color: #000;
 }
+.tp-speed-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 88px;
+  padding: 6px;
+  background: rgba(12, 14, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+}
+.tp-speed-menu.hidden { display: none; }
+.tp-speed-menu .tp-speed-opt { text-align: center; width: 100%; }
+html.light-theme .tp-speed-menu { background: rgba(255, 255, 255, 0.98); }
+html.light-theme .terrain-player-bar .tp-speed-opt { color: #1a2230; }
+
+/* Playlist: switch the 3D scene between the current route and a saved
+   favourite without leaving the viewer. */
+.tp-playlist-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.tp-playlist-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+  background: rgba(12, 14, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
+}
+.tp-playlist-menu.hidden { display: none; }
+.tp-playlist-title {
+  padding: 4px 8px 6px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.tp-playlist-opt {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: #e7ebf2;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--transition-fast);
+}
+.tp-playlist-opt:hover { background: rgba(255, 255, 255, 0.1); }
+.tp-playlist-opt.active {
+  background: rgba(0, 255, 127, 0.14);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+.tp-playlist-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.tp-playlist-empty {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+html.light-theme .tp-playlist-menu { background: rgba(255, 255, 255, 0.98); }
+html.light-theme .tp-playlist-opt { color: #1a2230; }
+html.light-theme .tp-playlist-opt:hover { background: rgba(0, 0, 0, 0.06); }
 
 .terrain-player-bar .tp-slider {
   flex: 1;
+  min-width: 60px;
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
@@ -7662,6 +7770,20 @@ html.light-theme .terrain-player-bar {
 }
 html.light-theme .terrain-player-bar .tp-slider::-webkit-slider-thumb {
   border-color: #fff;
+}
+
+/* The player bar used to hold 5 always-visible speed buttons + slider + two
+   labels, whose combined min-content width overflowed a phone-width viewport
+   with no way to reach the clipped right-hand controls. Collapsing speed into
+   one toggle (above) already frees most of that space; tighten the remaining
+   paddings/gaps/min-widths too so everything fits at once. */
+@media (max-width: 640px) {
+  .terrain-player-bar { gap: 6px; padding: 8px 10px; }
+  .terrain-player-bar .tp-btn { width: 32px; height: 32px; }
+  .terrain-player-bar .tp-speed-toggle { padding: 4px 7px; font-size: 10px; }
+  .terrain-player-bar .tp-slider { min-width: 40px; }
+  .terrain-player-bar .tp-label { min-width: 30px; font-size: 10px; }
+  .terrain-player-bar .tp-time { min-width: 40px; font-size: 10px; }
 }
 
 /* Open 3D viewer button */

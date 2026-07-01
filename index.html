@@ -1438,11 +1438,25 @@
           <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" fill="currentColor"/>
         </svg>
       </button>
-      <button class="tp-speed-btn" data-speed="0.25">0.25x</button>
-      <button class="tp-speed-btn" data-speed="0.5">0.5x</button>
-      <button class="tp-speed-btn active" data-speed="1">1x</button>
-      <button class="tp-speed-btn" data-speed="2">2x</button>
-      <button class="tp-speed-btn" data-speed="4">4x</button>
+      <div class="tp-speed-wrap" id="tp-speed-wrap">
+        <button type="button" class="tp-speed-toggle" id="tp-speed-toggle" title="播放速度（點擊展開選單／滑鼠懸浮滾輪／觸控上下拖曳調整）" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M4 15.5a8 8 0 1116 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 15.5l4-5.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="15.5" r="1.4" fill="currentColor"/></svg>
+          <span id="tp-speed-value">1x</span>
+        </button>
+        <div class="tp-speed-menu hidden" id="tp-speed-menu" role="menu">
+          <button type="button" class="tp-speed-opt" data-speed="0.25" role="menuitem">0.25x</button>
+          <button type="button" class="tp-speed-opt" data-speed="0.5" role="menuitem">0.5x</button>
+          <button type="button" class="tp-speed-opt active" data-speed="1" role="menuitem">1x</button>
+          <button type="button" class="tp-speed-opt" data-speed="2" role="menuitem">2x</button>
+          <button type="button" class="tp-speed-opt" data-speed="4" role="menuitem">4x</button>
+        </div>
+      </div>
+      <div class="tp-playlist-wrap" id="tp-playlist-wrap">
+        <button type="button" class="tp-btn" id="tp-playlist-btn" title="切換 3D 路線（目前路線／最愛路線）" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 6h11M4 12h11M4 18h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M17 14.3l4.5 2.7-4.5 2.7v-5.4z" fill="currentColor"/></svg>
+        </button>
+        <div class="tp-playlist-menu hidden" id="tp-playlist-menu" role="menu"></div>
+      </div>
       <input type="range" class="tp-slider" id="tp-slider" min="0" max="1" step="0.001" value="0">
       <span class="tp-label" id="tp-progress-label">0%</span>
       <span class="tp-time" id="tp-time-label">--</span>

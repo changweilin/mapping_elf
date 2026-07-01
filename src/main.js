@@ -1984,7 +1984,12 @@ const tpPlay = document.getElementById('tp-play');
 const tpSlider = document.getElementById('tp-slider');
 const tpProgressLabel = document.getElementById('tp-progress-label');
 const tpTimeLabel = document.getElementById('tp-time-label');
-const tpSpeedBtns = document.querySelectorAll('.tp-speed-btn');
+const tpSpeedToggle = document.getElementById('tp-speed-toggle');
+const tpSpeedValue = document.getElementById('tp-speed-value');
+const tpSpeedMenu = document.getElementById('tp-speed-menu');
+const tpSpeedOpts = document.querySelectorAll('.tp-speed-opt');
+const tpPlaylistBtn = document.getElementById('tp-playlist-btn');
+const tpPlaylistMenu = document.getElementById('tp-playlist-menu');
 const tvInfoPanel = document.getElementById('tv-info-panel');
 const tvInfoCollapse = document.getElementById('tv-info-collapse');
 const tvRouteStats = document.getElementById('tv-route-stats');
@@ -2041,6 +2046,18 @@ let terrainBuiltSignature = null;
 // Set false by handleTerrainLoadState whenever a build aborts/errors, so a
 // failed redraw doesn't get its (new) signature recorded against the stale scene.
 let terrainLastLoadOk = true;
+
+// --- 3D player playlist: hop between the current route and a saved favourite
+// without leaving the viewer. Peeking at a favourite must not clobber an
+// unsaved current route, so the live route (waypoints/settings/weather) is
+// snapshotted before switching away and restored when switching back — or
+// when the viewer closes while a favourite is showing. Each source's camera
+// pose/progress/speed is remembered by cache key so hopping back resumes
+// instead of re-flying the default view every time.
+let terrainActiveRouteKey = null;    // 'current' | `fav:<id>` — source shown now
+let terrainActiveCacheKey = null;    // grid-cache key actually built for it
+let terrainCurrentRouteSnapshot = null;
+const terrainViewStates = {};        // cacheKey -> { pos, target, progress, speed }
 
 // --- 3D terrain cache -----------------------------------------------------
 // The elevation-grid download is the slow part of building the 3D model, so the
@@ -2461,6 +2478,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     }
     // Build/refresh for the current route when no explicit cache key is given.
     if (!cacheKey) cacheKey = terrainRouteSignature();
+    terrainActiveCacheKey = cacheKey;
 
     // Planned routes come from the routing engine (allAlternatives); imported
     // tracks skip routing, so fall back to the drawn track + elevation profile.
@@ -2648,6 +2666,9 @@ function closeTerrainViewer() {
   tvLoading?.classList.remove('tv-loading-bg');
   terrainViewerEl.classList.add('hidden');
   closeTerrainExportMenu();
+  closeTerrainPlaylistMenu();
+  closeTerrainSpeedMenu();
+  restoreTerrainCurrentRouteIfNeeded();
   updateTerrainPlayerUI();
 }
 
@@ -2662,6 +2683,8 @@ function updateTerrainPlayerUI() {
   const progress = terrainViewer?.getProgress() ?? 0;
   if (tpSlider) tpSlider.value = progress;
   if (tpProgressLabel) tpProgressLabel.textContent = `${Math.round(progress * 100)}%`;
+
+  syncTerrainSpeedUI(terrainViewer?.getSpeed() ?? 1);
 }
 
 // The route-planning 3D button builds the current/imported route's terrain.
@@ -2678,6 +2701,8 @@ function build3dForCurrentRoute() {
     return;
   }
   const fav = findSavedCurrentRoute();
+  terrainActiveRouteKey = 'current';
+  terrainCurrentRouteSnapshot = null;
   openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
 }
 
@@ -2708,6 +2733,176 @@ async function refreshTerrainViewer() {
 btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
 tvCloseBtn?.addEventListener('click', closeTerrainViewer);
 tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
+
+// ---- 3D player playlist ---------------------------------------------------
+function closeTerrainPlaylistMenu() {
+  if (!tpPlaylistMenu) return;
+  tpPlaylistMenu.classList.add('hidden');
+  tpPlaylistBtn?.setAttribute('aria-expanded', 'false');
+}
+
+function renderTerrainPlaylistMenu() {
+  if (!tpPlaylistMenu) return;
+  const parts = [`<div class="tp-playlist-title">切換 3D 路線</div>`];
+  parts.push(
+    `<button type="button" class="tp-playlist-opt${terrainActiveRouteKey === 'current' ? ' active' : ''}" data-playlist-current role="menuitem">目前路線</button>`
+  );
+  if (favorites.length) {
+    parts.push('<div class="tp-playlist-sep"></div>');
+    favorites.forEach((f) => {
+      const active = terrainActiveRouteKey === `fav:${f.id}`;
+      parts.push(
+        `<button type="button" class="tp-playlist-opt${active ? ' active' : ''}" data-playlist-fav="${_escapeHtml(f.id)}" role="menuitem">${_escapeHtml(f.name)}</button>`
+      );
+    });
+  } else {
+    parts.push('<div class="tp-playlist-empty">尚未加入最愛路線</div>');
+  }
+  tpPlaylistMenu.innerHTML = parts.join('');
+  tpPlaylistMenu.querySelectorAll('[data-playlist-current]').forEach((btn) => {
+    btn.addEventListener('click', () => switchTerrainPlaylistSource({ type: 'current' }));
+  });
+  tpPlaylistMenu.querySelectorAll('[data-playlist-fav]').forEach((btn) => {
+    btn.addEventListener('click', () => switchTerrainPlaylistSource({ type: 'fav', id: btn.dataset.playlistFav }));
+  });
+}
+
+function captureTerrainViewState() {
+  if (!terrainViewer || !terrainActiveCacheKey) return;
+  const vs = terrainViewer.getViewState?.();
+  if (vs) terrainViewStates[terrainActiveCacheKey] = vs;
+}
+
+// Snapshot the live "current route" so a peek at a favourite (via the player
+// playlist) can be undone later. An imported track has no routing to replay
+// it from — captureFavorite()/loadFavorite() only round-trip mapManager's
+// sparse waypoints, which would re-route between them and silently replace
+// the original recorded track with a routed approximation. So imported
+// tracks get their own lossless snapshot (mirrors saveImportedTrackSession)
+// restored via restoreImportedTrack(), which redraws the exact same coords/
+// elevations with no network routing call; a normal routed route still uses
+// the favourite round-trip since re-routing the same waypoints reproduces it.
+function captureCurrentRouteSnapshot() {
+  if (importedTrackMode) {
+    return {
+      kind: 'track',
+      coords: currentRouteCoords,
+      elevations: currentElevations,
+      waypoints: mapManager.waypoints,
+      waypointMeta: mapManager.waypoints.map((_, i) => ({
+        ...(importedWaypointMeta[i] || {}),
+        ...(mapManager.getWaypointMetadata(i) || {}),
+      })),
+      intermediates: importedIntermediatePoints,
+    };
+  }
+  return { kind: 'favorite', fav: captureFavorite('目前路線') };
+}
+
+function currentRouteMatchesSnapshot(snap) {
+  if (!snap) return true;
+  if (snap.kind === 'track') return importedTrackMode && waypointsMatch(snap.waypoints, mapManager.waypoints);
+  return !importedTrackMode && waypointsMatch(snap.fav.waypoints, mapManager.waypoints);
+}
+
+async function restoreCurrentRouteSnapshot(snap, requestId) {
+  if (!snap) return true;
+  if (snap.kind === 'track') {
+    // restoreImportedTrack() is normally only called once at app startup, when
+    // allAlternatives is naturally still empty. Mid-session it can still hold
+    // the favourite's routed alternative from the peek we're undoing, and
+    // openTerrainViewer() prefers allAlternatives[selectedAltIndex] over
+    // currentRouteCoords — so without this reset the 3D view would keep
+    // showing the favourite's route even after the track is restored.
+    allAlternatives = [];
+    selectedAltIndex = 0;
+    const ok = await restoreImportedTrack(snap);
+    if (ok) autoFetchWeather({ force: false });
+    return ok;
+  }
+  loadFavorite(snap.fav);
+  return waitForFavoriteRouteReady(snap.fav, requestId);
+}
+
+// If the viewer closes (or the app navigates away) while a favourite is being
+// previewed, put the live app state back to whatever "current route" looked
+// like before the peek — otherwise leaving the 3D page would silently leave
+// the favourite's waypoints loaded as the current route.
+function restoreTerrainCurrentRouteIfNeeded() {
+  if (terrainActiveRouteKey && terrainActiveRouteKey !== 'current' && terrainCurrentRouteSnapshot) {
+    const snap = terrainCurrentRouteSnapshot;
+    if (!currentRouteMatchesSnapshot(snap)) restoreCurrentRouteSnapshot(snap, ++favoriteExportRequestSeq);
+  }
+  terrainActiveRouteKey = null;
+  terrainActiveCacheKey = null;
+  terrainCurrentRouteSnapshot = null;
+}
+
+// Switch the open 3D viewer between the current route and a saved favourite.
+// The route being left is snapshotted first (the current route has no other
+// persistence, so a peek at a favourite would otherwise lose it) and each
+// source's camera/progress/speed is restored from terrainViewStates so
+// hopping back resumes instead of re-flying the default view.
+async function switchTerrainPlaylistSource(entry) {
+  if (!terrainViewer || terrainViewerEl.classList.contains('hidden')) return;
+  const wantKey = entry.type === 'fav' ? `fav:${entry.id}` : 'current';
+  if (wantKey === terrainActiveRouteKey) { closeTerrainPlaylistMenu(); return; }
+  if (terrainViewer.isLoading() || hasRouteWeatherBusyTasks()) {
+    showNotification('路線或天氣資料處理中，請待完成後再切換', 'warning');
+    return;
+  }
+
+  closeTerrainPlaylistMenu();
+  captureTerrainViewState();
+  if (terrainActiveRouteKey === 'current') {
+    terrainCurrentRouteSnapshot = captureCurrentRouteSnapshot();
+  }
+
+  const requestId = ++favoriteExportRequestSeq;
+
+  if (entry.type === 'fav') {
+    const fav = favorites.find((f) => f.id === entry.id);
+    if (!fav) { showNotification('最愛路線不存在', 'error'); return; }
+    if (!waypointsMatch(fav.waypoints, mapManager.waypoints) || currentRouteCoords.length < 2) {
+      loadFavorite(fav);
+      const ready = await waitForFavoriteRouteReady(fav, requestId);
+      if (requestId !== favoriteExportRequestSeq) return;
+      if (!ready) { showNotification('找不到合適路徑', 'warning'); return; }
+    }
+    terrainActiveRouteKey = `fav:${fav.id}`;
+    await openTerrainViewer(`fav:${fav.id}`);
+  } else {
+    const snap = terrainCurrentRouteSnapshot;
+    if (!currentRouteMatchesSnapshot(snap)) {
+      const ready = await restoreCurrentRouteSnapshot(snap, requestId);
+      if (requestId !== favoriteExportRequestSeq) return;
+      if (!ready) { showNotification('找不到合適路徑', 'warning'); return; }
+    }
+    terrainActiveRouteKey = 'current';
+    const fav = findSavedCurrentRoute();
+    await openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
+  }
+
+  if (terrainActiveCacheKey) {
+    const vs = terrainViewStates[terrainActiveCacheKey];
+    if (vs) terrainViewer.applyViewState?.(vs);
+  }
+  updateTerrainPlayerUI();
+  renderTerrainPlaylistMenu();
+}
+
+tpPlaylistBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!tpPlaylistMenu) return;
+  if (tpPlaylistMenu.classList.contains('hidden')) renderTerrainPlaylistMenu();
+  const open = tpPlaylistMenu.classList.toggle('hidden');
+  tpPlaylistBtn.setAttribute('aria-expanded', String(!open));
+});
+document.addEventListener('click', (e) => {
+  if (!tpPlaylistMenu || tpPlaylistMenu.classList.contains('hidden')) return;
+  if (e.target.closest('#tp-playlist-wrap')) return;
+  closeTerrainPlaylistMenu();
+});
 
 // ---- 3D-print export (STL / 3MF) — Plan §IV ----
 function closeTerrainExportMenu() {
@@ -2816,14 +3011,89 @@ tpSlider?.addEventListener('input', () => {
   tpProgressLabel.textContent = `${Math.round(val * 100)}%`;
 });
 
-tpSpeedBtns.forEach((btn) => {
+// Speed control: a single toggle button that (a) expands a menu of preset
+// rates on click, (b) cycles through those same rates on mouse-wheel while
+// hovered, and (c) cycles them on a vertical touch-drag — three ways to reach
+// the same TERRAIN_SPEED_STEPS list, so a phone with no hover/wheel still has
+// the drag gesture and a mouse user can skip opening the menu entirely.
+const TERRAIN_SPEED_STEPS = [0.25, 0.5, 1, 2, 4];
+let terrainSpeed = 1;
+let tpSpeedTouchStartY = null;
+let tpSpeedTouchStartIdx = 0;
+let tpSpeedDragged = false;
+
+function syncTerrainSpeedUI(speed) {
+  terrainSpeed = speed;
+  if (tpSpeedValue) tpSpeedValue.textContent = `${speed}x`;
+  tpSpeedOpts.forEach((b) => b.classList.toggle('active', parseFloat(b.dataset.speed) === speed));
+}
+
+function setTerrainSpeed(speed) {
+  syncTerrainSpeedUI(speed);
+  if (terrainViewer) terrainViewer.setSpeed(speed);
+}
+
+function closeTerrainSpeedMenu() {
+  if (!tpSpeedMenu) return;
+  tpSpeedMenu.classList.add('hidden');
+  tpSpeedToggle?.setAttribute('aria-expanded', 'false');
+}
+
+tpSpeedToggle?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  // A tap that ended a touch-drag fires a synthetic click too; swallow just
+  // that one so dragging to a speed doesn't also toggle the menu open.
+  if (tpSpeedDragged) { tpSpeedDragged = false; return; }
+  if (!tpSpeedMenu) return;
+  const open = tpSpeedMenu.classList.toggle('hidden');
+  tpSpeedToggle.setAttribute('aria-expanded', String(!open));
+});
+
+tpSpeedOpts.forEach((btn) => {
   btn.addEventListener('click', () => {
-    tpSpeedBtns.forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    const speed = parseFloat(btn.dataset.speed);
-    if (terrainViewer) terrainViewer.setSpeed(speed);
+    setTerrainSpeed(parseFloat(btn.dataset.speed));
+    closeTerrainSpeedMenu();
   });
 });
+
+document.addEventListener('click', (e) => {
+  if (!tpSpeedMenu || tpSpeedMenu.classList.contains('hidden')) return;
+  if (e.target.closest('#tp-speed-wrap')) return;
+  closeTerrainSpeedMenu();
+});
+
+// Mouse-hover + wheel: scrolling up steps to a faster preset, down to slower.
+// The listener only ever fires while the cursor is actually over the button,
+// so no separate hover state needs tracking.
+tpSpeedToggle?.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const idx = TERRAIN_SPEED_STEPS.indexOf(terrainSpeed);
+  const base = idx === -1 ? TERRAIN_SPEED_STEPS.indexOf(1) : idx;
+  const dir = e.deltaY < 0 ? 1 : -1;
+  const next = TERRAIN_SPEED_STEPS[Math.max(0, Math.min(TERRAIN_SPEED_STEPS.length - 1, base + dir))];
+  setTerrainSpeed(next);
+}, { passive: false });
+
+// Touch drag up/down: drag up to step faster, down to step slower — one
+// preset per ~28px of vertical travel. Suppresses the trailing synthetic
+// click a tap-through-drag would otherwise fire (which would toggle the menu).
+tpSpeedToggle?.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 1) return;
+  tpSpeedTouchStartY = e.touches[0].clientY;
+  const idx = TERRAIN_SPEED_STEPS.indexOf(terrainSpeed);
+  tpSpeedTouchStartIdx = idx === -1 ? TERRAIN_SPEED_STEPS.indexOf(1) : idx;
+  tpSpeedDragged = false;
+}, { passive: true });
+tpSpeedToggle?.addEventListener('touchmove', (e) => {
+  if (tpSpeedTouchStartY == null || e.touches.length !== 1) return;
+  const dy = tpSpeedTouchStartY - e.touches[0].clientY;
+  const stepsMoved = Math.round(dy / 28);
+  if (stepsMoved !== 0) tpSpeedDragged = true;
+  const nextIdx = Math.max(0, Math.min(TERRAIN_SPEED_STEPS.length - 1, tpSpeedTouchStartIdx + stepsMoved));
+  const next = TERRAIN_SPEED_STEPS[nextIdx];
+  if (next !== terrainSpeed) setTerrainSpeed(next);
+}, { passive: true });
+tpSpeedToggle?.addEventListener('touchend', () => { tpSpeedTouchStartY = null; });
 
 // Layer toggles (contours / elevation labels / weather / day-night / weather FX)
 // Contour precision cycles: high → low → none.
@@ -5894,6 +6164,11 @@ function deleteFavorite(id) {
   favorites = favorites.filter(f => f.id !== id);
   if (favorites.length !== n) {
     clearTerrainCacheEntry(`fav:${id}`);
+    delete terrainViewStates[`fav:${id}`];
+    if (terrainActiveRouteKey === `fav:${id}`) {
+      terrainActiveRouteKey = null;
+      terrainActiveCacheKey = null;
+    }
     persistFavorites();
     renderFavoritesList();
     showNotification('已從最愛移除', 'info', 1200);
@@ -5990,6 +6265,8 @@ async function open3dForFavorite(fav) {
     }
   }
 
+  terrainActiveRouteKey = `fav:${fav.id}`;
+  terrainCurrentRouteSnapshot = null;
   await openTerrainViewer(`fav:${fav.id}`);
 }
 

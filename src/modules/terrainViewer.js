@@ -557,6 +557,30 @@ export class TerrainViewer {
     return this._speed;
   }
 
+  // Snapshot the camera pose + playback position/speed so a caller can restore
+  // them later — e.g. the player's playlist hopping back to a route it left.
+  getViewState() {
+    if (!this.camera || !this.controls) return null;
+    return {
+      pos: this.camera.position.toArray(),
+      target: this.controls.target.toArray(),
+      progress: this._progress,
+      speed: this._speed,
+    };
+  }
+
+  // Restore a previously captured view state onto the currently built scene.
+  // Camera coordinates are local to the route/bbox they were captured from, so
+  // this is only meaningful when re-applied to that same route.
+  applyViewState(state) {
+    if (!state || !this.camera || !this.controls) return;
+    if (Array.isArray(state.pos)) this.camera.position.fromArray(state.pos);
+    if (Array.isArray(state.target)) this.controls.target.fromArray(state.target);
+    this.controls.update();
+    if (Number.isFinite(state.speed)) this._speed = state.speed;
+    if (Number.isFinite(state.progress)) this.setProgress(state.progress);
+  }
+
   // Snap the camera to a preset viewing angle with north (+Z) pointing up, while
   // leaving OrbitControls free so the user can still orbit/tilt afterwards.
   //   'top' — straight-down (垂直俯視)
