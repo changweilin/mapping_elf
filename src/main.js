@@ -2059,6 +2059,27 @@ let terrainActiveCacheKey = null;    // grid-cache key actually built for it
 let terrainCurrentRouteSnapshot = null;
 const terrainViewStates = {};        // cacheKey -> { pos, target, progress, speed }
 
+// Remember whether the 3D viewer was open (and for which route) so a browser/
+// PWA reload — e.g. the OS discarding a backgrounded webview when the user
+// switches apps and comes back — restores the 3D page instead of silently
+// dropping to the 2D planning home. Only the route identity is stored; the
+// scene itself is rebuilt from the (cached) elevation grid + 圖資 on restore.
+const LS_TERRAIN_OPEN_KEY = 'mappingElf_terrain3dOpen';
+
+function persistTerrainOpenState() {
+  try {
+    if (terrainActiveRouteKey && !terrainViewerEl.classList.contains('hidden')) {
+      localStorage.setItem(LS_TERRAIN_OPEN_KEY, JSON.stringify({ routeKey: terrainActiveRouteKey }));
+    } else {
+      localStorage.removeItem(LS_TERRAIN_OPEN_KEY);
+    }
+  } catch (_) { /* noop */ }
+}
+
+function clearTerrainOpenState() {
+  try { localStorage.removeItem(LS_TERRAIN_OPEN_KEY); } catch (_) { /* noop */ }
+}
+
 // --- 3D terrain cache -----------------------------------------------------
 // The elevation-grid download is the slow part of building the 3D model, so the
 // result (grid + bbox) is cached and reused. Cache keys are either `fav:<id>`
@@ -2594,6 +2615,10 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       terrainViewer.show();
       updateTerrainToggleAvailability();
       updateTerrainPlayerUI();
+      persistTerrainOpenState();
+      // Nothing to (re)build, so clear any progress overlay a caller (e.g. the
+      // player-switch flow) put up for the route/weather phase.
+      handleTerrainLoadState({ active: false, percent: 100 });
       return;
     }
 
@@ -2646,6 +2671,9 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     // but only if the build actually finished (an aborted redraw keeps the old
     // scene, which no longer matches this signature).
     terrainBuiltSignature = (terrainLastLoadOk && terrainViewer.hasBuiltScene?.()) ? sig : null;
+    // Only mark the 3D page as "open for restore" once a scene actually built;
+    // an aborted/failed build falls through to closeTerrainViewer, which clears it.
+    if (terrainLastLoadOk) persistTerrainOpenState();
   } catch (err) {
     console.error('3D viewer error:', err);
     setTerrainBusy(false);
@@ -2669,6 +2697,7 @@ function closeTerrainViewer() {
   closeTerrainPlaylistMenu();
   closeTerrainSpeedMenu();
   restoreTerrainCurrentRouteIfNeeded();
+  clearTerrainOpenState();
   updateTerrainPlayerUI();
 }
 
@@ -2704,6 +2733,70 @@ function build3dForCurrentRoute() {
   terrainActiveRouteKey = 'current';
   terrainCurrentRouteSnapshot = null;
   openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
+}
+
+// Poll until the current/imported route has finished planning (or a timeout),
+// so a resume-restore doesn't try to build 3D from a half-computed route.
+function waitForCurrentRouteReady(timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const check = () => {
+      if (currentRouteCoords.length >= 2 && !isProcessing && !hasRouteWeatherBusyTasks()) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) { resolve(false); return; }
+      setTimeout(check, 250);
+    };
+    check();
+  });
+}
+
+// Wait until the current route's weather has finished loading, so a 3D build
+// triggered right after a route switch captures the weather points instead of
+// an empty set (the auto-fetch is debounced, so we allow a short grace window
+// for it to start, then wait for it to finish). Resolves true on success and
+// false if the request was superseded.
+function waitForWeatherSettled(requestId, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let sawWeather = false;
+    const check = () => {
+      if (requestId != null && requestId !== favoriteExportRequestSeq) { resolve(false); return; }
+      const busy = isWeatherFetching || hasRouteWeatherBusyTasks();
+      sawWeather ||= busy;
+      const elapsed = Date.now() - startedAt;
+      // Done once weather ran and finished; or after a grace window with no
+      // weather activity at all (nothing to fetch / everything cached); or timeout.
+      if (!busy && (sawWeather || elapsed >= 1500)) { resolve(true); return; }
+      if (elapsed >= timeoutMs) { resolve(true); return; }
+      setTimeout(check, 200);
+    };
+    check();
+  });
+}
+
+// On app start, if the 3D viewer was open before a reload/app-resume, reopen it
+// for the same route so the user lands back on the 3D page instead of home.
+async function restoreTerrain3DIfNeeded() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(LS_TERRAIN_OPEN_KEY) || 'null'); }
+  catch { saved = null; }
+  if (!saved || !saved.routeKey) return;
+  const routeKey = saved.routeKey;
+
+  if (routeKey.startsWith('fav:')) {
+    const fav = favorites.find((f) => `fav:${f.id}` === routeKey);
+    if (fav) { open3dForFavorite(fav); return; }
+    clearTerrainOpenState();
+    return;
+  }
+
+  // Current / imported route: wait for the restored route to finish planning,
+  // then reopen. If it never becomes ready, drop the marker so we don't retry.
+  const ready = await waitForCurrentRouteReady();
+  if (ready && currentRouteCoords.length >= 2) build3dForCurrentRoute();
+  else clearTerrainOpenState();
 }
 
 // Toolbar "更新" — redraw the open 3D model. A forced rebuild re-downloads a fresh
@@ -2860,27 +2953,58 @@ async function switchTerrainPlaylistSource(entry) {
 
   const requestId = ++favoriteExportRequestSeq;
 
-  if (entry.type === 'fav') {
-    const fav = favorites.find((f) => f.id === entry.id);
-    if (!fav) { showNotification('最愛路線不存在', 'error'); return; }
-    if (!waypointsMatch(fav.waypoints, mapManager.waypoints) || currentRouteCoords.length < 2) {
-      loadFavorite(fav);
-      const ready = await waitForFavoriteRouteReady(fav, requestId);
-      if (requestId !== favoriteExportRequestSeq) return;
-      if (!ready) { showNotification('找不到合適路徑', 'warning'); return; }
+  // Show the same progress overlay a normal 3D build uses for the whole switch —
+  // route planning + weather load happen behind the still-visible old scene, so
+  // without this the viewer would sit frozen for seconds before the terrain bar
+  // finally appears. The terrain build below continues on the same bar. Only used
+  // when we actually have to re-plan/re-fetch; an already-loaded route skips it.
+  let showedSwitchProgress = false;
+  const beginSwitchProgress = (detail) => {
+    showedSwitchProgress = true;
+    handleTerrainLoadState({ active: true, percent: 2, blocking: true, title: '切換 3D 路線', detail });
+  };
+  const failSwitch = (msg) => {
+    if (showedSwitchProgress) handleTerrainLoadState({ active: false, percent: 0 });
+    showNotification(msg, 'warning');
+  };
+
+  try {
+    if (entry.type === 'fav') {
+      const fav = favorites.find((f) => f.id === entry.id);
+      if (!fav) { failSwitch('最愛路線不存在'); return; }
+      // Re-plan + wait for the route AND its weather only when the favourite isn't
+      // already the live route — this both keeps switching fast when nothing needs
+      // reloading and guarantees the 3D build sees the full weather/圖資 data set.
+      if (!waypointsMatch(fav.waypoints, mapManager.waypoints) || currentRouteCoords.length < 2) {
+        beginSwitchProgress('規劃路線中…');
+        loadFavorite(fav);
+        const ready = await waitForFavoriteRouteReady(fav, requestId);
+        if (requestId !== favoriteExportRequestSeq) return;
+        if (!ready) { failSwitch('找不到合適路徑'); return; }
+        handleTerrainLoadState({ active: true, percent: 4, blocking: true, title: '切換 3D 路線', detail: '載入天氣資訊…' });
+        await waitForWeatherSettled(requestId);
+        if (requestId !== favoriteExportRequestSeq) return;
+      }
+      terrainActiveRouteKey = `fav:${fav.id}`;
+      await openTerrainViewer(`fav:${fav.id}`);
+    } else {
+      const snap = terrainCurrentRouteSnapshot;
+      if (!currentRouteMatchesSnapshot(snap)) {
+        beginSwitchProgress('規劃路線中…');
+        const ready = await restoreCurrentRouteSnapshot(snap, requestId);
+        if (requestId !== favoriteExportRequestSeq) return;
+        if (!ready) { failSwitch('找不到合適路徑'); return; }
+        handleTerrainLoadState({ active: true, percent: 4, blocking: true, title: '切換 3D 路線', detail: '載入天氣資訊…' });
+        await waitForWeatherSettled(requestId);
+        if (requestId !== favoriteExportRequestSeq) return;
+      }
+      terrainActiveRouteKey = 'current';
+      const fav = findSavedCurrentRoute();
+      await openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
     }
-    terrainActiveRouteKey = `fav:${fav.id}`;
-    await openTerrainViewer(`fav:${fav.id}`);
-  } else {
-    const snap = terrainCurrentRouteSnapshot;
-    if (!currentRouteMatchesSnapshot(snap)) {
-      const ready = await restoreCurrentRouteSnapshot(snap, requestId);
-      if (requestId !== favoriteExportRequestSeq) return;
-      if (!ready) { showNotification('找不到合適路徑', 'warning'); return; }
-    }
-    terrainActiveRouteKey = 'current';
-    const fav = findSavedCurrentRoute();
-    await openTerrainViewer(fav ? `fav:${fav.id}` : terrainRouteSignature());
+  } catch (err) {
+    if (showedSwitchProgress) handleTerrainLoadState({ active: false, percent: 0 });
+    throw err;
   }
 
   if (terrainActiveCacheKey) {
@@ -6081,9 +6205,43 @@ function _syncExtraSettingsUI() {
   if (typeof syncPaceCalibrationUI === 'function') syncPaceCalibrationUI();
 }
 
+// True when a favourite is already the live route with all route-/pace-affecting
+// settings unchanged, so (re)loading it would needlessly re-plan the route and
+// re-fetch weather/圖資 for no visible change. Custom names alone don't count —
+// they don't trigger a network refetch. Used to skip redundant reloads when the
+// user re-selects the route that's already showing without editing any params.
+function favoriteAlreadyLoaded(fav) {
+  if (!fav || importedTrackMode) return false;
+  if (!waypointsMatch(fav.waypoints, mapManager.waypoints)) return false;
+  if (currentRouteCoords.length < 2) return false;
+  const s = fav.settings || {};
+  const rtMode = !!s.roundTripMode;
+  const oLoop = rtMode ? false : !!s.oLoopMode;
+  if ((s.routeMode || 'hiking') !== routeEngine.mode) return false;
+  if (rtMode !== roundTripMode) return false;
+  if (oLoop !== oLoopMode) return false;
+  if (!!s.speedIntervalMode !== speedIntervalMode) return false;
+  const favActivity = normalizeSpeedActivity(s.speedActivity || defaultActivityForRouteMode(s.routeMode || 'hiking'));
+  if (favActivity !== speedActivity) return false;
+  if ((s.paceUnit || 'kmh') !== paceUnit) return false;
+  if ((Number(s.segmentIntervalKm) || 0) !== (Number(segmentIntervalKm) || 0)) return false;
+  if (!!s.perSegmentMode !== perSegmentMode) return false;
+  if ((s.strictLinearMode !== false) !== strictLinearMode) return false;
+  const favPace = JSON.stringify({ ...DEFAULT_PACE_PARAMS, ...(s.paceParams || {}) });
+  if (favPace !== JSON.stringify({ ...DEFAULT_PACE_PARAMS, ...paceParams })) return false;
+  return true;
+}
+
 function loadFavorite(fav) {
   if (!fav || !Array.isArray(fav.waypoints) || fav.waypoints.length < 2) {
     showNotification('最愛路線資料無效', 'error');
+    return;
+  }
+  // Nothing to reload: the route is already on screen with identical settings, so
+  // keep the existing route/weather/圖資 instead of re-planning and re-fetching.
+  if (favoriteAlreadyLoaded(fav)) {
+    updateRouteLibraryCurrent();
+    showNotification(`「${fav.name}」已是目前路線`, 'info', 1500);
     return;
   }
   history.suppressed = true;
@@ -11583,6 +11741,10 @@ async function init() {
   // Seed undo/redo history with the restored state as the baseline.
   historyInit();
   isInitialLoad = false;
+
+  // Re-open the 3D viewer if it was showing before a reload/app-resume, so
+  // leaving and returning to the browser doesn't kick the user back to home.
+  restoreTerrain3DIfNeeded();
 }
 
 // =========== Keyword Search (forward geocoding) ===========

@@ -3185,6 +3185,25 @@ export class TerrainViewer {
     return p;
   }
 
+  // Category label for a landmark node that carries no OSM name, so unnamed
+  // peaks/towers/viewpoints still get an on-model name in 3D. Peaks/saddles add
+  // the terrain-sampled elevation so nearby summits stay distinguishable.
+  _fallbackLandmarkName(cls, lat, lon) {
+    if (cls === 'peak' || cls === 'saddle') {
+      const base = cls === 'peak' ? '山峰' : '鞍部';
+      const e = typeof this._sampleGridElevation === 'function' ? this._sampleGridElevation(lat, lon) : null;
+      return Number.isFinite(e) ? `${base} ${Math.round(e)} m` : base;
+    }
+    const names = {
+      tower: '高塔',
+      lighthouse: '燈塔',
+      chimney: '煙囪',
+      viewpoint: '觀景點',
+      monument: '紀念地標',
+    };
+    return names[cls] || null;
+  }
+
   // Build a small procedural 3D model for an OSM point landmark (Plan §III-1).
   // Feet sit at the group origin (y = 0) and the model grows upward; the caller
   // drapes it onto the terrain. Symbolic (marker-scale, ms) rather than physically
@@ -3313,8 +3332,12 @@ export class TerrainViewer {
       return out;
     };
     const labelCands = [];
-    const pushLabelCand = (name, pos, color, pri) => {
-      if (name) labelCands.push({ name, pos, color, pri });
+    // `key` (optional) is the dedupe identity: named features dedupe on the name
+    // (so the same road/peak name appearing twice yields one label), but generic
+    // fallback names ("山峰", "觀景點", …) pass a position-based key so several
+    // unnamed landmarks don't all collapse into a single shared label.
+    const pushLabelCand = (name, pos, color, pri, key) => {
+      if (name) labelCands.push({ name, pos, color, pri, key: key || name });
     };
 
     for (const ln of (data.lines || [])) {
@@ -3602,11 +3625,22 @@ export class TerrainViewer {
       if (!model) continue;
       model.position.copy(world(lat, lon, baseLift));
       this.landmarkGroup.add(model);
-      // Label named landmarks (skip trees — they'd flood the label layer).
-      if (p.name && p.cls !== 'tree') {
+      // Label landmarks (skip trees — they'd flood the label layer). Named nodes
+      // use their OSM name; unnamed peaks/towers/viewpoints/… fall back to a
+      // category label (peaks carry their elevation) so no 3D indicator is left
+      // nameless. Fallback labels sort after named ones (pri + 3) so the label
+      // cap fills real place names first, and use a position-based dedupe key so
+      // multiple generic labels survive instead of collapsing into one.
+      if (p.cls !== 'tree') {
         const color = (p.cls === 'peak' || p.cls === 'saddle') ? 0xffd9a0 : 0xd8e0ea;
         const pri = (p.cls === 'peak') ? 2 : 6;
-        pushLabelCand(p.name, model.position.clone().setY(model.position.y + 16 * ms), color, pri);
+        const labelPos = model.position.clone().setY(model.position.y + 16 * ms);
+        if (p.name) {
+          pushLabelCand(p.name, labelPos, color, pri);
+        } else {
+          const fb = this._fallbackLandmarkName(p.cls, lat, lon);
+          if (fb) pushLabelCand(fb, labelPos, color, pri + 3, `${p.cls}@${lat.toFixed(4)},${lon.toFixed(4)}`);
+        }
       }
     }
 
@@ -3616,8 +3650,8 @@ export class TerrainViewer {
     let made = 0;
     for (const c of labelCands) {
       if (made >= 70) break;
-      const key = c.name.trim();
-      if (!key || seen.has(key)) continue;
+      const key = (c.key || c.name).trim();
+      if (!c.name.trim() || seen.has(key)) continue;
       seen.add(key);
       const label = this._createLabel(key, c.pos.x, c.pos.y, c.pos.z, c.color);
       label.scale.set(46 * ms, 15 * ms, 1);

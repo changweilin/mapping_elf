@@ -114,6 +114,53 @@ async function open3dForCurrentRoute(page) {
   await page.locator('#btn-open-3d-viewer').click();
 }
 
+// Mock the OSRM routing service so planning a routed (non-imported) route is
+// deterministic — needed for the favourite skip / player-switch tests, which
+// require a routed route (imported KML tracks intentionally always reload).
+async function mockRouting(page) {
+  await page.route('**/route/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    const coordPart = url.pathname.split('/').pop();
+    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
+    await route.fulfill({
+      json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] },
+    });
+  });
+}
+
+async function addWaypointsAtFractions(page, points) {
+  const box = await page.locator('#map').boundingBox();
+  expect(box).not.toBeNull();
+  for (let i = 0; i < points.length; i++) {
+    const [x, y] = points[i];
+    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+    await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
+  }
+}
+
+// Load the app and build a routed route from map clicks (no KML import), so the
+// current route is a normal routed favourite candidate rather than an imported
+// track. Weather is served so the load completes cleanly.
+async function openRoutedRoute(page, fractions = [[0.4, 0.42], [0.6, 0.58]]) {
+  const serve = (r) => r.fulfill({ json: weatherPayloadForUrl(r.request().url()) });
+  await page.route(/api\.open-meteo\.com\/v1\/forecast/, serve);
+  await page.route(/archive-api\.open-meteo\.com\/v1\/archive/, serve);
+  // Seed a zoomed-in map view so clicks land close together — at the default
+  // world view they'd span thousands of km and generate a huge weather point
+  // set that makes the route/weather load crawl.
+  await page.addInitScript(() => {
+    localStorage.setItem('mappingElf_mapView', JSON.stringify({ lat: 24.2133, lng: 121.3472, zoom: 14 }));
+  });
+  await page.goto('/');
+  await expect(page.locator('#map')).toBeVisible();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  await ensurePanelOpen(page);
+  await addWaypointsAtFractions(page, fractions);
+  await expect(page.locator('#btn-open-3d-viewer')).toBeEnabled({ timeout: 20_000 });
+  // Let the route + its weather finish so the 3D button won't refuse to open.
+  await page.locator('#route-weather-busy-overlay').waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
+}
+
 test('3D terrain builds for the current route from the route-planning button', async ({ page }) => {
   await mockElevation(page, { delayMs: 30 });
   await mockFeatures(page);
@@ -442,6 +489,86 @@ test('3D terrain: a favourite still builds via its per-favourite 3D button', asy
   await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/);
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+});
+
+test('3D terrain: reopens itself after a page reload (browser/app resume restore)', async ({ page }) => {
+  await mockElevation(page, { delayMs: 30 });
+  await mockFeatures(page);
+  await openWithRoute(page, { weather: true });
+
+  await open3dForCurrentRoute(page);
+  await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+
+  // Simulate the OS discarding a backgrounded webview and the user returning:
+  // the app reloads, and the 3D page should come back on its own rather than
+  // dropping to the 2D planning home.
+  await page.reload();
+  await expect(page.locator('#map')).toBeVisible();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+
+  await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/, { timeout: 30_000 });
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+
+  // Closing the viewer clears the restore marker so a later reload stays on home.
+  await page.locator('#tv-close-btn').click();
+  await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/);
+  await page.reload();
+  await expect(page.locator('#map')).toBeVisible();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  await page.waitForTimeout(2000);
+  await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/);
+});
+
+test('3D terrain: re-selecting the already-loaded favourite does not re-plan the route', async ({ page }) => {
+  await mockElevation(page, { delayMs: 30 });
+  await mockFeatures(page);
+  await mockRouting(page);
+  await openRoutedRoute(page);
+
+  // Save the routed route as a favourite; loading it back changes nothing.
+  await page.locator('#btn-favorite-add').click();
+  const loadBtn = page.locator('[data-favorite-load]').first();
+  await expect(loadBtn).toBeVisible();
+
+  // Let any in-flight route/weather work settle so the busy overlay is idle.
+  const busy = page.locator('#route-weather-busy-overlay');
+  await busy.waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
+
+  await loadBtn.click();
+  // The skip path reports the route is already current and must NOT raise the
+  // route-planning busy overlay (which a real re-plan would).
+  await expect(page.locator('#notifications')).toContainText('已是目前路線', { timeout: 5_000 });
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden();
+});
+
+test('3D terrain: switching routes in the player keeps a working model + hidden progress bar', async ({ page }) => {
+  await mockElevation(page, { delayMs: 60 });
+  await mockFeatures(page);
+  await mockRouting(page);
+  await openRoutedRoute(page);
+
+  // Save the current route as a favourite so the player playlist has an entry.
+  await page.locator('#btn-favorite-add').click();
+
+  await open3dForCurrentRoute(page);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+
+  // Open the playlist and switch to the saved favourite.
+  await page.locator('#tp-playlist-btn').click();
+  await expect(page.locator('#tp-playlist-menu')).not.toHaveClass(/hidden/);
+  await page.locator('[data-playlist-fav]').first().click();
+
+  // The viewer stays open and ends with a working model + hidden progress bar.
+  await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+  // The playlist now marks the favourite as the active source.
+  await page.locator('#tp-playlist-btn').click();
+  await expect(page.locator('[data-playlist-fav].active')).toHaveCount(1);
 });
 
 test('3D terrain: scrubbing playback drives the live position readout', async ({ page }) => {
