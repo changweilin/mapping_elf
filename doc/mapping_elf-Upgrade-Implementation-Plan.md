@@ -3,7 +3,7 @@
 <!-- AGENT-READABLE STATUS BLOCK — keep in sync when a task's state changes. -->
 ```yaml
 doc: mapping_elf 3D upgrade plan
-last_updated: 2026-07-01
+last_updated: 2026-07-02
 branch: codex/optimized_restructuring
 impl_file: src/modules/terrainViewer.js
 export_file: src/modules/terrainExporter.js
@@ -22,7 +22,7 @@ verification:
   - "npm run test:numeric: pass"
   - "static helper unit checks (_parseLengthM/_buildingHeight/_roofInfo/_classifyPoint/_roofPositions): pass"
   - "exporter smoke checks (binary STL triangle-count + finiteness; 3MF OPC zip: content-types/rels/model, basematerials, per-triangle p1 family colours, route object): pass"
-  - "browser/GUI QA: PENDING (open a 3D model; toggle 懸空/揭示; export STL+3MF and slice; check gabled roofs + peak/tree/tower models render)"
+  - "browser/GUI QA: PASS 2026-07-02 (Playwright live run, Jiufen route: 3D model built; 懸空 toggles drop-stems visible/hidden; 揭示 clamps tube drawRange + line instanceCount to progress and restores in full; STL export 43560 tris binary-valid + finite; 3MF export OPC-valid with basematerials/p1/2 objects; peak/tree/tower/viewpoint models render; gabled/skillion/hipped roof meshes build + render, ridge/mono-pitch/apex structure re-verified offline via _roofPositions)"
 ```
 
 ## 0. Implementation Status Ledger

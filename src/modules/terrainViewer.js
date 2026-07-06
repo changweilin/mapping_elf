@@ -133,6 +133,12 @@ export class TerrainViewer {
     // Bbox the in-memory _featuresData were built for, so a redraw can safely
     // reuse them as a fallback only when the area hasn't changed.
     this._featuresDataBbox = null;
+    // True once a 圖資 download attempt for the CURRENT scene has run to
+    // completion (success, genuine failure, or a legitimately empty result) —
+    // as opposed to being cut short by a switch/close mid-flight. Distinguishes
+    // "tried, nothing there" (don't keep re-fetching) from "never got a real
+    // chance" (worth retrying on the cache-signature re-entry shortcut).
+    this._featuresSettled = false;
 
     this._playing = false;
     this._speed = 1;
@@ -375,6 +381,23 @@ export class TerrainViewer {
 
   hasMapFeatures() {
     return !!(this.featureGroup && this.featureGroup.children.length);
+  }
+
+  // Re-attempt the background 圖資 download for the scene the caller is about to
+  // re-show without a rebuild (main.js's cache-signature "already built" shortcut)
+  // when it never ran to completion last time — e.g. the user switched to another
+  // route or closed the viewer before the Overpass fetch resolved. Gated on
+  // _featuresSettled rather than hasMapFeatures() so a route that genuinely has
+  // no OSM features nearby (settled, just empty) isn't re-fetched every time the
+  // shortcut fires. Safe to call even if an earlier attempt is still in flight:
+  // that one just gets superseded (its result, if it lands, is still persisted —
+  // see _loadMapFeaturesInBackground).
+  retryMapFeaturesIfMissing(cacheKeyForThisBuild) {
+    if (this._featuresSettled || !this.scene || !this._bbox) return false;
+    const token = (this._buildToken = (this._buildToken || 0) + 1);
+    this._emitLoad({ active: true, percent: 90, blocking: false, title: '建立地形模型', detail: '更新圖資中…' });
+    this._loadMapFeaturesInBackground(this._bbox, token, this._featuresData, this._featuresDataBbox, cacheKeyForThisBuild);
+    return true;
   }
 
   // True once a point-landmark model (peak/tree/tower/viewpoint/monument) exists,
@@ -773,11 +796,13 @@ export class TerrainViewer {
       try { this._buildMapFeatures(cachedFeatures, bbox); } catch (err) { console.warn('map features failed:', err); }
       this._featuresData = cachedFeatures;
       this._featuresDataBbox = bbox;
+      this._featuresSettled = true;
     } else {
       // Features arrive asynchronously; clear any stale ones so a rebuild in the
       // meantime (e.g. the normalization toggle) doesn't drape the old area's data.
       this._featuresData = null;
       this._featuresDataBbox = null;
+      this._featuresSettled = false;
     }
     this._buildCtx = { coords, elevations, waypoints, weatherPoints, bbox };
     // Token identifying THIS build so a background feature download that resolves
@@ -822,38 +847,55 @@ export class TerrainViewer {
     // interactive throughout — only the readout is shared, not the busy-lock.
     if (!cachedFeatures && !this._aborted) {
       this._emitLoad({ active: true, percent: 90, blocking: false, title: '建立地形模型', detail: '更新圖資中…' });
-      this._loadMapFeaturesInBackground(bbox, buildToken, prevFeatures, prevFeaturesBbox);
+      this._loadMapFeaturesInBackground(bbox, buildToken, prevFeatures, prevFeaturesBbox, routeData.cacheKey || null);
     } else {
       this._emitLoad({ active: false, percent: 100 });
     }
   }
 
   // Download map features off the critical path and drape them onto the already
-  // visible model. Guarded by the build token so a download that resolves after
-  // the user rebuilt/closed the model is discarded instead of painting a stale
-  // scene. A failed download reuses the previous build's features (same area).
-  // Progress (90→100, blocking: false) rides the same onLoad channel as the
-  // terrain build so the UI shows one continuous bar rather than a second one.
-  async _loadMapFeaturesInBackground(bbox, token, prevFeatures, prevFeaturesBbox) {
+  // visible model. Draping is guarded by the build token so a download that
+  // resolves after the user switched/rebuilt/closed the model doesn't paint a
+  // stale scene — but a *successful* download is always persisted for its own
+  // cacheKey regardless of supersession, so switching away mid-download (e.g. the
+  // 3D player hopping to another route) doesn't throw away already-fetched 圖資;
+  // the next visit to this route hits the cache instead of re-fetching. A failed
+  // download reuses the previous build's features (same area). Progress
+  // (90→100, blocking: false) rides the same onLoad channel as the terrain build
+  // so the UI shows one continuous bar rather than a second one — guarded by the
+  // token so a superseded fetch's late progress ticks can't corrupt the new
+  // build's own progress readout.
+  async _loadMapFeaturesInBackground(bbox, token, prevFeatures, prevFeaturesBbox, cacheKeyForThisBuild) {
     let featuresData = null;
     try {
       featuresData = await this._fetchMapFeatures(bbox, (p) => {
+        if (token !== this._buildToken) return;
         this._emitLoad({ active: true, percent: 90 + p * 10, blocking: false, detail: '更新圖資中…' });
       });
     } catch { featuresData = null; }
+
+    if (featuresData && this._onFeaturesComputed) {
+      try { this._onFeaturesComputed({ features: featuresData, bbox, cacheKey: cacheKeyForThisBuild }); } catch { /* noop */ }
+    }
+
     if (this._aborted || token !== this._buildToken || !this.scene) {
-      this._emitLoad({ active: false, percent: 100 });
+      // Superseded (another build/switch took over) or the viewer closed — the
+      // fetch above already ran to completion and was persisted above if it
+      // succeeded, so there's nothing left to do for this now-stale build. Leave
+      // _featuresSettled false: this attempt never got a real chance to finish
+      // against the still-current scene, so it's worth retrying later.
       return;
     }
+    // The attempt ran to completion against the still-current scene — success,
+    // genuine failure, or a legitimately empty result all count as "settled" so
+    // the cache re-entry shortcut doesn't keep re-fetching a route with no data.
+    this._featuresSettled = true;
     if (!featuresData && prevFeatures && this._bboxApproxEqual(bbox, prevFeaturesBbox)) {
       featuresData = prevFeatures;
     }
     if (!featuresData) {
       this._emitLoad({ active: false, percent: 100 });
       return;
-    }
-    if (featuresData !== prevFeatures && this._onFeaturesComputed) {
-      try { this._onFeaturesComputed({ features: featuresData, bbox }); } catch { /* noop */ }
     }
     try { this._buildMapFeatures(featuresData, bbox); } catch (err) {
       console.warn('map features failed:', err);
@@ -3185,6 +3227,25 @@ export class TerrainViewer {
     return p;
   }
 
+  // Category label for a landmark node that carries no OSM name, so unnamed
+  // peaks/towers/viewpoints still get an on-model name in 3D. Peaks/saddles add
+  // the terrain-sampled elevation so nearby summits stay distinguishable.
+  _fallbackLandmarkName(cls, lat, lon) {
+    if (cls === 'peak' || cls === 'saddle') {
+      const base = cls === 'peak' ? '山峰' : '鞍部';
+      const e = typeof this._sampleGridElevation === 'function' ? this._sampleGridElevation(lat, lon) : null;
+      return Number.isFinite(e) ? `${base} ${Math.round(e)} m` : base;
+    }
+    const names = {
+      tower: '高塔',
+      lighthouse: '燈塔',
+      chimney: '煙囪',
+      viewpoint: '觀景點',
+      monument: '紀念地標',
+    };
+    return names[cls] || null;
+  }
+
   // Build a small procedural 3D model for an OSM point landmark (Plan §III-1).
   // Feet sit at the group origin (y = 0) and the model grows upward; the caller
   // drapes it onto the terrain. Symbolic (marker-scale, ms) rather than physically
@@ -3313,8 +3374,12 @@ export class TerrainViewer {
       return out;
     };
     const labelCands = [];
-    const pushLabelCand = (name, pos, color, pri) => {
-      if (name) labelCands.push({ name, pos, color, pri });
+    // `key` (optional) is the dedupe identity: named features dedupe on the name
+    // (so the same road/peak name appearing twice yields one label), but generic
+    // fallback names ("山峰", "觀景點", …) pass a position-based key so several
+    // unnamed landmarks don't all collapse into a single shared label.
+    const pushLabelCand = (name, pos, color, pri, key) => {
+      if (name) labelCands.push({ name, pos, color, pri, key: key || name });
     };
 
     for (const ln of (data.lines || [])) {
@@ -3602,11 +3667,25 @@ export class TerrainViewer {
       if (!model) continue;
       model.position.copy(world(lat, lon, baseLift));
       this.landmarkGroup.add(model);
-      // Label named landmarks (skip trees — they'd flood the label layer).
-      if (p.name && p.cls !== 'tree') {
+      // Label landmarks (skip trees — they'd flood the label layer). Named nodes
+      // use their OSM name; unnamed peaks/towers/viewpoints/… fall back to a
+      // category label (peaks carry their elevation) so no 3D indicator is left
+      // nameless. Fallback labels sort after named ones (pri + 3) so the label
+      // cap fills real place names first, and use a position-based dedupe key so
+      // multiple generic labels survive instead of collapsing into one.
+      if (p.cls !== 'tree') {
         const color = (p.cls === 'peak' || p.cls === 'saddle') ? 0xffd9a0 : 0xd8e0ea;
-        const pri = (p.cls === 'peak') ? 2 : 6;
-        pushLabelCand(p.name, model.position.clone().setY(model.position.y + 16 * ms), color, pri);
+        // Landmarks always carry a rendered 3D model, so a label they lose to the
+        // shared cap reads as a nameless indicator — keep their priority ahead of
+        // buildings/areas (pri 4-6) so they reliably keep a label.
+        const pri = (p.cls === 'peak') ? 2 : 4;
+        const labelPos = model.position.clone().setY(model.position.y + 16 * ms);
+        if (p.name && p.name.trim()) {
+          pushLabelCand(p.name, labelPos, color, pri);
+        } else {
+          const fb = this._fallbackLandmarkName(p.cls, lat, lon);
+          if (fb) pushLabelCand(fb, labelPos, color, pri + 3, `${p.cls}@${lat.toFixed(4)},${lon.toFixed(4)}`);
+        }
       }
     }
 
@@ -3616,10 +3695,16 @@ export class TerrainViewer {
     let made = 0;
     for (const c of labelCands) {
       if (made >= 70) break;
-      const key = c.name.trim();
-      if (!key || seen.has(key)) continue;
+      const name = (c.name || '').trim();
+      if (!name) continue;
+      // `key` is only the dedupe identity (a position-based string for generic
+      // fallback labels); the sprite must always show the human-readable `name`,
+      // not the dedupe key, or unnamed landmarks render literal text like
+      // "peak@23.1234,120.5678" instead of their fallback name.
+      const key = (c.key || c.name).trim();
+      if (seen.has(key)) continue;
       seen.add(key);
-      const label = this._createLabel(key, c.pos.x, c.pos.y, c.pos.z, c.color);
+      const label = this._createLabel(name, c.pos.x, c.pos.y, c.pos.z, c.color);
       label.scale.set(46 * ms, 15 * ms, 1);
       this._registerLabel(label);
       this.featureLabelGroup.add(label);
