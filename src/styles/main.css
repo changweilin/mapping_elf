@@ -7000,6 +7000,14 @@ html.light-theme .panel-bottom-logo {
 .terrain-viewer-canvas-wrap {
   flex: 1;
   position: relative;
+  /* Establish its own stacking context so its absolutely-positioned children
+     (tv-loading-overlay z:30, tv-marker-detail z:14, tv-info-panel/tv-live-hud
+     z:12) can never outrank .terrain-viewer-toolbar / .terrain-player-bar
+     (z:10 flex items, siblings of this element). Without this, those bars —
+     and the tv-export-menu / tp-playlist-menu dropdowns nested inside them at
+     z:40 — would get painted first and then covered whenever the loading
+     overlay (or any canvas-wrap child) is showing, e.g. mid route-switch. */
+  z-index: 1;
   overflow: hidden;
 }
 
