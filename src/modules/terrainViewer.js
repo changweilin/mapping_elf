@@ -208,6 +208,10 @@ export class TerrainViewer {
     this._followUserOverride = false; // user grabbed the camera mid-playback; wins until next play()
     this._followPosTmp = new THREE.Vector3();
     this._followTargetTmp = new THREE.Vector3();
+    // Playback staging: reveal-as-walked engaged by play() (independent of the
+    // persisted 揭示 toggle), and the opening fly-in timer (Infinity = no intro).
+    this._playbackReveal = false;
+    this._introElapsed = Infinity;
 
     this._lastMetricsEmit = 0;
   }
@@ -553,6 +557,14 @@ export class TerrainViewer {
       this._updatePlayerPosition();
       if (this._onProgressChange) this._onProgressChange(this._progress);
     }
+    // Relive-style playback staging: the track reveals as it is walked (without
+    // flipping the user's persisted 揭示 toggle), and starting from the trailhead
+    // opens with a fly-in from a high overview down into the chase position.
+    if (!this._routeReveal && !this._playbackReveal) {
+      this._playbackReveal = true;
+      this._applyRouteReveal();
+    }
+    if (this._followCam && this._progress <= 0.001) this._introElapsed = 0;
     this._playing = true;
     this._followUserOverride = false;
     if (this.controls) this.controls.autoRotate = false;
@@ -642,9 +654,21 @@ export class TerrainViewer {
     // Markers are sized ~span/300 (cone height 13×that ≈ 0.043·span), so the
     // camera must sit a few tenths of a span back or it ends up inside them.
     const span = this._worldSpan || 2000;
-    const back = span * 0.5;
-    const lift = span * 0.3;
-    const ahead = span * 0.06;
+    let back = span * 0.5;
+    let lift = span * 0.3;
+    let ahead = span * 0.06;
+    // Opening fly-in: for the first seconds of a from-the-start playback the rig
+    // is blended from a high overview down to the chase pose (smoothstep), so
+    // pressing play sweeps down into the scene instead of cutting to it.
+    const INTRO_DUR = 2.6;
+    if (this._introElapsed < INTRO_DUR) {
+      this._introElapsed += dt;
+      const p = Math.min(1, this._introElapsed / INTRO_DUR);
+      const e = p * p * (3 - 2 * p);
+      back += (span * 1.15 - back) * (1 - e);
+      lift += (span * 0.8 - lift) * (1 - e);
+      ahead *= e;
+    }
     const desired = this._followPosTmp.set(pt.x - dirX * back, pt.y + lift, pt.z - dirZ * back);
     const look = this._followTargetTmp.set(pt.x + dirX * ahead, pt.y + lift * 0.15, pt.z + dirZ * ahead);
     // Frame-rate-independent exponential smoothing; the target converges a bit
@@ -707,6 +731,10 @@ export class TerrainViewer {
   async loadRouteData(routeData) {
     const { coords, elevations, waypoints, weatherPoints, routeStats, timing, routeColors, cachedTerrain } = routeData;
     if (!coords || coords.length < 2) return;
+    // A fresh route starts staged from scratch: full track until played, no
+    // leftover fly-in from the previous route.
+    this._playbackReveal = false;
+    this._introElapsed = Infinity;
 
     // Honour the persisted "海拔高度歸一化" preference for the initial build so the
     // first paint uses the right vertical scale (no rebuild needed on open).
@@ -1116,6 +1144,7 @@ export class TerrainViewer {
     // orbit and pauses the chase cam until the next play().
     this.controls.addEventListener('start', () => {
       this.controls.autoRotate = false;
+      this._introElapsed = Infinity; // a grab also cancels the opening fly-in
       if (this._playing && this._followCam) this._followUserOverride = true;
     });
 
@@ -2504,6 +2533,9 @@ export class TerrainViewer {
   // draw up to the player's progress; when off, the whole track is shown.
   setRouteRevealMode(on) {
     this._routeReveal = !!on;
+    // An explicit 揭示-off also cancels the automatic playback reveal, so the
+    // toggle always restores the full track.
+    if (!on) this._playbackReveal = false;
     this._applyRouteReveal();
   }
 
@@ -2515,12 +2547,13 @@ export class TerrainViewer {
   // or restore it in full (reveal off). Cheap — no geometry rebuild — so it can be
   // called every frame from _updatePlayerPosition.
   _applyRouteReveal() {
+    const revealOn = this._routeReveal || this._playbackReveal;
     const tube = this.routeTube;
     const line = this.routeLine;
     if (tube && tube.geometry) {
       const idx = tube.geometry.index;
       if (idx) {
-        if (!this._routeReveal) {
+        if (!revealOn) {
           tube.geometry.setDrawRange(0, idx.count);
         } else {
           const segs = this._routeTubeSegs || 0;
@@ -2531,7 +2564,7 @@ export class TerrainViewer {
       }
     }
     if (line && line.geometry) {
-      if (!this._routeReveal) {
+      if (!revealOn) {
         line.geometry.instanceCount = Infinity;
       } else {
         const segs = this._routeLineSegs || 0;
@@ -4012,7 +4045,7 @@ export class TerrainViewer {
     }
 
     // Reveal the track up to the current position when trail mode is on.
-    if (this._routeReveal) this._applyRouteReveal();
+    if (this._routeReveal || this._playbackReveal) this._applyRouteReveal();
 
     const metrics = this._metricsAtProgress(this._progress);
     this._applyEnvironment(metrics);
