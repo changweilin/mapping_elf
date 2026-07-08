@@ -182,10 +182,13 @@ test('imports sample KML and keeps route UI functional', async ({ page }) => {
   await importFixture(page, sampleKml);
   await expectImportedRoute(page);
 
-  await clickActionable(page, '#btn-toggle-elevation');
-  await expect(page.locator('#elevation-chart-container')).toHaveClass(/collapsed/);
-  await clickActionable(page, '#btn-toggle-elevation');
-  await expect(page.locator('#elevation-chart-container')).not.toHaveClass(/collapsed/);
+  // Bottom panel toggles between the elevation chart and the weather table.
+  await clickActionable(page, '#bp-view-toggle [data-bp-view="weather"]');
+  await expect(page.locator('.bp-weather-scroll')).toBeVisible();
+  await expect(page.locator('#elevation-chart-container')).toBeHidden();
+  await clickActionable(page, '#bp-view-toggle [data-bp-view="elev"]');
+  await expect(page.locator('#elevation-chart-container')).toBeVisible();
+  await expect(page.locator('.bp-weather-scroll')).toBeHidden();
 
   await clickActionable(page, '#btn-fit-route');
   await clickStable(page, '#btn-clear-route');

@@ -206,6 +206,10 @@ export class MapManager {
     this.stackedWaypointFlags = []; // Per-waypoint flag: outbound marker shares lat/lng with a return marker
     this.waypointLayerSwapped = []; // true if outbound is on top of return at this index
     this.ignoreMapClick = false;
+    // Measurement tools (F2): when set, map clicks feed the measure handler
+    // instead of creating waypoints. Host wires `onMeasureClick`.
+    this.measureMode = null;
+    this.onMeasureClick = null;
     this.dragLine = null;
     this.dragLine = null;
     this._dragWpIndex = undefined;
@@ -278,6 +282,11 @@ export class MapManager {
       }
       if (Date.now() - this._lastMultiTouchAt < 700) return;
       if (this.ignoreMapClick) return;
+      // Measurement mode intercepts the click: drop a measure point, no waypoint.
+      if (this.measureMode) {
+        this.onMeasureClick?.(e.latlng.lat, e.latlng.lng);
+        return;
+      }
       // A double-tap that just fired (zoom) sometimes still delivers a trailing
       // single `click`; ignore clicks landing within the double-tap window after
       // a dblclick so the second tap doesn't drop a stray waypoint.

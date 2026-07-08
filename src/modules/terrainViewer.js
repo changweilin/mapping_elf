@@ -208,6 +208,25 @@ export class TerrainViewer {
     this._followUserOverride = false; // user grabbed the camera mid-playback; wins until next play()
     this._followPosTmp = new THREE.Vector3();
     this._followTargetTmp = new THREE.Vector3();
+    // Smoothed chase heading: follows the route's big-picture direction (a
+    // look-ahead chord, temporally low-passed) instead of the jittery
+    // instantaneous tangent, so the camera stops shaking on wiggly tracks.
+    this._followDir = new THREE.Vector3(0, 0, 1);
+    // Relive-style waypoint stops: pause + close-up orbit when the walker
+    // reaches each waypoint, then continue. Built in _createWaypoints.
+    this._waypointStops = [];         // sorted [{ u, detail }]
+    this._nextStopIdx = 0;
+    this._pauseUntil = 0;             // performance.now() ms; >now = holding at a stop
+    this._orbitAngle = 0;
+    this._waypointPauseMs = 2600;
+    this._onWaypointArrive = null;
+    // Satellite imagery draped over the terrain surface (F3). Lazily fetched
+    // Esri tiles mosaicked into a CanvasTexture; falls back to the procedural
+    // land-cover colours when tiles can't load (offline / CORS / no coverage).
+    this._satelliteEnabled = false;
+    this._satTexture = null;
+    this._satTextureKey = null;
+    this._onSatelliteError = null;
     // Playback staging: reveal-as-walked engaged by play() (independent of the
     // persisted 揭示 toggle), and the opening fly-in timer (Infinity = no intro).
     this._playbackReveal = false;
@@ -475,6 +494,12 @@ export class TerrainViewer {
     this._onMarkerClick = cb;
   }
 
+  // cb(detail) — fired when Relive-style playback reaches a waypoint stop, so
+  // the host can surface that waypoint's content during the close-up pause.
+  onWaypointArrive(cb) {
+    this._onWaypointArrive = cb;
+  }
+
   // Toggles the weather badge/label layer (the 3-state 天氣 button's "hints").
   // Turning hints off also implies no animation (nothing left to animate).
   setWeatherVisible(visible) {
@@ -565,6 +590,10 @@ export class TerrainViewer {
       this._applyRouteReveal();
     }
     if (this._followCam && this._progress <= 0.001) this._introElapsed = 0;
+    // Resume immediately (don't stay parked in a waypoint pause) and re-arm the
+    // next Relive stop for wherever playback is resuming from.
+    this._pauseUntil = 0;
+    this._syncStopIdx();
     this._playing = true;
     this._followUserOverride = false;
     if (this.controls) this.controls.autoRotate = false;
@@ -584,9 +613,20 @@ export class TerrainViewer {
   setProgress(t) {
     if (this.controls) this.controls.autoRotate = false;
     this._progress = Math.max(0, Math.min(1, t));
+    // Scrubbing cancels any active waypoint pause and re-arms the next stop.
+    this._pauseUntil = 0;
+    this._syncStopIdx();
     this._updatePlayerPosition();
     this._emitMetrics(true);
     if (this._onProgressChange) this._onProgressChange(this._progress);
+  }
+
+  // Point _nextStopIdx at the first Relive stop still ahead of the playhead.
+  _syncStopIdx() {
+    const stops = this._waypointStops || [];
+    let i = 0;
+    while (i < stops.length && stops[i].u <= this._progress) i++;
+    this._nextStopIdx = i;
   }
 
   getProgress() {
@@ -644,16 +684,46 @@ export class TerrainViewer {
     const u = this._clampU(this._progress);
     const pt = this.playerPath.getPointAt(u);
     if (!pt) return;
-    const tan = this.playerPath.getTangentAt ? this.playerPath.getTangentAt(u) : null;
+
+    // Big-picture heading: instead of the instantaneous tangent (which wiggles
+    // with every Catmull-Rom kink and makes the camera shake), use a chord over
+    // a look-ahead window, then temporally low-pass it. The result tracks the
+    // route's general direction and ignores small zig-zags.
+    const pA = this.playerPath.getPointAt(this._clampU(this._progress + 0.05));
+    const pB = this.playerPath.getPointAt(this._clampU(this._progress - 0.03));
     let dirX = 0, dirZ = 1;
-    if (tan) {
-      const len = Math.hypot(tan.x, tan.z);
-      if (len > 1e-6) { dirX = tan.x / len; dirZ = tan.z / len; }
+    if (pA && pB) {
+      const vx = pA.x - pB.x, vz = pA.z - pB.z;
+      const len = Math.hypot(vx, vz);
+      if (len > 1e-6) { dirX = vx / len; dirZ = vz / len; }
     }
+    const dk = 1 - Math.exp(-dt * 1.1);   // slow heading convergence = steady cam
+    this._followDir.x += (dirX - this._followDir.x) * dk;
+    this._followDir.z += (dirZ - this._followDir.z) * dk;
+    const dl = Math.hypot(this._followDir.x, this._followDir.z) || 1;
+    const fdx = this._followDir.x / dl, fdz = this._followDir.z / dl;
+
     // Rig proportions scale with the model so any route frames the same way.
     // Markers are sized ~span/300 (cone height 13×that ≈ 0.043·span), so the
     // camera must sit a few tenths of a span back or it ends up inside them.
     const span = this._worldSpan || 2000;
+
+    // Relive-style close-up: while parked at a waypoint stop, pull in and slowly
+    // orbit the point so its content reads before playback continues.
+    if (this._pauseUntil > performance.now()) {
+      this._orbitAngle += dt * 0.5;
+      const back = span * 0.3, lift = span * 0.2;
+      const ca = Math.cos(this._orbitAngle), sa = Math.sin(this._orbitAngle);
+      const ox = fdx * ca - fdz * sa, oz = fdx * sa + fdz * ca;
+      const desired = this._followPosTmp.set(pt.x - ox * back, pt.y + lift, pt.z - oz * back);
+      const look = this._followTargetTmp.set(pt.x, pt.y + lift * 0.1, pt.z);
+      const k = 1 - Math.exp(-dt * 2.4);
+      this.camera.position.lerp(desired, k);
+      this.controls.target.lerp(look, Math.min(1, k * 1.4));
+      this.camera.lookAt(this.controls.target);
+      return;
+    }
+
     let back = span * 0.5;
     let lift = span * 0.3;
     let ahead = span * 0.06;
@@ -669,8 +739,8 @@ export class TerrainViewer {
       lift += (span * 0.8 - lift) * (1 - e);
       ahead *= e;
     }
-    const desired = this._followPosTmp.set(pt.x - dirX * back, pt.y + lift, pt.z - dirZ * back);
-    const look = this._followTargetTmp.set(pt.x + dirX * ahead, pt.y + lift * 0.15, pt.z + dirZ * ahead);
+    const desired = this._followPosTmp.set(pt.x - fdx * back, pt.y + lift, pt.z - fdz * back);
+    const look = this._followTargetTmp.set(pt.x + fdx * ahead, pt.y + lift * 0.15, pt.z + fdz * ahead);
     // Frame-rate-independent exponential smoothing; the target converges a bit
     // faster than the camera so turns read as the camera "swinging around".
     const k = 1 - Math.exp(-dt * 2.2);
@@ -2013,6 +2083,118 @@ export class TerrainViewer {
     this.terrainMesh.receiveShadow = true;
     this.terrainMesh.castShadow = true;
     this.scene.add(this.terrainMesh);
+
+    // A rebuild recreates the mesh; re-drape satellite imagery if it was on.
+    if (this._satelliteEnabled) this._applySatelliteTexture();
+  }
+
+  // cb() — fired when satellite imagery can't be draped (offline / no tiles) so
+  // the host can reset its toggle and notify the user.
+  onSatelliteError(cb) {
+    this._onSatelliteError = cb;
+  }
+
+  isSatelliteEnabled() {
+    return !!this._satelliteEnabled;
+  }
+
+  // 衛星影像: drape live Esri imagery over the terrain surface. The height-field
+  // mesh already carries a 0..1 UV grid spanning the bbox (u→lng, v→lat), so the
+  // texture maps straight on. Off → back to the procedural land-cover colours.
+  setSatelliteEnabled(on) {
+    this._satelliteEnabled = !!on;
+    if (this._satelliteEnabled) this._applySatelliteTexture();
+    else this._removeSatelliteTexture();
+    return this._satelliteEnabled;
+  }
+
+  _removeSatelliteTexture() {
+    if (!this.terrainMesh) return;
+    const mat = this.terrainMesh.material;
+    mat.map = null;
+    mat.vertexColors = true;
+    mat.color.setRGB(1, 1, 1);
+    mat.needsUpdate = true;
+  }
+
+  async _applySatelliteTexture() {
+    if (!this.terrainMesh || !this._bbox) return;
+    const b = this._bbox;
+    const key = `${b.minLat.toFixed(5)},${b.minLng.toFixed(5)},${b.maxLat.toFixed(5)},${b.maxLng.toFixed(5)}`;
+    try {
+      if (!this._satTexture || this._satTextureKey !== key) {
+        const tex = await this._buildSatelliteTexture(b);
+        if (!tex) throw new Error('no satellite tiles loaded');
+        this._satTexture?.dispose?.();
+        this._satTexture = tex;
+        this._satTextureKey = key;
+      }
+      // Guard: the user may have toggled it off, or the scene rebuilt, while the
+      // tiles were downloading.
+      if (!this._satelliteEnabled || !this.terrainMesh) return;
+      const mat = this.terrainMesh.material;
+      mat.map = this._satTexture;
+      mat.vertexColors = false;   // show the imagery, not the terrain tint × image
+      mat.color.setRGB(1, 1, 1);
+      mat.needsUpdate = true;
+    } catch (err) {
+      console.warn('satellite drape failed, falling back to land cover:', err);
+      this._satelliteEnabled = false;
+      this._removeSatelliteTexture();
+      if (this._onSatelliteError) this._onSatelliteError();
+    }
+  }
+
+  // Mosaic Esri World Imagery tiles covering the bbox into a CanvasTexture.
+  // Returns null if no tile could be fetched (offline / no coverage).
+  async _buildSatelliteTexture(bbox) {
+    const TILE = 256;
+    const lngToX = (lng, z) => (lng + 180) / 360 * (1 << z);
+    const latToY = (lat, z) => {
+      const r = lat * Math.PI / 180;
+      return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (1 << z);
+    };
+    // Highest zoom whose bbox still fits in ~5 tiles per side (caps downloads).
+    let z = 17;
+    for (; z >= 2; z--) {
+      const xs = lngToX(bbox.maxLng, z) - lngToX(bbox.minLng, z);
+      const ys = latToY(bbox.minLat, z) - latToY(bbox.maxLat, z);
+      if (Math.max(xs, ys) <= 5) break;
+    }
+    const x0 = lngToX(bbox.minLng, z), x1 = lngToX(bbox.maxLng, z);
+    const y0 = latToY(bbox.maxLat, z), y1 = latToY(bbox.minLat, z);  // y0 = north/top
+    const w = Math.max(1, Math.round((x1 - x0) * TILE));
+    const h = Math.max(1, Math.round((y1 - y0) * TILE));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const n = 1 << z;
+    let loaded = 0;
+    const jobs = [];
+    for (let tx = Math.floor(x0); tx <= Math.floor(x1); tx++) {
+      for (let ty = Math.floor(y0); ty <= Math.floor(y1); ty++) {
+        if (ty < 0 || ty >= n) continue;
+        const wx = ((tx % n) + n) % n;
+        jobs.push(new Promise((res) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            ctx.drawImage(img, (tx - x0) * TILE, (ty - y0) * TILE, TILE, TILE);
+            loaded++; res();
+          };
+          img.onerror = () => res();
+          // Esri World Imagery (same source as the 2D 衛星 layer): z/y/x order.
+          img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${wx}`;
+        }));
+      }
+    }
+    await Promise.all(jobs);
+    if (loaded === 0) return null;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = this.renderer?.capabilities?.getMaxAnisotropy?.() || 1;
+    tex.needsUpdate = true;
+    return tex;
   }
 
   // Smooth analytic normals (N×N×3, vertex order matching _createTerrain) from
@@ -2576,6 +2758,7 @@ export class TerrainViewer {
   _createWaypoints(waypoints, bbox) {
     if (!waypoints || waypoints.length === 0) return;
     const ms = this._markerScale || 1;
+    const stops = [];
 
     waypoints.forEach((wp, i) => {
       const [lat, lng] = wp.coords || wp;
@@ -2621,7 +2804,20 @@ export class TerrainViewer {
       this.scene.add(sign);
       this.waypointMarkers.push(sign);
       this._pickables.push(sign);
+
+      // Register a Relive stop at this waypoint's progress fraction (skip the
+      // trailhead and the finish — playback already handles those).
+      const total = this._totalDistM || 0;
+      if (total > 0 && wp.distanceM != null) {
+        const u = wp.distanceM / total;
+        if (u > 0.01 && u < 0.99) stops.push({ u, detail });
+      }
     });
+
+    stops.sort((a, b) => a.u - b.u);
+    this._waypointStops = stops;
+    this._nextStopIdx = 0;
+    this._pauseUntil = 0;
   }
 
   // A small flag-on-pole marker (旗幟標示) planted at a route waypoint's ground
@@ -4195,6 +4391,9 @@ export class TerrainViewer {
       this._progress = Math.max(0, Math.min(1, prevView.progress));
       this.controls.update();
     }
+    // _createWaypoints reset the stop cursor to 0; re-arm it for the restored
+    // playhead so a rebuild mid-track doesn't replay already-passed stops.
+    this._syncStopIdx();
     this._updateLineResolutions();
     this._updatePlayerPosition();
     this._emitMetrics(true);
@@ -4219,6 +4418,10 @@ export class TerrainViewer {
     this.waypointMarkers = [];
     this.weatherLabels = [];
     this._weatherIconEntries = [];
+    // The terrain material's `.map` (the satellite texture) was just disposed
+    // above; drop our cached handle so a re-drape rebuilds a fresh one.
+    this._satTexture = null;
+    this._satTextureKey = null;
     this.terrainMesh = null;
     this.routeLine = null;
     this.routeTube = null;
@@ -4297,13 +4500,32 @@ export class TerrainViewer {
     const dt = Math.min(this.clock.getDelta(), 0.1);
 
     if (this._playing && this.playerPath) {
-      this._personPhase += dt * this._speed;
-      this._progress += dt * this._speed * 0.05;
       let reachedEnd = false;
-      if (this._progress >= 1) {
-        this._progress = 1;
-        this._playing = false;
-        reachedEnd = true;
+      const now = performance.now();
+      if (this._pauseUntil > now) {
+        // Parked at a Relive waypoint stop: hold the playhead, keep the close-up
+        // orbit and weather alive, resume automatically when the timer expires.
+      } else {
+        this._personPhase += dt * this._speed;
+        const prev = this._progress;
+        this._progress += dt * this._speed * 0.05;
+        // Reached the next waypoint this frame → snap to it and begin the pause.
+        const stops = this._waypointStops;
+        if (this._nextStopIdx < stops.length && this._progress >= stops[this._nextStopIdx].u) {
+          const stop = stops[this._nextStopIdx];
+          this._nextStopIdx++;
+          if (stop.u > prev && stop.u < 1) {
+            this._progress = stop.u;
+            this._pauseUntil = now + this._waypointPauseMs;
+            this._orbitAngle = 0;
+            if (this._onWaypointArrive) this._onWaypointArrive(stop.detail);
+          }
+        }
+        if (this._progress >= 1) {
+          this._progress = 1;
+          this._playing = false;
+          reachedEnd = true;
+        }
       }
       this._updatePlayerPosition();
       this._updateFollowCamera(dt);

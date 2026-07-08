@@ -99,7 +99,7 @@ async function openWithRoute(page, { weather = false } = {}) {
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   await page.locator('#gpx-file-input').setInputFiles(sampleKml);
   await expect(page.locator('#waypoint-list .waypoint-item').first()).toBeVisible();
-  await expect(page.locator('#btn-open-3d-viewer')).toBeEnabled();
+  await expect(page.locator('#btn-view-3d')).toBeEnabled();
 }
 
 async function ensurePanelOpen(page) {
@@ -111,7 +111,7 @@ async function ensurePanelOpen(page) {
 // Build the current route's 3D terrain via the route-planning button.
 async function open3dForCurrentRoute(page) {
   await ensurePanelOpen(page);
-  await page.locator('#btn-open-3d-viewer').click();
+  await page.locator('#btn-view-3d').click();
 }
 
 // Mock the OSRM routing service so planning a routed (non-imported) route is
@@ -156,7 +156,7 @@ async function openRoutedRoute(page, fractions = [[0.4, 0.42], [0.6, 0.58]]) {
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   await ensurePanelOpen(page);
   await addWaypointsAtFractions(page, fractions);
-  await expect(page.locator('#btn-open-3d-viewer')).toBeEnabled({ timeout: 20_000 });
+  await expect(page.locator('#btn-view-3d')).toBeEnabled({ timeout: 20_000 });
   // Let the route + its weather finish so the 3D button won't refuse to open.
   await page.locator('#route-weather-busy-overlay').waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
 }
@@ -339,7 +339,7 @@ test('3D terrain: the route caches its elevation grid + 圖資 so reopening skip
   // Reopen the same route: cached grid + 圖資 (Cache-API-backed, see
   // saveTerrainFeaturesEntry) are both reused — no new elevation or Overpass
   // requests, and the page never re-hits the network for either.
-  await page.locator('#btn-open-3d-viewer').click();
+  await page.locator('#btn-view-3d').click();
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
   expect(elevation.count).toBe(firstRunElevation);

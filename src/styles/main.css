@@ -1159,6 +1159,142 @@ body.weather-card-busy .weather-edit-control:disabled {
   transform: scale(0.95);
 }
 
+.map-action-btn[aria-pressed="true"] {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+
+/* F2: Measurement tools panel */
+.measure-panel {
+  position: fixed;
+  left: 56px;
+  bottom: calc(var(--bottom-panel-height) + 10px);
+  z-index: 620;
+  width: 240px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-lg, var(--shadow-md));
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.measure-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.measure-mode-toggle {
+  display: inline-flex;
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.measure-mode-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.measure-mode-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.measure-close-btn {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.measure-close-btn:hover {
+  color: var(--accent-primary);
+}
+
+.measure-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.measure-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.measure-readout .mr-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.measure-readout .mr-label {
+  color: var(--text-secondary);
+}
+
+.measure-readout .mr-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.measure-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.measure-clear-btn {
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+.measure-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 768px) {
+  .measure-panel {
+    width: min(240px, calc(100vw - 68px));
+  }
+}
+
 /* Hikingbook-style route summary strip — the key numbers stay in view above
    the elevation profile without opening the 路線統計 section. Values are
    mirrored from the side-panel stats (see initRouteSummaryBar in main.js). */
@@ -4785,6 +4921,53 @@ body.is-resizing {
 
 .bp-chart-row .elevation-chart-container.collapsed {
   height: 32px;
+}
+
+/* F5: bottom-panel view toggle (elevation chart <-> detailed weather table).
+   Pinned to the chart-row's top-right so it stays reachable regardless of the
+   summary bar (which is hidden on landscape phones / scrolls on narrow portrait). */
+.bp-chart-row {
+  position: relative;
+}
+
+.bp-view-toggle {
+  position: absolute;
+  top: 4px;
+  right: 10px;
+  z-index: 6;
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px);
+}
+
+.bp-view-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.bp-view-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+/* Only one pane shows at a time; the toggle picks which. */
+.bottom-panel.bp-mode-weather #elevation-chart-container {
+  display: none;
+}
+
+.bottom-panel:not(.bp-mode-weather) .bp-weather-scroll {
+  display: none;
 }
 
 .bp-weather-header {

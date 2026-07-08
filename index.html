@@ -165,12 +165,41 @@
           fill="currentColor" />
       </svg>
     </button>
+    <button id="btn-measure-tool" class="map-action-btn" title="量測工具" aria-label="量測工具" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="20" height="20">
+        <path d="M21.71 8.29l-6-6a1 1 0 0 0-1.42 0l-12 12a1 1 0 0 0 0 1.42l6 6a1 1 0 0 0 1.42 0l12-12a1 1 0 0 0 0-1.42zM9 19.59 4.41 15l1.3-1.29 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8L15 4.41 19.59 9 9 19.59z" fill="currentColor" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- F2: Measurement tools panel -->
+  <div id="measure-panel" class="measure-panel hidden" role="group" aria-label="量測工具">
+    <div class="measure-panel-head">
+      <div class="measure-mode-toggle" id="measure-mode-toggle" role="group">
+        <button type="button" class="measure-mode-btn active" data-measure-mode="segment">軌跡量測</button>
+        <button type="button" class="measure-mode-btn" data-measure-mode="area">距離／面積</button>
+      </div>
+      <button type="button" class="measure-close-btn" id="btn-measure-close" title="關閉量測" aria-label="關閉量測">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" /></svg>
+      </button>
+    </div>
+    <p class="measure-hint" id="measure-hint">點擊軌跡上兩點以量測區間距離與爬升下降</p>
+    <div class="measure-readout" id="measure-readout"></div>
+    <div class="measure-panel-actions">
+      <button type="button" class="btn-secondary measure-clear-btn" id="btn-measure-clear">清除</button>
+    </div>
   </div>
 
   <!-- Bottom Panel: Elevation Profile + Weather Timeline -->
-  <div id="bottom-panel" class="bottom-panel">
+  <div id="bottom-panel" class="bottom-panel bp-mode-elev">
     <div class="bp-resize-handle" id="bp-resize-handle"></div>
     <div class="bp-chart-row">
+      <!-- Pinned top-right so it stays reachable even where the summary bar is
+           hidden (landscape phones) or scrolled off (narrow portrait). -->
+      <div class="bp-view-toggle" id="bp-view-toggle" role="group" aria-label="下方面板檢視切換">
+        <button type="button" class="bp-view-btn active" data-bp-view="elev" aria-pressed="true">垂直軌跡圖</button>
+        <button type="button" class="bp-view-btn" data-bp-view="weather" aria-pressed="false">詳細天氣</button>
+      </div>
       <!-- Always-visible route summary chips (mirror the side-panel stats).
            Lives inside .bp-chart-row so the panel's default-height math
            (handle + chart row) accounts for it automatically. -->
@@ -197,11 +226,6 @@
         <div class="chart-empty-state" id="chart-empty">
           <p>新增路線後顯示高度剖面</p>
         </div>
-        <button id="btn-toggle-elevation" class="chart-toggle-btn" title="收縮/展開高度圖">
-          <svg viewBox="0 0 24 24" width="16" height="16">
-            <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" fill="currentColor" />
-          </svg>
-        </button>
       </div>
     </div>
     <div class="bp-weather-scroll">
@@ -304,10 +328,9 @@
                 fill="currentColor" />
             </svg>
           </button>
-          <button class="icon-btn" id="btn-open-3d-viewer" title="建立 3D 地形" aria-label="建立 3D 地形" disabled>
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path d="M21 5v14H3V5h18zm-2 2H5v3h14V7zm0 5H5v5h14v-5z" fill="currentColor" opacity="0.7"/>
-              <path d="M7 10l2-3h6l2 3-5 4-5-4z" fill="currentColor" opacity="0.9"/>
+          <button class="icon-btn" id="btn-favorite-quick" title="加到最愛" aria-label="加到最愛" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24z" fill="currentColor" />
             </svg>
           </button>
           <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
@@ -1383,6 +1406,10 @@
         <button class="tv-layer-btn active" id="tv-toggle-features" title="地圖圖資（道路／河流／水體／綠地／荒地／建築）">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 7l6-2 6 2 6-2v12l-6 2-6-2-6 2V7z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 5v12M15 7v12" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
           <span>圖資</span>
+        </button>
+        <button class="tv-layer-btn" id="tv-toggle-satellite" title="衛星影像（在 3D 地形上疊加即時衛星空拍圖）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4 12a8 8 0 0 1 8-8M12 20a8 8 0 0 0 8-8" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.6"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/></svg>
+          <span>衛星</span>
         </button>
         <button class="tv-layer-btn" id="tv-toggle-labelsize" title="標示字體（關／大／小）— 快捷鍵 L">
           <svg viewBox="0 0 24 24" width="14" height="14"><text x="2" y="18" font-size="15" fill="currentColor">A</text><text x="13" y="18" font-size="10" fill="currentColor">a</text></svg>

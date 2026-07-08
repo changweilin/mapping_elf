@@ -8,7 +8,7 @@ import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize, projectMileage } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeTripStats, computeFatigueSeries, formatDuration, formatDurationHHMM, defaultSpeed, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, LANGUAGES, setLanguage, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
@@ -1345,8 +1345,6 @@ const statKcalCard = document.getElementById('stat-kcal-card');
 const statIntake = document.getElementById('stat-intake');
 const statIntakeCard = document.getElementById('stat-intake-card');
 
-const btnToggleElevation = document.getElementById('btn-toggle-elevation');
-
 const layerBtns = document.querySelectorAll('.layer-btn');
 const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
 
@@ -1976,7 +1974,7 @@ btnToggleTheme?.addEventListener('click', toggleAppTheme);
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
 
 // =========== 3D Terrain Viewer ===========
-const btnOpen3d = document.getElementById('btn-open-3d-viewer');
+const btnFavoriteQuick = document.getElementById('btn-favorite-quick');
 const btnView2d = document.getElementById('btn-view-2d');
 const btnView3d = document.getElementById('btn-view-3d');
 const tvView2d = document.getElementById('tv-view-2d');
@@ -2014,6 +2012,7 @@ const tvWeatherLabel = document.getElementById('tv-weather-label');
 const tvToggleDaynight = document.getElementById('tv-toggle-daynight');
 const tvToggleEffects = document.getElementById('tv-toggle-effects');
 const tvToggleFeatures = document.getElementById('tv-toggle-features');
+const tvToggleSatellite = document.getElementById('tv-toggle-satellite');
 const tvToggleLabelSize = document.getElementById('tv-toggle-labelsize');
 const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
 const tvToggleView = document.getElementById('tv-toggle-view');
@@ -2128,6 +2127,7 @@ const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
   absElev: false,         // 絕對海拔懸空（軌跡懸空＋支柱）
   trailReveal: false,     // 軌跡時序揭示（依播放進度）
   followCam: true,        // Relive 式運鏡：播放時鏡頭跟拍人物
+  satellite: false,       // 衛星影像疊加（Esri 空拍圖貼合地形表面）
 });
 
 function loadTerrainDisplaySettings() {
@@ -2661,6 +2661,15 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     terrainViewer.onMetrics((m) => renderTerrainMetrics(m));
     terrainViewer.onLoad((state) => handleTerrainLoadState(state));
     terrainViewer.onMarkerClick((detail) => renderTerrainMarkerDetail(detail));
+    // Relive-style: show the waypoint's content during the close-up pause.
+    terrainViewer.onWaypointArrive((detail) => renderTerrainMarkerDetail(detail));
+    // Satellite drape couldn't load (offline / no coverage): reset the toggle.
+    terrainViewer.onSatelliteError(() => {
+      terrainDisplaySettings.satellite = false;
+      saveTerrainDisplaySettings();
+      syncTerrainSatelliteButton();
+      showNotification('無法載入衛星影像，已切回地形著色', 'warning');
+    });
     // Persist a freshly downloaded grid against this route/favourite for reuse.
     terrainViewer.onTerrainComputed(({ grid, bbox }) => {
       if (cacheKey) saveTerrainCacheEntry(cacheKey, grid, bbox);
@@ -2876,7 +2885,7 @@ async function refreshTerrainViewer() {
   }
 }
 
-btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
+btnFavoriteQuick?.addEventListener('click', handleAddFavorite);
 // Segmented 2D/3D switch: the toolbar's 3D side builds the current route's
 // terrain; the mirrored control inside the viewer flips back to the 2D map.
 btnView3d?.addEventListener('click', build3dForCurrentRoute);
@@ -3167,7 +3176,6 @@ function update3dButtonBadge() {
   const hasRoute = currentRouteCoords && currentRouteCoords.length >= 2;
   const busy = hasRouteWeatherBusyTasks();
   const disabled = !hasRoute || busy;
-  if (btnOpen3d) btnOpen3d.disabled = disabled;
   if (btnView3d) {
     btnView3d.disabled = disabled;
     // Disabled state explains itself instead of looking broken.
@@ -3453,6 +3461,8 @@ function applyTerrainDisplayToViewer() {
   terrainViewer.setAbsoluteElevation(!!s.absElev);
   terrainViewer.setRouteRevealMode(!!s.trailReveal);
   terrainViewer.setFollowCamera(!!s.followCam);
+  terrainViewer.setSatelliteEnabled(!!s.satellite);
+  syncTerrainSatelliteButton();
   // Vertical normalization is baked into the build via routeData.elevNormalized;
   // here we only keep the button state in sync.
   syncTerrainNormalizeButton();
@@ -3461,6 +3471,12 @@ function applyTerrainDisplayToViewer() {
 function syncTerrainNormalizeButton() {
   if (tvToggleNormalize) {
     tvToggleNormalize.classList.toggle('active', !!terrainDisplaySettings.elevNormalized);
+  }
+}
+
+function syncTerrainSatelliteButton() {
+  if (tvToggleSatellite) {
+    tvToggleSatellite.classList.toggle('active', !!terrainDisplaySettings.satellite);
   }
 }
 
@@ -3512,6 +3528,13 @@ tvToggleFeatures?.addEventListener('click', () => {
   terrainViewer?.setFeaturesVisible(on);
   terrainDisplaySettings.features = on;
   saveTerrainDisplaySettings();
+});
+tvToggleSatellite?.addEventListener('click', () => {
+  const on = tvToggleSatellite.classList.toggle('active');
+  terrainDisplaySettings.satellite = on;
+  saveTerrainDisplaySettings();
+  if (on) showNotification('載入衛星影像…', 'info');
+  terrainViewer?.setSatelliteEnabled(on);
 });
 
 // Camera view preset toggle: 45° oblique ⇄ straight-down, both north-up. Snaps
@@ -3684,18 +3707,29 @@ sidePanel.addEventListener('touchend', (e) => {
   }
 }, { passive: true });
 
-btnToggleElevation?.addEventListener('click', () => {
-  const container = document.getElementById('elevation-chart-container');
-  container.classList.toggle('collapsed');
-  elevationProfile.toggleCollapse();
+// F5: bottom-panel content toggle — the lower block switches between the
+// elevation (vertical-track) chart and the detailed weather table instead of
+// stacking both. Mode class on #bottom-panel drives visibility (see main.css).
+const LS_BP_VIEW_KEY = 'mappingElf_bpView';
+const bottomPanelEl = document.getElementById('bottom-panel');
+function setBottomPanelView(view, persist = true) {
+  const mode = view === 'weather' ? 'weather' : 'elev';
+  bottomPanelEl?.classList.toggle('bp-mode-weather', mode === 'weather');
+  bottomPanelEl?.classList.toggle('bp-mode-elev', mode === 'elev');
+  document.querySelectorAll('#bp-view-toggle .bp-view-btn').forEach((b) => {
+    const on = b.dataset.bpView === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  // Chart.js needs a resize when its container becomes visible again.
+  if (mode === 'elev') requestAnimationFrame(() => elevationProfile?.chart?.resize());
+  if (persist) { try { localStorage.setItem(LS_BP_VIEW_KEY, mode); } catch (_) { } }
+}
+document.getElementById('bp-view-toggle')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.bp-view-btn');
+  if (btn) setBottomPanelView(btn.dataset.bpView);
 });
-
-// Double-click on chart container to toggle collapse as well
-document.getElementById('elevation-chart-container')?.addEventListener('dblclick', () => {
-  const container = document.getElementById('elevation-chart-container');
-  container.classList.toggle('collapsed');
-  elevationProfile.toggleCollapse();
-});
+setBottomPanelView(localStorage.getItem(LS_BP_VIEW_KEY) === 'weather' ? 'weather' : 'elev', false);
 
 
 // 手機平板螢幕下，點擊地圖自動收合側拉面板
@@ -3715,6 +3749,215 @@ btnMyLocation.addEventListener('click', async () => {
     showNotification('無法取得目前位置，請確認定位權限已開啟', 'error');
   }
 });
+
+// =========== F2: 2D map measurement tools ===========
+// Two modes share one panel + Leaflet overlay layer:
+//   segment — click two points; snap each to the planned track and report the
+//             along-track distance plus asc/ descent between them.
+//   area    — click any number of free points; report the cumulative straight-
+//             line length and, from 3 points on, the enclosed polygon area.
+const measurePanel = document.getElementById('measure-panel');
+const measureHintEl = document.getElementById('measure-hint');
+const measureReadoutEl = document.getElementById('measure-readout');
+const btnMeasureTool = document.getElementById('btn-measure-tool');
+let measureMode = 'segment';
+let measurePoints = [];            // clicked [lat, lng] points (raw)
+let measureLayer = null;           // L.layerGroup on the map
+
+function measureTrack() {
+  const pts = (elevationProfile?.points && elevationProfile.points.length >= 2)
+    ? elevationProfile.points
+    : currentRouteCoords;
+  return Array.isArray(pts) && pts.length >= 2 ? pts : null;
+}
+
+function ensureMeasureLayer() {
+  if (!measureLayer) measureLayer = L.layerGroup().addTo(mapManager.map);
+  return measureLayer;
+}
+
+function clearMeasureOverlay() {
+  measurePoints = [];
+  measureLayer?.clearLayers();
+  if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+}
+
+function measureDot(latlng, label) {
+  return L.marker(latlng, {
+    icon: L.divIcon({
+      className: 'measure-dot-icon',
+      html: `<span class="measure-dot">${label ?? ''}</span>`,
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    }),
+    interactive: false,
+    keyboard: false,
+  });
+}
+
+// Latitude-corrected planar area (shoelace) in m² — good to <0.5% for the
+// city-scale polygons this tool measures.
+function polygonAreaM2(pts) {
+  if (!Array.isArray(pts) || pts.length < 3) return 0;
+  const R = 6371000.785, toRad = Math.PI / 180;
+  const lat0 = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const cosLat0 = Math.cos(lat0 * toRad);
+  const xy = pts.map(([la, ln]) => [ln * toRad * R * cosLat0, la * toRad * R]);
+  let a = 0;
+  for (let i = 0; i < xy.length; i++) {
+    const j = (i + 1) % xy.length;
+    a += xy[i][0] * xy[j][1] - xy[j][0] * xy[i][1];
+  }
+  return Math.abs(a) / 2;
+}
+
+function formatArea(m2) {
+  if (m2 >= 1e6) return `${(m2 / 1e6).toFixed(2)} km²`;
+  if (m2 >= 1e4) return `${(m2 / 1e4).toFixed(2)} ha`;
+  return `${Math.round(m2)} m²`;
+}
+
+function latLngAtMileage(track, dists, m) {
+  if (m <= 0) return track[0];
+  const last = dists[dists.length - 1];
+  if (m >= last) return track[track.length - 1];
+  for (let i = 1; i < track.length; i++) {
+    if (dists[i] >= m) {
+      const segLen = dists[i] - dists[i - 1] || 1;
+      const t = (m - dists[i - 1]) / segLen;
+      const a = track[i - 1], b = track[i];
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    }
+  }
+  return track[track.length - 1];
+}
+
+function renderMeasureReadout(rows) {
+  if (!measureReadoutEl) return;
+  measureReadoutEl.innerHTML = rows.map(([label, value]) =>
+    `<div class="mr-row"><span class="mr-label">${label}</span><span class="mr-value">${value}</span></div>`
+  ).join('');
+}
+
+function computeSegmentMeasure() {
+  const track = measureTrack();
+  if (!track) { showNotification('先規劃路線再量測軌跡', 'warning'); return; }
+  const D = elevationProfile?.distances || [];
+  const E = elevationProfile?.elevations || [];
+  const aligned = D.length === track.length;
+  const m1r = projectMileage(track, measurePoints[0], 0);
+  const m2r = projectMileage(track, measurePoints[1], 0);
+  const lo = Math.min(m1r.mileage, m2r.mileage);
+  const hi = Math.max(m1r.mileage, m2r.mileage);
+  const pLo = latLngAtMileage(track, aligned ? D : cumulativeDistances(track), lo);
+  const pHi = latLngAtMileage(track, aligned ? D : cumulativeDistances(track), hi);
+
+  // Ascent / descent between the two mileages, sampled at the enclosed vertices.
+  let asc = 0, desc = 0;
+  if (aligned && E.length === track.length && elevationProfile._interpolateElevAtCumM) {
+    const samples = [elevationProfile._interpolateElevAtCumM(lo)];
+    for (let i = 0; i < D.length; i++) if (D[i] > lo && D[i] < hi) samples.push(E[i]);
+    samples.push(elevationProfile._interpolateElevAtCumM(hi));
+    for (let i = 1; i < samples.length; i++) {
+      const d = samples[i] - samples[i - 1];
+      if (d > 0) asc += d; else desc += d;
+    }
+  }
+
+  // Highlight the track slice between the two snapped points.
+  const dd = aligned ? D : cumulativeDistances(track);
+  const slice = [pLo];
+  for (let i = 0; i < track.length; i++) if (dd[i] > lo && dd[i] < hi) slice.push(track[i]);
+  slice.push(pHi);
+  const layer = ensureMeasureLayer();
+  layer.clearLayers();
+  L.polyline(slice, { color: '#f59e0b', weight: 5, opacity: 0.9 }).addTo(layer);
+  measureDot(pLo, 'A').addTo(layer);
+  measureDot(pHi, 'B').addTo(layer);
+
+  renderMeasureReadout([
+    ['沿軌跡距離', formatDistance(hi - lo)],
+    ['直線距離', formatDistance(haversineDistance(pLo, pHi))],
+    ['爬升', asc ? '+' + formatElevation(asc) : '—'],
+    ['下降', desc ? '−' + formatElevation(Math.abs(desc)) : '—'],
+  ]);
+}
+
+function computeAreaMeasure() {
+  const layer = ensureMeasureLayer();
+  layer.clearLayers();
+  measurePoints.forEach((p, i) => measureDot(p, String(i + 1)).addTo(layer));
+  let straight = 0;
+  for (let i = 1; i < measurePoints.length; i++) straight += haversineDistance(measurePoints[i - 1], measurePoints[i]);
+  if (measurePoints.length >= 3) {
+    L.polygon(measurePoints, { color: '#38bdf8', weight: 3, opacity: 0.9, fillOpacity: 0.12 }).addTo(layer);
+  } else if (measurePoints.length === 2) {
+    L.polyline(measurePoints, { color: '#38bdf8', weight: 3, opacity: 0.9 }).addTo(layer);
+  }
+  const rows = [
+    ['點數', String(measurePoints.length)],
+    ['直線總長', formatDistance(straight)],
+  ];
+  if (measurePoints.length >= 3) rows.push(['包圍面積', formatArea(polygonAreaM2(measurePoints))]);
+  renderMeasureReadout(rows);
+}
+
+function handleMeasureClick(lat, lng) {
+  if (measureMode === 'segment') {
+    if (!measureTrack()) { showNotification('先規劃路線再量測軌跡', 'warning'); return; }
+    if (measurePoints.length >= 2) measurePoints = [];   // start a fresh pair
+    measurePoints.push([lat, lng]);
+    if (measurePoints.length === 2) {
+      computeSegmentMeasure();
+    } else {
+      const track = measureTrack();
+      const dd = (elevationProfile?.distances?.length === track.length)
+        ? elevationProfile.distances : cumulativeDistances(track);
+      const snapped = latLngAtMileage(track, dd, projectMileage(track, measurePoints[0], 0).mileage);
+      const layer = ensureMeasureLayer();
+      layer.clearLayers();
+      measureDot(snapped, 'A').addTo(layer);
+      renderMeasureReadout([['提示', '再點一下第二點']]);
+    }
+  } else {
+    measurePoints.push([lat, lng]);
+    computeAreaMeasure();
+  }
+}
+
+function setMeasureMode(mode) {
+  measureMode = mode === 'area' ? 'area' : 'segment';
+  document.querySelectorAll('#measure-mode-toggle .measure-mode-btn').forEach((b) =>
+    b.classList.toggle('active', b.dataset.measureMode === measureMode));
+  if (measureHintEl) {
+    measureHintEl.textContent = measureMode === 'segment'
+      ? '點擊軌跡上兩點以量測區間距離與爬升下降'
+      : '依序點擊地圖任意點，計算直線距離與包圍面積';
+  }
+  clearMeasureOverlay();
+}
+
+function setMeasureActive(active) {
+  if (!measurePanel) return;
+  mapManager.measureMode = active ? measureMode : null;
+  measurePanel.classList.toggle('hidden', !active);
+  btnMeasureTool?.setAttribute('aria-pressed', String(active));
+  if (!active) clearMeasureOverlay();
+}
+
+mapManager.onMeasureClick = handleMeasureClick;
+btnMeasureTool?.addEventListener('click', () => {
+  setMeasureActive(measurePanel?.classList.contains('hidden'));
+});
+document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.measure-mode-btn');
+  if (!btn) return;
+  setMeasureMode(btn.dataset.measureMode);
+  mapManager.measureMode = measureMode;
+});
+document.getElementById('btn-measure-clear')?.addEventListener('click', clearMeasureOverlay);
+document.getElementById('btn-measure-close')?.addEventListener('click', () => setMeasureActive(false));
+setMeasureMode('segment');
 
 function pickRouteFile() {
   return platform.pickFile({
@@ -6204,6 +6447,7 @@ function updateRouteLibraryCurrent() {
   const stateEl = document.getElementById('route-library-current-state');
   const saveButtons = [
     document.getElementById('btn-favorite-add'),
+    document.getElementById('btn-favorite-quick'),
   ].filter(Boolean);
   const exportButton = document.getElementById('btn-export-gpx');
   const hasRoute = mapManager.waypoints.length >= 2 || currentRouteCoords.length >= 2;
@@ -8543,10 +8787,14 @@ function initWeatherControls() {
     } else if (legacyH > 0) {
       h = legacyH;
     } else {
-      // Default: Handle + Elevation Chart row only.
-      // We use the computed height of .bp-chart-row to handle responsive scaling.
-      const chartRow = panel.querySelector('.bp-chart-row');
-      h = (handle.offsetHeight || 18) + (chartRow?.offsetHeight || 0);
+      // Default: handle + summary chips + elevation-chart height. Measured from
+      // the always-visible summary bar plus the chart so the default stays right
+      // regardless of the active view (F5 toggle) — the chart's offsetHeight is 0
+      // while hidden in weather mode, so fall back to a sensible constant then.
+      const summaryBar = panel.querySelector('#route-summary-bar');
+      const chart = panel.querySelector('#elevation-chart-container');
+      const chartH = chart?.offsetHeight || 148;
+      h = (handle.offsetHeight || 18) + (summaryBar?.offsetHeight || 0) + chartH + 16;
     }
 
     if (h > 0) {

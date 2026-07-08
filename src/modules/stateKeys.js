@@ -54,6 +54,7 @@ const LAYOUT_STATE_KEYS = [
   'mappingElf_panelWidth',
   'mappingElf_panelHeight',
   'mappingElf_panelHeightRatio',
+  'mappingElf_bpView',
 ];
 
 const SESSION_STATE_KEYS = [

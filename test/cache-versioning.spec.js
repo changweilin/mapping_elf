@@ -94,6 +94,9 @@ async function addWaypointsAtFractions(page, points) {
   }
   await expect(page.locator(VISIBLE_ROUTE_PATH_SELECTOR)).toHaveCount(1);
   await expect(page.locator('#chart-empty')).toHaveClass(/hidden/);
+  // The bottom panel now toggles between the elevation chart and the weather
+  // table (defaults to the chart); switch to the weather view to see the header.
+  await page.locator('#bp-view-toggle [data-bp-view="weather"]').click();
   await expect(page.locator('#weather-table-container .wt-header-row-label .wt-col-head').first()).toBeVisible();
 }
 

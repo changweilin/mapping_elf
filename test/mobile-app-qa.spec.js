@@ -349,6 +349,8 @@ test.describe('mobile app QA', () => {
     const consoleErrors = await openApp(page);
 
     await page.locator('#gpx-file-input').setInputFiles(shortGpx);
+    // Bottom panel defaults to the elevation chart; switch to the weather view.
+    await page.locator('#bp-view-toggle [data-bp-view="weather"]').click();
     await expect(page.locator('#weather-table-container .wt-col-head').first()).toBeVisible();
 
     const initial = await elementBounds(page, '#bottom-panel');
