@@ -171,6 +171,27 @@
   <div id="bottom-panel" class="bottom-panel">
     <div class="bp-resize-handle" id="bp-resize-handle"></div>
     <div class="bp-chart-row">
+      <!-- Always-visible route summary chips (mirror the side-panel stats).
+           Lives inside .bp-chart-row so the panel's default-height math
+           (handle + chart row) accounts for it automatically. -->
+      <div id="route-summary-bar" class="route-summary-bar" aria-live="polite">
+        <div class="rsb-chip">
+          <span class="rsb-label">距離</span>
+          <span class="rsb-value" id="rsb-distance">—</span>
+        </div>
+        <div class="rsb-chip hidden" id="rsb-time-chip">
+          <span class="rsb-label">預估時間</span>
+          <span class="rsb-value" id="rsb-time">—</span>
+        </div>
+        <div class="rsb-chip">
+          <span class="rsb-label">總爬升</span>
+          <span class="rsb-value" id="rsb-ascent">—</span>
+        </div>
+        <div class="rsb-chip">
+          <span class="rsb-label">總下降</span>
+          <span class="rsb-value" id="rsb-descent">—</span>
+        </div>
+      </div>
       <div id="elevation-chart-container" class="elevation-chart-container">
         <canvas id="elevation-chart"></canvas>
         <div class="chart-empty-state" id="chart-empty">
@@ -1444,6 +1465,11 @@
         </svg>
         <svg id="tp-pause-icon" viewBox="0 0 24 24" width="18" height="18" style="display:none">
           <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" fill="currentColor"/>
+        </svg>
+      </button>
+      <button class="tp-btn active" id="tp-follow" title="運鏡跟隨（播放時鏡頭自動跟拍人物）">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/>
         </svg>
       </button>
       <div class="tp-speed-wrap" id="tp-speed-wrap">

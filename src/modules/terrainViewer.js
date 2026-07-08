@@ -203,6 +203,12 @@ export class TerrainViewer {
     this._person = null;
     this._personPhase = 0;
 
+    // --- Relive-style follow camera (chase cam during playback) ---
+    this._followCam = true;           // user preference (persisted by the host UI)
+    this._followUserOverride = false; // user grabbed the camera mid-playback; wins until next play()
+    this._followPosTmp = new THREE.Vector3();
+    this._followTargetTmp = new THREE.Vector3();
+
     this._lastMetricsEmit = 0;
   }
 
@@ -548,6 +554,8 @@ export class TerrainViewer {
       if (this._onProgressChange) this._onProgressChange(this._progress);
     }
     this._playing = true;
+    this._followUserOverride = false;
+    if (this.controls) this.controls.autoRotate = false;
     if (this._onPlayStateChange) this._onPlayStateChange(true);
   }
 
@@ -562,6 +570,7 @@ export class TerrainViewer {
   }
 
   setProgress(t) {
+    if (this.controls) this.controls.autoRotate = false;
     this._progress = Math.max(0, Math.min(1, t));
     this._updatePlayerPosition();
     this._emitMetrics(true);
@@ -602,6 +611,48 @@ export class TerrainViewer {
     this.controls.update();
     if (Number.isFinite(state.speed)) this._speed = state.speed;
     if (Number.isFinite(state.progress)) this.setProgress(state.progress);
+  }
+
+  // Relive-style chase cam: while playing, the camera glides behind the hiker
+  // along the travel direction and looks slightly ahead. Off = classic free
+  // orbit. A manual drag mid-playback suspends it until the next play().
+  setFollowCamera(on) {
+    this._followCam = !!on;
+    if (!this._followCam && this.controls) this.controls.autoRotate = false;
+    if (this._followCam) this._followUserOverride = false;
+  }
+
+  isFollowCamera() {
+    return this._followCam;
+  }
+
+  _updateFollowCamera(dt) {
+    if (!this._followCam || this._followUserOverride) return;
+    if (!this.camera || !this.controls || !this.playerPath) return;
+    const u = this._clampU(this._progress);
+    const pt = this.playerPath.getPointAt(u);
+    if (!pt) return;
+    const tan = this.playerPath.getTangentAt ? this.playerPath.getTangentAt(u) : null;
+    let dirX = 0, dirZ = 1;
+    if (tan) {
+      const len = Math.hypot(tan.x, tan.z);
+      if (len > 1e-6) { dirX = tan.x / len; dirZ = tan.z / len; }
+    }
+    // Rig proportions scale with the model so any route frames the same way.
+    // Markers are sized ~span/300 (cone height 13×that ≈ 0.043·span), so the
+    // camera must sit a few tenths of a span back or it ends up inside them.
+    const span = this._worldSpan || 2000;
+    const back = span * 0.5;
+    const lift = span * 0.3;
+    const ahead = span * 0.06;
+    const desired = this._followPosTmp.set(pt.x - dirX * back, pt.y + lift, pt.z - dirZ * back);
+    const look = this._followTargetTmp.set(pt.x + dirX * ahead, pt.y + lift * 0.15, pt.z + dirZ * ahead);
+    // Frame-rate-independent exponential smoothing; the target converges a bit
+    // faster than the camera so turns read as the camera "swinging around".
+    const k = 1 - Math.exp(-dt * 2.2);
+    this.camera.position.lerp(desired, k);
+    this.controls.target.lerp(look, Math.min(1, k * 1.35));
+    this.camera.lookAt(this.controls.target);
   }
 
   // Snap the camera to a preset viewing angle with north (+Z) pointing up, while
@@ -1061,6 +1112,12 @@ export class TerrainViewer {
     this.controls.maxPolarAngle = Math.PI / 2.1;
     this.controls.minDistance = 10;
     this.controls.maxDistance = 200000;
+    // A manual grab always wins the camera fight: it cancels the end-of-route
+    // orbit and pauses the chase cam until the next play().
+    this.controls.addEventListener('start', () => {
+      this.controls.autoRotate = false;
+      if (this._playing && this._followCam) this._followUserOverride = true;
+    });
 
     this._bindPointerHandlers();
     this._bindContextLossHandlers();
@@ -4216,10 +4273,18 @@ export class TerrainViewer {
         reachedEnd = true;
       }
       this._updatePlayerPosition();
+      this._updateFollowCamera(dt);
       if (this._onProgressChange) this._onProgressChange(this._progress);
       // The hiker walked to the end: stop playback and let the UI reset its
-      // play/pause button.
-      if (reachedEnd && this._onPlayStateChange) this._onPlayStateChange(false);
+      // play/pause button. With the chase cam engaged, finish Relive-style on a
+      // slow orbit around the final position (any grab or scrub cancels it).
+      if (reachedEnd) {
+        if (this._followCam && !this._followUserOverride && this.controls) {
+          this.controls.autoRotate = true;
+          this.controls.autoRotateSpeed = 0.6;
+        }
+        if (this._onPlayStateChange) this._onPlayStateChange(false);
+      }
     }
 
     // Weather keeps moving even while paused so a scrubbed-to frame still reads

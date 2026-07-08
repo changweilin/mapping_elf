@@ -523,7 +523,8 @@ html.light-theme .progress-card {
   --busy-overlay-edge: 12px;
   --busy-overlay-zoom-reserve: 62px;
   position: fixed;
-  top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 10px);
+  /* Clear the floating 2D/3D pill (fixed at toolbar+10px) instead of covering it. */
+  top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 58px);
   left: var(--busy-overlay-zoom-reserve);
   right: var(--busy-overlay-edge);
   bottom: auto;
@@ -983,27 +984,37 @@ body.weather-card-busy .weather-edit-control:disabled {
   box-shadow: 0 2px 8px rgba(110, 231, 183, 0.3);
 }
 
-/* 2D / 3D view switcher — one segmented control, mirrored inside the 3D
-   viewer toolbar, so switching dimensions is a single obvious flip. */
+/* 2D / 3D view switcher — one segmented pill, fixed at the same viewport spot
+   in both the 2D map and the 3D viewer (both containers are unfiltered
+   position:fixed, so `fixed` here means viewport coordinates in each), so it
+   reads as a single persistent control that survives the dimension flip. */
 .view-mode-toggle {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 940;
   display: flex;
   gap: 2px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  padding: 3px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-radius: 999px;
+  padding: 4px;
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
 }
 
 .view-mode-btn {
-  min-width: 42px;
-  padding: 6px 12px;
-  font-size: 12px;
+  min-width: 54px;
+  padding: 7px 16px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--text-secondary);
   background: transparent;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   cursor: pointer;
   transition: all var(--transition-fast);
   font-family: inherit;
@@ -1027,8 +1038,8 @@ body.weather-card-busy .weather-edit-control:disabled {
 }
 
 .tv-view-mode-toggle {
-  margin-left: 12px;
-  background: rgba(255, 255, 255, 0.06);
+  margin: 0;
+  background: rgba(20, 24, 32, 0.72);
 }
 
 /* Tool Buttons */
@@ -1146,6 +1157,60 @@ body.weather-card-busy .weather-edit-control:disabled {
 
 .map-action-btn:active {
   transform: scale(0.95);
+}
+
+/* Hikingbook-style route summary strip — the key numbers stay in view above
+   the elevation profile without opening the 路線統計 section. Values are
+   mirrored from the side-panel stats (see initRouteSummaryBar in main.js). */
+.route-summary-bar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 28px;
+  padding: 2px 12px 7px;
+  overflow-x: auto;
+}
+
+.rsb-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rsb-label {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rsb-value {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .route-summary-bar {
+    gap: 14px;
+    padding: 1px 8px 5px;
+  }
+
+  .rsb-value {
+    font-size: 12px;
+  }
+}
+
+/* Landscape phones: vertical space is too scarce for a stats strip, and the
+   extra chart-row height would tip the bottom panel's default height past the
+   50%-of-viewport point its double-tap expand/collapse toggle pivots on. */
+@media (max-height: 500px) {
+  .route-summary-bar {
+    display: none;
+  }
 }
 
 /* Custom Leaflet overrides */
@@ -4185,13 +4250,14 @@ body.route-list-dragging {
   }
 
   .view-mode-toggle {
-    padding: 2px;
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 8px);
+    padding: 3px;
   }
 
   .view-mode-btn {
-    min-width: 32px;
-    padding: 5px 8px;
-    font-size: 11px;
+    min-width: 44px;
+    padding: 6px 12px;
+    font-size: 12px;
   }
 
   .tool-btn {
@@ -4318,7 +4384,7 @@ body.route-list-dragging {
   }
 
   .app-busy-overlay {
-    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 6px);
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 50px);
     left: 56px;
     right: 56px;
   }
@@ -7481,7 +7547,7 @@ html.light-theme .tv-live-hud {
   /* Keep the brand compact and drop the subtitle so the action cluster fits. */
   .terrain-viewer-toolbar { padding: 0 10px; }
   .terrain-viewer-toolbar .tv-title-sub { display: none; }
-  .terrain-viewer-toolbar .tv-view-mode-toggle { margin-left: 6px; }
+  .terrain-viewer-toolbar .tv-view-mode-toggle { margin: 0; }
   .terrain-viewer-toolbar .tv-redraw-btn span { display: none; }
   .terrain-viewer-toolbar .tv-redraw-btn { padding: 0 9px; }
   .terrain-viewer-toolbar .tv-toolbar-actions { gap: 6px; }
@@ -7727,6 +7793,20 @@ html.light-theme .tv-loading-overlay { background: rgba(240, 244, 250, 0.72); }
 .terrain-player-bar .tp-btn.active:hover {
   background: #00d16b;
 }
+/* Relive-style hero play button — the one control that should read instantly. */
+.terrain-player-bar #tp-play {
+  width: 46px;
+  height: 46px;
+  background: var(--accent-gradient);
+  border: none;
+  color: var(--bg-primary);
+  box-shadow: 0 4px 14px rgba(0, 209, 107, 0.35);
+}
+.terrain-player-bar #tp-play:hover {
+  color: var(--bg-primary);
+  filter: brightness(1.08);
+  transform: scale(1.05);
+}
 /* Speed control: a single toggle button (current rate) that expands a small
    menu of preset rates. The toggle itself also responds to mouse-wheel while
    hovered and vertical touch-drag, so the menu is one of three ways to change
@@ -7918,6 +7998,7 @@ html.light-theme .terrain-player-bar .tp-slider::-webkit-slider-thumb {
 @media (max-width: 640px) {
   .terrain-player-bar { gap: 6px; padding: 8px 10px; }
   .terrain-player-bar .tp-btn { width: 32px; height: 32px; }
+  .terrain-player-bar #tp-play { width: 40px; height: 40px; }
   .terrain-player-bar .tp-speed-toggle { padding: 4px 7px; font-size: 10px; }
   .terrain-player-bar .tp-slider { min-width: 40px; }
   .terrain-player-bar .tp-label { min-width: 30px; font-size: 10px; }

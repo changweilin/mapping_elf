@@ -1991,6 +1991,7 @@ const tvExport3mf = document.getElementById('tv-export-3mf');
 const tvLanguageSelect = document.getElementById('tv-language-select');
 const tvToggleTheme = document.getElementById('tv-toggle-theme');
 const tpPlay = document.getElementById('tp-play');
+const tpFollow = document.getElementById('tp-follow');
 const tpSlider = document.getElementById('tp-slider');
 const tpProgressLabel = document.getElementById('tp-progress-label');
 const tpTimeLabel = document.getElementById('tp-time-label');
@@ -2126,6 +2127,7 @@ const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
   elevNormalized: false,
   absElev: false,         // 絕對海拔懸空（軌跡懸空＋支柱）
   trailReveal: false,     // 軌跡時序揭示（依播放進度）
+  followCam: true,        // Relive 式運鏡：播放時鏡頭跟拍人物
 });
 
 function loadTerrainDisplaySettings() {
@@ -3166,7 +3168,11 @@ function update3dButtonBadge() {
   const busy = hasRouteWeatherBusyTasks();
   const disabled = !hasRoute || busy;
   if (btnOpen3d) btnOpen3d.disabled = disabled;
-  if (btnView3d) btnView3d.disabled = disabled;
+  if (btnView3d) {
+    btnView3d.disabled = disabled;
+    // Disabled state explains itself instead of looking broken.
+    btnView3d.title = disabled ? '規劃路線後即可切換 3D' : '建立 3D 地形';
+  }
 }
 
 // Hook into route update flow
@@ -3176,6 +3182,35 @@ setCurrentRouteData = function (coords, elevations) {
   update3dButtonBadge();
 };
 update3dButtonBadge();
+
+// --- Route summary chips (Hikingbook-style always-visible key numbers) ------
+// Mirrors the side-panel stat values into the floating strip above the bottom
+// panel by observing the existing nodes, so every stats write site (route
+// update, clear, import, pace change) stays untouched.
+(function initRouteSummaryBar() {
+  const bar = document.getElementById('route-summary-bar');
+  if (!bar) return;
+  const pairs = [
+    [statDistance, document.getElementById('rsb-distance'), null],
+    [document.getElementById('stat-time'), document.getElementById('rsb-time'), document.getElementById('rsb-time-chip')],
+    [statAscent, document.getElementById('rsb-ascent'), null],
+    [document.getElementById('stat-descent'), document.getElementById('rsb-descent'), null],
+  ];
+  const sync = () => {
+    for (const [src, dst, chip] of pairs) {
+      if (!src || !dst) continue;
+      const v = (src.textContent || '—').trim();
+      if (dst.textContent !== v) dst.textContent = v;
+      // 預估時間 only exists in speed mode; hide its chip instead of showing "—".
+      if (chip) chip.classList.toggle('hidden', v === '—');
+    }
+  };
+  const obs = new MutationObserver(sync);
+  for (const [src] of pairs) {
+    if (src) obs.observe(src, { childList: true, characterData: true, subtree: true });
+  }
+  sync();
+})();
 
 // Player controls
 tpPlay?.addEventListener('click', () => {
@@ -3391,6 +3426,7 @@ function syncTerrainDisplayToggleUI() {
   tvToggleFeatures?.classList.toggle('active', !!s.features);
   tvToggleAbsolute?.classList.toggle('active', !!s.absElev);
   tvToggleTrail?.classList.toggle('active', !!s.trailReveal);
+  tpFollow?.classList.toggle('active', !!s.followCam);
 
   terrainLabelState = TERRAIN_LABEL_STATES.includes(s.labelSize) ? s.labelSize : 'none';
   if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
@@ -3416,6 +3452,7 @@ function applyTerrainDisplayToViewer() {
   terrainViewer.setLabelScale(terrainLabelState);
   terrainViewer.setAbsoluteElevation(!!s.absElev);
   terrainViewer.setRouteRevealMode(!!s.trailReveal);
+  terrainViewer.setFollowCamera(!!s.followCam);
   // Vertical normalization is baked into the build via routeData.elevNormalized;
   // here we only keep the button state in sync.
   syncTerrainNormalizeButton();
@@ -3510,6 +3547,15 @@ tvToggleAbsolute?.addEventListener('click', () => {
   const on = tvToggleAbsolute.classList.toggle('active');
   terrainViewer?.setAbsoluteElevation(on);
   terrainDisplaySettings.absElev = on;
+  saveTerrainDisplaySettings();
+});
+
+// Relive 式運鏡 toggle — while playing, the camera chases the hiker from behind
+// and ends on a slow orbit; off = classic free orbit camera.
+tpFollow?.addEventListener('click', () => {
+  const on = tpFollow.classList.toggle('active');
+  terrainViewer?.setFollowCamera(on);
+  terrainDisplaySettings.followCam = on;
   saveTerrainDisplaySettings();
 });
 
