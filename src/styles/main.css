@@ -73,10 +73,12 @@ html.light-theme {
   --text-secondary: #475569;
   --text-muted: #94a3b8;
 
-  --accent-primary: #00D16B;
+  /* Light mode: calmer Hikingbook-style trail green (dark mode keeps the
+     neon green that matches the cinematic 3D viewer). */
+  --accent-primary: #00A86B;
   --accent-secondary: #007BFF;
-  --accent-gradient: linear-gradient(135deg, #00D16B 0%, #007BFF 100%);
-  --accent-gradient-subtle: linear-gradient(135deg, rgba(0, 209, 107, 0.1) 0%, rgba(0, 123, 255, 0.1) 100%);
+  --accent-gradient: linear-gradient(135deg, #00A86B 0%, #007BFF 100%);
+  --accent-gradient-subtle: linear-gradient(135deg, rgba(0, 168, 107, 0.1) 0%, rgba(0, 123, 255, 0.1) 100%);
 
   --danger: #ef4444;
   --warning: #f59e0b;
@@ -435,6 +437,88 @@ html.light-theme #loading-screen .loading-bar {
   animation: loadingSlide 1.45s cubic-bezier(0.74, 0, 0.24, 1) infinite;
 }
 
+/* ======== Unified progress card ========
+   Single visual format for every progress readout (3D terrain build, route/
+   weather busy pill, map-pack export/import): circular spinner + title +
+   detail + determinate bar + percent. The 3D build card is the reference. */
+.progress-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(320px, calc(100% - 48px));
+  padding: 28px 26px;
+  background: rgba(20, 23, 31, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+html.light-theme .progress-card {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+}
+
+.progress-spinner svg {
+  display: block;
+}
+
+.progress-spinner-track {
+  stroke: rgba(148, 163, 184, 0.25);
+}
+
+.progress-spinner-arc {
+  stroke: var(--accent-primary);
+  stroke-dasharray: 90 150;
+  transform-origin: center;
+  animation: progressSpin 0.9s linear infinite;
+}
+
+@keyframes progressSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.progress-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-height: 16px;
+}
+
+.progress-card .loading-bar {
+  width: 100%;
+  height: 6px;
+}
+
+.progress-percent {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-task-count {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-overlay);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.progress-task-count.hidden {
+  display: none;
+}
+
 .app-busy-overlay {
   --busy-overlay-edge: 12px;
   --busy-overlay-zoom-reserve: 62px;
@@ -458,24 +542,46 @@ body.app-initial-loading .app-busy-overlay {
   opacity: 0;
 }
 
+/* Compact pill variant of the unified progress card: sits under the toolbar
+   and never blocks the map view. Same anatomy as the 3D build card, laid out
+   horizontally — spinner | title/detail | count+percent, bar across the bottom. */
 .app-busy-overlay .loading-content {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 4px 12px;
+  gap: 2px 10px;
   width: min(520px, 100%);
   min-width: 0;
   margin: 0 auto;
-  padding: 7px 12px 8px;
+  padding: 8px 12px 9px;
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(15, 23, 42, 0.9);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
   text-align: left;
   animation: busyOverlayBreathe 1.9s ease-in-out infinite;
+}
+
+.app-busy-overlay .progress-spinner {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.app-busy-overlay .progress-text {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+}
+
+.app-busy-overlay .progress-side {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .route-busy-center-brand {
@@ -542,7 +648,6 @@ html.light-theme .app-busy-overlay .loading-content {
 }
 
 .app-busy-overlay .loading-content p {
-  grid-column: 1 / -1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -550,13 +655,16 @@ html.light-theme .app-busy-overlay .loading-content {
   margin: 0;
   font-size: 11px;
   line-height: 1.2;
+  min-height: 0;
 }
 
 .app-busy-overlay .loading-bar {
   grid-column: 1 / -1;
+  grid-row: 3;
   width: 100%;
+  height: 4px;
   max-width: none;
-  margin: 0;
+  margin: 4px 0 0;
   position: relative;
 }
 
@@ -583,12 +691,12 @@ html.light-theme .app-busy-overlay .loading-content {
 }
 
 .loading-progress-text {
-  grid-column: 2;
-  grid-row: 1;
   margin: 0;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 body.route-weather-busy .weather-popup .weather-card,
@@ -783,7 +891,8 @@ body.weather-card-busy .weather-edit-control:disabled {
   #loading-screen .loading-bar-fill,
   .app-busy-overlay .loading-content,
   .app-busy-overlay .loading-bar-fill,
-  .app-busy-overlay .loading-bar-fill::after {
+  .app-busy-overlay .loading-bar-fill::after,
+  .progress-spinner-arc {
     animation: none;
   }
 }
@@ -818,6 +927,7 @@ body.weather-card-busy .weather-edit-control:disabled {
 .toolbar-center {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .app-logo {
@@ -871,6 +981,54 @@ body.weather-card-busy .weather-edit-control:disabled {
   color: var(--bg-primary);
   background: var(--accent-gradient);
   box-shadow: 0 2px 8px rgba(110, 231, 183, 0.3);
+}
+
+/* 2D / 3D view switcher — one segmented control, mirrored inside the 3D
+   viewer toolbar, so switching dimensions is a single obvious flip. */
+.view-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  border: 1px solid var(--border);
+}
+
+.view-mode-btn {
+  min-width: 42px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+}
+
+.view-mode-btn:hover:not(:disabled):not(.active) {
+  color: var(--text-primary);
+  background: var(--bg-overlay);
+}
+
+.view-mode-btn.active {
+  color: var(--bg-primary);
+  background: var(--accent-gradient);
+  box-shadow: 0 2px 8px rgba(110, 231, 183, 0.3);
+  cursor: default;
+}
+
+.view-mode-btn:disabled:not(.active) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tv-view-mode-toggle {
+  margin-left: 12px;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* Tool Buttons */
@@ -4024,6 +4182,16 @@ body.route-list-dragging {
     opacity: 0.75;
     font-size: 11px;
     line-height: 1;
+  }
+
+  .view-mode-toggle {
+    padding: 2px;
+  }
+
+  .view-mode-btn {
+    min-width: 32px;
+    padding: 5px 8px;
+    font-size: 11px;
   }
 
   .tool-btn {
@@ -7313,6 +7481,7 @@ html.light-theme .tv-live-hud {
   /* Keep the brand compact and drop the subtitle so the action cluster fits. */
   .terrain-viewer-toolbar { padding: 0 10px; }
   .terrain-viewer-toolbar .tv-title-sub { display: none; }
+  .terrain-viewer-toolbar .tv-view-mode-toggle { margin-left: 6px; }
   .terrain-viewer-toolbar .tv-redraw-btn span { display: none; }
   .terrain-viewer-toolbar .tv-redraw-btn { padding: 0 9px; }
   .terrain-viewer-toolbar .tv-toolbar-actions { gap: 6px; }
@@ -7436,50 +7605,11 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
   -webkit-backdrop-filter: blur(4px);
 }
 .tv-loading-overlay.hidden { display: none; }
-.tv-loading-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  width: min(320px, calc(100% - 48px));
-  padding: 28px 26px;
-  background: rgba(20, 23, 31, 0.92);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: 0 18px 50px rgba(0,0,0,0.45);
-  text-align: center;
-}
-.tv-loading-spinner svg { display: block; }
-.tv-loading-track { stroke: rgba(255,255,255,0.12); }
-.tv-loading-arc {
-  stroke: var(--accent-primary);
-  stroke-dasharray: 90 150;
-  transform-origin: center;
-  animation: tvSpin 0.9s linear infinite;
-}
-@keyframes tvSpin { to { transform: rotate(360deg); } }
-.tv-loading-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.tv-loading-detail {
-  font-size: 12px;
-  color: var(--text-secondary);
-  min-height: 16px;
-}
-.tv-loading-card .loading-bar {
-  width: 100%;
-  height: 6px;
-}
+/* Card visuals come from the shared .progress-card component (see the unified
+   progress card section near .loading-bar). Only tv-specific bits live here. */
 .tv-loading-fill {
   animation: none;
   transition: width 0.25s ease;
-}
-.tv-loading-percent {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
 }
 .tv-loading-abort {
   margin-top: 4px;
@@ -7545,6 +7675,7 @@ html.light-theme .tv-loading-overlay.tv-loading-bg .tv-loading-card { background
 .terrain-viewer-overlay.tv-busy .tv-info-panel,
 .terrain-viewer-overlay.tv-busy .tv-live-hud,
 .terrain-viewer-overlay.tv-busy .tv-redraw-btn,
+.terrain-viewer-overlay.tv-busy .tv-view-mode-toggle,
 .terrain-viewer-overlay.tv-busy .tv-close-btn {
   pointer-events: none;
   opacity: 0.45;
@@ -7552,7 +7683,6 @@ html.light-theme .tv-loading-overlay.tv-loading-bg .tv-loading-card { background
 }
 
 html.light-theme .tv-loading-overlay { background: rgba(240, 244, 250, 0.72); }
-html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
 
 /* Player Controls Bar */
 .terrain-player-bar {

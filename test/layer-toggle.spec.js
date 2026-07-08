@@ -122,6 +122,10 @@ async function addWaypointsAtFractions(page, points) {
   expect(box).not.toBeNull();
 
   for (let i = 0; i < points.length; i++) {
+    // Map clicks are intentionally swallowed while the route/weather busy lock
+    // is active, so wait out the previous waypoint's planning before clicking —
+    // otherwise this helper races the lock and the click is silently dropped.
+    await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 15000 });
     const [x, y] = points[i];
     await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
     await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);

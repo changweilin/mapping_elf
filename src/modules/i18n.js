@@ -53,6 +53,16 @@ const PHRASES = {
   '街道圖': { en: 'Street map', ja: '道路地図', ko: '도로 지도', fr: 'Carte routière', de: 'Straßenkarte', es: 'Mapa de calles', it: 'Mappa stradale' },
   '地形圖': { en: 'Topographic map', ja: '地形図', ko: '지형도', fr: 'Carte topo', de: 'Topografische Karte', es: 'Mapa topográfico', it: 'Mappa topografica' },
   '衛星圖': { en: 'Satellite map', ja: '衛星地図', ko: '위성 지도', fr: 'Carte satellite', de: 'Satellitenkarte', es: 'Mapa satelital', it: 'Mappa satellitare' },
+  '2D 地圖': { en: '2D map', ja: '2Dマップ', ko: '2D 지도', fr: 'Carte 2D', de: '2D-Karte', es: 'Mapa 2D', it: 'Mappa 2D' },
+  '返回 2D 地圖': { en: 'Back to 2D map', ja: '2Dマップに戻る', ko: '2D 지도로 돌아가기', fr: 'Retour à la carte 2D', de: 'Zurück zur 2D-Karte', es: 'Volver al mapa 2D', it: 'Torna alla mappa 2D' },
+  '建立 3D 地形': { en: 'Build 3D terrain', ja: '3D地形を作成', ko: '3D 지형 생성', fr: 'Créer le terrain 3D', de: '3D-Gelände erstellen', es: 'Crear terreno 3D', it: 'Crea terreno 3D' },
+  '2D / 3D 檢視切換': { en: '2D / 3D view switch', ja: '2D / 3D表示切替', ko: '2D / 3D 보기 전환', fr: 'Bascule vue 2D / 3D', de: '2D/3D-Ansicht umschalten', es: 'Cambio de vista 2D / 3D', it: 'Cambio vista 2D / 3D' },
+  '匯出分享包': { en: 'Exporting share pack', ja: '共有パックを書き出し中', ko: '공유 팩 내보내는 중', fr: 'Export du pack de partage', de: 'Freigabepaket wird exportiert', es: 'Exportando paquete para compartir', it: 'Esportazione pacchetto di condivisione' },
+  '匯入離線地圖包': { en: 'Importing offline map pack', ja: 'オフライン地図パックをインポート中', ko: '오프라인 지도 팩 가져오는 중', fr: 'Import du pack de cartes hors ligne', de: 'Offline-Kartenpaket wird importiert', es: 'Importando paquete de mapas sin conexión', it: 'Importazione pacchetto mappe offline' },
+  '準備資料...': { en: 'Preparing data...', ja: 'データを準備中...', ko: '데이터 준비 중...', fr: 'Préparation des données...', de: 'Daten werden vorbereitet...', es: 'Preparando datos...', it: 'Preparazione dei dati...' },
+  '打包中...': { en: 'Packaging...', ja: '圧縮中...', ko: '압축 중...', fr: 'Compression...', de: 'Wird verpackt...', es: 'Empaquetando...', it: 'Creazione pacchetto...' },
+  '準備還原...': { en: 'Preparing restore...', ja: '復元を準備中...', ko: '복원 준비 중...', fr: 'Préparation de la restauration...', de: 'Wiederherstellung wird vorbereitet...', es: 'Preparando restauración...', it: 'Preparazione ripristino...' },
+  '還原中...': { en: 'Restoring...', ja: '復元中...', ko: '복원 중...', fr: 'Restauration...', de: 'Wird wiederhergestellt...', es: 'Restaurando...', it: 'Ripristino...' },
   '全部回到預設': { en: 'Reset all defaults', ja: 'すべて既定値に戻す', ko: '모두 기본값으로 재설정', fr: 'Réinitialiser tous les réglages', de: 'Alles zurücksetzen', es: 'Restablecer todo', it: 'Ripristina tutto' },
   '匯入路線（GPX / KML）': { en: 'Import route (GPX / KML)', ja: 'ルートをインポート（GPX / KML）', ko: '루트 가져오기 (GPX / KML)', fr: 'Importer un itinéraire (GPX / KML)', de: 'Route importieren (GPX / KML)', es: 'Importar ruta (GPX / KML)', it: 'Importa percorso (GPX / KML)' },
   '匯出路線': { en: 'Export route', ja: 'ルートを書き出す', ko: '루트 내보내기', fr: 'Exporter l’itinéraire', de: 'Route exportieren', es: 'Exportar ruta', it: 'Esporta percorso' },
@@ -907,6 +917,10 @@ function translatePattern(text) {
   if (m) return withNum('{n} options', '{n}案', '{n}개 경로', '{n} options', '{n} Optionen', '{n} opciones', '{n} opzioni', m[1]);
   m = text.match(/^(\d+) 個航點$/);
   if (m) return withNum('{n} waypoints', '{n}ウェイポイント', '{n}개 웨이포인트', '{n} waypoints', '{n} Wegpunkte', '{n} waypoints', '{n} waypoint', m[1]);
+  m = text.match(/^圖磚 (\d+)\/(\d+)$/);
+  if (m) return withNum('Tiles {n}', 'タイル {n}', '타일 {n}', 'Tuiles {n}', 'Kacheln {n}', 'Teselas {n}', 'Tile {n}', `${m[1]}/${m[2]}`);
+  m = text.match(/^還原圖磚 (\d+)\/(\d+)$/);
+  if (m) return withNum('Restoring tiles {n}', 'タイルを復元 {n}', '타일 복원 {n}', 'Restauration des tuiles {n}', 'Kacheln wiederherstellen {n}', 'Restaurando teselas {n}', 'Ripristino tile {n}', `${m[1]}/${m[2]}`);
   m = text.match(/^快取瓦片：(\d+) 個$/);
   if (m) return withNum('Cached tiles: {n}', 'キャッシュタイル：{n}', '캐시 타일: {n}개', 'Tuiles en cache : {n}', 'Gecachte Kacheln: {n}', 'Teselas en caché: {n}', 'Tile in cache: {n}', m[1]);
   m = text.match(/^已刪除 (\d+) 張圖磚$/);

@@ -173,12 +173,14 @@ function hasRouteWeatherBusyTasks() {
   return routeWeatherBusyTasks.size > 0;
 }
 
+// lockScope: 'route' locks route editing + weather cards, 'weather-card' locks
+// only weather cards, 'none' is display-only (progress readout, no locking).
 function isRouteWeatherBusy() {
-  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'weather-card');
+  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'weather-card' && task.lockScope !== 'none');
 }
 
 function isWeatherCardInteractionLocked() {
-  return hasRouteWeatherBusyTasks();
+  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'none');
 }
 
 function showRouteWeatherBusyNotice(duration = 2200) {
@@ -237,7 +239,9 @@ function updateRouteWeatherBusyOverlay() {
   const detailEl = document.getElementById('route-weather-busy-detail');
   const progressEl = document.getElementById('route-weather-busy-progress');
   const fillEl = document.getElementById('route-weather-busy-fill');
-  const barEl = overlay?.querySelector('.loading-bar');
+  const countEl = document.getElementById('route-weather-busy-count');
+  // Scope to the card: the hidden brand-reserve block also contains a .loading-bar.
+  const barEl = overlay?.querySelector('.loading-content .loading-bar');
   const brandEl = document.getElementById('route-weather-busy-brand');
   const brandTextEl = brandEl?.querySelector('.route-busy-brand-text');
   if (brandTextEl && !brandTextEl.dataset.defaultText) {
@@ -261,6 +265,12 @@ function updateRouteWeatherBusyOverlay() {
     }
     if (titleEl) titleEl.textContent = task?.title || '處理中';
     if (detailEl) detailEl.textContent = task?.detail || '請稍候...';
+    if (countEl) {
+      // The pill shows the newest task; surface how many more run behind it.
+      const extra = routeWeatherBusyTasks.size - 1;
+      countEl.classList.toggle('hidden', extra < 1);
+      if (extra >= 1) countEl.textContent = `+${extra}`;
+    }
     if (progressEl) progressEl.textContent = progress == null ? '處理中' : `${Math.round(progress)}%`;
     if (fillEl) {
       fillEl.classList.toggle('is-determinate', progress != null);
@@ -1316,9 +1326,6 @@ const btnRedo = document.getElementById('btn-redo');
 const btnResetDefaults = document.getElementById('btn-reset-defaults');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
-const progressContainer = document.getElementById('download-progress-container');
-const progressText = document.getElementById('download-progress-text');
-const progressFill = document.getElementById('download-progress-fill');
 const mappackImportModal = document.getElementById('mappack-import-modal');
 // const btnFetchWeather = document.getElementById('btn-fetch-weather'); (Moved to weather table)
 
@@ -1970,6 +1977,9 @@ btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'
 
 // =========== 3D Terrain Viewer ===========
 const btnOpen3d = document.getElementById('btn-open-3d-viewer');
+const btnView2d = document.getElementById('btn-view-2d');
+const btnView3d = document.getElementById('btn-view-3d');
+const tvView2d = document.getElementById('tv-view-2d');
 const terrainViewerEl = document.getElementById('terrain-viewer');
 const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
 const tvCloseBtn = document.getElementById('tv-close-btn');
@@ -2865,6 +2875,13 @@ async function refreshTerrainViewer() {
 }
 
 btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
+// Segmented 2D/3D switch: the toolbar's 3D side builds the current route's
+// terrain; the mirrored control inside the viewer flips back to the 2D map.
+btnView3d?.addEventListener('click', build3dForCurrentRoute);
+btnView2d?.addEventListener('click', () => {
+  if (!terrainViewerEl?.classList.contains('hidden')) closeTerrainViewer();
+});
+tvView2d?.addEventListener('click', closeTerrainViewer);
 tvCloseBtn?.addEventListener('click', closeTerrainViewer);
 tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
 
@@ -3147,7 +3164,9 @@ tvToggleTheme?.addEventListener('click', toggleAppTheme);
 function update3dButtonBadge() {
   const hasRoute = currentRouteCoords && currentRouteCoords.length >= 2;
   const busy = hasRouteWeatherBusyTasks();
-  if (btnOpen3d) btnOpen3d.disabled = !hasRoute || busy;
+  const disabled = !hasRoute || busy;
+  if (btnOpen3d) btnOpen3d.disabled = disabled;
+  if (btnView3d) btnView3d.disabled = disabled;
 }
 
 // Hook into route update flow
@@ -4055,7 +4074,9 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', pl
     : null;
   const routeMeta = includeRoute ? buildExportRouteMeta(routeName, exportCoords) : null;
 
-  progressContainer.classList.remove('hidden');
+  // Display-only progress: exporting snapshots the data up front, so the user
+  // may keep editing while tiles download/zip.
+  const busyTask = beginRouteWeatherBusyTask({ title: '匯出分享包', detail: '準備資料...', lockScope: 'none' });
 
   try {
     const { MapPackExporter } = await ensureMapPackModules();
@@ -4080,10 +4101,10 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', pl
       filenameBase,
       onProgress: (cur, total, phase) => {
         const pct = Math.round((cur / Math.max(total, 1)) * 100);
-        progressText.textContent = phase === 'zip'
-          ? `打包中 ${pct}%`
-          : `圖磚 ${pct}% (${cur}/${total})`;
-        progressFill.style.width = `${pct}%`;
+        busyTask.set({
+          detail: phase === 'zip' ? '打包中...' : `圖磚 ${cur}/${total}`,
+          progress: pct,
+        });
       },
     });
     await platform.shareFile({
@@ -4108,9 +4129,7 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', pl
     showNotification(err.message || '匯出失敗', 'error');
     console.error(err);
   } finally {
-    progressContainer.classList.add('hidden');
-    progressText.textContent = '0%';
-    progressFill.style.width = '0%';
+    busyTask.end();
   }
 }
 
@@ -4214,10 +4233,9 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
   const parsed = _pendingMappack;
   _closeMappackImportModal(); // Centralized close path handles body class removal
 
-  // Use the global progress variables defined at the top of the file
-  if (progressContainer) progressContainer.classList.remove('hidden');
-  if (progressText) progressText.textContent = '準備還原...';
-  if (progressFill) progressFill.style.width = '0%';
+  // Display-only progress (the pre-unification widget never locked editing
+  // during restore either; route apply below drives its own busy tasks).
+  const busyTask = beginRouteWeatherBusyTask({ title: '匯入離線地圖包', detail: '準備還原...', lockScope: 'none' });
 
   try {
     const { MapPackImporter } = await ensureMapPackModules();
@@ -4227,12 +4245,10 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
       restoreState,
       onProgress: (cur, total, phase) => {
         const pct = Math.round((cur / Math.max(total, 1)) * 100);
-        if (progressText) {
-          progressText.textContent = phase === 'tiles'
-            ? `還原圖磚 ${pct}% (${cur}/${total})`
-            : `${pct}%`;
-        }
-        if (progressFill) progressFill.style.width = `${pct}%`;
+        busyTask.set({
+          detail: phase === 'tiles' ? `還原圖磚 ${cur}/${total}` : '還原中...',
+          progress: pct,
+        });
       },
     });
 
@@ -4271,9 +4287,7 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
     showNotification(err.message || '匯入失敗', 'error');
     console.error('Mappack apply failed:', err);
   } finally {
-    if (progressContainer) progressContainer.classList.add('hidden');
-    if (progressText) progressText.textContent = '0%';
-    if (progressFill) progressFill.style.width = '0%';
+    busyTask.end();
     _pendingMappack = null;
   }
 });

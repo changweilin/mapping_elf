@@ -69,13 +69,24 @@
         <div class="loading-bar"></div>
       </div>
     </div>
-    <div class="loading-content">
-      <h2 id="route-weather-busy-title">處理中</h2>
-      <p id="route-weather-busy-detail">請稍候...</p>
+    <div class="loading-content progress-card">
+      <div class="progress-spinner" aria-hidden="true">
+        <svg viewBox="0 0 50 50" width="26" height="26">
+          <circle class="progress-spinner-track" cx="25" cy="25" r="20" fill="none" stroke-width="5"/>
+          <circle class="progress-spinner-arc" cx="25" cy="25" r="20" fill="none" stroke-width="5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="progress-text">
+        <h2 class="progress-title" id="route-weather-busy-title">處理中</h2>
+        <p class="progress-detail" id="route-weather-busy-detail">請稍候...</p>
+      </div>
+      <div class="progress-side">
+        <span class="progress-task-count hidden" id="route-weather-busy-count"></span>
+        <div class="loading-progress-text progress-percent" id="route-weather-busy-progress">0%</div>
+      </div>
       <div class="loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="loading-bar-fill" id="route-weather-busy-fill"></div>
       </div>
-      <div class="loading-progress-text" id="route-weather-busy-progress">0%</div>
     </div>
   </div>
 
@@ -109,6 +120,10 @@
           </svg>
           <span>衛星</span>
         </button>
+      </div>
+      <div class="view-mode-toggle" id="view-mode-toggle" role="group" aria-label="2D / 3D 檢視切換">
+        <button type="button" class="view-mode-btn active" id="btn-view-2d" title="2D 地圖" aria-pressed="true">2D</button>
+        <button type="button" class="view-mode-btn" id="btn-view-3d" title="建立 3D 地形" aria-pressed="false" disabled>3D</button>
       </div>
     </div>
     <div class="toolbar-right">
@@ -1053,17 +1068,6 @@
       </div>
     </section>
 
-    <!-- Map Pack progress (shown during .melmap export / import) -->
-    <div class="download-progress hidden" id="download-progress-container" style="margin: 10px 16px;">
-      <div style="font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between;">
-        <span>進度</span>
-        <span id="download-progress-text">0%</span>
-      </div>
-      <div class="loading-bar">
-        <div class="loading-bar-fill" id="download-progress-fill" style="width: 0%"></div>
-      </div>
-    </div>
-
     <!-- About Me Section -->
     <section class="panel-section about-me-section">
       <div class="about-me-content">
@@ -1258,6 +1262,10 @@
           <span class="app-title">Mapping Elf</span>
         </div>
         <span class="tv-title-sub">3D 地形導航</span>
+        <div class="view-mode-toggle tv-view-mode-toggle" role="group" aria-label="2D / 3D 檢視切換">
+          <button type="button" class="view-mode-btn" id="tv-view-2d" title="返回 2D 地圖" aria-pressed="false">2D</button>
+          <button type="button" class="view-mode-btn active" id="tv-view-3d" title="3D 地形導航" aria-pressed="true">3D</button>
+        </div>
       </div>
       <div class="tv-toolbar-actions">
         <label class="language-switcher tv-language-switcher" title="語言">
@@ -1412,19 +1420,19 @@
            圖資/map features re-download in the background — one continuous bar
            instead of two separate widgets. -->
       <div class="tv-loading-overlay hidden" id="tv-loading" aria-live="polite">
-        <div class="tv-loading-card">
-          <div class="tv-loading-spinner" aria-hidden="true">
+        <div class="tv-loading-card progress-card">
+          <div class="tv-loading-spinner progress-spinner" aria-hidden="true">
             <svg viewBox="0 0 50 50" width="44" height="44">
-              <circle class="tv-loading-track" cx="25" cy="25" r="20" fill="none" stroke-width="4"/>
-              <circle class="tv-loading-arc" cx="25" cy="25" r="20" fill="none" stroke-width="4" stroke-linecap="round"/>
+              <circle class="tv-loading-track progress-spinner-track" cx="25" cy="25" r="20" fill="none" stroke-width="4"/>
+              <circle class="tv-loading-arc progress-spinner-arc" cx="25" cy="25" r="20" fill="none" stroke-width="4" stroke-linecap="round"/>
             </svg>
           </div>
-          <div class="tv-loading-title" id="tv-loading-title">建立地形模型</div>
-          <div class="tv-loading-detail" id="tv-loading-detail">下載高程資料中…</div>
+          <div class="tv-loading-title progress-title" id="tv-loading-title">建立地形模型</div>
+          <div class="tv-loading-detail progress-detail" id="tv-loading-detail">下載高程資料中…</div>
           <div class="loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="loading-bar-fill tv-loading-fill" id="tv-loading-fill" style="width:0%"></div>
           </div>
-          <div class="tv-loading-percent" id="tv-loading-percent">0%</div>
+          <div class="tv-loading-percent progress-percent" id="tv-loading-percent">0%</div>
           <button class="tv-loading-abort" id="tv-loading-abort">終止</button>
         </div>
       </div>
