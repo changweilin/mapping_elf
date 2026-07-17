@@ -202,6 +202,11 @@ export class TerrainViewer {
     // --- Animated hiker ---
     this._person = null;
     this._personPhase = 0;
+    // Smoothed facing direction: like the chase cam's _followDir, the figure
+    // turns toward a look-ahead chord (temporally low-passed) instead of the
+    // jittery instantaneous tangent, so it stops twitching on wiggly tracks and
+    // walks a smoother path.
+    this._personDir = new THREE.Vector3(0, 0, 1);
 
     // --- Relive-style follow camera (chase cam during playback) ---
     this._followCam = true;           // user preference (persisted by the host UI)
@@ -220,6 +225,10 @@ export class TerrainViewer {
     this._orbitAngle = 0;
     this._waypointPauseMs = 2600;
     this._onWaypointArrive = null;
+    // Start/end waypoint details, dealt as playback cards at the trailhead and
+    // finish (mid-route stops live in _waypointStops).
+    this._startDetail = null;
+    this._endDetail = null;
     // Satellite imagery draped over the terrain surface (F3). Lazily fetched
     // Esri tiles mosaicked into a CanvasTexture; falls back to the procedural
     // land-cover colours when tiles can't load (offline / CORS / no coverage).
@@ -598,6 +607,10 @@ export class TerrainViewer {
     this._followUserOverride = false;
     if (this.controls) this.controls.autoRotate = false;
     if (this._onPlayStateChange) this._onPlayStateChange(true);
+    // Deal the trailhead card as the fly-in sweeps down (metrics read at u=0).
+    if (this._progress <= 0.001 && this._onWaypointArrive && this._startDetail) {
+      this._onWaypointArrive(this._startDetail);
+    }
   }
 
   pause() {
@@ -1204,7 +1217,13 @@ export class TerrainViewer {
     this.scene.background = new THREE.Color(0x1a1a2e);
 
     this.camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 500000);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    // logarithmicDepthBuffer: the scene spans tens of thousands of world units
+    // with a 0.1 near / 500000 far range; a linear depth buffer has nowhere near
+    // the precision for that ratio, so coplanar surfaces (route draped on
+    // terrain, buildings, the hiker's cone on the ground) z-fight and shimmer as
+    // the camera glides. A log buffer distributes precision across the range and
+    // kills the flicker. All materials here are built-in, so it's safe.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -2766,6 +2785,10 @@ export class TerrainViewer {
     if (!waypoints || waypoints.length === 0) return;
     const ms = this._markerScale || 1;
     const stops = [];
+    // Start/end aren't Relive pause-stops (playback's fly-in and finish-orbit
+    // handle those beats), but playback still deals their cards — captured here.
+    this._startDetail = null;
+    this._endDetail = null;
 
     waypoints.forEach((wp, i) => {
       const [lat, lng] = wp.coords || wp;
@@ -2789,6 +2812,8 @@ export class TerrainViewer {
         isStart: i === 0,
         isEnd: i === waypoints.length - 1,
       };
+      if (detail.isStart) this._startDetail = detail;
+      if (detail.isEnd) this._endDetail = detail;
 
       // Colour-matched flag-on-pole planted at the waypoint itself (旗幟標示),
       // echoing the 2D map's pin colour so the ground point reads clearly even
@@ -4024,12 +4049,14 @@ export class TerrainViewer {
     this.playerMarker = null;   // no sphere — the inverted-cone cursor marks the spot
 
     // 3D position cursor: a single inverted cone (tip pointing down at the route
-    // point) sitting just below the hiker. Half the previous marker size.
+    // point) sitting just below the hiker. Shrunk to 1/3 of the previous size;
+    // the figure's standing height derives from coneH below, so it drops to sit
+    // just above the point automatically.
     this._cursorGroup = new THREE.Group();
-    const coneH = 13 * ms;
+    const coneH = (13 / 3) * ms;
     this._cursorHeight = coneH;
     const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(6 * ms, coneH, 16),
+      new THREE.ConeGeometry(2 * ms, coneH, 16),
       new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff5500, emissiveIntensity: 0.9 })
     );
     cone.rotation.x = Math.PI;        // apex points straight down at the point
@@ -4042,17 +4069,6 @@ export class TerrainViewer {
     // primitives with pivoting limbs so it can actually run.
     this._person = this._createPersonFigure(ms);
     this.scene.add(this._person);
-
-    // Progress ring (half size).
-    const ringGeo = new THREE.RingGeometry(6.5 * ms, 9 * ms, 32);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xff6600,
-      transparent: true,
-      opacity: 0.6,
-      side: THREE.DoubleSide,
-    });
-    this.playerRing = new THREE.Mesh(ringGeo, ringMat);
-    this.scene.add(this.playerRing);
 
     // Trail line behind player
     const trailMat = new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.3 });
@@ -4207,11 +4223,25 @@ export class TerrainViewer {
       // Stand on top of the cursor cone.
       this._person.position.set(pt.x, pt.y + coneH + bob, pt.z);
 
-      // Face the direction of travel (path tangent).
-      const tan = this.playerPath.getTangentAt
-        ? this.playerPath.getTangentAt(this._clampU(this._progress))
-        : null;
-      if (tan && (tan.x || tan.z)) this._person.rotation.y = Math.atan2(tan.x, tan.z);
+      // Face the direction of travel. The raw Catmull-Rom tangent kinks at every
+      // GPS wiggle and made the figure snap-turn constantly; instead aim it at a
+      // look-ahead chord (same window the chase cam uses) and low-pass the result
+      // so heading changes are gradual and the walked path reads as smooth. Snap
+      // instantly while scrubbing (not playing) so it faces right at rest.
+      const pA = this.playerPath.getPointAt(this._clampU(this._progress + 0.05));
+      const pB = this.playerPath.getPointAt(this._clampU(this._progress - 0.03));
+      if (pA && pB) {
+        const vx = pA.x - pB.x, vz = pA.z - pB.z;
+        const len = Math.hypot(vx, vz);
+        if (len > 1e-6) {
+          const tx = vx / len, tz = vz / len;
+          const k = moving ? 0.1 : 1;   // per-frame turn rate; instant at rest
+          this._personDir.x += (tx - this._personDir.x) * k;
+          this._personDir.z += (tz - this._personDir.z) * k;
+          const dl = Math.hypot(this._personDir.x, this._personDir.z) || 1;
+          this._person.rotation.y = Math.atan2(this._personDir.x / dl, this._personDir.z / dl);
+        }
+      }
       this._person.rotation.x = moving ? 0.2 : 0.0; // lean forward when running
 
       if (parts) {
@@ -4220,11 +4250,6 @@ export class TerrainViewer {
         parts.armL.rotation.x = -swing * amp * 0.9;
         parts.armR.rotation.x = swing * amp * 0.9;
       }
-    }
-
-    if (this.playerRing) {
-      this.playerRing.position.copy(pt);
-      this.playerRing.lookAt(this.camera.position);
     }
 
     if (this.playerTrail) {
@@ -4545,6 +4570,8 @@ export class TerrainViewer {
           this.controls.autoRotate = true;
           this.controls.autoRotateSpeed = 0.6;
         }
+        // Deal the finish card over the end-of-route orbit (metrics read at u=1).
+        if (this._onWaypointArrive && this._endDetail) this._onWaypointArrive(this._endDetail);
         if (this._onPlayStateChange) this._onPlayStateChange(false);
       }
     }

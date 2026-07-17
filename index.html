@@ -688,6 +688,28 @@
               <div class="offline-panel-title">App 離線底圖來源</div>
               <div class="offline-panel-note">魯地圖 .map / MBTiles</div>
             </div>
+            <div class="offline-map-download" id="offline-map-download-links">
+              <div class="offline-map-download-heading">
+                <div class="offline-panel-title">取得離線底圖</div>
+                <div class="offline-panel-note">下載 .map 圖資後,用下方「匯入底圖」載入</div>
+              </div>
+              <div class="offline-map-download-btn-row">
+                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="rudymap" title="下載魯地圖離線圖資（台灣）">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                  </svg>
+                  <span class="offline-map-download-name">魯地圖</span>
+                  <span class="offline-map-download-region">台灣</span>
+                </button>
+                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="openandromaps" title="下載 OpenAndroMaps 離線圖資（世界地圖）">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                  </svg>
+                  <span class="offline-map-download-name">OpenAndroMaps</span>
+                  <span class="offline-map-download-region">世界</span>
+                </button>
+              </div>
+            </div>
             <div class="offline-pack-list" id="offline-map-source-list" aria-live="polite">
               <div class="offline-pack-empty">Web 版不支援魯地圖離線底圖匯入</div>
             </div>
