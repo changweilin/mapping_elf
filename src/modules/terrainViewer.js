@@ -633,6 +633,13 @@ export class TerrainViewer {
     return this._progress;
   }
 
+  // Public read-only snapshot of the position-driven metrics (date/time, mileage,
+  // altitude, speed, grade, fatigue, weather) at a given playback fraction — used
+  // by the host to populate the Relive close-up waypoint card.
+  metricsAt(u = this._progress) {
+    return this._metricsAtProgress(u);
+  }
+
   isPlaying() {
     return this._playing;
   }

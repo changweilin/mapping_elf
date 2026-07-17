@@ -2042,6 +2042,10 @@ const tvLoadingDetail = document.getElementById('tv-loading-detail');
 const tvLoadingFill = document.getElementById('tv-loading-fill');
 const tvLoadingPercent = document.getElementById('tv-loading-percent');
 const tvLoadingAbort = document.getElementById('tv-loading-abort');
+const tvWpCard = document.getElementById('tv-wp-card');
+const tvWpCardBody = document.getElementById('tv-wp-card-body');
+let tvWpCardLeaveTimer = null;
+let tvWpCardHideTimer = null;
 
 let terrainViewer = null;
 // True while the toolbar "更新" rebuild is running. A redraw must never kick the
@@ -2661,8 +2665,9 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     terrainViewer.onMetrics((m) => renderTerrainMetrics(m));
     terrainViewer.onLoad((state) => handleTerrainLoadState(state));
     terrainViewer.onMarkerClick((detail) => renderTerrainMarkerDetail(detail));
-    // Relive-style: show the waypoint's content during the close-up pause.
-    terrainViewer.onWaypointArrive((detail) => renderTerrainMarkerDetail(detail));
+    // Relive-style: deal the TCG close-up card (personal/terrain/weather) while
+    // the camera pauses on the waypoint.
+    terrainViewer.onWaypointArrive((detail) => showWaypointCard(detail));
     // Satellite drape couldn't load (offline / no coverage): reset the toggle.
     terrainViewer.onSatelliteError(() => {
       terrainDisplaySettings.satellite = false;
@@ -2727,6 +2732,7 @@ function closeTerrainViewer() {
     terrainViewer.hide();
   }
   setTerrainBusy(false);
+  hideWaypointCard();
   tvLoading?.classList.add('hidden');
   tvLoading?.classList.remove('tv-loading-bg');
   terrainViewerEl.classList.add('hidden');
@@ -3666,6 +3672,91 @@ function renderTerrainMarkerDetail(detail) {
     <div class="tv-marker-detail-title"><span class="tv-marker-detail-dot" style="color:${colorCss};background:${colorCss}"></span>${tvEscapeHtml(title)}</div>
     <div class="tv-marker-detail-rows">${rows.join('') || '<div class="tv-marker-detail-row"><span class="tv-md-label">—</span></div>'}</div>`;
   tvMarkerDetail.classList.remove('hidden');
+}
+
+// ---- Relive close-up waypoint card (TCG-style "draw" reveal) ----
+// When the 3D playback camera pauses for a close-up on a waypoint, deal a card
+// surfacing that moment's personal / terrain / weather info. The numbers come
+// from the same position-driven metrics that feed the live HUD
+// (terrainViewer.metricsAt) merged with the waypoint's own detail.
+function hideWaypointCard() {
+  if (tvWpCardLeaveTimer) { clearTimeout(tvWpCardLeaveTimer); tvWpCardLeaveTimer = null; }
+  if (tvWpCardHideTimer) { clearTimeout(tvWpCardHideTimer); tvWpCardHideTimer = null; }
+  if (!tvWpCard) return;
+  tvWpCard.classList.add('hidden');
+  tvWpCard.classList.remove('dealing', 'leaving');
+}
+
+function showWaypointCard(detail) {
+  if (!tvWpCard || !tvWpCardBody || !detail) return;
+  const m = terrainViewer?.metricsAt?.(terrainViewer.getProgress?.()) || {};
+  const colorCss = detail.colorCss || '#44aaff';
+  const lang = getLanguage();
+
+  const rowsHtml = (rows) => rows
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([label, v]) => `<div class="tv-wp-row"><span class="tv-wp-row-label">${tvEscapeHtml(label)}</span><span class="tv-wp-row-value">${tvEscapeHtml(v)}</span></div>`)
+    .join('') || '<div class="tv-wp-row"><span class="tv-wp-row-label">—</span></div>';
+
+  // 個人資訊
+  const arrival = (m.dateMs != null && Number.isFinite(m.dateMs))
+    ? new Date(m.dateMs).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+  const elapsed = m.timeH != null ? formatDurationHHMM(m.timeH) : null;
+  const speed = (m.speedKmh != null && Number.isFinite(m.speedKmh)) ? `${m.speedKmh.toFixed(1)} km/h` : null;
+  const fatigue = (m.fatiguePct != null && Number.isFinite(m.fatiguePct))
+    ? `${Math.round(Math.max(0, Math.min(100, m.fatiguePct)))}%` : null;
+  const personRows = rowsHtml([['抵達時刻', arrival], ['歷時', elapsed], ['移動速度', speed], ['疲勞度', fatigue]]);
+
+  // 軌跡地形資訊
+  const mileageM = (m.distM != null) ? m.distM : detail.distanceM;
+  const mileage = mileageM != null ? formatDistance(mileageM) : null;
+  const elevVal = (m.elevM != null) ? m.elevM : detail.elevation;
+  const elev = elevVal != null ? formatElevation(elevVal) : null;
+  let grade = null;
+  if (m.gradePct != null && Number.isFinite(m.gradePct)) {
+    const g = m.gradePct;
+    const sign = g > 0.5 ? '↗' : (g < -0.5 ? '↘' : '→');
+    grade = `${sign}${Math.abs(g).toFixed(1)}%`;
+  }
+  const terrainRows = rowsHtml([['里程', mileage], ['海拔', elev], ['坡度', grade]]);
+
+  // 當下天氣資訊
+  const wx = m.weather || null;
+  const wxEmoji = wx?.icon || '🧭';
+  const wxTemp = (wx && wx.temperature != null) ? `${Math.round(wx.temperature)}°C` : null;
+  const wxCond = (wx && wx.code != null) ? tWmo(wx.code) : null;
+  const weatherRows = rowsHtml([['天氣狀況', wxCond], ['溫度', wxTemp]]);
+
+  const tag = detail.isStart ? '起點' : (detail.isEnd ? '終點' : '中繼點');
+
+  tvWpCard.style.setProperty('--wp-card-color', colorCss);
+  tvWpCardBody.innerHTML = `
+    <div class="tv-wp-card-top">
+      <span class="tv-wp-card-tag" style="background:${colorCss}">${tvEscapeHtml(tag)}</span>
+      <span class="tv-wp-card-name">${tvEscapeHtml(detail.label || '航點')}</span>
+    </div>
+    <div class="tv-wp-card-hero">
+      <span class="tv-wp-card-emoji">${tvEscapeHtml(wxEmoji)}</span>
+      ${wxTemp ? `<span class="tv-wp-card-hero-temp">${tvEscapeHtml(wxTemp)}</span>` : ''}
+    </div>
+    <div class="tv-wp-card-cats">
+      <section class="tv-wp-cat"><div class="tv-wp-cat-title">👤 個人</div>${personRows}</section>
+      <section class="tv-wp-cat"><div class="tv-wp-cat-title">⛰️ 地形</div>${terrainRows}</section>
+      <section class="tv-wp-cat"><div class="tv-wp-cat-title">🌦️ 天氣</div>${weatherRows}</section>
+    </div>`;
+
+  // Replay the deal animation from scratch on every arrival.
+  if (tvWpCardLeaveTimer) { clearTimeout(tvWpCardLeaveTimer); tvWpCardLeaveTimer = null; }
+  if (tvWpCardHideTimer) { clearTimeout(tvWpCardHideTimer); tvWpCardHideTimer = null; }
+  tvWpCard.classList.remove('hidden', 'leaving', 'dealing');
+  void tvWpCard.offsetWidth;           // force reflow so the keyframes restart
+  tvWpCard.classList.add('dealing');
+
+  // Auto-dismiss just before the close-up pause ends (~2.6s in the viewer).
+  tvWpCardLeaveTimer = setTimeout(() => {
+    tvWpCard.classList.add('leaving');
+    tvWpCardHideTimer = setTimeout(hideWaypointCard, 420);
+  }, 2200);
 }
 
 tvMarkerDetailClose?.addEventListener('click', hideTerrainMarkerDetail);

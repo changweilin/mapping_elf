@@ -60,13 +60,15 @@ test('F4: Relive playback pauses at an intermediate waypoint and does not throw'
   await page.locator('#btn-view-3d').click();
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
 
-  // Detail popup should be hidden before playback.
-  await expect(page.locator('#tv-marker-detail')).toHaveClass(/hidden/);
+  // The Relive close-up card should be hidden before playback.
+  await expect(page.locator('#tv-wp-card')).toHaveClass(/hidden/);
 
   await page.locator('#tp-play').click();
-  // Reaching the middle waypoint triggers the Relive pause → its content popup.
-  await expect(page.locator('#tv-marker-detail')).not.toHaveClass(/hidden/, { timeout: 25_000 });
-  await expect(page.locator('.tv-marker-detail-title')).toBeVisible();
+  // Reaching the middle waypoint triggers the Relive pause → the TCG close-up card.
+  await expect(page.locator('#tv-wp-card')).not.toHaveClass(/hidden/, { timeout: 25_000 });
+  await expect(page.locator('.tv-wp-card-name')).toHaveText(/.+/);
+  // The card surfaces the three info categories (personal / terrain / weather).
+  await expect(page.locator('#tv-wp-card .tv-wp-cat')).toHaveCount(3);
 
   // Playback advanced and nothing threw during the camera/animate rewrite.
   const progress = await page.locator('#tp-slider').evaluate((el) => parseFloat(el.value) || 0);

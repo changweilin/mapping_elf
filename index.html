@@ -1374,6 +1374,16 @@
           </div>
         </div>
       </div>
+      <!-- Relive close-up waypoint card: TCG-style "draw" reveal that pops in
+           when the playback camera pauses on a waypoint, surfacing the walker's
+           personal / terrain / weather info for that moment. -->
+      <div class="tv-wp-card hidden" id="tv-wp-card" aria-live="polite">
+        <div class="tv-wp-card-inner">
+          <div class="tv-wp-card-glow" aria-hidden="true"></div>
+          <div class="tv-wp-card-shine" aria-hidden="true"></div>
+          <div class="tv-wp-card-body" id="tv-wp-card-body"></div>
+        </div>
+      </div>
       <!-- Marker detail popup (waypoints / landmarks) -->
       <div class="tv-marker-detail hidden" id="tv-marker-detail">
         <button class="tv-marker-detail-close" id="tv-marker-detail-close" title="關閉" aria-label="關閉">

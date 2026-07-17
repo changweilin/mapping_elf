@@ -4496,6 +4496,10 @@ body.route-list-dragging {
   .bp-chart-row .elevation-chart-container {
     height: 100px;
   }
+  .bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container {
+    flex-basis: 100px;
+    min-height: 70px;
+  }
 
   /* Weather header: tighten padding on mobile */
   .bp-weather-header {
@@ -4547,6 +4551,10 @@ body.route-list-dragging {
   /* Lower the default elevation chart even further */
   .bp-chart-row .elevation-chart-container {
     height: 80px;
+  }
+  .bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container {
+    flex-basis: 80px;
+    min-height: 60px;
   }
 
   /* Bottom panel cannot exceed landscape viewport */
@@ -4920,6 +4928,29 @@ body.is-resizing {
 }
 
 .bp-chart-row .elevation-chart-container.collapsed {
+  height: 32px;
+}
+
+/* Elevation view: let the chart row + chart grow to fill the panel so dragging
+   the divider taller expands the vertical-track chart all the way to the bottom
+   (instead of pinning it to a fixed height and leaving dead space below).
+   flex-basis keeps the default/auto-layout height at the old fixed value. */
+.bottom-panel.bp-mode-elev .bp-chart-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container {
+  flex: 1 1 140px;
+  height: auto;
+  min-height: 90px;
+}
+
+.bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container.collapsed {
+  flex: 0 0 32px;
+  min-height: 0;
   height: 32px;
 }
 
@@ -7619,6 +7650,180 @@ html.light-theme .panel-bottom-logo {
 }
 .tv-marker-detail-row .tv-md-label { color: var(--text-muted); }
 .tv-marker-detail-row .tv-md-value { color: var(--text-primary); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ===== Relive close-up waypoint card (TCG-style draw reveal) =====
+   Full-overlay, pointer-events:none so the 3D canvas stays interactive beneath
+   it. Sits inside #terrain-canvas-wrap (z-index:1) so it stays trapped below the
+   toolbar dropdowns, per the viewer's stacking contract. */
+.tv-wp-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  perspective: 1200px;
+  z-index: 16;
+}
+.tv-wp-card.hidden { display: none; }
+
+.tv-wp-card-inner {
+  position: relative;
+  width: 250px;
+  max-width: calc(100% - 40px);
+  padding: 14px 16px 16px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, rgba(20, 22, 32, 0.96), rgba(10, 11, 18, 0.98));
+  border: 1.5px solid var(--wp-card-color, #44aaff);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 0 28px -6px var(--wp-card-color, #44aaff);
+  color: var(--text-primary);
+  overflow: hidden;
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+}
+
+/* Holographic sheen keyed to the waypoint colour. */
+.tv-wp-card-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 80% at 50% -12%,
+    color-mix(in srgb, var(--wp-card-color, #44aaff) 34%, transparent), transparent 62%);
+  mix-blend-mode: screen;
+  opacity: 0.75;
+}
+
+/* One-shot light sweep on deal. */
+.tv-wp-card-shine {
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 55%;
+  height: 100%;
+  background: linear-gradient(105deg, transparent 0%, rgba(255, 255, 255, 0.3) 45%,
+    rgba(255, 255, 255, 0.55) 50%, transparent 80%);
+  transform: skewX(-18deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tv-wp-card-body { position: relative; z-index: 1; }
+
+.tv-wp-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.tv-wp-card-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: #0b0d12;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tv-wp-card-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tv-wp-card-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 2px 0 12px;
+}
+.tv-wp-card-emoji {
+  font-size: 44px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
+}
+.tv-wp-card-hero-temp {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tv-wp-card-cats { display: flex; flex-direction: column; gap: 9px; }
+.tv-wp-cat {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 7px 9px;
+}
+.tv-wp-cat-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--wp-card-color, #9ca3af);
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+.tv-wp-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  padding: 1px 0;
+}
+.tv-wp-row-label { color: var(--text-secondary); }
+.tv-wp-row-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tv-wp-card.dealing .tv-wp-card-inner {
+  animation: tvWpDraw 620ms cubic-bezier(0.18, 0.9, 0.28, 1.2) 1 both;
+}
+.tv-wp-card.dealing .tv-wp-card-shine {
+  animation: tvWpShine 900ms ease-out 260ms 1;
+}
+.tv-wp-card.leaving .tv-wp-card-inner {
+  animation: tvWpLeave 380ms ease-in 1 both;
+}
+
+@keyframes tvWpDraw {
+  0%   { opacity: 0; transform: translateY(46%) rotateX(35deg) rotateZ(-10deg) scale(0.55); }
+  55%  { opacity: 1; transform: translateY(-6%) rotateX(-6deg) rotateZ(3deg) scale(1.06); }
+  75%  { transform: translateY(0) rotateX(2deg) rotateZ(-1deg) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) rotateX(0) rotateZ(0) scale(1); }
+}
+@keyframes tvWpShine {
+  0%   { left: -60%; opacity: 0; }
+  30%  { opacity: 1; }
+  100% { left: 120%; opacity: 0; }
+}
+@keyframes tvWpLeave {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-10%) scale(0.9); }
+}
+
+@media (max-width: 768px) {
+  .tv-wp-card-inner { width: 220px; padding: 12px 13px 13px; }
+  .tv-wp-card-emoji { font-size: 38px; }
+  .tv-wp-card-hero-temp { font-size: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tv-wp-card.dealing .tv-wp-card-inner { animation: tvWpFade 200ms ease-out both; }
+  .tv-wp-card.dealing .tv-wp-card-shine { animation: none; }
+  .tv-wp-card.leaving .tv-wp-card-inner { animation: tvWpFade 200ms ease-in reverse both; }
+}
+@keyframes tvWpFade { from { opacity: 0; } to { opacity: 1; } }
 
 /* Layer toggle controls */
 .tv-layer-controls {

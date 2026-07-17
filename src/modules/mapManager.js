@@ -3262,6 +3262,8 @@ export class MapManager {
         this._noteMultiTouchGesture();
         return;
       }
+      // Measurement mode owns track taps — never arm a route-insert long-press.
+      if (this.measureMode) return;
       if (oe.button !== undefined && oe.button !== 0) return;
       lpTriggered = false;
       const point = domEventPoint(oe);
@@ -3421,6 +3423,10 @@ export class MapManager {
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
       if (Date.now() - this._lastMultiTouchAt < 700) return;
+      // Measurement mode: the polyline's stopped propagation bypasses the
+      // map-level click handler, so forward on-track taps to the measure tool
+      // here instead of inserting a waypoint.
+      if (this.measureMode) { this.onMeasureClick?.(e.latlng.lat, e.latlng.lng); return; }
       if (lpTriggered || routeInsertDragActive) return;
       if (this.isFrozen) {
         this._notifyFrozenInteraction('route-edit');
