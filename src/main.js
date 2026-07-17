@@ -17,6 +17,7 @@ import { buildWeatherPointsFromState } from './modules/weatherPointBuilder.js';
 import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
+import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -3857,6 +3858,11 @@ let measurePoints = [];            // clicked [lat, lng] points (raw)
 let measureLayer = null;           // L.layerGroup on the map
 let catchmentAbort = null;         // AbortController for the in-flight DEM fetch
 let catchmentToken = 0;            // guards against a stale async result landing
+let catchmentEnvAbort = null;      // AbortController for the weather+hydrology fetch
+let catchmentEnvToken = 0;         // guards a stale env result (geometry or time changed)
+let catchmentLast = null;          // { lat, lng, result } — geometry kept for re-eval on time change
+let catchmentDate = '';            // chosen date YYYY-MM-DD, seeded from the weather anchor
+let catchmentHour = null;          // chosen hour 0-23, kept for the session
 
 function measureTrack() {
   const pts = (elevationProfile?.points && elevationProfile.points.length >= 2)
@@ -4001,6 +4007,10 @@ function cancelCatchment() {
   catchmentToken++;
   catchmentAbort?.abort();
   catchmentAbort = null;
+  catchmentEnvToken++;
+  catchmentEnvAbort?.abort();
+  catchmentEnvAbort = null;
+  catchmentLast = null;
 }
 
 // Smallest-bbox cached 3D-terrain grid whose extent covers the click, so the
@@ -4070,11 +4080,139 @@ async function runCatchment(lat, lng) {
   }).addTo(layer);
   measureDot(result.outlet, '▼').addTo(layer);
 
-  const rows = [['集水區面積', formatArea(result.areaM2)]];
-  if (Number.isFinite(result.outletEle)) rows.push(['出水口海拔', formatElevation(result.outletEle)]);
-  renderMeasureReadout(rows);
+  catchmentLast = { lat, lng, result };
+  seedCatchmentDateTime();
+  renderCatchmentBase(result);
+  loadCatchmentEnv();
   if (result.source === 'cached') showNotification('集水區為近似值（來自已快取地形）', 'info');
   else if (result.touchesBorder) showNotification('集水區可能延伸至分析範圍外', 'info');
+}
+
+// Seed the catchment date/hour from the weather anchor (col-0 date+hour, else
+// today 08:00) on first use, then keep the user's choice for the session so
+// clicking a new point doesn't reset the time. See getTerrainStartMs().
+function seedCatchmentDateTime() {
+  if (catchmentDate && catchmentHour != null) return;
+  const d = new Date(getTerrainStartMs());
+  const p2 = (n) => String(n).padStart(2, '0');
+  catchmentDate = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  catchmentHour = d.getHours();
+}
+
+const CATCHMENT_WEATHER_KEYS = [
+  ['weather', '天氣'], ['temp', '溫度'], ['feelsLike', '體感溫度'],
+  ['humidity', '濕度'], ['windSpeed', '風速'], ['precipitation', '雨量'], ['precipProb', '降雨機率'],
+];
+
+// severity (0-3 | -1 | null) → risk-chip CSS suffix.
+function catchmentSevClass(sev) {
+  return sev == null ? '' : ['low', 'mid', 'high', 'ext'][sev] || 'na';
+}
+
+function catchmentRowsHtml(rows) {
+  return rows.map((r) => {
+    const chip = r.level
+      ? ` <span class="risk-chip risk-${catchmentSevClass(r.severity)}">${r.level}</span>`
+      : '';
+    return `<div class="mr-row"><span class="mr-label">${r.label}</span>`
+      + `<span class="mr-value">${r.value || ''}${chip}</span></div>`;
+  }).join('');
+}
+
+function catchmentWeatherHtml(data) {
+  if (!data) return '<div class="ct-nodata">—</div>';
+  return CATCHMENT_WEATHER_KEYS.map(([key, label]) =>
+    `<div class="mr-row"><span class="mr-label">${label}</span>`
+    + `<span class="mr-value">${getCellValue(data, key)}</span></div>`
+  ).join('');
+}
+
+// Full readout skeleton for a catchment result: area/outlet + terrain + an
+// adjustable date/hour picker + async weather & hydrology sections.
+function renderCatchmentBase(result) {
+  if (!measureReadoutEl) return;
+  const geoRows = computeGeometryRows(result);
+  const outletRow = Number.isFinite(result.outletEle)
+    ? `<div class="mr-row"><span class="mr-label">出水口海拔</span><span class="mr-value">${formatElevation(result.outletEle)}</span></div>`
+    : '';
+  const hourOpts = Array.from({ length: 24 }, (_, h) =>
+    `<option value="${h}"${h === catchmentHour ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
+  ).join('');
+
+  measureReadoutEl.innerHTML = `
+    <div class="ct-sec">
+      <div class="mr-row"><span class="mr-label">集水區面積</span><span class="mr-value">${formatArea(result.areaM2)}</span></div>
+      ${outletRow}
+      ${catchmentRowsHtml(geoRows)}
+    </div>
+    <div class="ct-time-row">
+      <span class="mr-label">時間</span>
+      <input type="date" id="ct-date" class="ct-date-input" value="${catchmentDate}">
+      <select id="ct-hour" class="ct-hour-select">${hourOpts}</select>
+    </div>
+    <div class="mr-section">天氣</div>
+    <div class="ct-sec" id="ct-weather"><div class="ct-loading">載入天氣與水文中…</div></div>
+    <div class="mr-section">水文</div>
+    <div class="ct-sec" id="ct-hydro"><div class="ct-loading">載入天氣與水文中…</div></div>
+    <div class="ct-disclaimer">水文指標為粗略估算，僅供參考</div>`;
+
+  const onChange = () => {
+    const dv = document.getElementById('ct-date')?.value;
+    const hv = parseInt(document.getElementById('ct-hour')?.value ?? '', 10);
+    if (dv) catchmentDate = dv;
+    if (Number.isFinite(hv)) catchmentHour = hv;
+    loadCatchmentEnv();
+  };
+  document.getElementById('ct-date')?.addEventListener('change', onChange);
+  document.getElementById('ct-hour')?.addEventListener('change', onChange);
+}
+
+function setCatchmentSectionsLoading() {
+  for (const id of ['ct-weather', 'ct-hydro']) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="ct-loading">載入天氣與水文中…</div>';
+  }
+}
+
+// Fetch weather (existing service) + hydrology (new module) for the catchment at
+// the chosen time and render both sections. Token-guarded so a superseded fetch
+// (new point clicked, or time changed again) never lands stale (INC race rule).
+async function loadCatchmentEnv() {
+  if (!catchmentLast) return;
+  catchmentEnvToken++;
+  const token = catchmentEnvToken;
+  catchmentEnvAbort?.abort();
+  catchmentEnvAbort = new AbortController();
+  const { lat, lng } = catchmentLast;
+  const dateStr = catchmentDate, hour = catchmentHour;
+  setCatchmentSectionsLoading();
+
+  const swallow = (err) => {
+    if (err?.name === 'AbortError') throw err;
+    console.warn('Catchment env fetch failed:', err?.message);
+    return null;
+  };
+
+  let weatherData = null, hydroEnv = null;
+  try {
+    [weatherData, hydroEnv] = await Promise.all([
+      weatherService.getWeatherAtPoint(lat, lng, dateStr, hour, { signal: catchmentEnvAbort.signal }).catch(swallow),
+      fetchHydroData(lat, lng, dateStr, hour, { signal: catchmentEnvAbort.signal }).catch(swallow),
+    ]);
+  } catch (err) {
+    if (token !== catchmentEnvToken) return;   // superseded — discard silently
+  }
+  if (token !== catchmentEnvToken) return;
+  catchmentEnvAbort = null;
+
+  const wEl = document.getElementById('ct-weather');
+  const hEl = document.getElementById('ct-hydro');
+  if (wEl) wEl.innerHTML = catchmentWeatherHtml(weatherData);
+  if (hEl) {
+    hEl.innerHTML = (hydroEnv && hydroEnv.available)
+      ? catchmentRowsHtml(computeHydroIndicators(catchmentLast.result, hydroEnv))
+      : '<div class="ct-nodata">此日期無水文資料</div>';
+  }
 }
 
 function handleMeasureClick(lat, lng) {

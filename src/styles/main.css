@@ -1246,6 +1246,83 @@ body.weather-card-busy .weather-edit-control:disabled {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
+  max-height: min(50vh, 440px);
+  overflow-y: auto;
+}
+
+.measure-readout .ct-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.measure-readout .mr-section {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.ct-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ct-time-row .mr-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ct-date-input,
+.ct-hour-select {
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.ct-date-input { flex: 1; }
+.ct-hour-select { flex: 0 0 auto; width: 66px; }
+
+.risk-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  color: #fff;
+  vertical-align: middle;
+}
+
+.risk-chip.risk-low { background: #16a34a; }
+.risk-chip.risk-mid { background: #eab308; color: #1a1a1a; }
+.risk-chip.risk-high { background: #f97316; }
+.risk-chip.risk-ext { background: #dc2626; }
+.risk-chip.risk-na { background: var(--border); color: var(--text-secondary); }
+
+.ct-loading,
+.ct-nodata {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ct-disclaimer {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  opacity: 0.85;
 }
 
 .measure-readout .mr-row {

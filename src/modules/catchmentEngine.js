@@ -83,7 +83,9 @@ class MinHeap {
  * @returns {Promise<Object>} `{ status }` where status is one of
  *   'ok' | 'flat' | 'empty' | 'error' | 'aborted'. On 'ok': `outer` (ring of
  *   [lat,lng]), `holes` (rings), `outlet` [lat,lng], `outletEle`, `areaM2`,
- *   `cellCount`, `touchesBorder`, and `source` ('api' | 'cached').
+ *   `cellCount`, `touchesBorder`, `source` ('api' | 'cached'), and the
+ *   geomorphometry `minEle`, `maxEle`, `reliefM`, `meanSlopeDeg`, `maxSlopeDeg`,
+ *   `flowLenM` (main-channel length, m) that feed the hydrology indicators.
  */
 export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) {
   const dLat = SPACING_M / 111320;
@@ -192,7 +194,10 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
   }
 
   // --- 7. Upslope contributing area: reverse-BFS along flow directions -------
+  // flowDist[i] = downstream distance from cell i to the outlet along D8, so its
+  // maximum over the catchment approximates the main-channel length.
   const inSet = new Uint8Array(N * N);
+  const flowDist = new Float64Array(N * N);
   const queue = [outlet];
   inSet[outlet] = 1;
   let touchesBorder = false;
@@ -200,16 +205,37 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
     const c = queue[head];
     const cr = (c / N) | 0, cc = c % N;
     if (cr === 0 || cr === N - 1 || cc === 0 || cc === N - 1) touchesBorder = true;
-    for (const [dr, dc] of NB) {
+    for (const [dr, dc, dcell] of NB) {
       const nr = cr + dr, nc = cc + dc;
       if (!inGrid(nr, nc)) continue;
       const ni = idx(nr, nc);
-      if (!inSet[ni] && target[ni] === c) { inSet[ni] = 1; queue.push(ni); }
+      if (!inSet[ni] && target[ni] === c) {
+        inSet[ni] = 1;
+        flowDist[ni] = flowDist[c] + dcell * SPACING_M;
+        queue.push(ni);
+      }
     }
   }
 
   const cellCount = queue.length;
   if (cellCount < MIN_CELLS) return { status: 'empty', source };
+
+  // --- 7b. Geomorphometry over the catchment cells (feeds hydrology) ---------
+  // Slope is steepest-descent on the real (hole-filled, pre-sink-fill) DEM.
+  let minEle = Infinity, maxEle = -Infinity, slopeDegSum = 0, maxSlope = 0, flowLenM = 0;
+  for (let i = 0; i < N * N; i++) {
+    if (!inSet[i]) continue;
+    const e = dem[i];
+    if (e < minEle) minEle = e;
+    if (e > maxEle) maxEle = e;
+    const s = steepestSlope(dem, N, idx, inGrid, (i / N) | 0, i % N);   // m/m
+    slopeDegSum += Math.atan(s) * 180 / Math.PI;
+    if (s > maxSlope) maxSlope = s;
+    if (flowDist[i] > flowLenM) flowLenM = flowDist[i];
+  }
+  const meanSlopeDeg = slopeDegSum / cellCount;
+  const maxSlopeDeg = Math.atan(maxSlope) * 180 / Math.PI;
+  const reliefM = maxEle - minEle;
 
   // --- 8. Trace the raster boundary into lat/lng rings -----------------------
   const cornerLat = (cr) => latOf(0) + dLat / 2 - cr * dLat;
@@ -224,6 +250,12 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
     outletEle: dem[outlet],
     areaM2: cellCount * SPACING_M * SPACING_M,
     cellCount,
+    minEle,
+    maxEle,
+    reliefM,
+    meanSlopeDeg,
+    maxSlopeDeg,
+    flowLenM,
     touchesBorder,
     source,
   };
