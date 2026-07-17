@@ -16,6 +16,7 @@ import { estimateMapPackTiles } from './modules/tileEstimator.js';
 import { buildWeatherPointsFromState } from './modules/weatherPointBuilder.js';
 import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
+import { computeCatchment } from './modules/catchmentEngine.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -3854,6 +3855,8 @@ const btnMeasureTool = document.getElementById('btn-measure-tool');
 let measureMode = 'segment';
 let measurePoints = [];            // clicked [lat, lng] points (raw)
 let measureLayer = null;           // L.layerGroup on the map
+let catchmentAbort = null;         // AbortController for the in-flight DEM fetch
+let catchmentToken = 0;            // guards against a stale async result landing
 
 function measureTrack() {
   const pts = (elevationProfile?.points && elevationProfile.points.length >= 2)
@@ -3868,6 +3871,7 @@ function ensureMeasureLayer() {
 }
 
 function clearMeasureOverlay() {
+  cancelCatchment();
   measurePoints = [];
   measureLayer?.clearLayers();
   if (measureReadoutEl) measureReadoutEl.innerHTML = '';
@@ -3993,7 +3997,91 @@ function computeAreaMeasure() {
   renderMeasureReadout(rows);
 }
 
+function cancelCatchment() {
+  catchmentToken++;
+  catchmentAbort?.abort();
+  catchmentAbort = null;
+}
+
+// Smallest-bbox cached 3D-terrain grid whose extent covers the click, so the
+// catchment can be computed offline (or when the elevation API is failing).
+function findCachedDemAt(lat, lng) {
+  const cache = loadTerrainCache();
+  let best = null, bestSpan = Infinity;
+  for (const key of Object.keys(cache)) {
+    const e = cache[key];
+    const b = e?.bbox;
+    if (!b || !Array.isArray(e.grid)) continue;
+    if (lat < b.minLat || lat > b.maxLat || lng < b.minLng || lng > b.maxLng) continue;
+    const span = (b.maxLat - b.minLat) + (b.maxLng - b.minLng);
+    if (span < bestSpan) { bestSpan = span; best = { grid: e.grid, bbox: b }; }
+  }
+  return best;
+}
+
+async function runCatchment(lat, lng) {
+  cancelCatchment();                       // supersede any earlier in-flight run
+  const token = catchmentToken;
+  catchmentAbort = new AbortController();
+
+  const layer = ensureMeasureLayer();
+  layer.clearLayers();
+  measureDot([lat, lng], '▼').addTo(layer);
+  renderMeasureReadout([['提示', '計算集水區中…']]);
+
+  let result;
+  try {
+    result = await computeCatchment(lat, lng, {
+      signal: catchmentAbort.signal,
+      offlineDem: findCachedDemAt(lat, lng),
+    });
+  } catch (err) {
+    if (token !== catchmentToken) return;  // a newer click already took over
+    console.warn('Catchment failed:', err);
+    result = { status: 'error' };
+  }
+  if (token !== catchmentToken) return;     // stale result — discard silently
+  catchmentAbort = null;
+
+  if (result.status === 'aborted') return;
+  if (result.status === 'flat') {
+    layer.clearLayers();
+    if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+    showNotification('此處為大面積平地，無法判定集水方向', 'info');
+    return;
+  }
+  if (result.status === 'error') {
+    layer.clearLayers();
+    if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+    showNotification('海拔資料取得失敗，請稍後再試', 'warning');
+    return;
+  }
+  if (result.status === 'empty' || !result.outer?.length) {
+    layer.clearLayers();
+    if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+    showNotification('此處集水範圍過小', 'info');
+    return;
+  }
+
+  layer.clearLayers();
+  L.polygon([result.outer, ...result.holes], {
+    color: '#2563eb', weight: 2, opacity: 0.9,
+    fillColor: '#3b82f6', fillOpacity: 0.25,
+  }).addTo(layer);
+  measureDot(result.outlet, '▼').addTo(layer);
+
+  const rows = [['集水區面積', formatArea(result.areaM2)]];
+  if (Number.isFinite(result.outletEle)) rows.push(['出水口海拔', formatElevation(result.outletEle)]);
+  renderMeasureReadout(rows);
+  if (result.source === 'cached') showNotification('集水區為近似值（來自已快取地形）', 'info');
+  else if (result.touchesBorder) showNotification('集水區可能延伸至分析範圍外', 'info');
+}
+
 function handleMeasureClick(lat, lng) {
+  if (measureMode === 'catchment') {
+    runCatchment(lat, lng);
+    return;
+  }
   if (measureMode === 'segment') {
     if (!measureTrack()) { showNotification('先規劃路線再量測軌跡', 'warning'); return; }
     if (measurePoints.length >= 2) measurePoints = [];   // start a fresh pair
@@ -4016,15 +4104,17 @@ function handleMeasureClick(lat, lng) {
   }
 }
 
+const MEASURE_HINTS = {
+  segment: '點擊軌跡上兩點以量測區間距離與爬升下降',
+  area: '依序點擊地圖任意點，計算直線距離與包圍面積',
+  catchment: '點擊地圖任意點，繪製該處集水區範圍',
+};
+
 function setMeasureMode(mode) {
-  measureMode = mode === 'area' ? 'area' : 'segment';
+  measureMode = MEASURE_HINTS[mode] ? mode : 'segment';
   document.querySelectorAll('#measure-mode-toggle .measure-mode-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.measureMode === measureMode));
-  if (measureHintEl) {
-    measureHintEl.textContent = measureMode === 'segment'
-      ? '點擊軌跡上兩點以量測區間距離與爬升下降'
-      : '依序點擊地圖任意點，計算直線距離與包圍面積';
-  }
+  if (measureHintEl) measureHintEl.textContent = MEASURE_HINTS[measureMode];
   clearMeasureOverlay();
 }
 
