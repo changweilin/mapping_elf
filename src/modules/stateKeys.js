@@ -18,6 +18,7 @@ const WEATHER_STATE_KEYS = [
   'mappingElf_weather',
   'mappingElf_weatherCells',
   'mappingElf_weatherCache',
+  'mappingElf_catchmentCache',
   'mappingElf_weatherCacheEnabled',
   'mappingElf_weatherCacheDistanceM',
   'mappingElf_weatherCacheElevationM',

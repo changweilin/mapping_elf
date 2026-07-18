@@ -7091,6 +7091,102 @@ html.light-theme .wc-time-select {
   color-scheme: light;
 }
 
+/* Weather-card view toggle (weather ⇄ catchment) */
+.wc-view-toggle {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.wc-view-btn {
+  flex: 1;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wc-view-btn:hover:not(.active) {
+  color: var(--text-primary);
+}
+
+.wc-view-btn.active {
+  background: var(--wc-accent, var(--accent-primary));
+  color: #fff;
+}
+
+/* Weather-card "set to now" buttons */
+.wc-now-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.wc-now-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wc-now-btn:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: rgba(110, 231, 183, 0.1);
+}
+
+.wc-now-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wc-now-btn svg {
+  flex: 0 0 auto;
+}
+
+/* Weather-card catchment read-out — reuses the weather-card .wc-info-grid rows
+   so text/data layout matches the weather view. Rendered at full size up front
+   (skeleton) so the card doesn't grow when async values fill in. */
+.wc-catchment {
+  margin-top: 8px;
+}
+
+.wc-catchment .wc-catch-grid + .wc-catch-grid {
+  margin-top: 6px;
+}
+
+.wc-catchment .ct-disclaimer {
+  margin-top: 8px;
+}
+
+.wc-catch-val {
+  font-variant-numeric: tabular-nums;
+}
+
+.wc-catch-msg {
+  margin-top: 8px;
+}
+
 .wc-info-value.clickable-coords {
   cursor: pointer;
   transition: color var(--transition-fast), transform var(--transition-fast);
