@@ -185,11 +185,30 @@ export class WeatherService {
     today.setHours(0, 0, 0, 0);
     const targetDate = new Date(dateStr + 'T00:00:00');
     const diffDays = Math.round((targetDate - today) / (1000 * 60 * 60 * 24));
-    if (diffDays >= 0 && diffDays <= 16) {
-      return this._fetchForecastFull(lat, lng, dateStr, hour, options);
-    } else {
-      return this._fetchHistoricalFull(lat, lng, dateStr, hour, options);
+    const attempt = () => (diffDays >= 0 && diffDays <= 16)
+      ? this._fetchForecastFull(lat, lng, dateStr, hour, options)
+      : this._fetchHistoricalFull(lat, lng, dateStr, hour, options);
+
+    // A burst load (many points, sequential) intermittently draws a 429, a
+    // timeout, or an empty slice for a few points. With no retry those points
+    // were left as an unfetched "?" badge that can't open its card. Retry with
+    // backoff (longer for a rate limit); only an external abort short-circuits.
+    const MAX_ATTEMPTS = 3;
+    let lastErr;
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      if (options.signal?.aborted) { const e = new Error('Aborted'); e.name = 'AbortError'; throw e; }
+      try {
+        return await attempt();
+      } catch (err) {
+        if (err?.name === 'AbortError') throw err;
+        lastErr = err;
+        if (i < MAX_ATTEMPTS - 1) {
+          const is429 = /\b429\b/.test(err?.message || '');
+          await new Promise((r) => setTimeout(r, (is429 ? 900 : 450) * (i + 1)));
+        }
+      }
     }
+    throw lastErr;
   }
 
   async _fetchForecastFull(lat, lng, dateStr, hour, options = {}) {
@@ -251,6 +270,17 @@ export class WeatherService {
       visibility = h.visibility?.[hour] ?? null;   // metres
       cloudCover = h.cloudcover?.[hour] ?? null;   // %
     }
+
+    // A 200 response can still be substantively empty (weathercode missing AND
+    // every hourly/daily numeric field null) on an API hiccup or a date past the
+    // usable horizon. Treat that as a failed fetch, not a success: returning it
+    // would paint a ❓ badge whose card refuses to open (no detail fields) and
+    // poison the cache. Throwing routes it through the caller's error path.
+    const noUsableData = (hourlyCode == null || hourlyCode < 0)
+      && [temp, feelsLike, humidity, precip, windSpeed,
+          d.temperature_2m_max?.[0], d.temperature_2m_min?.[0], d.precipitation_sum?.[0]]
+        .every(v => v == null);
+    if (noUsableData) throw new Error('No usable weather data');
 
     const fmtDT = s => s ? (s.split('T')[1] ?? '').slice(0, 5) || null : null;
     const wmo = WMO_CODES[hourlyCode] || { icon: '❓', desc: '未知' };

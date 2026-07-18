@@ -178,6 +178,9 @@ function waypointPinSvgHtml() {
 export class MapManager {
   constructor(containerId, onWaypointChange) {
     this.isFrozen = false; // Freeze map clicks and waypoint dragging
+    // While frozen for a data load, still permit appending a waypoint by
+    // map-click (the route geometry is settled; move/insert stay blocked).
+    this.allowAppendWhileFrozen = false;
     this.onWaypointChange = onWaypointChange;
     this.onRouteSelect = null; // callback(index)
     this.onRouteHover = null; // callback(lat, lng) | callback(null, null)
@@ -276,7 +279,9 @@ export class MapManager {
     });
 
     this.map.on('click', (e) => {
-      if (this.isFrozen) {
+      // A data load allows APPEND-by-click (allowAppendWhileFrozen) even while
+      // frozen; every other frozen interaction is still refused.
+      if (this.isFrozen && !this.allowAppendWhileFrozen) {
         this._notifyFrozenInteraction('map-click');
         return;
       }

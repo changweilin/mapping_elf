@@ -133,12 +133,14 @@ function showImportedTrackEditNotice(duration = 3200) {
   showNotification(IMPORTED_TRACK_EDIT_NOTICE, 'warning', duration);
 }
 
+// Undo/redo are intentionally absent: their enabled/blocked state is owned solely
+// by _updateHistoryButtons so a data load ('edit' scope) can keep them live while a
+// full route lock keeps them disabled. #waypoint-list button is scoped with
+// :not(.wp-remove-live) so the delete-last button stays clickable during a load.
 const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
   '#btn-clear-route',
   '#btn-replan-route',
   '#btn-reverse-replan-route',
-  '#btn-undo',
-  '#btn-redo',
   '.search-result-add',
 ].join(',');
 
@@ -146,12 +148,10 @@ const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
   '#btn-clear-route',
   '#btn-replan-route',
   '#btn-reverse-replan-route',
-  '#btn-undo',
-  '#btn-redo',
   '#btn-fit-route',
   '#btn-my-location',
   '#btn-import-gpx',
-  '#waypoint-list button',
+  '#waypoint-list button:not(.wp-remove-live)',
   '#weather-table-container button',
   '#weather-table-container input',
   '#weather-table-container select',
@@ -202,6 +202,19 @@ function isWeatherCardInteractionLocked() {
   return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'none' && task.lockScope !== 'edit');
 }
 
+// True while the ONLY thing holding the lock is a running data load (weather/
+// catchment, lockScope 'edit') — the route geometry is settled, so a limited set of
+// edits is allowed mid-load: append a waypoint (map-click), delete the LAST one,
+// undo, redo. Each cancels the load and re-plans, which is the intended flow. A
+// 'route'-scope task (route (re)planning) or an imported track keeps EVERYTHING
+// locked (returns false). Paused loads flip to 'none' and unlock fully on their own.
+function isDataLoadEditMode() {
+  if (importedTrackMode) return false;
+  const tasks = Array.from(routeWeatherBusyTasks.values());
+  if (tasks.some(task => task.lockScope !== 'edit' && task.lockScope !== 'none' && task.lockScope !== 'weather-card')) return false;
+  return tasks.some(task => task.lockScope === 'edit');
+}
+
 function showRouteWeatherBusyNotice(duration = 2200) {
   const now = Date.now();
   if (now - busyInteractionNoticeAt < 900) return;
@@ -248,10 +261,13 @@ function updateRouteWeatherBusyOverlay() {
   const busy = hasRouteWeatherBusyTasks();
   const routeLocked = isRouteWeatherBusy();
   const weatherCardLocked = isWeatherCardInteractionLocked();
+  const dataLoadEdit = isDataLoadEditMode();
   const wasRouteLocked = document.body.classList.contains('route-weather-busy');
+  const wasDataLoadEdit = document.body.classList.contains('data-load-edit');
   document.body.classList.toggle('route-weather-busy', routeLocked);
   document.body.classList.toggle('weather-card-busy', weatherCardLocked);
   document.body.classList.toggle('route-weather-progress-busy', busy);
+  document.body.classList.toggle('data-load-edit', dataLoadEdit);
 
   const overlay = document.getElementById('route-weather-busy-overlay');
   const titleEl = document.getElementById('route-weather-busy-title');
@@ -336,13 +352,22 @@ function updateRouteWeatherBusyOverlay() {
 
   if (typeof mapManager !== 'undefined' && mapManager) {
     mapManager.setFrozen(!!importedTrackMode || routeLocked);
+    // Map-click append stays live while a data load holds the (relaxed) lock.
+    mapManager.allowAppendWhileFrozen = dataLoadEdit;
+  }
+  // Undo/redo live/disabled state is owned here (they were removed from the blunt
+  // disable selector): recompute on every busy transition, not just when going idle.
+  if (typeof _updateHistoryButtons === 'function') _updateHistoryButtons();
+  // Entering/leaving data-load-edit re-renders the waypoint list so the delete-last
+  // affordance appears (or disappears) without waiting for the next waypoint change.
+  if (wasDataLoadEdit !== dataLoadEdit && typeof updateWaypointList === 'function' && typeof mapManager !== 'undefined' && mapManager) {
+    updateWaypointList(mapManager.waypoints);
   }
   if (!busy && typeof syncTrackModeUI === 'function') {
     syncTrackModeUI();
     if (wasRouteLocked && !routeLocked && typeof updateWaypointList === 'function' && typeof mapManager !== 'undefined' && mapManager) {
       updateWaypointList(mapManager.waypoints);
     }
-    if (typeof _updateHistoryButtons === 'function') _updateHistoryButtons();
   }
 }
 
@@ -466,7 +491,10 @@ function installRouteWeatherBusyGuard() {
     if (!isRouteWeatherBusy()) return;
     const tag = target?.tagName?.toLowerCase();
     if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
-    const editKey = e.key === 'Delete' || e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase()));
+    const isUndoRedoKey = (e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase());
+    // Undo/redo stay live while a data load holds the relaxed lock.
+    if (isUndoRedoKey && isDataLoadEditMode()) return;
+    const editKey = e.key === 'Delete' || e.key === 'Backspace' || isUndoRedoKey;
     if (!editKey) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -1208,7 +1236,10 @@ function historyRedo() {
 }
 
 function _updateHistoryButtons() {
-  const frozen = !!importedTrackMode || isRouteWeatherBusy();
+  // A data load ('edit' scope) keeps undo/redo live; a full route lock / imported
+  // track disables them. (These buttons are no longer in the blunt disable selector,
+  // so this is their single source of truth.)
+  const frozen = !!importedTrackMode || (isRouteWeatherBusy() && !isDataLoadEditMode());
   if (btnUndo) btnUndo.disabled = frozen || history.undo.length === 0;
   if (btnRedo) btnRedo.disabled = frozen || history.redo.length === 0;
 }
@@ -3986,7 +4017,7 @@ function setBottomPanelView(view, persist = true) {
   if (mode === 'elev') requestAnimationFrame(() => elevationProfile?.chart?.resize());
   // Opening the catchment view renders the table, then lazily backfills any
   // waypoint whose 集水區 read-out isn't cached yet (progress-bar managed).
-  if (mode === 'catchment' && bottomPanelReady) { renderCatchmentPanel(); autoFetchCatchment(); }
+  if (mode === 'catchment' && bottomPanelReady) { renderCatchmentPanel(); autoFetchCatchment({ notify: true }); }
   if (persist) { try { localStorage.setItem(LS_BP_VIEW_KEY, mode); } catch (_) { } }
 }
 document.getElementById('bp-view-toggle')?.addEventListener('click', (e) => {
@@ -5683,9 +5714,12 @@ async function selectAlternative(index, options = {}) {
   renderWeatherPanel();
 
   // Automatically fetch weather data whenever the route is finalized.
-  // We trigger a general auto-fetch (force:false) so that all points (new waypoints, 
+  // We trigger a general auto-fetch (force:false) so that all points (new waypoints,
   // return waypoints, and intermediate points) get weather info if missing.
   autoFetchWeather({ force: false });
+  // Mirror the same auto-load for 集水區: if the catchment view is open, backfill
+  // the newly-planned points (deferred internally until this plan/weather settles).
+  autoFetchCatchment();
   pendingNewWaypointIndex = null;
   return true;
 }
@@ -5736,6 +5770,10 @@ function hideAlternatives() {
 function updateWaypointList(waypoints) {
   updateRouteLibraryCurrent();
   const frozen = !!importedTrackMode || isRouteWeatherBusy();
+  // While a data load holds the relaxed lock, the only in-list edit allowed is
+  // deleting the LAST waypoint — surface just that one button (marked
+  // .wp-remove-live so the busy disable-selector skips it).
+  const dataLoadEdit = isDataLoadEditMode();
   if (waypoints.length === 0) {
     waypointList.innerHTML = `
       <div class="empty-state">
@@ -5763,18 +5801,28 @@ function updateWaypointList(waypoints) {
       const safeDisplayName = _escapeHtml(displayName);
       const cumM = waypointCumDistM[i];
       const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
+      const isLast = i === waypoints.length - 1;
+      // Data-load-edit: last row shows a single delete-last button; all other rows
+      // show no actions. Normal/full-frozen keep the existing up/down/remove set.
+      const actionsHtml = dataLoadEdit
+        ? (isLast
+            ? `<div class="wp-actions">
+            <button class="wp-action wp-remove wp-remove-live" data-index="${i}" title="刪除最後航點">×</button>
+          </div>`
+            : '')
+        : `<div class="wp-actions" style="${frozen ? 'display:none' : ''}">
+            <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button class="wp-action wp-down" data-index="${i}" title="向下移" ${isLast ? 'disabled' : ''}>↓</button>
+            <button class="wp-action wp-remove" data-index="${i}" title="移除">×</button>
+          </div>`;
       return `
-        <div class="waypoint-item ${frozen ? 'is-frozen' : ''}">
+        <div class="waypoint-item ${frozen && !dataLoadEdit ? 'is-frozen' : ''}">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
           <span class="wp-coords" title="單擊高亮" style="color:${gradColor}">
             <span class="wp-place-name">${safeDisplayName}</span>
             ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
-          <div class="wp-actions" style="${frozen ? 'display:none' : ''}">
-            <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
-            <button class="wp-action wp-down" data-index="${i}" title="向下移" ${i === waypoints.length - 1 ? 'disabled' : ''}>↓</button>
-            <button class="wp-action wp-remove" data-index="${i}" title="移除">×</button>
-          </div>
+          ${actionsHtml}
         </div>`;
     })
     .join('');
@@ -10861,6 +10909,17 @@ function cancelWeatherFetchForRouteReplan() {
   unparkLoadRun(activeWeatherFetchRun);   // wake a paused loop so it can unwind
 }
 
+// Stable partition putting 主航點 (isWaypoint — user-placed points, incl. return
+// legs) before 副航點 (intermediate points), so a long weather/集水區 load fills the
+// important named points first and the many intermediates afterwards. Geographic
+// order is preserved within each group.
+function orderMainWaypointsFirst(items, ptOf) {
+  const main = [];
+  const sub = [];
+  for (const it of items) (ptOf(it)?.isWaypoint ? main : sub).push(it);
+  return main.concat(sub);
+}
+
 function autoFetchWeather(options = {}) {
   if (autoFetchTimeout) clearTimeout(autoFetchTimeout);
   const queuedOptions = {
@@ -10997,8 +11056,71 @@ async function fetchAllWeatherData(options = {}) {
   const fetchBtn = document.querySelector('[data-action="fetch"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
+  // Network-fetch + apply ONE target's weather. Returns 'ok' | 'fail' | 'cancel'.
+  // 'cancel' = the run was aborted (caller breaks). 'fail' = a genuine data failure,
+  // left as a retry candidate. weatherService already retries transient 429/timeout/
+  // empty responses internally; this outcome drives the post-pass retry sweep so a
+  // failed point is never left stuck as an unopenable "?" badge.
+  const fetchAndApplyWeatherForState = async (state) => {
+    const { pt, i, dateStr, hour, cacheKey } = state;
+    WEATHER_ROWS.forEach(row => {
+      const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+      if (cell) {
+        const valueEl = cell.querySelector('.wt-cell-value');
+        if (valueEl) valueEl.textContent = '...';
+        else cell.textContent = '...';
+        cell.classList.remove('error');
+        cell.classList.add('loading');
+      }
+    });
+    try {
+      const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
+      if (isWeatherFetchRunCancelled(fetchRun)) return 'cancel';
+      setWeatherCacheData(pt, dateStr, hour, data, { cacheKey });
+      const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
+      WEATHER_ROWS.forEach(row => {
+        const val = getCellValue(data, row.key, pt);
+        cells[row.key] = val;
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) {
+          updateWeatherTableCell(cell, row.key, val);
+          cell.classList.remove('loading', 'error');
+        }
+      });
+      saveWeatherCells(getSemanticKey(pt), cells);
+      // Update only the outbound map badge; return markers carry their own icon.
+      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
+        mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+      // Refresh chart/map weather markers when it will not interrupt an active waypoint drag.
+      refreshWeatherMarkersAfterWeatherUpdate();
+      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      return 'ok';
+    } catch (err) {
+      if (isWeatherFetchRunCancelled(fetchRun) || isAbortError(err)) return 'cancel';
+      console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
+      WEATHER_ROWS.forEach(row => {
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) {
+          const valueEl = cell.querySelector('.wt-cell-value');
+          if (valueEl) valueEl.textContent = '—';
+          else cell.textContent = '—';
+          cell.classList.remove('loading');
+          cell.classList.add('error');
+        }
+      });
+      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      return 'fail';
+    }
+  };
+
+  // 主航點 first, 副航點 after (requirement: load the important named points before
+  // the many intermediates). Failures are collected for a single retry sweep.
+  const orderedTargets = orderMainWaypointsFirst(targetStates, (s) => s.pt);
+  const failedStates = [];
+  let remainingFailures = 0;
+
   try {
-    for (const state of targetStates) {
+    for (const state of orderedTargets) {
       if (isWeatherFetchRunCancelled(fetchRun)) break;
       await waitIfLoadPaused(fetchRun);            // park here while 停止 is active
       if (isWeatherFetchRunCancelled(fetchRun)) break;   // cancelled while paused
@@ -11060,53 +11182,9 @@ async function fetchAllWeatherData(options = {}) {
         }
       }
 
-      WEATHER_ROWS.forEach(row => {
-        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) {
-          const valueEl = cell.querySelector('.wt-cell-value');
-          if (valueEl) valueEl.textContent = '...';
-          else cell.textContent = '...';
-          cell.classList.remove('error');
-          cell.classList.add('loading');
-        }
-      });
-
-      try {
-        data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
-        if (isWeatherFetchRunCancelled(fetchRun)) break;
-        setWeatherCacheData(pt, dateStr, hour, data, { cacheKey });
-        const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
-        WEATHER_ROWS.forEach(row => {
-          const val = getCellValue(data, row.key, pt);
-          cells[row.key] = val;
-          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-          if (cell) {
-            updateWeatherTableCell(cell, row.key, val);
-            cell.classList.remove('loading', 'error');
-          }
-        });
-        saveWeatherCells(getSemanticKey(pt), cells);
-        // Update only the outbound map badge; return markers carry their own icon.
-        if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
-          mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
-
-        // Refresh chart/map weather markers when it will not interrupt an active waypoint drag.
-        refreshWeatherMarkersAfterWeatherUpdate();
-      } catch (err) {
-        if (isWeatherFetchRunCancelled(fetchRun) || isAbortError(err)) break;
-        console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
-        WEATHER_ROWS.forEach(row => {
-          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-          if (cell) {
-            const valueEl = cell.querySelector('.wt-cell-value');
-            if (valueEl) valueEl.textContent = '—';
-            else cell.textContent = '—';
-            cell.classList.remove('loading');
-            cell.classList.add('error');
-          }
-        });
-      }
-      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      const outcome = await fetchAndApplyWeatherForState(state);
+      if (outcome === 'cancel') break;
+      if (outcome === 'fail') failedStates.push(state);
       processedTargets++;
       markWeatherProgress();
       await maybePaintWeatherProgress();
@@ -11116,6 +11194,33 @@ async function fetchAllWeatherData(options = {}) {
         if (!shouldContinue || isWeatherFetchRunCancelled(fetchRun)) break;
       }
     }
+
+    // Retry sweep: a burst load's TAIL is the most 429/timeout-prone, and the
+    // progress bar reaching 100% while those points sit at "?" is exactly the
+    // reported bug. By now the rate-limit window has had time to recover — re-attempt
+    // the failures once (主航點 first). Whatever still fails is surfaced honestly.
+    let stillFailed = failedStates;
+    if (!isWeatherFetchRunCancelled(fetchRun) && stillFailed.length) {
+      const retryList = orderMainWaypointsFirst(stillFailed, (s) => s.pt);
+      stillFailed = [];
+      const retryTotal = retryList.length;
+      let retryDone = 0;
+      for (const state of retryList) {
+        if (isWeatherFetchRunCancelled(fetchRun)) { stillFailed.push(state); continue; }
+        await waitIfLoadPaused(fetchRun);
+        if (isWeatherFetchRunCancelled(fetchRun)) { stillFailed.push(state); continue; }
+        busyTask.set({ detail: `重試載入天氣資訊 ${retryDone + 1}/${retryTotal}`, progress: 100 });
+        const outcome = await fetchAndApplyWeatherForState(state);
+        if (outcome === 'cancel') { stillFailed.push(state); break; }
+        if (outcome === 'fail') stillFailed.push(state);
+        retryDone++;
+        if (retryDone < retryTotal) {
+          const shouldContinue = await waitForWeatherFetchDelay(500, fetchRun.signal);
+          if (!shouldContinue || isWeatherFetchRunCancelled(fetchRun)) break;
+        }
+      }
+    }
+    remainingFailures = stillFailed.length;
   } finally {
     const wasCancelled = isWeatherFetchRunCancelled(fetchRun);
     pausableLoadRuns.delete(fetchRun);
@@ -11140,7 +11245,13 @@ async function fetchAllWeatherData(options = {}) {
       fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
     }
     if (wasCancelled) return;
-    showNotification('天氣資訊已更新', 'success', 2000);
+    // Honest completion: don't claim success while some points are still "?".
+    // Those badges stay clickable to retry that single point on demand.
+    if (remainingFailures > 0) {
+      showNotification(`部分航點天氣載入失敗（${remainingFailures}），點擊該航點可重試`, 'warning', 3200);
+    } else {
+      showNotification('天氣資訊已更新', 'success', 2000);
+    }
   }
 }
 
@@ -11274,14 +11385,47 @@ function cancelCatchmentFetchForRouteReplan() {
   unparkLoadRun(activeCatchmentFetchRun);   // wake a paused loop so it can unwind
 }
 
-// Lazy backfill on view-open: fetch only when some waypoint column is uncached.
-function autoFetchCatchment() {
+let catchmentAutoFetchTimeout = 0;
+let catchmentReadNoticeAt = 0;
+
+// Hint shown when the catchment view has missing data but the read is currently
+// restricted — a route re-plan / weather load owns the edit lock, or a batch just
+// came back empty (network / API-quota limited). Throttled like the other notices.
+function showCatchmentReadRestrictedNotice(kind = 'busy') {
+  const now = Date.now();
+  if (now - catchmentReadNoticeAt < 1500) return;
+  catchmentReadNoticeAt = now;
+  const msg = kind === 'failed'
+    ? '集水區資訊讀取受限，請稍後再試'
+    : '資料處理中，集水區資訊將於完成後自動載入';
+  showNotification(msg, 'warning', 2400);
+}
+
+// Auto-load 集水區 for any visible column still missing it — the catchment
+// counterpart to autoFetchWeather, so a freshly-planned route backfills new
+// waypoints without a manual 取得集水區. Only runs while the catchment view is
+// showing; when a route/weather load holds priority it defers (and, if the user
+// just switched in, hints why) then retries once that work settles.
+function autoFetchCatchment({ notify = false } = {}) {
+  if (catchmentAutoFetchTimeout) { clearTimeout(catchmentAutoFetchTimeout); catchmentAutoFetchTimeout = 0; }
+  if (!bottomPanelReady || getBottomPanelView() !== 'catchment') return;
   if (isCatchmentFetching) return;
+
   const anyMissing = getCatchmentColumnIndices().some((colIdx) => {
     const pt = weatherPoints[colIdx];
     return pt && getSavedCatchmentCells(getSemanticKey(pt))?.status !== 'ok';
   });
-  if (anyMissing) fetchAllCatchmentData();
+  if (!anyMissing) return;
+
+  // Defer only while an active route re-plan owns the state (columns are still
+  // being rebuilt); a concurrent weather load is fine — catchment loads alongside
+  // it, same as the manual 取得集水區 during a weather fetch.
+  if (isProcessing) {
+    if (notify) showCatchmentReadRestrictedNotice('busy');
+    catchmentAutoFetchTimeout = setTimeout(() => autoFetchCatchment({ notify: false }), 1200);
+    return;
+  }
+  fetchAllCatchmentData();
 }
 
 // Delineate + hydrology for one point, save to the shared cache, return
@@ -11356,12 +11500,17 @@ async function fetchAllCatchmentData(options = {}) {
     return;
   }
 
+  // 主航點 first, 副航點 (intermediates) after — the important named points get their
+  // 集水區 read-out before the many intermediates on a long, DEM-heavy load.
+  const orderedTargets = orderMainWaypointsFirst(targets, (t) => t.pt);
+
   const controller = new AbortController();
   const run = { id: ++catchmentFetchRunSeq, controller, signal: controller.signal, cancelled: false, paused: false, lockScope: 'edit', _resume: null };
   activeCatchmentFetchRun = run;
   isCatchmentFetching = true;
   const total = targets.length;
   let done = 0;
+  let okCount = 0;
   const busyTask = beginRouteWeatherBusyTask({
     title: '正在載入集水區資訊',
     detail: `載入集水區資訊 0/${total}`,
@@ -11374,7 +11523,7 @@ async function fetchAllCatchmentData(options = {}) {
   if (fetchBtn) fetchBtn.disabled = true;
 
   try {
-    for (const { colIdx, pt } of targets) {
+    for (const { colIdx, pt } of orderedTargets) {
       if (isCatchmentFetchRunCancelled(run)) break;
       await waitIfLoadPaused(run);                       // park here while 停止 is active
       if (isCatchmentFetchRunCancelled(run)) break;      // cancelled while paused
@@ -11389,6 +11538,7 @@ async function fetchAllCatchmentData(options = {}) {
       }
       if (isCatchmentFetchRunCancelled(run)) break;
       fillCatchmentTableColumn(colIdx, readout);
+      if (readout?.status === 'ok') okCount++;
       // Keep an open card that's showing this point's catchment view in sync.
       if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
       done++;
@@ -11405,7 +11555,10 @@ async function fetchAllCatchmentData(options = {}) {
     if (!wasCancelled) busyTask.set({ detail: '完成', progress: 100 });
     busyTask.end();
     if (fetchBtn) fetchBtn.disabled = false;
-    if (!wasCancelled) showNotification('集水區資訊已更新', 'success', 2000);
+    // Every column came back empty (DEM/hydrology reads blocked — offline or
+    // API-quota limited): hint rather than the misleading "已更新".
+    if (!wasCancelled && okCount === 0) showCatchmentReadRestrictedNotice('failed');
+    else if (!wasCancelled) showNotification('集水區資訊已更新', 'success', 2000);
   }
 }
 
@@ -11851,6 +12004,32 @@ function syncCatchmentBasins() {
   wanted.forEach((colIdx) => { if (!_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx); });
 }
 
+// Display-only progress pill (lockScope 'none' — no editing lock) shown while a
+// card's 集水區 basin/data is being delineated. The per-card DEM compute is
+// otherwise silent, so the user faced an empty card + undrawn region with no sign
+// anything was running. Ref-counted so concurrent card computes share one pill,
+// and only raised on a cache MISS (a cache hit returns instantly).
+let _cardCatchmentBusyCount = 0;
+let _cardCatchmentBusyTask = null;
+function beginCardCatchmentBusy() {
+  _cardCatchmentBusyCount++;
+  if (!_cardCatchmentBusyTask) {
+    _cardCatchmentBusyTask = beginRouteWeatherBusyTask({
+      title: '正在計算集水區', detail: '計算集水區範圍中…', progress: null, lockScope: 'none',
+    });
+  }
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    _cardCatchmentBusyCount = Math.max(0, _cardCatchmentBusyCount - 1);
+    if (_cardCatchmentBusyCount === 0 && _cardCatchmentBusyTask) {
+      _cardCatchmentBusyTask.end();
+      _cardCatchmentBusyTask = null;
+    }
+  };
+}
+
 // Delineate (cache-first) and draw ONLY the basin overlay for a card key — no
 // panel — so the range shows on the map independently of the card body (compact,
 // minimized, closed, or the GPS cursor). Token-guarded per key against a newer
@@ -11861,11 +12040,14 @@ async function drawBasinOverlay(key, lat, lng, accentColor) {
   _cardCatchmentAbort.get(key)?.abort();
   const abort = new AbortController();
   _cardCatchmentAbort.set(key, abort);
+  const endBusy = getCatchmentCacheHit(lat, lng) ? null : beginCardCatchmentBusy();
   let result = null;
   try {
     result = await getCatchmentFor(lat, lng, { signal: abort.signal });
   } catch (_) {
     if (token !== _cardCatchmentToken.get(key)) return;
+  } finally {
+    endBusy?.();
   }
   if (token !== _cardCatchmentToken.get(key)) return;
   if (_cardCatchmentAbort.get(key) === abort) _cardCatchmentAbort.delete(key);
@@ -11960,12 +12142,15 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
     if (Array.isArray(saved.hydro)) fill('hydro', saved.hydro);
   }
 
+  const endBusy = getCatchmentCacheHit(lat, lng) ? null : beginCardCatchmentBusy();
   let result;
   try {
     result = await getCatchmentFor(lat, lng, { signal: abort.signal });
   } catch (err) {
     if (stale()) return;                                   // superseded — discard silently
     result = { status: 'error' };
+  } finally {
+    endBusy?.();
   }
   if (stale()) return;
 
