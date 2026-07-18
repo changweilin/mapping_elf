@@ -267,6 +267,76 @@ test('catchment view choice is remembered across a page reload', async ({ page }
   await expect(poly).toHaveCount(1, { timeout: 20000 });
 });
 
+test('waypoint catchment readout is remembered across a page reload', async ({ page }) => {
+  // Reload-safe reset (see the view-choice test): the route, weather cache and the
+  // persisted catchment readout must all survive the reload.
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('__catch_data_setup')) return;
+    localStorage.clear();
+    localStorage.setItem('mappingElf_routeMode', 'walking');
+    localStorage.setItem('mappingElf_roundTrip', '0');
+    localStorage.setItem('mappingElf_oLoop', '0');
+    localStorage.setItem('mappingElf_speedMode', '0');
+    localStorage.setItem('mappingElf_segmentKm', '0');
+    localStorage.setItem('mappingElf_language', 'zh-TW');
+    localStorage.setItem('mappingElf_collectiveMarked', '0');
+    localStorage.setItem('mappingElf_collectiveIntermediate', '0');
+    localStorage.setItem('mappingElf_collectiveAll', '0');
+    sessionStorage.setItem('__catch_data_setup', '1');
+  });
+  await page.route('**/route/v1/**', (route) => {
+    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
+    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
+    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
+  });
+  await forecast(page);
+  await flood(page);
+  await coneElevation(page);
+
+  await page.goto('/');
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  const box = await page.locator('#map').boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
+  await page.mouse.click(box.x + box.width * 0.66, box.y + box.height * 0.5);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first()).toBeVisible();
+  await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+
+  const cardId = await openFirstCardFull(page);
+  const card = page.locator(`#${cardId}`);
+  await clickCardControl(card.locator('.wc-view-btn[data-wc-view="catchment"]'));
+  await expect(card.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
+  // Wait for the full readout (last hydrology cell resolves off the "…" skeleton).
+  await expect(card.locator('[data-catch="hydro"] .wc-catch-val').last()).not.toHaveText('…', { timeout: 20000 });
+
+  // The full readout is now persisted under the registered key: an ok entry with a
+  // 6-row hydrology array + terrain values.
+  const store = await page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_catchmentCells') || '{}'));
+  const entries = Object.values(store);
+  expect(entries.length).toBeGreaterThan(0);
+  expect(entries[0].status).toBe('ok');
+  expect(Array.isArray(entries[0].hydro)).toBe(true);
+  expect(entries[0].hydro.length).toBe(6);
+  expect(Array.isArray(entries[0].terrain)).toBe(true);
+  expect(entries[0].terrain.length).toBeGreaterThan(0);
+
+  // Reload → the remembered readout survives storage AND the card (reopened in its
+  // remembered catchment view) shows real terrain + hydrology, no "…" placeholders.
+  await page.reload();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  const survived = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('mappingElf_catchmentCells') || '{}')).length);
+  expect(survived).toBeGreaterThan(0);
+
+  const cardId2 = await openFirstCardFull(page);
+  const card2 = page.locator(`#${cardId2}`);
+  await expect(card2.locator('.wc-view-btn[data-wc-view="catchment"].active')).toBeVisible({ timeout: 10000 });
+  await expect(card2.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
+  await expect(card2.locator('[data-catch="hydro"] .wc-catch-val').last()).not.toHaveText('…', { timeout: 20000 });
+  await expect(card2.locator('.wc-catchment')).not.toContainText('…');
+});
+
 test('view toggle applies to the whole collective set', async ({ page }) => {
   await setupRoute(page, { collective: true });
 

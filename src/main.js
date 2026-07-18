@@ -1116,6 +1116,11 @@ function applySettingsFromStorage() {
   } catch {
     cachedCatchmentData = {};
   }
+  try {
+    savedCatchmentCells = JSON.parse(localStorage.getItem(LS_CATCHMENT_CELLS_KEY) || '{}');
+  } catch {
+    savedCatchmentCells = {};
+  }
   loadCardCatchmentViewMemory();   // restore per-card 天氣/集水區 view choice from the imported state
   collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0';
   collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
@@ -7858,6 +7863,24 @@ let savedWeatherCells = (() => {
   catch { return {}; }
 })();
 
+// Persisted catchment readout (terrain + hydrology fill-ready HTML) keyed by the
+// SAME semantic point key as savedWeatherCells, so a waypoint's 集水區 info is
+// remembered across refresh / .melmap and shows instantly — the catchment data
+// flows through the same save/prune/restore pipeline as the weather cells.
+const LS_CATCHMENT_CELLS_KEY = 'mappingElf_catchmentCells';
+let savedCatchmentCells = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_CATCHMENT_CELLS_KEY) || '{}'); }
+  catch { return {}; }
+})();
+function saveCatchmentCells(semKey, cells) {
+  if (!semKey) return;
+  savedCatchmentCells[semKey] = cells;
+  try { localStorage.setItem(LS_CATCHMENT_CELLS_KEY, JSON.stringify(savedCatchmentCells)); } catch (_) { }
+}
+function getSavedCatchmentCells(semKey) {
+  return (semKey && savedCatchmentCells[semKey]) || null;
+}
+
 /**
  * Stable semantic key for a weather column point, based on coordinates.
  * Rounds lat/lng to 2 decimal places (~550 m threshold at equator):
@@ -9930,9 +9953,10 @@ function renderWeatherPanel() {
     return;
   }
 
-  // Prune savedWeatherCells: remove entries whose coordinate key no longer matches
-  // any point in the current panel. This prevents stale data from accumulating in
-  // localStorage when waypoints are moved far or deleted.
+  // Prune savedWeatherCells + savedCatchmentCells: remove entries whose key no
+  // longer matches any point in the current panel. Prevents stale data from
+  // accumulating in localStorage when waypoints are moved far or deleted. Both
+  // stores share the semantic-key namespace, so they prune in one pass.
   {
     const validKeys = new Set(weatherPoints.flatMap(p => [getSemanticKey(p), getLegacySemanticKey(p)]));
     let pruned = false;
@@ -9941,6 +9965,13 @@ function renderWeatherPanel() {
     });
     if (pruned) {
       try { localStorage.setItem(LS_WEATHER_CELLS_KEY, JSON.stringify(savedWeatherCells)); } catch (_) { }
+    }
+    let prunedCatch = false;
+    Object.keys(savedCatchmentCells).forEach(k => {
+      if (!validKeys.has(k)) { delete savedCatchmentCells[k]; prunedCatch = true; }
+    });
+    if (prunedCatch) {
+      try { localStorage.setItem(LS_CATCHMENT_CELLS_KEY, JSON.stringify(savedCatchmentCells)); } catch (_) { }
     }
   }
 
@@ -11408,7 +11439,7 @@ function resolveCardWeatherValue(colIdx, info, key) {
 // superseded fill (time change or a newer card) never lands stale (INC race
 // rule). weatherVal(key) resolves the card's already-shown weather value (same
 // fallback chain as the weather view), so no extra weather fetch is issued here.
-async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, container }) {
+async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weatherVal, container }) {
   if (!container) return;
   const token = (_cardPanelToken.get(key) || 0) + 1;
   _cardPanelToken.set(key, token);
@@ -11425,6 +11456,15 @@ async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, c
   // Weather mirrors the weather view (already loaded) — fill it immediately while the DEM computes.
   fill('weather', CATCHMENT_CARD_WEATHER_KEYS.map(([k]) => (weatherVal ? weatherVal(k) : '—')));
 
+  // Prefill terrain + hydrology from the remembered readout so nothing shows "…"
+  // while the live compute runs — and the info survives if a fetch fails / offline.
+  const saved = getSavedCatchmentCells(semKey);
+  const hasSaved = saved?.status === 'ok';
+  if (hasSaved) {
+    if (Array.isArray(saved.terrain)) fill('terrain', saved.terrain);
+    if (Array.isArray(saved.hydro)) fill('hydro', saved.hydro);
+  }
+
   let result;
   try {
     result = await getCatchmentFor(lat, lng, { signal: abort.signal });
@@ -11435,6 +11475,9 @@ async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, c
   if (stale()) return;
 
   if (!result || result.status !== 'ok' || !result.outer?.length) {
+    // Live delineation failed — keep the remembered readout on screen if we have
+    // one; only show the reason when there is nothing to fall back to.
+    if (hasSaved) return;
     const msg = result?.status === 'flat' ? '此處為大面積平地，無法判定集水方向'
       : result?.status === 'empty' ? '此處集水範圍過小'
       : '海拔資料取得失敗，請稍後再試';
@@ -11444,7 +11487,8 @@ async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, c
 
   const geoRows = computeGeometryRows(result);
   const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
-  fill('terrain', [formatArea(result.areaM2), outlet, ...geoRows.map(catchmentValueHtml)]);
+  const terrainVals = [formatArea(result.areaM2), outlet, ...geoRows.map(catchmentValueHtml)];
+  fill('terrain', terrainVals);
 
   let hydroEnv = null;
   try {
@@ -11455,9 +11499,21 @@ async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, c
   }
   if (stale()) return;
   if (_cardPanelAbort.get(key) === abort) _cardPanelAbort.delete(key);
-  fill('hydro', (hydroEnv && hydroEnv.available)
+  const hydroVals = (hydroEnv && hydroEnv.available)
     ? computeHydroIndicators(result, hydroEnv).map(catchmentValueHtml)
-    : CATCHMENT_HYDRO_LABELS.map(() => '—'));
+    : null;
+  if (hydroVals) fill('hydro', hydroVals);
+  else if (!(hasSaved && Array.isArray(saved.hydro))) fill('hydro', CATCHMENT_HYDRO_LABELS.map(() => '—'));
+
+  // Remember the freshest complete readout (keyed like the weather cells) so it
+  // shows instantly next time and after a page refresh / .melmap import.
+  saveCatchmentCells(semKey, {
+    status: 'ok',
+    terrain: terrainVals,
+    hydro: hydroVals || (hasSaved ? saved.hydro : null) || CATCHMENT_HYDRO_LABELS.map(() => '—'),
+    dateStr: dateStr || null,
+    hour: Number.isFinite(Number(hour)) ? Number(hour) : null,
+  });
 }
 
 // Per-point "set to now" for a waypoint card. Mirrors the card's ± buttons
@@ -11859,6 +11915,7 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
       drawBasinOverlay('cursor', ctx.lat, ctx.lng, '#6366f1');   // basin on the map
       renderCardCatchment({                                       // panel body
         key: 'cursor',
+        semKey: null,   // GPS cursor is ephemeral — not remembered
         lat: ctx.lat,
         lng: ctx.lng,
         dateStr: ctx.dateStr,
@@ -12041,6 +12098,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     if (container && info?.pt) {
       renderCardCatchment({
         key: colIdx,
+        semKey: getSemanticKey(info.pt),
         lat: info.pt.lat,
         lng: info.pt.lng,
         dateStr: info.dateStr,
