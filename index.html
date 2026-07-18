@@ -82,7 +82,9 @@
       </div>
       <div class="progress-side">
         <span class="progress-task-count hidden" id="route-weather-busy-count"></span>
+        <span class="progress-paused-badge hidden" id="route-weather-busy-paused" data-i18n="已暫停">已暫停</span>
         <div class="loading-progress-text progress-percent" id="route-weather-busy-progress">0%</div>
+        <button type="button" id="route-weather-busy-toggle" class="progress-toggle-btn hidden" aria-pressed="false">停止</button>
       </div>
       <div class="loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="loading-bar-fill" id="route-weather-busy-fill"></div>
@@ -200,6 +202,7 @@
       <div class="bp-view-toggle" id="bp-view-toggle" role="group" aria-label="下方面板檢視切換">
         <button type="button" class="bp-view-btn active" data-bp-view="elev" aria-pressed="true">垂直軌跡圖</button>
         <button type="button" class="bp-view-btn" data-bp-view="weather" aria-pressed="false">詳細天氣</button>
+        <button type="button" class="bp-view-btn" data-bp-view="catchment" aria-pressed="false">詳細集水區</button>
       </div>
       <!-- Always-visible route summary chips (mirror the side-panel stats).
            Lives inside .bp-chart-row so the panel's default-height math
@@ -233,6 +236,13 @@
       <div id="weather-table-container">
         <div class="weather-empty-state">
           <p>完成規劃路線後點擊「取得天氣」</p>
+        </div>
+      </div>
+    </div>
+    <div class="bp-catchment-scroll">
+      <div id="catchment-table-container">
+        <div class="weather-empty-state">
+          <p>完成規劃路線後點擊「取得集水區」</p>
         </div>
       </div>
     </div>

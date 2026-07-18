@@ -438,6 +438,9 @@ function coordinateDistance(a, b) {
 }
 
 async function startLongPressWaypointDrag(page, point) {
+  // Waypoint editing (drag) is locked while a load holds the edit lock, so wait it
+  // out first — mirrors addWaypointsAtFractions' map-click guard.
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 15000 });
   await page.mouse.move(point.x, point.y);
   await page.mouse.down();
   await page.waitForTimeout(LONG_PRESS_MS);
@@ -519,6 +522,8 @@ async function touchSelectTopWaypoint(page, number) {
 }
 
 async function touchLongPressDrag(page, startPoint, endPoint) {
+  // Editing is locked while a load holds the edit lock; wait it out before arming.
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 15000 });
   await dispatchTouch(page, 'touchStart', startPoint);
   await page.waitForTimeout(LONG_PRESS_MS);
   await expect(page.locator('.waypoint-trash-zone')).toBeVisible();
@@ -709,6 +714,11 @@ test('route replanning cancels in-flight weather fetch and restarts after route 
   expect(box).not.toBeNull();
   const routeStartsBefore = routeEvents.filter((event) => event.type === 'start').length;
   const routeFinishesBefore = routeEvents.filter((event) => event.type === 'finish').length;
+
+  // Editing is locked while the weather load runs; stop it so the map click can
+  // add a waypoint (which then replans and cancels the paused fetch).
+  await expect(page.locator('#route-weather-busy-toggle')).toBeVisible();
+  await page.locator('#route-weather-busy-toggle').click();
 
   await page.mouse.click(box.x + box.width * 0.70, box.y + box.height * 0.50);
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);
@@ -1712,7 +1722,7 @@ test.describe('touch waypoint gestures', () => {
       .toBe(beforeLayer.returnAboveOutbound);
   });
 
-  test('touch long-press dragging survives weather marker updates while loading', async ({ page }) => {
+  test('touch long-press waypoint editing is locked while loading, then works once idle', async ({ page }) => {
     await openLayerTestApp(page, { weatherDelayMs: 600 });
     await addRoundTripWaypoints(page);
 
@@ -1720,11 +1730,21 @@ test.describe('touch waypoint gestures', () => {
     const storedBefore = await storedWaypoints(page);
     expect(storedBefore).toHaveLength(2);
 
+    // While the load holds the edit lock, a long-press does NOT arm the drag and
+    // the waypoint stays put (raw dispatch — the helper would wait out the lock).
     await expect(page.locator('[data-action="fetch"]').first()).toBeDisabled({ timeout: 4000 });
-    await touchLongPressDrag(page, before, {
-      x: before.x + 85,
-      y: before.y + 30,
-    });
+    await dispatchTouch(page, 'touchStart', before);
+    await page.waitForTimeout(LONG_PRESS_MS);
+    await expect(page.locator('.waypoint-trash-zone')).toBeHidden();
+    await dispatchTouch(page, 'touchMove', { x: before.x + 85, y: before.y + 30 });
+    await dispatchTouch(page, 'touchEnd', { x: before.x + 85, y: before.y + 30 });
+    const storedDuring = await storedWaypoints(page);
+    expect(coordinateDistance(storedDuring[0], storedBefore[0])).toBeLessThan(0.000001);
+
+    // Once the load finishes, the same drag moves the waypoint.
+    await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 8000 });
+    const beforeIdle = await waypointCenter(page, 1, false);
+    await touchLongPressDrag(page, beforeIdle, { x: beforeIdle.x + 85, y: beforeIdle.y + 30 });
 
     const storedAfter = await storedWaypoints(page);
     expect(storedAfter).toHaveLength(2);

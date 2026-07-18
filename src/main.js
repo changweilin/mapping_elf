@@ -150,6 +150,7 @@ const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
   '#btn-redo',
   '#btn-fit-route',
   '#btn-my-location',
+  '#btn-import-gpx',
   '#waypoint-list button',
   '#weather-table-container button',
   '#weather-table-container input',
@@ -163,7 +164,20 @@ const WEATHER_CARD_BUSY_DISABLE_SELECTOR = [
   '.weather-card select',
 ].join(',');
 
+// During a data load ('edit' scope) cards stay fully interactive (open/close/
+// resize/navigate) EXCEPT their date/time editors — changing the time is an edit,
+// only allowed once the load is stopped.
+const WEATHER_CARD_EDIT_DISABLE_SELECTOR = [
+  '.weather-card .wc-date-input',
+  '.weather-card .wc-time-select',
+  '.weather-card .wc-time-adj-btn',
+  '.weather-card .wc-now-btn',
+].join(',');
+
 let routeWeatherBusyTasks = new Map();
+// Active, pausable data loads (weather + catchment). The progress bar's 停止/繼續
+// toggle acts on all of them; each run exposes { paused, _resume, busyTask }.
+const pausableLoadRuns = new Set();
 let deferredBusySettings = new Map();
 let busyInteractionNoticeAt = 0;
 let deferredSettingsNoticeAt = 0;
@@ -175,14 +189,17 @@ function hasRouteWeatherBusyTasks() {
   return routeWeatherBusyTasks.size > 0;
 }
 
-// lockScope: 'route' locks route editing + weather cards, 'weather-card' locks
-// only weather cards, 'none' is display-only (progress readout, no locking).
+// lockScope: 'route' locks route editing + weather cards; 'edit' locks route
+// editing + card date/time (but leaves cards open/close/resize free) — used by the
+// weather/catchment data loads; 'weather-card' locks only weather cards; 'none' is
+// display-only (progress readout, no locking — e.g. a paused load).
 function isRouteWeatherBusy() {
   return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'weather-card' && task.lockScope !== 'none');
 }
 
 function isWeatherCardInteractionLocked() {
-  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'none');
+  // 'edit' scope deliberately does NOT lock card open/close/resize.
+  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'none' && task.lockScope !== 'edit');
 }
 
 function showRouteWeatherBusyNotice(duration = 2200) {
@@ -292,8 +309,27 @@ function updateRouteWeatherBusyOverlay() {
     fillEl.style.removeProperty('--busy-progress');
   }
 
+  // 停止/繼續 toggle — only while a pausable data load (weather/catchment) runs.
+  // Label + spinner flip with the paused state.
+  const toggleBtn = document.getElementById('route-weather-busy-toggle');
+  const pausedBadge = document.getElementById('route-weather-busy-paused');
+  const pausable = busy && hasPausableLoad();
+  const paused = pausable && anyLoadPaused();
+  if (overlay) overlay.classList.toggle('is-paused', paused);
+  if (toggleBtn) {
+    toggleBtn.classList.toggle('hidden', !pausable);
+    if (pausable) {
+      toggleBtn.textContent = translatePhrase(paused ? '繼續' : '停止');
+      toggleBtn.setAttribute('aria-pressed', String(paused));
+    }
+  }
+  if (pausedBadge) pausedBadge.classList.toggle('hidden', !paused);
+
   syncBusyDisabledControls(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR, routeLocked, 'route-edit-control');
   syncBusyDisabledControls(WEATHER_CARD_BUSY_DISABLE_SELECTOR, weatherCardLocked, 'weather-edit-control');
+  // Card date/time editors: locked while a load holds the 'edit' lock (routeLocked),
+  // even though the card itself stays open/close/resize-able.
+  syncBusyDisabledControls(WEATHER_CARD_EDIT_DISABLE_SELECTOR, routeLocked, 'wc-time-edit-control');
   // Re-evaluate the 3D button: it must stay locked while any route/weather task
   // runs and re-enable as soon as they all finish.
   if (typeof update3dButtonBadge === 'function') update3dButtonBadge();
@@ -348,7 +384,59 @@ function flushDeferredBusySettings() {
   pending.forEach((applyFn) => applyFn());
 }
 
+// --- Load pause/resume (progress-bar 停止/繼續 toggle) -------------------------
+// A pausable load (weather/catchment) registers its run; its loop parks on
+// waitIfLoadPaused() while paused. Pausing flips the load's busy task to
+// display-only ('none') so date/time, track-load and waypoint edits unlock;
+// resuming restores its 'edit' lock and wakes the parked loop.
+function anyLoadPaused() {
+  return Array.from(pausableLoadRuns).some((r) => r.paused);
+}
+function hasPausableLoad() {
+  return pausableLoadRuns.size > 0;
+}
+function waitIfLoadPaused(run) {
+  if (!run || !run.paused) return Promise.resolve();
+  return new Promise((resolve) => { run._resume = resolve; });
+}
+function pauseAllLoads() {
+  let changed = false;
+  pausableLoadRuns.forEach((run) => {
+    if (!run.paused && !run.cancelled) {
+      run.paused = true;
+      run.busyTask?.set({ lockScope: 'none' });   // unlock editing while stopped
+      changed = true;
+    }
+  });
+  if (changed) updateRouteWeatherBusyOverlay();
+}
+function resumeAllLoads() {
+  pausableLoadRuns.forEach((run) => {
+    if (run.paused) {
+      run.paused = false;
+      run.busyTask?.set({ lockScope: run.lockScope || 'edit' });   // re-lock editing
+      const cb = run._resume; run._resume = null; cb?.();
+    }
+  });
+  updateRouteWeatherBusyOverlay();
+}
+function toggleLoadPause() {
+  if (anyLoadPaused()) resumeAllLoads(); else pauseAllLoads();
+}
+// Wake a parked loop so a cancel (route replan) can unwind it cleanly.
+function unparkLoadRun(run) {
+  if (run && run._resume) { const cb = run._resume; run._resume = null; cb?.(); }
+}
+
 function installRouteWeatherBusyGuard() {
+  const toggleBtn = document.getElementById('route-weather-busy-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleLoadPause();
+    });
+  }
   const blockPointerEvent = (e) => {
     const target = e.target;
     const isWeatherBadgeClick = e.type === 'click' && target?.closest?.('.wp-weather-badge');
@@ -387,6 +475,62 @@ function installRouteWeatherBusyGuard() {
 }
 
 installRouteWeatherBusyGuard();
+
+// Hover explanation for info-card / catchment-table items. A single translucent
+// bubble follows whichever `[data-tip]` element the pointer is over; the tip text
+// is the Chinese label's description (WC_INFO_TIPS), translated at show-time. Pure
+// progressive enhancement — no-op on touch/no-hover devices.
+let _wcTipBubble = null;
+function getInfoTipBubble() {
+  if (_wcTipBubble) return _wcTipBubble;
+  const el = document.createElement('div');
+  el.className = 'wc-tip-bubble';
+  el.setAttribute('role', 'tooltip');
+  el.setAttribute('data-i18n-skip', '');   // text is pre-translated; keep the observer off it
+  document.body.appendChild(el);
+  _wcTipBubble = el;
+  return el;
+}
+function hideInfoTip() {
+  if (_wcTipBubble) _wcTipBubble.classList.remove('visible');
+  _infoTipCurrent = null;
+}
+function showInfoTipFor(el) {
+  const label = el?.dataset?.tip;
+  const desc = label && WC_INFO_TIPS[label];
+  if (!desc) { hideInfoTip(); return; }
+  const bubble = getInfoTipBubble();
+  bubble.textContent = translatePhrase(desc);
+  bubble.classList.add('visible');
+  const r = el.getBoundingClientRect();
+  const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+  const margin = 8;
+  let left = r.left + r.width / 2 - bw / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - bw - margin));
+  let top = r.top - bh - margin;                  // prefer above the item
+  bubble.classList.toggle('below', top < margin);
+  if (top < margin) top = r.bottom + margin;      // …flip below when clipped at the top
+  bubble.style.left = `${Math.round(left)}px`;
+  bubble.style.top = `${Math.round(top)}px`;
+}
+let _infoTipCurrent = null;
+function installInfoTipController() {
+  if (!window.matchMedia?.('(hover: hover)').matches) return;  // skip touch-only devices
+  document.addEventListener('mouseover', (e) => {
+    const el = e.target?.closest?.('[data-tip]');
+    if (el === _infoTipCurrent) return;
+    _infoTipCurrent = el;
+    if (el) showInfoTipFor(el); else hideInfoTip();
+  });
+  document.addEventListener('mouseout', (e) => {
+    // Hide only when the pointer truly leaves the current tip target.
+    if (_infoTipCurrent && !e.relatedTarget?.closest?.('[data-tip]')) hideInfoTip();
+  });
+  // A moved/closed card must not leave a stale bubble hanging over the map.
+  window.addEventListener('scroll', hideInfoTip, true);
+  document.addEventListener('mousedown', hideInfoTip, true);
+}
+installInfoTipController();
 
 let routeExportersPromise = null;
 async function ensureRouteExporters() {
@@ -3818,9 +3962,20 @@ sidePanel.addEventListener('touchend', (e) => {
 // stacking both. Mode class on #bottom-panel drives visibility (see main.css).
 const LS_BP_VIEW_KEY = 'mappingElf_bpView';
 const bottomPanelEl = document.getElementById('bottom-panel');
+const BP_VIEWS = ['elev', 'weather', 'catchment'];
+// False until the weather panel has rendered once (weatherPoints initialised). The
+// module-eval bootstrap below sets the mode class but MUST NOT touch weatherPoints
+// (TDZ), so catchment render/fetch side-effects are gated on this.
+let bottomPanelReady = false;
+function getBottomPanelView() {
+  if (bottomPanelEl?.classList.contains('bp-mode-weather')) return 'weather';
+  if (bottomPanelEl?.classList.contains('bp-mode-catchment')) return 'catchment';
+  return 'elev';
+}
 function setBottomPanelView(view, persist = true) {
-  const mode = view === 'weather' ? 'weather' : 'elev';
+  const mode = BP_VIEWS.includes(view) ? view : 'elev';
   bottomPanelEl?.classList.toggle('bp-mode-weather', mode === 'weather');
+  bottomPanelEl?.classList.toggle('bp-mode-catchment', mode === 'catchment');
   bottomPanelEl?.classList.toggle('bp-mode-elev', mode === 'elev');
   document.querySelectorAll('#bp-view-toggle .bp-view-btn').forEach((b) => {
     const on = b.dataset.bpView === mode;
@@ -3829,13 +3984,16 @@ function setBottomPanelView(view, persist = true) {
   });
   // Chart.js needs a resize when its container becomes visible again.
   if (mode === 'elev') requestAnimationFrame(() => elevationProfile?.chart?.resize());
+  // Opening the catchment view renders the table, then lazily backfills any
+  // waypoint whose 集水區 read-out isn't cached yet (progress-bar managed).
+  if (mode === 'catchment' && bottomPanelReady) { renderCatchmentPanel(); autoFetchCatchment(); }
   if (persist) { try { localStorage.setItem(LS_BP_VIEW_KEY, mode); } catch (_) { } }
 }
 document.getElementById('bp-view-toggle')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.bp-view-btn');
   if (btn) setBottomPanelView(btn.dataset.bpView);
 });
-setBottomPanelView(localStorage.getItem(LS_BP_VIEW_KEY) === 'weather' ? 'weather' : 'elev', false);
+setBottomPanelView(BP_VIEWS.includes(localStorage.getItem(LS_BP_VIEW_KEY)) ? localStorage.getItem(LS_BP_VIEW_KEY) : 'elev', false);
 
 
 // 手機平板螢幕下，點擊地圖自動收合側拉面板
@@ -4138,6 +4296,55 @@ const CATCHMENT_CARD_WEATHER_KEYS = CATCHMENT_WEATHER_KEYS.filter(
 // Hydrology row count for the "no data" fill fallback; order/labels mirror
 // computeHydroIndicators (catchmentHydro.js) — see buildCatchmentSkeletonHtml.
 const CATCHMENT_HYDRO_LABELS = ['土壤含水量', '前期降雨', '預估逕流量', '河川流量', '溪水暴漲風險', '土石流風險'];
+
+// Terrain-row labels (order MUST match the terrain[] array saved by saveCatchmentCells:
+// area, outlet, then computeGeometryRows → 海拔範圍/平均坡度/主流長度).
+const CATCHMENT_TERRAIN_LABELS = ['集水區面積', '出水口海拔', '海拔範圍', '平均坡度', '主流長度'];
+
+// Info-card item explanations (Chinese label → Chinese description). The description
+// sentences are registered in i18n PHRASES, so the hover tooltip translates them at
+// show-time via translatePhrase(). Labels shared across weather/catchment views map to
+// one description. Missing keys simply show no tooltip.
+const WC_INFO_TIPS = {
+  '天氣': '該時段的天氣狀況與代表圖示',
+  '溫度': '該時段的預估氣溫（攝氏）',
+  '雨量': '該時段每小時累積降雨量（毫米）',
+  '降雨機率': '該時段出現降雨的機率百分比',
+  '最高溫': '當日預報的最高氣溫',
+  '最低溫': '當日預報的最低氣溫',
+  '體感溫度': '綜合氣溫、濕度與風速後的人體實際感受溫度',
+  '濕度': '空氣相對濕度百分比',
+  '露點': '空氣達到飽和凝結的溫度，愈接近氣溫代表愈潮濕',
+  '雲量': '天空被雲層覆蓋的比例',
+  '風速': '該時段的平均風速',
+  '陣風': '該時段的最大瞬間風速',
+  'UV': '紫外線指數，數值愈高愈需加強防曬',
+  '能見度': '水平方向可看清物體的最大距離',
+  '日照': '當日可照射到陽光的總時數',
+  '輻射': '太陽短波輻射強度',
+  '日出': '當日太陽升起的時刻',
+  '日落': '當日太陽落下的時刻',
+  '距離': '沿路線從起點累積到此點的里程',
+  '海拔': '此點地面的高程',
+  '坐標': '此點的經緯度座標（點擊可複製）',
+  '集水區面積': '雨水最終匯流至此出水口的地表範圍面積',
+  '出水口海拔': '集水區最低匯流點（出水口）的高程',
+  '海拔範圍': '集水區內最低到最高的高程差',
+  '平均坡度': '集水區地表的平均傾斜角度',
+  '主流長度': '集水區內最長匯流路徑（主河道）的長度',
+  '土壤含水量': '根區土壤的水分飽和百分比，愈高愈易形成逕流',
+  '前期降雨': '事件前 24／72 小時的累積雨量，反映地表既有濕度',
+  '預估逕流量': '依 SCS-CN 法估算此次降雨形成的地表逕流體積',
+  '河川流量': '區域河道的模擬流量，以及相對於常態的距平',
+  '溪水暴漲風險': '綜合降雨強度、土壤濕度與地形研判的溪水暴漲參考等級（非官方警報）',
+  '土石流風險': '依降雨強度—延時門檻與坡度、濕度研判的土石流參考等級（非官方警報）',
+};
+
+// ` data-tip="<label>"` when the label has an explanation; '' otherwise. The
+// hover controller (installInfoTipController) resolves + translates the text.
+function wcTipAttr(label) {
+  return WC_INFO_TIPS[label] ? ` data-tip="${label}"` : '';
+}
 
 // severity (0-3 | -1 | null) → risk-chip CSS suffix.
 function catchmentSevClass(sev) {
@@ -5192,6 +5399,7 @@ async function applyRestoredRouteResult(restore) {
 
 async function onWaypointsChanged(waypoints) {
   cancelWeatherFetchForRouteReplan();
+  cancelCatchmentFetchForRouteReplan();
   ensureWaypointIds();
   bumpWaypointVersion();
   invalidateRoutePlanRun();
@@ -5310,6 +5518,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   }
 
   cancelWeatherFetchForRouteReplan();
+  cancelCatchmentFetchForRouteReplan();
   isProcessing = true;
   pendingUpdate = false;
   const routePlanSnapshot = createRoutePlanSnapshot(waypoints);
@@ -9198,6 +9407,12 @@ function initWeatherControls() {
     }
   });
 
+  // Detailed-catchment table: manual "取得集水區" (force re-fetch of all columns).
+  document.getElementById('catchment-table-container')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="fetch-catchment"]');
+    if (btn) fetchAllCatchmentData({ force: true });
+  });
+
   const panel = document.getElementById('bottom-panel');
   const handle = document.getElementById('bp-resize-handle');
   if (!panel) return;
@@ -10272,6 +10487,12 @@ function renderWeatherPanel() {
   saveWeatherSettings();
   refreshOpenWeatherCards();
   if (isRouteWeatherBusy()) updateRouteWeatherBusyOverlay();
+
+  // weatherPoints is now initialised; the bottom-panel side-effects are safe.
+  // Keep the detailed-catchment table in step with the rebuilt columns (cache-only
+  // repaint — new columns show cached values or '…', backfilled by 取得集水區).
+  bottomPanelReady = true;
+  if (getBottomPanelView() === 'catchment') renderCatchmentPanel();
 }
 
 /**
@@ -10637,6 +10858,7 @@ function cancelWeatherFetchForRouteReplan() {
   if (!activeWeatherFetchRun || activeWeatherFetchRun.cancelled) return;
   activeWeatherFetchRun.cancelled = true;
   activeWeatherFetchRun.controller?.abort();
+  unparkLoadRun(activeWeatherFetchRun);   // wake a paused loop so it can unwind
 }
 
 function autoFetchWeather(options = {}) {
@@ -10741,6 +10963,9 @@ async function fetchAllWeatherData(options = {}) {
     controller,
     signal: controller.signal,
     cancelled: false,
+    paused: false,
+    lockScope: 'edit',
+    _resume: null,
   };
   activeWeatherFetchRun = fetchRun;
   isWeatherFetching = true;
@@ -10750,8 +10975,10 @@ async function fetchAllWeatherData(options = {}) {
       ? `網頁開啟時載入天氣資訊 0/${totalTargets}`
       : `準備天氣欄位 0/${totalTargets}`,
     progress: 0,
-    lockScope: 'weather-card',
+    lockScope: 'edit',
   });
+  fetchRun.busyTask = busyTask;
+  pausableLoadRuns.add(fetchRun);
   const markWeatherProgress = () => {
     busyTask.set({
       detail: isInitialWeatherLoad
@@ -10773,6 +11000,8 @@ async function fetchAllWeatherData(options = {}) {
   try {
     for (const state of targetStates) {
       if (isWeatherFetchRunCancelled(fetchRun)) break;
+      await waitIfLoadPaused(fetchRun);            // park here while 停止 is active
+      if (isWeatherFetchRunCancelled(fetchRun)) break;   // cancelled while paused
       let { pt, i, dateStr, hour, cacheKey, cacheHit, saved, savedLoaded } = state;
       if (fetchBtn) {
         const labelSpan = fetchBtn.querySelector('span');
@@ -10889,6 +11118,7 @@ async function fetchAllWeatherData(options = {}) {
     }
   } finally {
     const wasCancelled = isWeatherFetchRunCancelled(fetchRun);
+    pausableLoadRuns.delete(fetchRun);
     if (isInitialWeatherLoad && !wasCancelled) {
       const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - fetchStartedAt;
       if (elapsed < minInitialProgressMs) {
@@ -10911,6 +11141,271 @@ async function fetchAllWeatherData(options = {}) {
     }
     if (wasCancelled) return;
     showNotification('天氣資訊已更新', 'success', 2000);
+  }
+}
+
+// =========== Detailed Catchment Table (bottom-panel view) ===========
+// A read-only table mirroring the detailed-weather table's look (same
+// .weather-table classes + per-waypoint column widths aligned to the chart X
+// axis): one column per visible weather point, rows = 集水區 terrain + hydrology
+// indicators. Cell values come from the shared 集水區 cache (savedCatchmentCells);
+// fetchAllCatchmentData backfills missing ones under the busy/progress overlay.
+
+// Row plan: label + which saved-cells array (terrain|hydro) + index within it.
+const CATCHMENT_TABLE_ROWS = [
+  ...CATCHMENT_TERRAIN_LABELS.map((label, i) => ({ label, section: 'terrain', i })),
+  ...CATCHMENT_HYDRO_LABELS.map((label, i) => ({ label, section: 'hydro', i })),
+];
+
+// Detailed catchment is kept COLUMN-IDENTICAL to detailed weather (同調): same
+// visible set — primary waypoints + 副航點 (intermediate points) + return legs —
+// and it inherits the weather table's collapse state (which drops to main
+// waypoints only). Each column is still a cache-first per-point DEM read, so the
+// batch loader's progress bar + 300 ms spacing carry a long 副航點-heavy load.
+function getCatchmentColumnIndices() {
+  return getWeatherTableVisibleIndices();
+}
+
+// Column layout matching the weather table's look (voronoi widths over the chosen
+// waypoint columns → the same proportional spread across the panel width).
+function computeCatchmentColumnLayout() {
+  const positions = computeWeatherPointPositions();
+  const visibleIndices = getCatchmentColumnIndices();
+  const visiblePositions = visibleIndices.map(i => positions[i]);
+  const visibleN = visibleIndices.length;
+  const voronoi = visiblePositions.map((p, i) => {
+    const left = i === 0 ? p : (p - visiblePositions[i - 1]) / 2;
+    const right = i === visibleN - 1 ? (1 - p) : (visiblePositions[i + 1] - p) / 2;
+    return left + right;
+  });
+  const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
+  const labelW = weatherTableCollapsed ? 36 : 68;
+  const minColW = weatherTableCollapsed ? 30 : 110;
+  const dataW = weatherTableCollapsed ? visibleN * minColW : Math.max(panelW - labelW, visibleN * minColW);
+  const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
+  return { labelW, colWidths, visibleIndices, firstReturnIdx: weatherPoints.findIndex(pt => pt.isReturn) };
+}
+
+// Saved-cell value (HTML, may carry a risk chip) for a catchment row/column, or '…'.
+function catchmentTableCellHtml(pt, row) {
+  const saved = getSavedCatchmentCells(getSemanticKey(pt));
+  if (saved?.status === 'ok') {
+    const arr = row.section === 'terrain' ? saved.terrain : saved.hydro;
+    if (Array.isArray(arr) && arr[row.i] != null) return arr[row.i];
+  }
+  return '…';
+}
+
+function buildCatchmentFetchControlHtml() {
+  return `<th class="wt-label-cell wt-th">
+      <button class="wt-ctrl-fetch" data-action="fetch-catchment" title="取得集水區">
+        <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5C8.2 6.7 5.5 10 5.5 13.4a6.5 6.5 0 0 0 13 0C18.5 10 15.8 6.7 12 2.5z" fill="currentColor"/></svg>
+        <span>取得集水區</span>
+      </button>
+    </th>`;
+}
+
+// Read-only per-column date+hour line (mirrors the weather table's time header,
+// without editors). Reflects each column's live schedule (weather-table DOM → saved).
+function buildCatchmentScheduleRowHtml(visibleIndices, firstReturnIdx, saved) {
+  let html = `<tr class="wt-header-row wt-header-row-time"><th class="wt-label-cell wt-th"><span class="wt-catch-sched-head">時間</span></th>`;
+  visibleIndices.forEach((colIdx) => {
+    const pt = weatherPoints[colIdx];
+    const thClass = buildWeatherColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-col-head wt-th');
+    const sched = getWeatherPointSchedule(pt, colIdx, saved);
+    const txt = sched?.date
+      ? `${sched.date.slice(5).replace('-', '/')} ${String(sched.hour ?? 8).padStart(2, '0')}:00`
+      : '—';
+    html += `<th class="${thClass}" data-idx="${colIdx}"><span class="wt-catch-sched">${txt}</span></th>`;
+  });
+  return `${html}</tr>`;
+}
+
+function buildCatchmentDataRowHtml(row, visibleIndices, firstReturnIdx) {
+  let html = `<tr><td class="wt-label-cell wt-td"${wcTipAttr(row.label)}>${row.label}</td>`;
+  visibleIndices.forEach((colIdx) => {
+    const pt = weatherPoints[colIdx];
+    const tdClass = buildWeatherDataColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-data-cell wt-td');
+    const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
+    html += `<td class="${tdClass}" data-cat-col="${colIdx}" data-cat-section="${row.section}" data-cat-i="${row.i}"${cellStyle}>`
+      + `<span class="wt-cell-value">${catchmentTableCellHtml(pt, row)}</span></td>`;
+  });
+  return `${html}</tr>`;
+}
+
+function renderCatchmentPanel() {
+  const container = document.getElementById('catchment-table-container');
+  if (!container) return;
+  if (!Array.isArray(weatherPoints) || weatherPoints.length === 0) {
+    container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得集水區」</p></div>';
+    return;
+  }
+  const { labelW, colWidths, visibleIndices, firstReturnIdx } = computeCatchmentColumnLayout();
+  const saved = loadWeatherSettings();
+
+  let html = `<table class="weather-table catchment-table${weatherTableCollapsed ? ' is-collapsed' : ''}">`;
+  html += buildWeatherColgroupHtml(labelW, colWidths);
+  html += '<thead>';
+  html += `<tr class="wt-header-row wt-header-row-label">${buildCatchmentFetchControlHtml()}`;
+  visibleIndices.forEach((colIdx, visiblePos) => {
+    html += buildWeatherLabelHeaderCellHtml(weatherPoints[colIdx], colIdx, visiblePos, firstReturnIdx);
+  });
+  html += `</tr>`;
+  html += buildCatchmentScheduleRowHtml(visibleIndices, firstReturnIdx, saved);
+  html += '</thead><tbody>';
+  CATCHMENT_TABLE_ROWS.forEach((row) => { html += buildCatchmentDataRowHtml(row, visibleIndices, firstReturnIdx); });
+  html += '</tbody></table>';
+  html += `<div class="ct-disclaimer catchment-table-note">水文指標為粗略估算，僅供參考</div>`;
+  container.innerHTML = html;
+}
+
+let isCatchmentFetching = false;
+let activeCatchmentFetchRun = null;
+let catchmentFetchRunSeq = 0;
+
+function isCatchmentFetchRunCancelled(run) {
+  return !run || run.cancelled || run.signal?.aborted || activeCatchmentFetchRun !== run;
+}
+
+function cancelCatchmentFetchForRouteReplan() {
+  if (!activeCatchmentFetchRun || activeCatchmentFetchRun.cancelled) return;
+  activeCatchmentFetchRun.cancelled = true;
+  activeCatchmentFetchRun.controller?.abort();
+  unparkLoadRun(activeCatchmentFetchRun);   // wake a paused loop so it can unwind
+}
+
+// Lazy backfill on view-open: fetch only when some waypoint column is uncached.
+function autoFetchCatchment() {
+  if (isCatchmentFetching) return;
+  const anyMissing = getCatchmentColumnIndices().some((colIdx) => {
+    const pt = weatherPoints[colIdx];
+    return pt && getSavedCatchmentCells(getSemanticKey(pt))?.status !== 'ok';
+  });
+  if (anyMissing) fetchAllCatchmentData();
+}
+
+// Delineate + hydrology for one point, save to the shared cache, return
+// { status, terrain[], hydro[] } (HTML strings). Aborts propagate to the caller.
+async function computeCatchmentReadout(pt, colIdx, signal) {
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+
+  const result = await getCatchmentFor(pt.lat, pt.lng, { signal });
+  if (!result || result.status !== 'ok' || !result.outer?.length) return { status: result?.status || 'error' };
+
+  const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
+  const terrain = [formatArea(result.areaM2), outlet, ...computeGeometryRows(result).map(catchmentValueHtml)];
+
+  let hydroEnv = null;
+  try {
+    hydroEnv = await fetchHydroData(pt.lat, pt.lng, dateStr, hour, { signal });
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    hydroEnv = null;
+  }
+  const hydro = (hydroEnv && hydroEnv.available)
+    ? computeHydroIndicators(result, hydroEnv).map(catchmentValueHtml)
+    : CATCHMENT_HYDRO_LABELS.map(() => '—');
+
+  saveCatchmentCells(getSemanticKey(pt), {
+    status: 'ok', terrain, hydro,
+    dateStr: dateStr || null,
+    hour: Number.isFinite(Number(hour)) ? Number(hour) : null,
+  });
+  return { status: 'ok', terrain, hydro };
+}
+
+function setCatchmentColumnCells(colIdx, valueFor) {
+  const container = document.getElementById('catchment-table-container');
+  if (!container) return;
+  CATCHMENT_TABLE_ROWS.forEach((row) => {
+    const cell = container.querySelector(`[data-cat-col="${colIdx}"][data-cat-section="${row.section}"][data-cat-i="${row.i}"] .wt-cell-value`);
+    if (cell) cell.innerHTML = valueFor(row);
+  });
+}
+
+function fillCatchmentTableColumn(colIdx, readout) {
+  const ok = readout?.status === 'ok';
+  setCatchmentColumnCells(colIdx, (row) => {
+    const arr = ok ? (row.section === 'terrain' ? readout.terrain : readout.hydro) : null;
+    return (arr && arr[row.i] != null) ? arr[row.i] : '—';
+  });
+}
+
+// Batch-load 集水區 read-outs for every visible column, progress-bar managed.
+// `force` re-fetches all columns; otherwise only the uncached ones.
+async function fetchAllCatchmentData(options = {}) {
+  const { force = false } = options;
+  if (isCatchmentFetching) return;
+  if (!Array.isArray(weatherPoints) || weatherPoints.length === 0) {
+    showNotification('請先建立路線', 'warning');
+    return;
+  }
+  renderCatchmentPanel();   // ensure the cells exist to receive values
+
+  const visibleIndices = getCatchmentColumnIndices();
+  const targets = visibleIndices
+    .map((colIdx) => ({ colIdx, pt: weatherPoints[colIdx] }))
+    .filter(({ pt }) => pt && (force || getSavedCatchmentCells(getSemanticKey(pt))?.status !== 'ok'));
+
+  if (targets.length === 0) {
+    visibleIndices.forEach((colIdx) =>
+      fillCatchmentTableColumn(colIdx, getSavedCatchmentCells(getSemanticKey(weatherPoints[colIdx]))));
+    showNotification('集水區資訊已更新', 'success', 1500);
+    return;
+  }
+
+  const controller = new AbortController();
+  const run = { id: ++catchmentFetchRunSeq, controller, signal: controller.signal, cancelled: false, paused: false, lockScope: 'edit', _resume: null };
+  activeCatchmentFetchRun = run;
+  isCatchmentFetching = true;
+  const total = targets.length;
+  let done = 0;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在載入集水區資訊',
+    detail: `載入集水區資訊 0/${total}`,
+    progress: 0,
+    lockScope: 'edit',
+  });
+  run.busyTask = busyTask;
+  pausableLoadRuns.add(run);
+  const fetchBtn = document.querySelector('[data-action="fetch-catchment"]');
+  if (fetchBtn) fetchBtn.disabled = true;
+
+  try {
+    for (const { colIdx, pt } of targets) {
+      if (isCatchmentFetchRunCancelled(run)) break;
+      await waitIfLoadPaused(run);                       // park here while 停止 is active
+      if (isCatchmentFetchRunCancelled(run)) break;      // cancelled while paused
+      setCatchmentColumnCells(colIdx, () => '…');
+      let readout;
+      try {
+        readout = await computeCatchmentReadout(pt, colIdx, run.signal);
+      } catch (err) {
+        if (isAbortError(err) || isCatchmentFetchRunCancelled(run)) break;
+        console.warn(`Catchment fetch failed for ${pt.label}:`, err?.message);
+        readout = { status: 'error' };
+      }
+      if (isCatchmentFetchRunCancelled(run)) break;
+      fillCatchmentTableColumn(colIdx, readout);
+      // Keep an open card that's showing this point's catchment view in sync.
+      if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
+      done++;
+      busyTask.set({ detail: `載入集水區資訊 ${done}/${total}`, progress: (done / total) * 100 });
+      if (done < total) {
+        const cont = await waitForWeatherFetchDelay(300, run.signal);
+        if (!cont || isCatchmentFetchRunCancelled(run)) break;
+      }
+    }
+  } finally {
+    const wasCancelled = isCatchmentFetchRunCancelled(run);
+    pausableLoadRuns.delete(run);
+    if (activeCatchmentFetchRun === run) { activeCatchmentFetchRun = null; isCatchmentFetching = false; }
+    if (!wasCancelled) busyTask.set({ detail: '完成', progress: 100 });
+    busyTask.end();
+    if (fetchBtn) fetchBtn.disabled = false;
+    if (!wasCancelled) showNotification('集水區資訊已更新', 'success', 2000);
   }
 }
 
@@ -11252,7 +11747,7 @@ function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '
     const valuePrefix = layerForRow
       ? buildRowWindyIconHtml(layerForRow, windyUrlForLayer(layerForRow))
       : '';
-    html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
+    html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}${wcTipAttr(row.label)}>`;
     html += `<span class="wc-info-label">${row.label}</span>`;
     html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
     html += `</div>`;
@@ -11413,7 +11908,7 @@ function buildCatchmentSkeletonHtml() {
   const grid = (section, rows) =>
     `<div class="wc-info-grid wc-catch-grid" data-catch="${section}">` +
     rows.map(([label, wide]) =>
-      `<div class="wc-info-item${wide ? ' is-wide' : ''}"${wide ? ' style="grid-column: span 2;"' : ''}>`
+      `<div class="wc-info-item${wide ? ' is-wide' : ''}"${wide ? ' style="grid-column: span 2;"' : ''}${wcTipAttr(label)}>`
       + `<span class="wc-info-label">${label}</span>`
       + `<span class="wc-info-value wc-catch-val">…</span></div>`).join('') +
     `</div>`;
