@@ -9455,10 +9455,21 @@ function initWeatherControls() {
     }
   });
 
-  // Detailed-catchment table: manual "取得集水區" (force re-fetch of all columns).
+  // Detailed-catchment table: manual "取得集水區" (force re-fetch of all columns);
+  // clicking a failed/stale data column retries just that one (parity with a weather
+  // "?" badge click); clicking an OK column highlights its point like the weather table.
   document.getElementById('catchment-table-container')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action="fetch-catchment"]');
-    if (btn) fetchAllCatchmentData({ force: true });
+    if (btn) { fetchAllCatchmentData({ force: true }); return; }
+    if (e.target.closest('[data-action="toggle-weather-table"]')) { toggleWeatherTableCollapsed(); return; }
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    const cell = e.target.closest('[data-cat-col]');
+    if (!cell) return;
+    const colIdx = parseInt(cell.dataset.catCol);
+    if (isNaN(colIdx)) return;
+    const pt = weatherPoints[colIdx];
+    if (pt && catchmentColumnNeedsFetch(pt, colIdx)) fetchCatchmentForUnloadedColumn(colIdx);
+    else highlightPoint(colIdx, true);
   });
 
   const panel = document.getElementById('bottom-panel');
@@ -11354,7 +11365,10 @@ function renderCatchmentPanel() {
   const { labelW, colWidths, visibleIndices, firstReturnIdx } = computeCatchmentColumnLayout();
   const saved = loadWeatherSettings();
 
-  let html = `<table class="weather-table catchment-table${weatherTableCollapsed ? ' is-collapsed' : ''}">`;
+  // Column-collapse toggle (shared weatherTableCollapsed state) — parity with the
+  // weather table, so the user can drop to 主航點-only columns from catchment view too.
+  let html = buildWeatherCollapseButton();
+  html += `<table class="weather-table catchment-table${weatherTableCollapsed ? ' is-collapsed' : ''}">`;
   html += buildWeatherColgroupHtml(labelW, colWidths);
   html += '<thead>';
   html += `<tr class="wt-header-row wt-header-row-label">${buildCatchmentFetchControlHtml()}`;
@@ -11401,6 +11415,29 @@ function showCatchmentReadRestrictedNotice(kind = 'busy') {
   showNotification(msg, 'warning', 2400);
 }
 
+// Parity with weather's weatherCellsMatchSchedule: a saved 集水區 readout is stale
+// once the column's date/hour changes, because the hydrology rows depend on
+// dateStr/hour. Terrain is time-independent, but the readout is stored as a unit.
+function catchmentCellsMatchSchedule(saved, dateStr, hour) {
+  if (!saved) return false;
+  const sd = saved.dateStr ?? null;
+  const sh = saved.hour ?? null;
+  if (!sd && sh == null) return true;   // legacy entry with no schedule stamp
+  if (sd && dateStr && sd !== dateStr) return false;
+  if (sh != null && hour != null && Number(sh) !== Number(hour)) return false;
+  return true;
+}
+
+// A catchment column needs (re)fetching when it has no OK readout, or its saved
+// readout was computed for a different schedule than the column shows now — parity
+// with weather's hasCompletedWeatherLoad gating.
+function catchmentColumnNeedsFetch(pt, colIdx) {
+  const saved = getSavedCatchmentCells(getSemanticKey(pt));
+  if (saved?.status !== 'ok') return true;
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  return !catchmentCellsMatchSchedule(saved, schedule?.date || null, schedule?.hour ?? null);
+}
+
 // Auto-load 集水區 for any visible column still missing it — the catchment
 // counterpart to autoFetchWeather, so a freshly-planned route backfills new
 // waypoints without a manual 取得集水區. Only runs while the catchment view is
@@ -11413,7 +11450,7 @@ function autoFetchCatchment({ notify = false } = {}) {
 
   const anyMissing = getCatchmentColumnIndices().some((colIdx) => {
     const pt = weatherPoints[colIdx];
-    return pt && getSavedCatchmentCells(getSemanticKey(pt))?.status !== 'ok';
+    return pt && catchmentColumnNeedsFetch(pt, colIdx);
   });
   if (!anyMissing) return;
 
@@ -11480,7 +11517,7 @@ function fillCatchmentTableColumn(colIdx, readout) {
 // Batch-load 集水區 read-outs for every visible column, progress-bar managed.
 // `force` re-fetches all columns; otherwise only the uncached ones.
 async function fetchAllCatchmentData(options = {}) {
-  const { force = false } = options;
+  const { force = false, onlyColIndex = null } = options;
   if (isCatchmentFetching) return;
   if (!Array.isArray(weatherPoints) || weatherPoints.length === 0) {
     showNotification('請先建立路線', 'warning');
@@ -11490,8 +11527,9 @@ async function fetchAllCatchmentData(options = {}) {
 
   const visibleIndices = getCatchmentColumnIndices();
   const targets = visibleIndices
+    .filter((colIdx) => onlyColIndex === null || colIdx === onlyColIndex)   // single-column retry
     .map((colIdx) => ({ colIdx, pt: weatherPoints[colIdx] }))
-    .filter(({ pt }) => pt && (force || getSavedCatchmentCells(getSemanticKey(pt))?.status !== 'ok'));
+    .filter(({ pt, colIdx }) => pt && (force || catchmentColumnNeedsFetch(pt, colIdx)));
 
   if (targets.length === 0) {
     visibleIndices.forEach((colIdx) =>
@@ -11522,25 +11560,39 @@ async function fetchAllCatchmentData(options = {}) {
   const fetchBtn = document.querySelector('[data-action="fetch-catchment"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
+  // Compute + apply ONE column's 集水區 readout. Returns 'ok' | 'fail' | 'cancel'.
+  // Draws the point's map basin incrementally (cache hit → no refetch), mirroring
+  // weather's per-point setWaypointWeather so 已算完的航點先顯示集水區.
+  const loadOneCatchment = async ({ colIdx, pt }) => {
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    await waitIfLoadPaused(run);                        // park here while 停止 is active
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    setCatchmentColumnCells(colIdx, () => '…');
+    let readout;
+    try {
+      readout = await computeCatchmentReadout(pt, colIdx, run.signal);
+    } catch (err) {
+      if (isAbortError(err) || isCatchmentFetchRunCancelled(run)) return 'cancel';
+      console.warn(`Catchment fetch failed for ${pt.label}:`, err?.message);
+      readout = { status: 'error' };
+    }
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    fillCatchmentTableColumn(colIdx, readout);
+    const ok = readout?.status === 'ok';
+    if (ok && isCatchmentView(colIdx) && !_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx);
+    // Keep an open card that's showing this point's catchment view in sync.
+    if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
+    return ok ? 'ok' : 'fail';
+  };
+
+  const failedTargets = [];
+  let remainingFailures = 0;
   try {
-    for (const { colIdx, pt } of orderedTargets) {
-      if (isCatchmentFetchRunCancelled(run)) break;
-      await waitIfLoadPaused(run);                       // park here while 停止 is active
-      if (isCatchmentFetchRunCancelled(run)) break;      // cancelled while paused
-      setCatchmentColumnCells(colIdx, () => '…');
-      let readout;
-      try {
-        readout = await computeCatchmentReadout(pt, colIdx, run.signal);
-      } catch (err) {
-        if (isAbortError(err) || isCatchmentFetchRunCancelled(run)) break;
-        console.warn(`Catchment fetch failed for ${pt.label}:`, err?.message);
-        readout = { status: 'error' };
-      }
-      if (isCatchmentFetchRunCancelled(run)) break;
-      fillCatchmentTableColumn(colIdx, readout);
-      if (readout?.status === 'ok') okCount++;
-      // Keep an open card that's showing this point's catchment view in sync.
-      if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
+    for (const target of orderedTargets) {
+      const outcome = await loadOneCatchment(target);
+      if (outcome === 'cancel') break;
+      if (outcome === 'ok') okCount++;
+      else failedTargets.push(target);
       done++;
       busyTask.set({ detail: `載入集水區資訊 ${done}/${total}`, progress: (done / total) * 100 });
       if (done < total) {
@@ -11548,6 +11600,30 @@ async function fetchAllCatchmentData(options = {}) {
         if (!cont || isCatchmentFetchRunCancelled(run)) break;
       }
     }
+
+    // Retry sweep — parity with weather: the burst tail is the most 429/timeout-prone;
+    // re-attempt failures once (主航點 first) now the rate-limit window has recovered.
+    let stillFailed = failedTargets;
+    if (!isCatchmentFetchRunCancelled(run) && stillFailed.length) {
+      const retryList = orderMainWaypointsFirst(stillFailed, (t) => t.pt);
+      stillFailed = [];
+      const retryTotal = retryList.length;
+      let retryDone = 0;
+      for (const target of retryList) {
+        if (isCatchmentFetchRunCancelled(run)) { stillFailed.push(target); continue; }
+        busyTask.set({ detail: `重試載入集水區 ${retryDone + 1}/${retryTotal}`, progress: 100 });
+        const outcome = await loadOneCatchment(target);
+        if (outcome === 'cancel') { stillFailed.push(target); break; }
+        if (outcome === 'ok') okCount++;
+        else stillFailed.push(target);
+        retryDone++;
+        if (retryDone < retryTotal) {
+          const cont = await waitForWeatherFetchDelay(500, run.signal);
+          if (!cont || isCatchmentFetchRunCancelled(run)) break;
+        }
+      }
+    }
+    remainingFailures = stillFailed.length;
   } finally {
     const wasCancelled = isCatchmentFetchRunCancelled(run);
     pausableLoadRuns.delete(run);
@@ -11555,11 +11631,28 @@ async function fetchAllCatchmentData(options = {}) {
     if (!wasCancelled) busyTask.set({ detail: '完成', progress: 100 });
     busyTask.end();
     if (fetchBtn) fetchBtn.disabled = false;
-    // Every column came back empty (DEM/hydrology reads blocked — offline or
-    // API-quota limited): hint rather than the misleading "已更新".
-    if (!wasCancelled && okCount === 0) showCatchmentReadRestrictedNotice('failed');
-    else if (!wasCancelled) showNotification('集水區資訊已更新', 'success', 2000);
+    if (!wasCancelled) syncCatchmentBasins();   // reconcile every catchment-view basin at completion
+    // Honest completion (parity with weather): total blackout keeps the restricted
+    // hint; a partial failure warns + invites a per-column retry; else success.
+    if (!wasCancelled) {
+      if (okCount === 0) showCatchmentReadRestrictedNotice('failed');
+      else if (remainingFailures > 0) showNotification(`部分集水區載入失敗（${remainingFailures}），點擊該欄可重試`, 'warning', 3200);
+      else showNotification('集水區資訊已更新', 'success', 2000);
+    }
   }
+}
+
+// Single-column catchment re-fetch, the parity counterpart of
+// fetchWeatherForUnloadedCard: clicking a failed/stale 集水區 column retries just
+// that column. Deferred (not swallowed) while a batch load already owns the state.
+function fetchCatchmentForUnloadedColumn(colIdx) {
+  if (isCatchmentFetching) {
+    showNotification('集水區載入中，該欄會自動重試', 'info', 1800);
+    return false;
+  }
+  showNotification('開始載入此欄集水區資訊...', 'info', 1600);
+  fetchAllCatchmentData({ onlyColIndex: colIdx, force: true });
+  return true;
 }
 
 // =========== Weather Card (Map Popup) ===========
@@ -11670,9 +11763,18 @@ function fetchWeatherForUnloadedCard(colIdx) {
     return false;
   }
   if (hasLoadedWeatherCardInfo(colIdx)) return false;
+  // A batch load is already running — fetchAllWeatherData would no-op on its
+  // isWeatherFetching guard, silently swallowing the click. That load's retry sweep
+  // re-attempts failed points, so tell the user rather than pretending to fetch.
+  if (isWeatherFetching) {
+    showNotification('天氣載入中，該航點會自動重試', 'info', 1800);
+    return false;
+  }
   closeWeatherCard(colIdx);
   showNotification('開始載入此點天氣資訊...', 'info', 1600);
-  fetchAllWeatherData({ onlyColIndex: colIdx });
+  // force:true guarantees a real re-fetch of this one column (bypasses any stale
+  // partial state); it does NOT clear the whole temp cache (onlyColIndex is set).
+  fetchAllWeatherData({ onlyColIndex: colIdx, force: true });
   return true;
 }
 
@@ -12011,12 +12113,23 @@ function syncCatchmentBasins() {
 // and only raised on a cache MISS (a cache hit returns instantly).
 let _cardCatchmentBusyCount = 0;
 let _cardCatchmentBusyTask = null;
+let _cardCatchmentBusyRun = null;
+let _cardCatchmentBusyRunSeq = 0;
+// Parity with weather's single-point load (fetchWeatherForUnloadedCard →
+// lockScope 'edit' + pausable): the per-card basin compute locks editing to the
+// relaxed data-load set AND registers a pausable run so 停止/繼續 shows and actually
+// parks the compute (callers park on `_cardCatchmentBusyRun` before the DEM read).
 function beginCardCatchmentBusy() {
   _cardCatchmentBusyCount++;
   if (!_cardCatchmentBusyTask) {
     _cardCatchmentBusyTask = beginRouteWeatherBusyTask({
-      title: '正在計算集水區', detail: '計算集水區範圍中…', progress: null, lockScope: 'none',
+      title: '正在計算集水區', detail: '計算集水區範圍中…', progress: null, lockScope: 'edit',
     });
+    _cardCatchmentBusyRun = {
+      id: `cardcatch_${++_cardCatchmentBusyRunSeq}`, cancelled: false, paused: false,
+      lockScope: 'edit', _resume: null, busyTask: _cardCatchmentBusyTask,
+    };
+    pausableLoadRuns.add(_cardCatchmentBusyRun);
   }
   let ended = false;
   return () => {
@@ -12024,6 +12137,7 @@ function beginCardCatchmentBusy() {
     ended = true;
     _cardCatchmentBusyCount = Math.max(0, _cardCatchmentBusyCount - 1);
     if (_cardCatchmentBusyCount === 0 && _cardCatchmentBusyTask) {
+      if (_cardCatchmentBusyRun) { pausableLoadRuns.delete(_cardCatchmentBusyRun); _cardCatchmentBusyRun = null; }
       _cardCatchmentBusyTask.end();
       _cardCatchmentBusyTask = null;
     }
@@ -12043,6 +12157,8 @@ async function drawBasinOverlay(key, lat, lng, accentColor) {
   const endBusy = getCatchmentCacheHit(lat, lng) ? null : beginCardCatchmentBusy();
   let result = null;
   try {
+    if (endBusy && _cardCatchmentBusyRun) await waitIfLoadPaused(_cardCatchmentBusyRun);  // honor 停止
+    if (token !== _cardCatchmentToken.get(key)) return;    // superseded while parked
     result = await getCatchmentFor(lat, lng, { signal: abort.signal });
   } catch (_) {
     if (token !== _cardCatchmentToken.get(key)) return;
@@ -12145,6 +12261,8 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
   const endBusy = getCatchmentCacheHit(lat, lng) ? null : beginCardCatchmentBusy();
   let result;
   try {
+    if (endBusy && _cardCatchmentBusyRun) await waitIfLoadPaused(_cardCatchmentBusyRun);  // honor 停止
+    if (stale()) return;                                   // superseded while parked
     result = await getCatchmentFor(lat, lng, { signal: abort.signal });
   } catch (err) {
     if (stale()) return;                                   // superseded — discard silently

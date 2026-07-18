@@ -51,6 +51,29 @@ async function fetchJson(url, signal) {
   return resp.json();
 }
 
+// Parity with weatherService.getWeatherAtPoint's retry: a burst catchment load
+// intermittently draws a 429/timeout on the forecast/flood endpoints. Without a
+// retry the whole hydro half of that column silently drops to "—". Retry with
+// backoff (longer for a rate limit); only an external abort short-circuits.
+async function fetchJsonWithRetry(url, signal) {
+  const MAX_ATTEMPTS = 3;
+  let lastErr;
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    if (signal?.aborted) { const e = new Error('Aborted'); e.name = 'AbortError'; throw e; }
+    try {
+      return await fetchJson(url, signal);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      lastErr = err;
+      if (i < MAX_ATTEMPTS - 1) {
+        const is429 = /\b429\b/.test(err?.message || '');
+        await new Promise((r) => setTimeout(r, (is429 ? 900 : 450) * (i + 1)));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 const sumRange = (arr, lo, hi) => {
   if (!Array.isArray(arr)) return null;
   let s = 0, n = 0;
@@ -95,8 +118,8 @@ export async function fetchHydroData(lat, lng, dateStr, hour, { signal } = {}) {
     + `&daily=river_discharge,river_discharge_mean&start_date=${fStart}&end_date=${fEnd}`;
 
   const [wx, flood] = await Promise.all([
-    fetchJson(wxUrl, signal).catch((err) => { if (err?.name === 'AbortError') throw err; console.warn('Hydro forecast failed:', err.message); return null; }),
-    fetchJson(floodUrl, signal).catch((err) => { if (err?.name === 'AbortError') throw err; console.warn('Hydro flood failed:', err.message); return null; }),
+    fetchJsonWithRetry(wxUrl, signal).catch((err) => { if (err?.name === 'AbortError') throw err; console.warn('Hydro forecast failed:', err.message); return null; }),
+    fetchJsonWithRetry(floodUrl, signal).catch((err) => { if (err?.name === 'AbortError') throw err; console.warn('Hydro flood failed:', err.message); return null; }),
   ]);
 
   return normalize(wx, flood, dateStr, h);
