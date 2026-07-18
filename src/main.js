@@ -9606,6 +9606,7 @@ function refreshOpenWeatherCards() {
       _renderWeatherCard(cIdx);
     });
   }
+  syncCatchmentBasins();   // keep basins in step with the catchment-view memory
 }
 
 const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
@@ -9901,8 +9902,9 @@ function renderWeatherPanel() {
     });
   }
   weatherPoints = buildWeatherPoints();
-  // Basin overlays are keyed by colIdx; a rebuild re-maps colIdx→point, so drop
-  // them all here. Open catchment cards redraw their basin when re-rendered.
+  // Basin overlays are keyed by colIdx; a rebuild re-maps colIdx→point. Clear them
+  // all, then (below) redraw for every catchment-view point at its new position —
+  // independent of whether its card is open, so 副航點/compact/closed basins survive.
   clearAllCardCatchments();
   if (previousCardStates.size > 0 && typeof _wcStates !== 'undefined') {
     _wcStates.clear();
@@ -9912,6 +9914,7 @@ function renderWeatherPanel() {
     });
     mapManager.closeWeatherPopup();
   }
+  syncCatchmentBasins();
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
@@ -11139,6 +11142,7 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
   const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
+  syncCatchmentBasins();   // ensure this point's basin matches its catchment-view choice
   if (
     options.centerOnMobileExpand === true &&
     prevMode !== 'full' &&
@@ -11228,9 +11232,11 @@ function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '
 // cache-deterministic position.
 const _wcCatchmentViewMemory = new Map();   // semanticKey → boolean (catchment view)
 let cursorCatchmentView = false;            // GPS-cursor card catchment toggle
-const _cardCatchmentToken = new Map();      // key → generation guard for async fills
-const _cardCatchmentAbort = new Map();      // key → AbortController for the in-flight fill
+const _cardCatchmentToken = new Map();      // key → generation guard for the basin-polygon draw
+const _cardCatchmentAbort = new Map();      // key → AbortController for the polygon delineation
 const _cardCatchmentLayers = new Map();     // key → L.layerGroup drawn on the map
+const _cardPanelToken = new Map();          // key → generation guard for the catchment PANEL fill
+const _cardPanelAbort = new Map();          // key → AbortController for the panel weather/hydrology fetch
 
 function catchmentViewKeyFor(colIdx) {
   const pt = weatherPoints[colIdx];
@@ -11278,31 +11284,47 @@ function clearAllCardCatchments() {
   });
 }
 
-// Delineate (cache-first) and draw ONLY the basin overlay for a waypoint card —
-// no panel — so the range stays on the map while the card is compact (or, once
-// drawn, minimized/closed). Shares the panel fill's per-colIdx token guard; only
-// one of the two draws for a given card state, so they never race each other.
-async function drawCatchmentPolygonForCard(colIdx) {
-  const pt = weatherPoints[colIdx];
-  if (!pt) return;
-  const token = (_cardCatchmentToken.get(colIdx) || 0) + 1;
-  _cardCatchmentToken.set(colIdx, token);
-  _cardCatchmentAbort.get(colIdx)?.abort();
+// Single source of truth for waypoint/intermediate basin overlays: draw one for
+// every point currently in catchment view (regardless of whether its card is
+// full, compact, minimized, or closed — the view choice is what matters), and
+// clear overlays that are no longer wanted (toggled back to weather, point
+// removed, or a stale colIdx after a rebuild). Cache-first + token-guarded, so a
+// no-op reconcile is cheap and never flickers an already-correct basin.
+function syncCatchmentBasins() {
+  const wanted = new Set();
+  weatherPoints.forEach((pt, colIdx) => { if (isCatchmentView(colIdx)) wanted.add(colIdx); });
+  Array.from(_cardCatchmentLayers.keys()).forEach((key) => {
+    if (key !== 'cursor' && !wanted.has(key)) clearCardCatchment(key);
+  });
+  wanted.forEach((colIdx) => { if (!_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx); });
+}
+
+// Delineate (cache-first) and draw ONLY the basin overlay for a card key — no
+// panel — so the range shows on the map independently of the card body (compact,
+// minimized, closed, or the GPS cursor). Token-guarded per key against a newer
+// draw for the same key.
+async function drawBasinOverlay(key, lat, lng, accentColor) {
+  const token = (_cardCatchmentToken.get(key) || 0) + 1;
+  _cardCatchmentToken.set(key, token);
+  _cardCatchmentAbort.get(key)?.abort();
   const abort = new AbortController();
-  _cardCatchmentAbort.set(colIdx, abort);
+  _cardCatchmentAbort.set(key, abort);
   let result = null;
   try {
-    result = await getCatchmentFor(pt.lat, pt.lng, { signal: abort.signal });
+    result = await getCatchmentFor(lat, lng, { signal: abort.signal });
   } catch (_) {
-    if (token !== _cardCatchmentToken.get(colIdx)) return;
+    if (token !== _cardCatchmentToken.get(key)) return;
   }
-  if (token !== _cardCatchmentToken.get(colIdx)) return;
-  if (_cardCatchmentAbort.get(colIdx) === abort) _cardCatchmentAbort.delete(colIdx);
-  if (result?.status === 'ok' && result.outer?.length) {
-    drawCardCatchmentPolygon(colIdx, result, _weatherPointGradColor(pt));
-  } else {
-    clearCardCatchmentPolygon(colIdx);
-  }
+  if (token !== _cardCatchmentToken.get(key)) return;
+  if (_cardCatchmentAbort.get(key) === abort) _cardCatchmentAbort.delete(key);
+  if (result?.status === 'ok' && result.outer?.length) drawCardCatchmentPolygon(key, result, accentColor);
+  else clearCardCatchmentPolygon(key);
+}
+
+function drawCatchmentPolygonForCard(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return;
+  drawBasinOverlay(colIdx, pt.lat, pt.lng, _weatherPointGradColor(pt));
 }
 
 function buildWeatherCardViewToggleHtml(showCatchment) {
@@ -11352,20 +11374,22 @@ function resolveCardWeatherValue(colIdx, info, key) {
   return (tableValue !== null && tableValue !== undefined) ? tableValue : '—';
 }
 
-// Fill a card's `.wc-catchment` container: render the fixed skeleton, delineate
-// (cache-first), draw the basin on the map in accentColor, then fill terrain +
-// the card's weather + async hydrology in place. Token-guarded per key so a
+// Fill a full card's `.wc-catchment` PANEL: render the fixed skeleton, delineate
+// (cache-first) for the terrain rows, fill the card's weather, then async
+// hydrology — all in place. The basin OVERLAY on the map is owned separately by
+// syncCatchmentBasins(); this only touches the card body. Guarded by its own
+// per-key panel token/abort so it never fights the polygon draw, and so a
 // superseded fill (time change or a newer card) never lands stale (INC race
-// rule); weatherVal(key) resolves the card's already-shown weather value (same
+// rule). weatherVal(key) resolves the card's already-shown weather value (same
 // fallback chain as the weather view), so no extra weather fetch is issued here.
-async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, container, accentColor }) {
+async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, container }) {
   if (!container) return;
-  const token = (_cardCatchmentToken.get(key) || 0) + 1;
-  _cardCatchmentToken.set(key, token);
-  _cardCatchmentAbort.get(key)?.abort();
+  const token = (_cardPanelToken.get(key) || 0) + 1;
+  _cardPanelToken.set(key, token);
+  _cardPanelAbort.get(key)?.abort();
   const abort = new AbortController();
-  _cardCatchmentAbort.set(key, abort);
-  const stale = () => token !== _cardCatchmentToken.get(key);
+  _cardPanelAbort.set(key, abort);
+  const stale = () => token !== _cardPanelToken.get(key);
 
   container.innerHTML = buildCatchmentSkeletonHtml();
   const fill = (section, values) => {
@@ -11385,15 +11409,12 @@ async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, c
   if (stale()) return;
 
   if (!result || result.status !== 'ok' || !result.outer?.length) {
-    clearCardCatchmentPolygon(key);
     const msg = result?.status === 'flat' ? '此處為大面積平地，無法判定集水方向'
       : result?.status === 'empty' ? '此處集水範圍過小'
       : '海拔資料取得失敗，請稍後再試';
     container.innerHTML = `<div class="ct-nodata wc-catch-msg">${msg}</div>`;
     return;
   }
-
-  drawCardCatchmentPolygon(key, result, accentColor);
 
   const geoRows = computeGeometryRows(result);
   const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
@@ -11407,7 +11428,7 @@ async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, c
     hydroEnv = null;
   }
   if (stale()) return;
-  if (_cardCatchmentAbort.get(key) === abort) _cardCatchmentAbort.delete(key);
+  if (_cardPanelAbort.get(key) === abort) _cardPanelAbort.delete(key);
   fill('hydro', (hydroEnv && hydroEnv.available)
     ? computeHydroIndicators(result, hydroEnv).map(catchmentValueHtml)
     : CATCHMENT_HYDRO_LABELS.map(() => '—'));
@@ -11551,12 +11572,10 @@ function _renderWeatherCard(colIdx) {
   const { data, cells, pt, dateStr, hour } = info;
   const isCompact = state === 'compact';
   const isFull = state === 'full';
-  // The basin overlay follows the catchment-view choice, not the card size, so it
-  // stays while the card is compact. Full cards redraw it via the panel fill in
-  // _bindWeatherCardEvents; compact cards draw the polygon only. Weather-view
-  // cards drop the overlay.
-  if (!isCatchmentView(colIdx)) clearCardCatchmentPolygon(colIdx);
-  else if (isCompact) drawCatchmentPolygonForCard(colIdx);
+  // Basin overlays are reconciled centrally by syncCatchmentBasins() (called from
+  // the view toggle, refreshOpenWeatherCards, and route rebuilds), so the overlay
+  // follows the catchment-view choice regardless of card size/open-state — full,
+  // compact, minimized, or closed. This render just draws the card body.
 
   // Check if this card should be highlighted
   const curTh = document.querySelector('#weather-table-container .wt-col-head.wt-col-highlight');
@@ -11809,7 +11828,8 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
     const container = wrapper.querySelector('.wc-catchment');
     const ctx = _cursorCardCtx;
     if (container && ctx) {
-      renderCardCatchment({
+      drawBasinOverlay('cursor', ctx.lat, ctx.lng, '#6366f1');   // basin on the map
+      renderCardCatchment({                                       // panel body
         key: 'cursor',
         lat: ctx.lat,
         lng: ctx.lng,
@@ -11817,7 +11837,6 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
         hour: ctx.hour,
         weatherVal: (k) => (ctx.data ? getCellValue(ctx.data, k, { lat: ctx.lat, lng: ctx.lng }) : '—'),
         container,
-        accentColor: '#6366f1',
       });
     }
   }
@@ -11980,14 +11999,14 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
       // path (raw _renderWeatherCard would close a momentarily-unloaded card).
       getWeatherCardInteractionIndices(colIdx).forEach((idx) => {
         setCatchmentViewMemory(idx, toCatch);
-        if (!toCatch) clearCardCatchment(idx);
       });
+      syncCatchmentBasins();   // draw/clear basins for the whole set (incl. compact/closed)
       refreshOpenWeatherCards();
     });
   });
 
-  // If this card is in catchment view, (re)fill it — delineate cache-first,
-  // draw the basin in the point's colour, load hydrology for the card's time.
+  // If this full card is in catchment view, fill its panel (the basin overlay on
+  // the map is handled separately by syncCatchmentBasins).
   if (isCatchmentView(colIdx)) {
     const container = root.querySelector('.wc-catchment');
     const info = _getWeatherCardData(colIdx);
@@ -12000,7 +12019,6 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         hour: info.hour,
         weatherVal: (k) => resolveCardWeatherValue(colIdx, info, k),
         container,
-        accentColor: _weatherPointGradColor(info.pt),
       });
     }
   }

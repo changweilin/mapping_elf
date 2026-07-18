@@ -1,0 +1,111 @@
+import { expect, test } from '@playwright/test';
+
+// Intermediate (副航點/中繼點) weather cards must draw the catchment basin on the
+// map just like waypoint cards, and it must survive a weather-panel rebuild
+// (which re-maps colIdx→point). The basin is reconciled centrally by
+// syncCatchmentBasins(), independent of card re-render.
+const ANCHOR = [23.5, 121.0];
+
+function coneElevation(page) {
+  return page.route(/v1\/elevation/, (route) => {
+    const url = new URL(route.request().url());
+    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
+    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
+    const elevation = lats.map((la, i) => {
+      const dy = (la - ANCHOR[0]) * 111320;
+      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
+      return 100 + 0.1 * Math.hypot(dx, dy);
+    });
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
+  });
+}
+function forecast(page) {
+  return page.route(/v1\/forecast/, (route) => {
+    const url = new URL(route.request().url());
+    const start = url.searchParams.get('start_date') || '2026-07-18';
+    const end = url.searchParams.get('end_date') || start;
+    const hourlyVars = (url.searchParams.get('hourly') || '').split(',').filter(Boolean);
+    const days = [];
+    for (let d = new Date(`${start}T00:00:00`); d <= new Date(`${end}T00:00:00`); d.setDate(d.getDate() + 1)) days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    const times = [];
+    for (const day of days) for (let h = 0; h < 24; h++) times.push(`${day}T${String(h).padStart(2, '0')}:00`);
+    const hourly = { time: times };
+    for (const v of hourlyVars) hourly[v] = times.map(() => v === 'precipitation' ? 8 : v.startsWith('soil_moisture') ? 0.35 : v === 'temperature_2m' ? 21 : 1);
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation: 1500, hourly, daily: { time: days } }) });
+  });
+}
+function flood(page) {
+  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
+    const url = new URL(route.request().url());
+    const start = url.searchParams.get('start_date');
+    const end = url.searchParams.get('end_date') || start;
+    const days = [];
+    for (let d = new Date(`${start}T00:00:00`); d <= new Date(`${end}T00:00:00`); d.setDate(d.getDate() + 1)) days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ daily: { time: days, river_discharge: days.map(() => 5), river_discharge_mean: days.map(() => 4) } }) });
+  });
+}
+
+test('intermediate (副航點) card: catchment draws a basin that survives a rebuild', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+    localStorage.setItem('mappingElf_routeMode', 'walking');
+    localStorage.setItem('mappingElf_roundTrip', '0');
+    localStorage.setItem('mappingElf_oLoop', '0');
+    localStorage.setItem('mappingElf_speedMode', '0');
+    localStorage.setItem('mappingElf_segmentKm', '0.1');
+    localStorage.setItem('mappingElf_waypointCentering', '0');
+    localStorage.setItem('mappingElf_language', 'zh-TW');
+  });
+  await page.route('**/route/v1/**', (route) => {
+    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
+    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
+    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 3000, duration: 3000, geometry: { type: 'LineString', coordinates: coords } }] } });
+  });
+  await forecast(page);
+  await flood(page);
+  await coneElevation(page);
+
+  await page.goto('/');
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  const box = await page.locator('#map').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+
+  await page.mouse.click(cx, box.y + box.height * 0.15);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
+  await page.mouse.click(cx, box.y + box.height * 0.85);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+
+  await expect(page.locator('.intermediate-point-icon').first()).toBeVisible({ timeout: 15000 });
+  await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+  await page.locator('.wt-ctrl-fetch, [data-action="fetch"]').first().click({ force: true }).catch(() => {});
+  await page.waitForTimeout(2000);
+
+  // Open the intermediate (副航點) card via its map weather badge.
+  const badge = page.locator('.intermediate-point-icon .wp-weather-badge').first();
+  for (let i = 0; i < 3 && (await page.locator('.weather-card').count()) === 0; i++) {
+    await badge.dispatchEvent('click');
+    await page.waitForTimeout(1200);
+  }
+  await page.locator('.weather-card').first().waitFor({ timeout: 8000 });
+  if (!(await page.locator('.weather-card.full').count())) {
+    await page.locator('.weather-card .q-toggle').first().dispatchEvent('click');
+  }
+  const cardId = await page.locator('.weather-card.full').first().getAttribute('id');
+  const card = page.locator(`#${cardId}`);
+  expect(await card.getAttribute('data-col-idx')).not.toBeNull();
+
+  // Switch the sub-waypoint card to catchment → basin drawn on the map.
+  await card.locator('.wc-view-btn[data-wc-view="catchment"]').dispatchEvent('click');
+  await expect(card.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
+  const poly = page.locator('#map .leaflet-overlay-pane path.wc-catchment-poly');
+  await expect(poly).toHaveCount(1, { timeout: 20000 });
+
+  // Force a weather-panel rebuild (shift all times) → basin must survive (redrawn
+  // by syncCatchmentBasins even though colIdx→point is re-mapped). The bulk
+  // day-plus lives in the weather table (hidden by default → reveal it first).
+  await page.locator('#bp-view-toggle [data-bp-view="weather"]').click();
+  await page.locator('#weather-table-container [data-action="day-plus"]').first().waitFor({ timeout: 5000 });
+  await page.locator('#weather-table-container [data-action="day-plus"]').first().click();
+  await page.waitForTimeout(1800);
+  await expect(poly).toHaveCount(1, { timeout: 20000 });
+});
