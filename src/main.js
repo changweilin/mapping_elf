@@ -1116,6 +1116,7 @@ function applySettingsFromStorage() {
   } catch {
     cachedCatchmentData = {};
   }
+  loadCardCatchmentViewMemory();   // restore per-card 天氣/集水區 view choice from the imported state
   collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0';
   collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
   collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1';
@@ -4122,6 +4123,12 @@ const CATCHMENT_WEATHER_KEYS = [
   ['weather', '天氣'], ['temp', '溫度'], ['feelsLike', '體感溫度'],
   ['humidity', '濕度'], ['windSpeed', '風速'], ['precipitation', '雨量'], ['precipProb', '降雨機率'],
 ];
+
+// Weather rows shown inside a weather-CARD's catchment view. Drops weather/溫度/體感
+// 溫度 because the card already shows those in its header line (wc-weather-main).
+const CATCHMENT_CARD_WEATHER_KEYS = CATCHMENT_WEATHER_KEYS.filter(
+  ([k]) => k !== 'weather' && k !== 'temp' && k !== 'feelsLike',
+);
 
 // Hydrology row count for the "no data" fill fallback; order/labels mirror
 // computeHydroIndicators (catchmentHydro.js) — see buildCatchmentSkeletonHtml.
@@ -11230,7 +11237,25 @@ function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '
 // The chosen view is remembered by semantic key (like card size in _wcLastModes)
 // so a card reopens in the same view — and its basin redraws at the same,
 // cache-deterministic position.
-const _wcCatchmentViewMemory = new Map();   // semanticKey → boolean (catchment view)
+// semanticKey → boolean (catchment view). Persisted so a card reopens in the same
+// view after a page refresh (keys are coordinate/id-derived, stable across reload).
+const LS_CARD_CATCHMENT_VIEW_KEY = 'mappingElf_cardCatchmentView';
+const _wcCatchmentViewMemory = new Map();
+function loadCardCatchmentViewMemory() {
+  _wcCatchmentViewMemory.clear();
+  try {
+    const arr = JSON.parse(localStorage.getItem(LS_CARD_CATCHMENT_VIEW_KEY) || '[]');
+    if (Array.isArray(arr)) arr.forEach((k) => { if (typeof k === 'string') _wcCatchmentViewMemory.set(k, true); });
+  } catch (_) { }
+}
+loadCardCatchmentViewMemory();
+function persistCardCatchmentViewMemory() {
+  try {
+    const keys = [];
+    _wcCatchmentViewMemory.forEach((on, k) => { if (on) keys.push(k); });
+    localStorage.setItem(LS_CARD_CATCHMENT_VIEW_KEY, JSON.stringify(keys));
+  } catch (_) { }
+}
 let cursorCatchmentView = false;            // GPS-cursor card catchment toggle
 const _cardCatchmentToken = new Map();      // key → generation guard for the basin-polygon draw
 const _cardCatchmentAbort = new Map();      // key → AbortController for the polygon delineation
@@ -11247,6 +11272,7 @@ function isCatchmentView(colIdx) {
 }
 function setCatchmentViewMemory(colIdx, on) {
   _wcCatchmentViewMemory.set(catchmentViewKeyFor(colIdx), !!on);
+  persistCardCatchmentViewMemory();
 }
 
 function clearCardCatchmentPolygon(key) {
@@ -11351,8 +11377,8 @@ function catchmentValueHtml(row) {
 // values that don't fit a half-column.
 function buildCatchmentSkeletonHtml() {
   const TERRAIN = [['集水區面積', 0], ['出水口海拔', 0], ['海拔範圍', 1], ['平均坡度', 1], ['主流長度', 0]];
-  const WEATHER = CATCHMENT_WEATHER_KEYS.map(([, label]) => [label, 0]);
-  const HYDRO = [['土壤含水量', 0], ['前期降雨', 1], ['預估逕流量', 0], ['河川流量', 1], ['溪水暴漲風險', 1], ['土石流風險', 1]];
+  const WEATHER = CATCHMENT_CARD_WEATHER_KEYS.map(([, label]) => [label, 0]);
+  const HYDRO = [['土壤含水量', 0], ['前期降雨', 1], ['預估逕流量', 0], ['河川流量', 1], ['溪水暴漲風險', 0], ['土石流風險', 0]];
   const grid = (section, rows) =>
     `<div class="wc-info-grid wc-catch-grid" data-catch="${section}">` +
     rows.map(([label, wide]) =>
@@ -11397,7 +11423,7 @@ async function renderCardCatchment({ key, lat, lng, dateStr, hour, weatherVal, c
     values.forEach((v, i) => { if (cells[i]) cells[i].innerHTML = v; });
   };
   // Weather mirrors the weather view (already loaded) — fill it immediately while the DEM computes.
-  fill('weather', CATCHMENT_WEATHER_KEYS.map(([k]) => (weatherVal ? weatherVal(k) : '—')));
+  fill('weather', CATCHMENT_CARD_WEATHER_KEYS.map(([k]) => (weatherVal ? weatherVal(k) : '—')));
 
   let result;
   try {
@@ -11646,8 +11672,10 @@ function _renderWeatherCard(colIdx) {
   }
   if (isFull) {
     const showCatch = isCatchmentView(colIdx);
-    html += buildWeatherCardViewToggleHtml(showCatch);
+    // Time controls sit in the shared block above the weather/集水區 toggle so they
+    // apply to whichever view is active.
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
+    html += buildWeatherCardViewToggleHtml(showCatch);
     if (showCatch) {
       html += `<div class="wc-catchment"></div>`;
     } else {

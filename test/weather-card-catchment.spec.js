@@ -145,14 +145,20 @@ test('weather card: catchment toggle draws basin + set-to-now buttons work', asy
   await expect(catch1).toContainText('僅供參考');
   await expect(catch1).not.toContainText('NaN');
   await expect(catch1).not.toContainText('undefined');
+  // 天氣/溫度/體感溫度 are shown in the card header line, so the catchment panel omits them.
+  await expect(catch1).not.toContainText('天氣');
+  await expect(catch1).not.toContainText('溫度');
 
   // Basin polygon drawn on the map, and it added a path.
   await expect(page.locator('#map .leaflet-overlay-pane path.wc-catchment-poly')).toHaveCount(1, { timeout: 20000 });
   expect(await page.locator('#map .leaflet-overlay-pane path').count()).toBeGreaterThan(pathsBefore);
 
   // Weather-card format: 2-column info grid, all rows present up front (terrain 5
-  // + weather 7 + hydrology 6), so the card does not balloon when async data lands.
-  await expect(card.locator('.wc-catchment [data-catch] .wc-info-item')).toHaveCount(18);
+  // + weather 4 [humidity/wind/precip×2] + hydrology 6), so the card does not
+  // balloon when async data lands.
+  await expect(card.locator('.wc-catchment [data-catch] .wc-info-item')).toHaveCount(15);
+  // 溪水暴漲風險 / 土石流風險 sit side by side (half-width), so only 前期降雨 + 河川流量 span full width.
+  await expect(card.locator('[data-catch="hydro"] .wc-info-item.is-wide')).toHaveCount(2);
   const skelH = await card.locator('.wc-catchment').evaluate((el) => el.getBoundingClientRect().height);
   await expect(card.locator('[data-catch="hydro"] .wc-catch-val').first()).not.toHaveText('…', { timeout: 20000 });
   const fullH = await card.locator('.wc-catchment').evaluate((el) => el.getBoundingClientRect().height);
@@ -203,6 +209,62 @@ test('catchment basin persists through compact / minimize / reopen', async ({ pa
   // Toggling back to weather removes the basin.
   await clickCardControl(card().locator('.wc-view-btn[data-wc-view="weather"]'));
   await expect(poly).toHaveCount(0, { timeout: 20000 });
+});
+
+test('catchment view choice is remembered across a page reload', async ({ page }) => {
+  // addInitScript reruns on every navigation (incl. reload), so guard the reset
+  // with sessionStorage — the route + persisted view choice must survive the reload.
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('__catch_reload_setup')) return;
+    localStorage.clear();
+    localStorage.setItem('mappingElf_routeMode', 'walking');
+    localStorage.setItem('mappingElf_roundTrip', '0');
+    localStorage.setItem('mappingElf_oLoop', '0');
+    localStorage.setItem('mappingElf_speedMode', '0');
+    localStorage.setItem('mappingElf_segmentKm', '0');
+    localStorage.setItem('mappingElf_language', 'zh-TW');
+    localStorage.setItem('mappingElf_collectiveMarked', '0');
+    localStorage.setItem('mappingElf_collectiveIntermediate', '0');
+    localStorage.setItem('mappingElf_collectiveAll', '0');
+    sessionStorage.setItem('__catch_reload_setup', '1');
+  });
+  await page.route('**/route/v1/**', (route) => {
+    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
+    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
+    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
+  });
+  await forecast(page);
+  await flood(page);
+  await coneElevation(page);
+
+  await page.goto('/');
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  const box = await page.locator('#map').boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
+  await page.mouse.click(box.x + box.width * 0.66, box.y + box.height * 0.5);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first()).toBeVisible();
+  await page.waitForFunction(() => !document.body.classList.contains('weather-card-busy'));
+
+  const cardId = await openFirstCardFull(page);
+  const card = page.locator(`#${cardId}`);
+  await clickCardControl(card.locator('.wc-view-btn[data-wc-view="catchment"]'));
+  await expect(card.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
+  const poly = page.locator('#map .leaflet-overlay-pane path.wc-catchment-poly');
+  await expect(poly).toHaveCount(1, { timeout: 20000 });
+
+  // The choice is written to localStorage under the registered key.
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_cardCatchmentView') || '[]'));
+  expect(Array.isArray(stored)).toBe(true);
+  expect(stored.length).toBeGreaterThan(0);
+
+  // Reload → route restores AND the basin is auto-redrawn from the remembered view
+  // choice (syncCatchmentBasins reconciles on panel render, no card reopen needed).
+  await page.reload();
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
+  await expect(poly).toHaveCount(1, { timeout: 20000 });
 });
 
 test('view toggle applies to the whole collective set', async ({ page }) => {
