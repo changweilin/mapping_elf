@@ -887,6 +887,22 @@ const LS_SHOW_IM_ICON_KEY = 'mappingElf_showImIcon';
 let showWpIcon = localStorage.getItem(LS_SHOW_WP_ICON_KEY) !== '0'; // default true
 let showImIcon = localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== null ? localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== '0' : window.innerWidth > 768;
 
+// Info-card detail toggles, split by 主航點 (waypoint) / 副航點 (intermediate).
+// When a detail flag is off, that point class's card shows only the info above
+// the 天氣/集水區 toggle plus 雨量/降雨機率/濕度/風速 — and the hidden data is not
+// loaded (catchment: no DEM/hydro compute, no basin overlay). 主航點 defaults on,
+// 副航點 defaults off.
+const LS_WP_DETAIL_WEATHER_KEY = 'mappingElf_wpDetailWeather';
+const LS_WP_DETAIL_CATCHMENT_KEY = 'mappingElf_wpDetailCatchment';
+const LS_IM_DETAIL_WEATHER_KEY = 'mappingElf_imDetailWeather';
+const LS_IM_DETAIL_CATCHMENT_KEY = 'mappingElf_imDetailCatchment';
+let wpDetailWeather = localStorage.getItem(LS_WP_DETAIL_WEATHER_KEY) !== '0';   // default true
+let wpDetailCatchment = localStorage.getItem(LS_WP_DETAIL_CATCHMENT_KEY) !== '0'; // default true
+let imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';    // default false
+let imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1'; // default false
+const weatherDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailWeather : imDetailWeather);
+const catchmentDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailCatchment : imDetailCatchment);
+
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
   catch { return { ...DEFAULT_PACE_PARAMS }; }
@@ -1303,6 +1319,10 @@ function applySettingsFromStorage() {
   waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0';
   showWpIcon = localStorage.getItem(LS_SHOW_WP_ICON_KEY) !== '0';
   showImIcon = localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== null ? localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== '0' : window.innerWidth > 768;
+  wpDetailWeather = localStorage.getItem(LS_WP_DETAIL_WEATHER_KEY) !== '0';
+  wpDetailCatchment = localStorage.getItem(LS_WP_DETAIL_CATCHMENT_KEY) !== '0';
+  imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';
+  imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1';
   try {
     paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
   } catch {
@@ -1368,6 +1388,14 @@ function applySettingsFromStorage() {
   if (showWpIconEl) showWpIconEl.checked = showWpIcon;
   const showImIconEl = document.getElementById('show-intermediate-weather-icon');
   if (showImIconEl) showImIconEl.checked = showImIcon;
+  const wpDetailWeatherEl = document.getElementById('wp-detail-weather');
+  if (wpDetailWeatherEl) wpDetailWeatherEl.checked = wpDetailWeather;
+  const wpDetailCatchmentEl = document.getElementById('wp-detail-catchment');
+  if (wpDetailCatchmentEl) wpDetailCatchmentEl.checked = wpDetailCatchment;
+  const imDetailWeatherEl = document.getElementById('im-detail-weather');
+  if (imDetailWeatherEl) imDetailWeatherEl.checked = imDetailWeather;
+  const imDetailCatchmentEl = document.getElementById('im-detail-catchment');
+  if (imDetailCatchmentEl) imDetailCatchmentEl.checked = imDetailCatchment;
   syncWeatherCacheSettingsUI();
 
   // Refresh UI
@@ -1933,6 +1961,29 @@ function initWaypointSettings() {
     });
   }
 
+  // Info-card detail toggles (主/副航點 × 天氣/集水區). On change, re-render open
+  // cards to the new detail level and reconcile basin overlays (catchment detail
+  // off means no basin for that point). Deferred while a route/weather load runs.
+  const bindDetailToggle = (id, storageKey, initial, apply) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.checked = initial;
+    el.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting(id, () => el.dispatchEvent(new Event('change')));
+        return;
+      }
+      apply(el.checked);
+      localStorage.setItem(storageKey, el.checked ? '1' : '0');
+      refreshOpenWeatherCards();
+      syncCatchmentBasins();
+    });
+  };
+  bindDetailToggle('wp-detail-weather', LS_WP_DETAIL_WEATHER_KEY, wpDetailWeather, (v) => { wpDetailWeather = v; });
+  bindDetailToggle('wp-detail-catchment', LS_WP_DETAIL_CATCHMENT_KEY, wpDetailCatchment, (v) => { wpDetailCatchment = v; });
+  bindDetailToggle('im-detail-weather', LS_IM_DETAIL_WEATHER_KEY, imDetailWeather, (v) => { imDetailWeather = v; });
+  bindDetailToggle('im-detail-catchment', LS_IM_DETAIL_CATCHMENT_KEY, imDetailCatchment, (v) => { imDetailCatchment = v; });
+
   const importAutoSortEl = document.getElementById('import-auto-sort-enable');
   if (importAutoSortEl) {
     importAutoSortEl.checked = importAutoSortMode;
@@ -1962,7 +2013,7 @@ function initWaypointSettings() {
   btnMinimize?.addEventListener('click', () => {
     const targetCols = getCollectiveIndices();
     if (targetCols.length === 0) {
-      showNotification('未選取任何操作目標 (標示點 / 中繼點)', 'warning');
+      showNotification('未選取任何操作目標 (主航點 / 副航點)', 'warning');
       return;
     }
     targetCols.forEach(idx => closeWeatherCard(idx));
@@ -2761,7 +2812,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       };
     });
 
-    // Whether a point's weather icon shows in 3D follows the same 主航點/中繼點
+    // Whether a point's weather icon shows in 3D follows the same 主航點/副航點
     // checkboxes as the 2D map; the WMO code + temperature themselves live in the
     // weather cache (weatherPoints entries don't carry them directly), same as
     // what feeds the 2D marker badges.
@@ -3917,7 +3968,7 @@ function showWaypointCard(detail) {
   const wxCond = (wx && wx.code != null) ? tWmo(wx.code) : null;
   const weatherRows = rowsHtml([['天氣狀況', wxCond], ['溫度', wxTemp]]);
 
-  const tag = detail.isStart ? '起點' : (detail.isEnd ? '終點' : '中繼點');
+  const tag = detail.isStart ? '起點' : (detail.isEnd ? '終點' : '副航點');
 
   tvWpCard.style.setProperty('--wp-card-color', colorCss);
   tvWpCardBody.innerHTML = `
@@ -4319,10 +4370,12 @@ const CATCHMENT_WEATHER_KEYS = [
 ];
 
 // Weather rows shown inside a weather-CARD's catchment view. Drops weather/溫度/體感
-// 溫度 because the card already shows those in its header line (wc-weather-main).
-const CATCHMENT_CARD_WEATHER_KEYS = CATCHMENT_WEATHER_KEYS.filter(
-  ([k]) => k !== 'weather' && k !== 'temp' && k !== 'feelsLike',
-);
+// 溫度 (already in the card header line) and is ordered 雨量/降雨機率/濕度/風速 so it
+// reads the same as the minimal weather view; rendered at the TOP of the catchment
+// card (above 地形/水文).
+const CATCHMENT_CARD_WEATHER_KEYS = [
+  ['precipitation', '雨量'], ['precipProb', '降雨機率'], ['humidity', '濕度'], ['windSpeed', '風速'],
+];
 
 // Hydrology row count for the "no data" fill fallback; order/labels mirror
 // computeHydroIndicators (catchmentHydro.js) — see buildCatchmentSkeletonHtml.
@@ -6348,7 +6401,7 @@ function resetPaceToAnchor() {
     _wcStates.forEach((mode, colIdx) => _renderWeatherCard(colIdx));
   }
 
-  const label = anchorPt.label || (anchorPt.isWaypoint ? `航點 ${anchorPt.wpIndex + 1}` : '中繼點');
+  const label = anchorPt.label || (anchorPt.isWaypoint ? `航點 ${anchorPt.wpIndex + 1}` : '副航點');
   showNotification(`已依據「${label}」重置配速時間`, 'success');
   historyRecord();
 }
@@ -8109,6 +8162,15 @@ const WEATHER_ROWS = [
 const WEATHER_CARD_TOP_STAT_ROWS = WEATHER_TOP_ROWS.filter(row => row.key === 'precipitation' || row.key === 'precipProb');
 const WEATHER_CARD_MIDDLE_ROWS = WEATHER_MIDDLE_ROWS;
 const WEATHER_CARD_BOTTOM_ROWS = WEATHER_BOTTOM_ROWS;
+
+// Reduced weather-card body shown when 詳細天氣資訊 is off for a point's class:
+// only 雨量/降雨機率/濕度/風速 below the shared header (temp/desc/time controls).
+const WEATHER_CARD_MINIMAL_ROWS = [
+  { key: 'precipitation', label: '雨量' },
+  { key: 'precipProb', label: '降雨機率' },
+  { key: 'humidity', label: '濕度' },
+  { key: 'windSpeed', label: '風速' },
+];
 
 let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
@@ -12129,7 +12191,8 @@ function clearAllCardCatchments() {
 // no-op reconcile is cheap and never flickers an already-correct basin.
 function syncCatchmentBasins() {
   const wanted = new Set();
-  weatherPoints.forEach((pt, colIdx) => { if (isCatchmentView(colIdx)) wanted.add(colIdx); });
+  // 詳細集水區資訊 off → no basin overlay for that point (range is neither drawn nor read).
+  weatherPoints.forEach((pt, colIdx) => { if (isCatchmentView(colIdx) && catchmentDetailEnabledFor(pt)) wanted.add(colIdx); });
   Array.from(_cardCatchmentLayers.keys()).forEach((key) => {
     if (key !== 'cursor' && !wanted.has(key)) clearCardCatchment(key);
   });
@@ -12229,7 +12292,7 @@ function catchmentValueHtml(row) {
 // renderCardCatchment (area, outlet, computeGeometryRows / computeHydroIndicators).
 // `1` = full-width row (like the weather card's is-wide coords row) for the long
 // values that don't fit a half-column.
-function buildCatchmentSkeletonHtml() {
+function buildCatchmentSkeletonHtml(weatherOnly = false) {
   const TERRAIN = [['集水區面積', 0], ['出水口海拔', 0], ['海拔範圍', 1], ['平均坡度', 1], ['主流長度', 0]];
   const WEATHER = CATCHMENT_CARD_WEATHER_KEYS.map(([, label]) => [label, 0]);
   const HYDRO = [['土壤含水量', 0], ['前期降雨', 1], ['預估逕流量', 0], ['河川流量', 1], ['溪水暴漲風險', 0], ['土石流風險', 0]];
@@ -12240,7 +12303,10 @@ function buildCatchmentSkeletonHtml() {
       + `<span class="wc-info-label">${label}</span>`
       + `<span class="wc-info-value wc-catch-val">…</span></div>`).join('') +
     `</div>`;
-  return grid('terrain', TERRAIN) + grid('weather', WEATHER) + grid('hydro', HYDRO)
+  // Weather sits at the TOP. When 詳細集水區資訊 is off, only the weather group shows
+  // (地形/水文 are neither rendered nor computed).
+  if (weatherOnly) return grid('weather', WEATHER);
+  return grid('weather', WEATHER) + grid('terrain', TERRAIN) + grid('hydro', HYDRO)
     + `<div class="ct-disclaimer">水文指標為粗略估算，僅供參考</div>`;
 }
 
@@ -12262,7 +12328,7 @@ function resolveCardWeatherValue(colIdx, info, key) {
 // superseded fill (time change or a newer card) never lands stale (INC race
 // rule). weatherVal(key) resolves the card's already-shown weather value (same
 // fallback chain as the weather view), so no extra weather fetch is issued here.
-async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weatherVal, container }) {
+async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weatherVal, container, detailed = true }) {
   if (!container) return;
   const token = (_cardPanelToken.get(key) || 0) + 1;
   _cardPanelToken.set(key, token);
@@ -12271,13 +12337,17 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
   _cardPanelAbort.set(key, abort);
   const stale = () => token !== _cardPanelToken.get(key);
 
-  container.innerHTML = buildCatchmentSkeletonHtml();
+  container.innerHTML = buildCatchmentSkeletonHtml(!detailed);
   const fill = (section, values) => {
     const cells = container.querySelectorAll(`[data-catch="${section}"] .wc-catch-val`);
     values.forEach((v, i) => { if (cells[i]) cells[i].innerHTML = v; });
   };
   // Weather mirrors the weather view (already loaded) — fill it immediately while the DEM computes.
   fill('weather', CATCHMENT_CARD_WEATHER_KEYS.map(([k]) => (weatherVal ? weatherVal(k) : '—')));
+
+  // 詳細集水區資訊 off: weather-only card. No DEM delineation, no hydrology read —
+  // the hidden 地形/水文 are not computed at all ("其他不顯示的也不用讀取").
+  if (!detailed) { _cardPanelAbort.delete(key); return; }
 
   // Prefill terrain + hydrology from the remembered readout so nothing shows "…"
   // while the live compute runs — and the info survives if a fetch fails / offline.
@@ -12562,6 +12632,9 @@ function _renderWeatherCard(colIdx) {
     html += buildWeatherCardViewToggleHtml(showCatch);
     if (showCatch) {
       html += `<div class="wc-catchment"></div>`;
+    } else if (!weatherDetailEnabledFor(pt)) {
+      // 詳細天氣資訊 off: only 雨量/降雨機率/濕度/風速, no full detail / Windy link.
+      html += buildWeatherCardSectionHtml(WEATHER_CARD_MINIMAL_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
     } else {
       html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
       html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer));
@@ -12933,6 +13006,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         hour: info.hour,
         weatherVal: (k) => resolveCardWeatherValue(colIdx, info, k),
         container,
+        detailed: catchmentDetailEnabledFor(info.pt),
       });
     }
   }

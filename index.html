@@ -482,7 +482,7 @@
         </div>
         <!-- 按段重算 + 配速時間 並排 -->
         <div class="pace-checks-row">
-          <label class="pace-check-opt" title="勾選後,各段中繼點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
+          <label class="pace-check-opt" title="勾選後,各段副航點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
             <input type="checkbox" id="pace-per-segment-enable">
             <span>按段重算</span>
           </label>
@@ -552,7 +552,7 @@
           </svg>
           <span class="h3-label">航點設置</span>
         </h3>
-        <div class="section-actions waypoint-header-actions" onclick="event.stopPropagation()" title="中繼點設置">
+        <div class="section-actions waypoint-header-actions" onclick="event.stopPropagation()" title="副航點設置">
           <div class="interval-mode-controls">
             <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
               關</label>
@@ -578,11 +578,11 @@
           style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
           <label class="pace-check-opt">
             <input type="checkbox" id="collective-marked-pts" checked>
-            <span>全標示點</span>
+            <span>全主航點</span>
           </label>
           <label class="pace-check-opt">
             <input type="checkbox" id="collective-intermediate-pts" checked>
-            <span>全中繼點</span>
+            <span>全副航點</span>
           </label>
           <label class="pace-check-opt" title="勾選全航點時將自動包含前兩項">
             <input type="checkbox" id="collective-all-waypoints">
@@ -607,9 +607,33 @@
             <input type="checkbox" id="show-waypoint-weather-icon" checked>
             <span>主航點</span>
           </label>
-          <label class="pace-check-opt" title="在地圖上顯示中繼點的天氣圖示">
+          <label class="pace-check-opt" title="在地圖上顯示副航點的天氣圖示">
             <input type="checkbox" id="show-intermediate-weather-icon" checked>
-            <span>中繼點</span>
+            <span>副航點</span>
+          </label>
+        </div>
+
+        <div class="pace-checks-row" style="margin-bottom: 8px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
+          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">主航點資訊</span>
+          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
+            <input type="checkbox" id="wp-detail-weather" checked>
+            <span>詳細天氣資訊</span>
+          </label>
+          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
+            <input type="checkbox" id="wp-detail-catchment" checked>
+            <span>詳細集水區資訊</span>
+          </label>
+        </div>
+
+        <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
+          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">副航點資訊</span>
+          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
+            <input type="checkbox" id="im-detail-weather">
+            <span>詳細天氣資訊</span>
+          </label>
+          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
+            <input type="checkbox" id="im-detail-catchment">
+            <span>詳細集水區資訊</span>
           </label>
         </div>
 
