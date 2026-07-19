@@ -11526,13 +11526,20 @@ async function fetchAllCatchmentData(options = {}) {
   renderCatchmentPanel();   // ensure the cells exist to receive values
 
   const visibleIndices = getCatchmentColumnIndices();
-  const targets = visibleIndices
+  // Progress-bar parity with weather (fetchAllWeatherData): 分母 = 全部可見欄位,
+  // NOT only the uncached ones, so 航點完成數 climbs through the whole route. Each
+  // target carries whether it still needs a DEM read; cached columns are applied
+  // instantly in-loop (no fetch, no inter-request delay) yet still count toward N/total.
+  const allTargets = visibleIndices
     .filter((colIdx) => onlyColIndex === null || colIdx === onlyColIndex)   // single-column retry
     .map((colIdx) => ({ colIdx, pt: weatherPoints[colIdx] }))
-    .filter(({ pt, colIdx }) => pt && (force || catchmentColumnNeedsFetch(pt, colIdx)));
+    .filter(({ pt }) => pt)
+    .map((t) => ({ ...t, needsFetch: force || catchmentColumnNeedsFetch(t.pt, t.colIdx) }));
 
-  if (targets.length === 0) {
-    visibleIndices.forEach((colIdx) =>
+  // Nothing needs a fetch → apply saved readouts synchronously, no progress bar
+  // (mirrors weather's !needsNetworkFetch fast path).
+  if (!allTargets.some((t) => t.needsFetch)) {
+    allTargets.forEach(({ colIdx }) =>
       fillCatchmentTableColumn(colIdx, getSavedCatchmentCells(getSemanticKey(weatherPoints[colIdx]))));
     showNotification('集水區資訊已更新', 'success', 1500);
     return;
@@ -11540,13 +11547,13 @@ async function fetchAllCatchmentData(options = {}) {
 
   // 主航點 first, 副航點 (intermediates) after — the important named points get their
   // 集水區 read-out before the many intermediates on a long, DEM-heavy load.
-  const orderedTargets = orderMainWaypointsFirst(targets, (t) => t.pt);
+  const orderedTargets = orderMainWaypointsFirst(allTargets, (t) => t.pt);
 
   const controller = new AbortController();
   const run = { id: ++catchmentFetchRunSeq, controller, signal: controller.signal, cancelled: false, paused: false, lockScope: 'edit', _resume: null };
   activeCatchmentFetchRun = run;
   isCatchmentFetching = true;
-  const total = targets.length;
+  const total = allTargets.length;
   let done = 0;
   let okCount = 0;
   const busyTask = beginRouteWeatherBusyTask({
@@ -11585,10 +11592,33 @@ async function fetchAllCatchmentData(options = {}) {
     return ok ? 'ok' : 'fail';
   };
 
+  // Apply ONE already-cached column instantly (parity with weather's cache path):
+  // fills the table + syncs an open card, no DEM read and no inter-request delay,
+  // but still advances N/total. Basins for cached columns are reconciled by
+  // syncCatchmentBasins() at completion, matching the all-cached fast path.
+  const fillCachedColumn = ({ colIdx, pt }) => {
+    const saved = getSavedCatchmentCells(getSemanticKey(pt));
+    fillCatchmentTableColumn(colIdx, saved);
+    if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
+    return saved?.status === 'ok';
+  };
+
   const failedTargets = [];
   let remainingFailures = 0;
   try {
     for (const target of orderedTargets) {
+      if (isCatchmentFetchRunCancelled(run)) break;
+      await waitIfLoadPaused(run);                       // park here while 停止 is active
+      if (isCatchmentFetchRunCancelled(run)) break;      // cancelled while paused
+
+      // Cached column: no fetch, no delay — just fill + advance the counter.
+      if (!target.needsFetch) {
+        if (fillCachedColumn(target)) okCount++;
+        done++;
+        busyTask.set({ detail: `載入集水區資訊 ${done}/${total}`, progress: (done / total) * 100 });
+        continue;
+      }
+
       const outcome = await loadOneCatchment(target);
       if (outcome === 'cancel') break;
       if (outcome === 'ok') okCount++;
