@@ -3787,7 +3787,8 @@ async function loadTerrain3DCatchments() {
   pausableLoadRuns.add(run);
 
   try {
-    for (const wp of wps) {
+    for (let i = 0; i < wps.length; i++) {
+      const wp = wps[i];
       if (token !== terrain3dCatchmentToken || run.cancelled) break;
       await waitIfLoadPaused(run);              // park here while 停止 is active
       if (token !== terrain3dCatchmentToken || run.cancelled) break;
@@ -3801,11 +3802,14 @@ async function loadTerrain3DCatchments() {
       }
       if (token !== terrain3dCatchmentToken || run.cancelled) break;
       if (result?.status === 'ok' && result.outer?.length) {
+        // Match the 2D basin / waypoint pin colour; fall back to the route
+        // gradient by position so every basin is still distinctly coloured.
+        const basinColor = wp.color || interpolateRouteColor(total > 1 ? i / (total - 1) : 0);
         terrainViewer.addCatchmentBasin({
           outer: result.outer,
           holes: result.holes || [],
           outlet: result.outlet || null,
-          color: wp.color || null,
+          color: basinColor,
         });
         okCount++;
       }

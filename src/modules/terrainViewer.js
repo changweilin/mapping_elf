@@ -1844,6 +1844,20 @@ export class TerrainViewer {
     return this._isHole(this._sampleSmooth(field, gy, gx, FIELD_SIZE));
   }
 
+  // Ray-casting point-in-polygon on a [lat,lng][] ring (lat=y, lng=x). Used to
+  // rasterise a catchment fill against the terrain's own grid so the fill drapes
+  // over the interior relief instead of tenting flatly between boundary vertices.
+  _pointInRing(lat, lng, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const yi = ring[i][0], xi = ring[i][1];
+      const yj = ring[j][0], xj = ring[j][1];
+      if (((yi > lat) !== (yj > lat)) &&
+        (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+
   // Split a polyline ([lat,lng][]) into runs of consecutive points that sit on
   // real (non-hole) terrain, so a road/river/outline isn't drawn across a blank
   // tile. Runs shorter than 2 points are dropped by the caller.
@@ -4666,33 +4680,59 @@ export class TerrainViewer {
         .map((h) => this._clipRingToBbox(toShape(h), bbox))
         .filter((h) => h.length >= 3);
 
-      // Filled surface, per-vertex draped so it hugs the relief.
-      const localXZ = (lat, lng) => { const p = this._latLngToLocal(lat, lng, 0, bbox); return new THREE.Vector2(p.x, p.z); };
-      const contour2D = outer.map(([la, lo]) => localXZ(la, lo));
-      const holes2D = holes.map((h) => h.map(([la, lo]) => localXZ(la, lo)));
-      let faces = null;
-      try { faces = THREE.ShapeUtils.triangulateShape(contour2D, holes2D); } catch { faces = null; }
-      if (faces && faces.length) {
-        const combinedLL = [...outer, ...holes.flat()];
-        const verts3D = combinedLL.map(([la, lo]) => world(la, lo, lift));
-        const combinedHole = combinedLL.map(([la, lo]) => this._isOverHole(la, lo));
-        const positions = [];
-        for (const f of faces) {
-          if (f.some((idx) => combinedHole[idx])) continue;  // skip triangles over terrain holes
-          for (const idx of f) { const v = verts3D[idx]; if (v) positions.push(v.x, v.y, v.z); }
+      // Filled surface: rasterise the basin over its OWN bbox with a resolution
+      // decoupled from the (whole-route) terrain field, sampling the terrain height
+      // per node. This gives full coverage even for a small local catchment (a few
+      // terrain-field cells wide) — the earlier field-index approach left small
+      // basins with a sparse/empty fill under the outline — while still hugging the
+      // interior relief (each node's height comes from _sampleGridElevation).
+      let bLatMin = Infinity, bLatMax = -Infinity, bLngMin = Infinity, bLngMax = -Infinity;
+      for (const [la, lo] of outer) {
+        if (la < bLatMin) bLatMin = la; if (la > bLatMax) bLatMax = la;
+        if (lo < bLngMin) bLngMin = lo; if (lo > bLngMax) bLngMax = lo;
+      }
+      const latSpan = bLatMax - bLatMin, lngSpan = bLngMax - bLngMin;
+      // Sample ~1.5× the terrain-field density where the basin is large, but never
+      // fewer than 24 steps so a tiny basin is still smoothly and fully filled.
+      const stepsY = Math.max(24, Math.min(140, Math.ceil(latSpan / dLatCell * 1.5)));
+      const stepsX = Math.max(24, Math.min(140, Math.ceil(lngSpan / dLngCell * 1.5)));
+      const nLat = (i) => bLatMin + (i / stepsY) * latSpan;
+      const nLng = (j) => bLngMin + (j / stepsX) * lngSpan;
+      const cols = stepsX + 1;
+      const cornerVert = new Array((stepsY + 1) * cols).fill(null);
+      for (let i = 0; i <= stepsY; i++) {
+        for (let j = 0; j <= stepsX; j++) {
+          const la = nLat(i), lo = nLng(j);
+          cornerVert[i * cols + j] = this._isOverHole(la, lo) ? null : world(la, lo, lift);
         }
-        if (positions.length) {
-          const geo = new THREE.BufferGeometry();
-          geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-          geo.computeVertexNormals();
-          const mat = new THREE.MeshBasicMaterial({
-            color, transparent: true, opacity: 0.26, side: THREE.DoubleSide,
-            depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
-          });
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.renderOrder = 2;
-          grp.add(mesh);
+      }
+      const inBasin = (la, lo) => this._pointInRing(la, lo, outer) && !holes.some((h) => this._pointInRing(la, lo, h));
+      const positions = [];
+      for (let i = 0; i < stepsY; i++) {
+        for (let j = 0; j < stepsX; j++) {
+          // Cell-centre test keeps the fill inside the true boundary (drawn crisply
+          // by the outline below); half-cell stair-stepping hides under it.
+          if (!inBasin(nLat(i + 0.5), nLng(j + 0.5))) continue;
+          const v00 = cornerVert[i * cols + j];
+          const v10 = cornerVert[i * cols + (j + 1)];
+          const v01 = cornerVert[(i + 1) * cols + j];
+          const v11 = cornerVert[(i + 1) * cols + (j + 1)];
+          if (!v00 || !v10 || !v01 || !v11) continue;   // touches a terrain hole → skip
+          positions.push(v00.x, v00.y, v00.z, v10.x, v10.y, v10.z, v11.x, v11.y, v11.z);
+          positions.push(v00.x, v00.y, v00.z, v11.x, v11.y, v11.z, v01.x, v01.y, v01.z);
         }
+      }
+      if (positions.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geo.computeVertexNormals();
+        const mat = new THREE.MeshBasicMaterial({
+          color, transparent: true, opacity: 0.34, side: THREE.DoubleSide,
+          depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 2;
+        grp.add(mesh);
       }
 
       // Boundary outline (outer + holes), split at terrain holes so it never
