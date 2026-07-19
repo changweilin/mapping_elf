@@ -1818,6 +1818,19 @@ export class TerrainViewer {
     return { x, y, z };
   }
 
+  // Inverse of _latLngToLocal's horizontal projection: recover lat/lng from a
+  // world (x, z). Used to re-drape a resampled track point onto the surface,
+  // which only exists as a function of lat/lng.
+  _localToLatLng(x, z, bbox) {
+    const cx = (bbox.minLng + bbox.maxLng) / 2;
+    const cy = (bbox.minLat + bbox.maxLat) / 2;
+    const R = 6371000;
+    const toRad = Math.PI / 180;
+    const lat = cy + z / (R * toRad);
+    const lng = cx + x / (R * toRad * Math.cos(toRad * cy));
+    return { lat, lng };
+  }
+
   // Interpolated terrain elevation (metres) at a lat/lng on the rendered surface,
   // so points can be dropped onto it. Samples the same fine field as the mesh;
   // falls back to the datum height over a hole.
@@ -2740,46 +2753,70 @@ export class TerrainViewer {
     return cols[idx].clone();
   }
 
+  // World-space clearance for the draped track (and the hiker riding it). The
+  // tube body has radius 6, so lifting the centreline by radius + a small
+  // span-scaled margin seats the tube just above the terrain: the track hugs the
+  // relief without z-fighting or piercing it, and the constant world-unit lift
+  // stays glued at any vertical exaggeration (unlike a metric lift, which the
+  // normalization scale would inflate into a visible float).
+  _routeDrapeLift() {
+    return 6 + Math.max(2, (this._worldSpan || 2000) * 0.001);
+  }
+
   _createRoutePath(coords, elevations, bbox) {
     if (!coords || coords.length < 2) return;
 
     const hasGradient = !!(this._routeColors && this._routeColors.length === coords.length);
     const legacyColor = new THREE.Color(0x00d4ff);
-    // Dynamic minor draping offset (Plan §II): lift the track a small,
-    // relief-proportional amount above the surface instead of a fixed +5 m. On a
-    // tall model +5 m disappears into the terrain (Z-fighting / track sinking);
-    // scaling with the elevation range keeps a consistent visible float at any
-    // model size while never lifting the track conspicuously off the ground.
-    const relief = Math.max(1, this._fieldMaxV - this._fieldMinV);
-    const routeLift = Math.max(5, relief * 0.01);
-    const pts = coords.map(([lat, lng], i) => {
-      const elev = elevations?.[i] ?? 0;
-      const p = this._latLngToLocal(lat, lng, elev + routeLift, bbox);
-      return new THREE.Vector3(p.x, p.y, p.z);
-    });
 
-    // Centripetal Catmull-Rom curve (Plan §II): centripetal parameterisation
-    // never overshoots or loops at sharp turns the way the uniform variant does,
-    // so tight switchbacks read as smooth curves rather than cusps. The curve is
-    // then resampled at an even arc-length spacing dense enough that both the 3D
-    // tube AND the overlay line follow the real bends instead of cutting the
-    // corner between sparsely-sampled GPS vertices (the "straight-line cutting"
-    // artefact). Sample count scales with the track's on-model length, clamped.
-    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    // The track is DRAPED onto the rendered terrain surface (grid-sampled), not
+    // hung at the raw GPS elevation. The surface mesh is a smoothed 25×25 DEM, so
+    // the GPS track diverges from it by tens of metres over ridges/valleys — that
+    // mismatch is what left the old track visibly floating above (or sunk into)
+    // the relief. Draping makes it hug whatever the viewer actually sees.
+    const drapeLift = this._routeDrapeLift();
+
+    // Build the smooth path in the HORIZONTAL plane first, then resolve every
+    // point's height by draping. Centripetal Catmull-Rom never overshoots/loops
+    // at sharp turns (switchbacks read as smooth curves, not cusps); the curve is
+    // resampled at an even spacing dense enough that both the tube and the
+    // overlay line follow the real bends instead of cutting corners between
+    // sparsely-sampled GPS vertices. Sample count scales with the on-model
+    // length, clamped.
+    const horizPts = coords.map(([lat, lng]) => {
+      const p = this._latLngToLocal(lat, lng, this._elevBase || 0, bbox);
+      return new THREE.Vector3(p.x, 0, p.z);
+    });
+    const horizCurve = new THREE.CatmullRomCurve3(horizPts, false, 'centripetal');
     let curveLen = 0;
-    try { curveLen = curve.getLength(); } catch { curveLen = 0; }
+    try { curveLen = horizCurve.getLength(); } catch { curveLen = 0; }
     const targetSpacing = Math.max(6, (this._worldSpan || 2000) / 500);
     const segCount = Math.max(
-      pts.length * 2,
-      Math.min(4000, Math.round((curveLen || pts.length * targetSpacing) / targetSpacing))
+      horizPts.length * 2,
+      Math.min(4000, Math.round((curveLen || horizPts.length * targetSpacing) / targetSpacing))
     );
-    // Arc-length-even samples: even tube rings + gradient fraction == distance
-    // fraction, so the resampled colours line up with the 2D route gradient.
-    const sampled = curve.getSpacedPoints(segCount);
+
+    // Re-drape EVERY resampled point (not just the GPS vertices) onto the surface
+    // so the densified track follows the relief end to end and never dips through
+    // it between sparse vertices. Over a terrain hole (missing DEM tile) carry the
+    // last valid height so the track doesn't dive to the basin datum across the
+    // data gap. Arc-length-even in the horizontal plane keeps the gradient
+    // fraction ≈ distance fraction, so the colours still line up with the 2D route.
+    let carrySurf = null;
+    const sampled = horizCurve.getSpacedPoints(segCount).map((v) => {
+      const { lat, lng } = this._localToLatLng(v.x, v.z, bbox);
+      let surf = this._sampleGridElevation(lat, lng);
+      if (this._isOverHole(lat, lng)) surf = (carrySurf != null ? carrySurf : surf);
+      else carrySurf = surf;
+      const base = this._latLngToLocal(lat, lng, surf, bbox);
+      return new THREE.Vector3(base.x, base.y + drapeLift, base.z);
+    });
 
     // Tube geometry gives the track a shaded 3D body. Gradient colours are applied
-    // ring-by-ring so it reads like the 2D route line.
-    const tubularSegments = segCount;
+    // ring-by-ring so it reads like the 2D route line. Built from the draped
+    // samples so the body hugs the surface too.
+    const curve = new THREE.CatmullRomCurve3(sampled, false, 'centripetal');
+    const tubularSegments = Math.max(1, sampled.length - 1);
     const radialSegments = 8;
     const tubeGeo = new THREE.TubeGeometry(curve, tubularSegments, 6, radialSegments, false);
     const tubeMat = new THREE.MeshStandardMaterial({
@@ -2845,46 +2882,8 @@ export class TerrainViewer {
     // resampled points) — the reveal mode limits instanceCount to this fraction.
     this._routeLineSegs = Math.max(1, sampled.length - 1);
 
-    // ----- Suspended-absolute drop stems (Plan §II-4) -----
-    // Thin vertical lines from the track down to the terrain surface beneath each
-    // (subsampled) route vertex, making the track's suspension in 3D space legible
-    // when the 絕對海拔 mode is on. Built once, hidden until toggled.
-    this._buildRouteStems(coords, elevations, routeLift, bbox);
-
     // Honour a persisted trail-reveal preference for the freshly built geometry.
     this._applyRouteReveal();
-  }
-
-  // Build the vertical drop-lines connecting the suspended track to the ground.
-  // Subsampled so a dense track doesn't spawn thousands of stems. Stems are
-  // skipped where the track barely floats (< ~4 m above terrain) or over a hole.
-  _buildRouteStems(coords, elevations, routeLift, bbox) {
-    if (!coords || coords.length < 2) return;
-    const step = Math.max(1, Math.floor(coords.length / 80));
-    const verts = [];
-    const pushStem = (i) => {
-      const [lat, lng] = coords[i];
-      if (this._isOverHole(lat, lng)) return;
-      const routeElev = (elevations?.[i] ?? 0) + routeLift;
-      const groundElev = this._sampleGridElevation(lat, lng);
-      if (routeElev - groundElev < 4) return; // barely floating → no stem needed
-      const top = this._latLngToLocal(lat, lng, routeElev, bbox);
-      const bot = this._latLngToLocal(lat, lng, groundElev, bbox);
-      verts.push(top.x, top.y, top.z, bot.x, bot.y, bot.z);
-    };
-    for (let i = 0; i < coords.length; i += step) pushStem(i);
-    pushStem(coords.length - 1);
-    if (verts.length < 6) return;
-
-    const geo = new LineSegmentsGeometry();
-    geo.setPositions(verts);
-    const mat = new LineMaterial({ color: 0xffb066, linewidth: 1.2, transparent: true, opacity: 0.55 });
-    const stems = new LineSegments2(geo, mat);
-    stems.computeLineDistances();
-    stems.visible = this._absoluteElevation;
-    this._routeStemGroup = stems;
-    this.scene.add(stems);
-    this._lineMaterials.push(mat);
   }
 
   // Suspended-absolute mode (Plan §II-4): show the drop stems so the track reads
@@ -4201,10 +4200,14 @@ export class TerrainViewer {
     if (!coords || coords.length < 2) return;
     const ms = this._markerScale || 1;
 
-    const pts = coords.map(([lat, lng], i) => {
-      const elev = elevations?.[i] ?? 0;
-      const p = this._latLngToLocal(lat, lng, elev + 20, bbox);
-      return new THREE.Vector3(p.x, p.y, p.z);
+    // Ride the hiker on the same draped surface as the track (see
+    // _createRoutePath) so the cursor cone stays seated on the trail instead of
+    // floating at the raw GPS elevation.
+    const drapeLift = this._routeDrapeLift();
+    const pts = coords.map(([lat, lng]) => {
+      const surf = this._sampleGridElevation(lat, lng);
+      const p = this._latLngToLocal(lat, lng, surf, bbox);
+      return new THREE.Vector3(p.x, p.y + drapeLift, p.z);
     });
 
     this.playerPath = new THREE.CatmullRomCurve3(pts);
