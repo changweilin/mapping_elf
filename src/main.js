@@ -2250,17 +2250,15 @@ const tvContourLabel = document.getElementById('tv-contour-label');
 const tvToggleContourLabels = document.getElementById('tv-toggle-contour-labels');
 const tvToggleWeather = document.getElementById('tv-toggle-weather');
 const tvWeatherLabel = document.getElementById('tv-weather-label');
-const tvToggleDaynight = document.getElementById('tv-toggle-daynight');
 const tvToggleEffects = document.getElementById('tv-toggle-effects');
 const tvToggleFeatures = document.getElementById('tv-toggle-features');
+const tvToggleCatchment = document.getElementById('tv-toggle-catchment');
 const tvToggleSatellite = document.getElementById('tv-toggle-satellite');
 const tvToggleLabelSize = document.getElementById('tv-toggle-labelsize');
 const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
 const tvToggleView = document.getElementById('tv-toggle-view');
 const tvViewLabel = document.getElementById('tv-view-label');
 const tvToggleNormalize = document.getElementById('tv-toggle-normalize');
-const tvToggleAbsolute = document.getElementById('tv-toggle-absolute');
-const tvToggleTrail = document.getElementById('tv-toggle-trail');
 const tvLiveHud = document.getElementById('tv-live-hud');
 const tvHudCollapse = document.getElementById('tv-hud-collapse');
 const tvMarkerDetail = document.getElementById('tv-marker-detail');
@@ -2364,16 +2362,16 @@ const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
   contour: 'high',        // high | low | none
   contourLabels: true,
   weather: 'on',          // on (hints+動畫) | noAnim (hints only) | off (all off)
-  daynight: true,
   effects: true,          // 地標裝飾（峰頂／樹木／高塔／觀景點／紀念碑模型）
   features: true,
+  catchment3d: false,     // 集水區疊加（開啟時自動計算各主航點集水範圍，貼合地形）
   labelSize: 'none',      // none | large | small
   elevNormalized: false,
-  absElev: false,         // 絕對海拔懸空（軌跡懸空＋支柱）
-  trailReveal: false,     // 軌跡時序揭示（依播放進度）
   followCam: true,        // Relive 式運鏡：播放時鏡頭跟拍人物
   satellite: false,       // 衛星影像疊加（Esri 空拍圖貼合地形表面）
 });
+// 日夜光照恆為開啟（早期版本有 daynight 開關，已移除）：日夜只影響 3D 物件與天空
+// 背景，地形網格改由固定日照 rig 渲染（見 terrainViewer 的 layers 設定）。
 
 function loadTerrainDisplaySettings() {
   try {
@@ -2822,11 +2820,22 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
         const cells = getSavedWeatherCells(wp);
         const code = cells?._weatherCode;
         const tempNum = cells?.temp != null ? parseFloat(cells.temp) : NaN;
+        // Pass the detailed weather rows through as-is (already unit-formatted
+        // display strings) for the playback card; null when absent/blank.
+        const cellStr = (k) => {
+          const v = cells?.[k];
+          const s = v != null ? String(v).trim() : '';
+          return (s === '' || s === '—') ? null : s;
+        };
         return {
           coords: wp.coords || [wp.lat, wp.lng],
           elevation: wp.elevation || 0,
           weatherCode: Number.isFinite(code) ? code : null,
           temperature: Number.isFinite(tempNum) ? tempNum : null,
+          precipitation: cellStr('precipitation'),
+          precipProb: cellStr('precipProb'),
+          humidity: cellStr('humidity'),
+          windSpeed: cellStr('windSpeed'),
           label: wp.label || null,
         };
       })
@@ -2950,6 +2959,9 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     applyTerrainDisplayToViewer();
     updateTerrainToggleAvailability();
     updateTerrainPlayerUI();
+    // A fresh build wipes the viewer's catchment basins; if the 集水區 toggle is
+    // on, recompute them for this route (fire-and-forget; manages its own progress).
+    if (terrainLastLoadOk && terrainDisplaySettings.catchment3d) loadTerrain3DCatchments();
     // Remember what we just built so an unchanged re-entry can skip the rebuild —
     // but only if the build actually finished (an aborted redraw keeps the old
     // scene, which no longer matches this signature).
@@ -2967,6 +2979,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
 }
 
 function closeTerrainViewer() {
+  cancelTerrain3DCatchments();     // abort any in-flight 集水區 compute
   if (terrainViewer) {
     if (terrainViewer.isLoading()) terrainViewer.abort();
     terrainViewer.pause();
@@ -3649,6 +3662,15 @@ function updateTerrainToggleAvailability() {
       : '此區域沒有可顯示的地圖圖資';
   }
 
+  // 集水區 needs 主航點 to delineate around.
+  const hasWaypoints = (terrainViewer.getWaypointCoords?.()?.length ?? 0) > 0;
+  if (tvToggleCatchment) {
+    tvToggleCatchment.disabled = !hasWaypoints;
+    tvToggleCatchment.title = hasWaypoints
+      ? '集水區（開啟時自動計算各主航點的集水範圍並貼合地形顯示）'
+      : '此路線沒有可計算集水區的主航點';
+  }
+
   // 3D-print export is available once a terrain solid exists.
   const canExport = terrainViewer.hasExportableModel?.() ?? false;
   if (tvExportBtn) tvExportBtn.disabled = !canExport;
@@ -3676,11 +3698,9 @@ function syncTerrainDisplayToggleUI() {
     tvToggleWeather.classList.toggle('active', terrainWeatherState !== 'off');
     tvToggleWeather.classList.toggle('tv-weather-off', terrainWeatherState === 'off');
   }
-  tvToggleDaynight?.classList.toggle('active', !!s.daynight);
   tvToggleEffects?.classList.toggle('active', !!s.effects);
   tvToggleFeatures?.classList.toggle('active', !!s.features);
-  tvToggleAbsolute?.classList.toggle('active', !!s.absElev);
-  tvToggleTrail?.classList.toggle('active', !!s.trailReveal);
+  tvToggleCatchment?.classList.toggle('active', !!s.catchment3d);
   tpFollow?.classList.toggle('active', !!s.followCam);
 
   terrainLabelState = TERRAIN_LABEL_STATES.includes(s.labelSize) ? s.labelSize : 'none';
@@ -3700,13 +3720,12 @@ function applyTerrainDisplayToViewer() {
   terrainViewer.setContourPrecision(terrainContourState);
   terrainViewer.setContourLabelsVisible(!!s.contourLabels);
   terrainViewer.setWeatherVisible(terrainWeatherState !== 'off');
-  terrainViewer.setEnvironmentEnabled(!!s.daynight);
+  // 日夜光照恆為開啟（開關已移除）。
+  terrainViewer.setEnvironmentEnabled(true);
   terrainViewer.setWeatherAnimEnabled(terrainWeatherState === 'on');
   terrainViewer.setEffectsEnabled(!!s.effects);
   terrainViewer.setFeaturesVisible(!!s.features);
   terrainViewer.setLabelScale(terrainLabelState);
-  terrainViewer.setAbsoluteElevation(!!s.absElev);
-  terrainViewer.setRouteRevealMode(!!s.trailReveal);
   terrainViewer.setFollowCamera(!!s.followCam);
   terrainViewer.setSatelliteEnabled(!!s.satellite);
   syncTerrainSatelliteButton();
@@ -3724,6 +3743,85 @@ function syncTerrainNormalizeButton() {
 function syncTerrainSatelliteButton() {
   if (tvToggleSatellite) {
     tvToggleSatellite.classList.toggle('active', !!terrainDisplaySettings.satellite);
+  }
+}
+
+// --- 3D 集水區 (Task 1) --------------------------------------------------------
+// Cache-first delineation of each 主航點's catchment, draped on the 3D terrain.
+// Mirrors the 2D catchment load: progress bar + 停止/繼續 (pausable) + editing lock,
+// and reuses getCatchmentFor (offline DEM aware, persists to the shared cache).
+let terrain3dCatchmentToken = 0;
+let terrain3dCatchmentAbort = null;
+let terrain3dCatchmentRun = null;
+
+function cancelTerrain3DCatchments() {
+  terrain3dCatchmentToken++;
+  if (terrain3dCatchmentRun) {
+    terrain3dCatchmentRun.cancelled = true;
+    unparkLoadRun(terrain3dCatchmentRun);   // wake a 停止-parked loop so it can unwind
+  }
+  terrain3dCatchmentAbort?.abort();
+  terrain3dCatchmentAbort = null;
+}
+
+async function loadTerrain3DCatchments() {
+  if (!terrainViewer) return;
+  const wps = terrainViewer.getWaypointCoords?.() || [];
+  if (!wps.length) { showNotification('此路線沒有可計算集水區的主航點', 'warning', 1800); return; }
+
+  cancelTerrain3DCatchments();                 // supersede any earlier run
+  const token = ++terrain3dCatchmentToken;
+  const abort = new AbortController();
+  terrain3dCatchmentAbort = abort;
+
+  terrainViewer.setCatchmentBasins([]);        // clear prior basins, keep group ready
+  terrainViewer.setCatchmentVisible(true);
+
+  const total = wps.length;
+  let done = 0, okCount = 0;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在計算集水區', detail: `計算集水區 0/${total}`, progress: 0, lockScope: 'edit',
+  });
+  const run = { id: `terrain3dcatch_${token}`, cancelled: false, paused: false, lockScope: 'edit', _resume: null, busyTask };
+  terrain3dCatchmentRun = run;
+  pausableLoadRuns.add(run);
+
+  try {
+    for (const wp of wps) {
+      if (token !== terrain3dCatchmentToken || run.cancelled) break;
+      await waitIfLoadPaused(run);              // park here while 停止 is active
+      if (token !== terrain3dCatchmentToken || run.cancelled) break;
+      const [lat, lng] = wp.coords;
+      let result = null;
+      try {
+        result = await getCatchmentFor(lat, lng, { signal: abort.signal });
+      } catch (err) {
+        if (isAbortError(err)) break;
+        console.warn('3D catchment failed:', err);
+      }
+      if (token !== terrain3dCatchmentToken || run.cancelled) break;
+      if (result?.status === 'ok' && result.outer?.length) {
+        terrainViewer.addCatchmentBasin({
+          outer: result.outer,
+          holes: result.holes || [],
+          outlet: result.outlet || null,
+          color: wp.color || null,
+        });
+        okCount++;
+      }
+      done++;
+      busyTask.set({ detail: `計算集水區 ${done}/${total}`, progress: done / total });
+    }
+  } finally {
+    pausableLoadRuns.delete(run);
+    if (terrain3dCatchmentRun === run) terrain3dCatchmentRun = null;
+    if (terrain3dCatchmentAbort === abort) terrain3dCatchmentAbort = null;
+    busyTask.end();
+  }
+
+  if (token === terrain3dCatchmentToken) {
+    if (okCount > 0) showNotification(`已顯示 ${okCount} 個集水區`, 'success', 1500);
+    else showNotification('這些航點沒有可顯示的集水區範圍', 'info', 1800);
   }
 }
 
@@ -3755,12 +3853,6 @@ tvToggleWeather?.addEventListener('click', () => {
   const next = TERRAIN_WEATHER_STATES[(TERRAIN_WEATHER_STATES.indexOf(terrainWeatherState) + 1) % TERRAIN_WEATHER_STATES.length];
   applyTerrainWeatherState(next);
 });
-tvToggleDaynight?.addEventListener('click', () => {
-  const on = tvToggleDaynight.classList.toggle('active');
-  terrainViewer?.setEnvironmentEnabled(on);
-  terrainDisplaySettings.daynight = on;
-  saveTerrainDisplaySettings();
-});
 // 特效: purely declutters the decorative landmark models (peaks/trees/towers/
 // viewpoints/monuments) — independent of the 天氣 button above.
 tvToggleEffects?.addEventListener('click', () => {
@@ -3775,6 +3867,20 @@ tvToggleFeatures?.addEventListener('click', () => {
   terrainViewer?.setFeaturesVisible(on);
   terrainDisplaySettings.features = on;
   saveTerrainDisplaySettings();
+});
+// 集水區: on → auto-compute each 主航點's catchment (cache-first) and drape it;
+// off → hide the overlay and abort any in-flight compute.
+tvToggleCatchment?.addEventListener('click', () => {
+  if (tvToggleCatchment.disabled) return;
+  const on = tvToggleCatchment.classList.toggle('active');
+  terrainDisplaySettings.catchment3d = on;
+  saveTerrainDisplaySettings();
+  if (on) {
+    loadTerrain3DCatchments();
+  } else {
+    cancelTerrain3DCatchments();
+    terrainViewer?.setCatchmentVisible(false);
+  }
 });
 tvToggleSatellite?.addEventListener('click', () => {
   const on = tvToggleSatellite.classList.toggle('active');
@@ -3811,30 +3917,12 @@ tvToggleNormalize?.addEventListener('click', () => {
   terrainViewer?.setElevationNormalized(on);
 });
 
-// 絕對海拔懸空 toggle (Plan §II-4) — shows the track floating at true elevation
-// with vertical support stems to the ground. Visibility flip only; no rebuild.
-tvToggleAbsolute?.addEventListener('click', () => {
-  const on = tvToggleAbsolute.classList.toggle('active');
-  terrainViewer?.setAbsoluteElevation(on);
-  terrainDisplaySettings.absElev = on;
-  saveTerrainDisplaySettings();
-});
-
 // Relive 式運鏡 toggle — while playing, the camera chases the hiker from behind
 // and ends on a slow orbit; off = classic free orbit camera.
 tpFollow?.addEventListener('click', () => {
   const on = tpFollow.classList.toggle('active');
   terrainViewer?.setFollowCamera(on);
   terrainDisplaySettings.followCam = on;
-  saveTerrainDisplaySettings();
-});
-
-// 軌跡時序揭示 toggle (Plan §II-1) — reveals the track progressively as playback
-// advances (CZML-Path style) instead of drawing the whole line at once.
-tvToggleTrail?.addEventListener('click', () => {
-  const on = tvToggleTrail.classList.toggle('active');
-  terrainViewer?.setRouteRevealMode(on);
-  terrainDisplaySettings.trailReveal = on;
   saveTerrainDisplaySettings();
 });
 
@@ -3959,14 +4047,22 @@ function showWaypointCard(detail) {
     const sign = g > 0.5 ? '↗' : (g < -0.5 ? '↘' : '→');
     grade = `${sign}${Math.abs(g).toFixed(1)}%`;
   }
-  const terrainRows = rowsHtml([['里程', mileage], ['海拔', elev], ['坡度', grade]]);
+  const ascent = (m.cumAscentM != null && Number.isFinite(m.cumAscentM)) ? `↑${formatElevation(m.cumAscentM)}` : null;
+  const descent = (m.cumDescentM != null && Number.isFinite(m.cumDescentM)) ? `↓${formatElevation(m.cumDescentM)}` : null;
+  const terrainRows = rowsHtml([['里程', mileage], ['海拔', elev], ['坡度', grade], ['累積爬升', ascent], ['累積下降', descent]]);
 
   // 當下天氣資訊
   const wx = m.weather || null;
   const wxEmoji = wx?.icon || '🧭';
   const wxTemp = (wx && wx.temperature != null) ? `${Math.round(wx.temperature)}°C` : null;
   const wxCond = (wx && wx.code != null) ? tWmo(wx.code) : null;
-  const weatherRows = rowsHtml([['天氣狀況', wxCond], ['溫度', wxTemp]]);
+  const weatherRows = rowsHtml([
+    ['天氣狀況', wxCond], ['溫度', wxTemp],
+    ['雨量', wx?.precipitation ?? null],
+    ['降雨機率', wx?.precipProb ?? null],
+    ['濕度', wx?.humidity ?? null],
+    ['風速', wx?.windSpeed ?? null],
+  ]);
 
   const tag = detail.isStart ? '起點' : (detail.isEnd ? '終點' : '副航點');
 

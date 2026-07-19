@@ -579,7 +579,9 @@ test('3D terrain: scrubbing playback drives the live position readout', async ({
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
 
-  await expect(page.locator('#tv-toggle-daynight')).toHaveClass(/active/);
+  // Day/night is permanently on now (its toggle was removed); use the default-on
+  // 等高線 toggle as the "toolbar rendered" readiness proxy instead.
+  await expect(page.locator('#tv-toggle-contour')).toHaveClass(/active/);
 
   const slider = page.locator('#tp-slider');
   await slider.evaluate((el) => {
@@ -611,4 +613,43 @@ test('3D terrain: abort button cancels computation and closes the viewer', async
 
   await page.locator('#tv-loading-abort').click();
   await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/, { timeout: 20_000 });
+});
+
+test('3D terrain: removed toggles are gone and 集水區 toggle drives the basin overlay', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await mockElevation(page, { delayMs: 30 });
+  await mockFeatures(page);
+  await openWithRoute(page);
+  await open3dForCurrentRoute(page);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+
+  // The 日夜 / 懸空 / 揭示 toggles were removed (day/night is permanently on).
+  await expect(page.locator('#tv-toggle-daynight')).toHaveCount(0);
+  await expect(page.locator('#tv-toggle-absolute')).toHaveCount(0);
+  await expect(page.locator('#tv-toggle-trail')).toHaveCount(0);
+
+  // The 集水區 toggle is present, enabled (route has 主航點) and starts off.
+  const catchmentBtn = page.locator('#tv-toggle-catchment');
+  await expect(catchmentBtn).toBeEnabled();
+  await expect(catchmentBtn).not.toHaveClass(/active/);
+
+  // Turning it on runs the (cache-first / offline-DEM) compute and persists.
+  await catchmentBtn.click();
+  await expect(catchmentBtn).toHaveClass(/active/);
+  await expect
+    .poll(async () => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_terrain3dDisplay') || '{}').catchment3d))
+    .toBe(true);
+  // The delineation eventually settles (its busy overlay clears).
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 30_000 });
+
+  // Turning it off hides the overlay and clears the persisted flag.
+  await catchmentBtn.click();
+  await expect(catchmentBtn).not.toHaveClass(/active/);
+  await expect
+    .poll(async () => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_terrain3dDisplay') || '{}').catchment3d))
+    .toBe(false);
+
+  expect(errors).toEqual([]);
 });

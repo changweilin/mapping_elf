@@ -28,6 +28,15 @@ const GRID_SIZE = 25;
 const SUBDIV = 6;
 const FIELD_SIZE = (GRID_SIZE - 1) * SUBDIV + 1; // 145
 
+// Render layer for the terrain surface. Day/night lighting (the route-clock sun/
+// ambient/hemi/moon) lives on the default layer 0 and lights the 3D objects
+// (landmarks, buildings, route, weather rigs) + the sky background only. The
+// terrain mesh is moved to this dedicated layer and lit by a fixed midday rig
+// (also on this layer), so the ground stays legible regardless of the time of
+// day — "日夜只影響 3D 物件與背景，地形不受日夜效果渲染". The camera renders both
+// layers; picking is unaffected (the terrain is not a raycast target).
+const TERRAIN_LAYER = 1;
+
 export class TerrainViewer {
   constructor(container) {
     this.container = container;
@@ -130,6 +139,12 @@ export class TerrainViewer {
     // that doesn't re-download anything.
     this._buildCtx = null;
     this._featuresData = null;
+    // Catchment basins draped on the terrain (Task 1). Data ({ outer, holes,
+    // outlet, color }[]) is kept so an in-place rebuild can redraw them; the
+    // group is rebuilt from it, and its visibility follows _catchmentVisible.
+    this._catchmentBasinsData = null;
+    this._catchmentGroup = null;
+    this._catchmentVisible = false;
     // Bbox the in-memory _featuresData were built for, so a redraw can safely
     // reuse them as a fallback only when the area hasn't changed.
     this._featuresDataBbox = null;
@@ -167,6 +182,8 @@ export class TerrainViewer {
     this._distances = null;       // cumulative metres, aligned to routePoints
     this._times = null;           // cumulative elapsed hours, aligned to routePoints
     this._fatigue = null;         // per-vertex fatigue fraction 0..1
+    this._cumAscent = null;       // cumulative climb (m) up to each vertex
+    this._cumDescent = null;      // cumulative descent (m, positive) up to each vertex
     this._startMs = null;         // departure timestamp (ms epoch)
     this._totalDistM = 0;
     this._weatherPoints = [];
@@ -183,6 +200,11 @@ export class TerrainViewer {
     this._moon = null;
     this._ambient = null;
     this._hemi = null;
+    // Fixed midday rig that lights only the terrain (see _setupEnvironment).
+    this._terrainSun = null;
+    this._terrainSunTarget = null;
+    this._terrainAmbient = null;
+    this._terrainHemi = null;
     this._rain = null;
     this._snow = null;
     this._currentWeatherCat = 'clear';
@@ -419,6 +441,54 @@ export class TerrainViewer {
 
   hasMapFeatures() {
     return !!(this.featureGroup && this.featureGroup.children.length);
+  }
+
+  // ---------- Catchment basins (Task 1) ----------
+  // The main.js host owns the 集水區 computation (cache-first DEM delineation of
+  // each 主航點); it feeds the resulting lat/lng rings here to be draped on the
+  // terrain surface. Coordinates for the currently displayed model's 主航點 (so a
+  // favourite-peek uses the right waypoints).
+  getWaypointCoords() {
+    const wps = this._buildCtx?.waypoints;
+    if (!Array.isArray(wps)) return [];
+    return wps
+      .map((w) => ({
+        coords: w.coords || (w.lat != null ? [w.lat, w.lng] : null),
+        color: w.color || null,
+        label: w.label || null,
+      }))
+      .filter((w) => Array.isArray(w.coords) && w.coords.length === 2);
+  }
+
+  // Replace the whole basin set. basins: { outer:[[lat,lng]…], holes:[[…]],
+  // outlet:[lat,lng], color? }[].
+  setCatchmentBasins(basins) {
+    this._catchmentBasinsData = Array.isArray(basins) ? basins.slice() : null;
+    this._drawCatchmentBasins();
+  }
+
+  // Append one basin incrementally (主航點 draw-as-computed), without disposing the
+  // group — so basins pop in one by one as their DEM finishes.
+  addCatchmentBasin(basin) {
+    if (!basin || !Array.isArray(basin.outer) || basin.outer.length < 3) return;
+    if (!this._catchmentBasinsData) this._catchmentBasinsData = [];
+    this._catchmentBasinsData.push(basin);
+    this._ensureCatchmentGroup();
+    if (this._catchmentGroup) this._buildOneCatchmentBasin(basin, this._catchmentGroup);
+  }
+
+  setCatchmentVisible(on) {
+    this._catchmentVisible = !!on;
+    if (this._catchmentGroup) this._catchmentGroup.visible = this._catchmentVisible;
+  }
+
+  isCatchmentVisible() {
+    return this._catchmentVisible;
+  }
+
+  clearCatchmentBasins() {
+    this._catchmentBasinsData = null;
+    this._disposeCatchmentGroup();
   }
 
   // Re-attempt the background 圖資 download for the scene the caller is about to
@@ -856,6 +926,8 @@ export class TerrainViewer {
     this._totalDistM = this._distances[this._distances.length - 1] || 0;
     this._times = Array.isArray(timing?.times) && timing.times.length === coords.length ? timing.times : null;
     this._fatigue = Array.isArray(timing?.fatigue) && timing.fatigue.length === coords.length ? timing.fatigue : null;
+    // Cumulative climb / descent (m) aligned to routePoints, for the playback card.
+    ({ ascent: this._cumAscent, descent: this._cumDescent } = TerrainViewer._cumulativeElevationChange(this.routeElevations));
     this._startMs = Number.isFinite(timing?.startMs) ? timing.startMs : Date.now();
 
     this._aborted = false;
@@ -944,6 +1016,9 @@ export class TerrainViewer {
     this._emitLoad({ active: true, percent: 88, title: '建立地形模型', detail: '計算等高線與軌跡…' });
 
     this._clearScene();
+    // A fresh route/model invalidates any previous route's catchment basins; the
+    // host re-triggers the compute if its 集水區 toggle is still on.
+    this._catchmentBasinsData = null;
     this._createTerrain(bbox);
     this._createContours(bbox);
     this._createRoutePath(coords, elevations, bbox);
@@ -1217,6 +1292,9 @@ export class TerrainViewer {
     this.scene.background = new THREE.Color(0x1a1a2e);
 
     this.camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 500000);
+    // Render the terrain layer in addition to the default one (the terrain mesh
+    // lives on TERRAIN_LAYER so the day/night lights skip it — see _setupEnvironment).
+    this.camera.layers.enable(TERRAIN_LAYER);
     // logarithmicDepthBuffer: the scene spans tens of thousands of world units
     // with a 0.1 near / 500000 far range; a linear depth buffer has nowhere near
     // the precision for that ratio, so coplanar surfaces (route draped on
@@ -1338,6 +1416,44 @@ export class TerrainViewer {
     this._moon = new THREE.DirectionalLight(0xaaccff, 0.0);
     this.scene.add(this._moon);
 
+    // The day/night rig above lives on layer 0 and therefore lights only the 3D
+    // objects (landmarks/buildings/route/weather rigs) + the sky background. The
+    // terrain is on TERRAIN_LAYER, so it is lit exclusively by this fixed midday
+    // rig — a stable SE-tilted sun that keeps the relief readable (with hillshade)
+    // no matter the route clock. Directions/intensities mirror the old
+    // day/night-off "bright daytime" look.
+    const dayPreset = this._skyPreset(55);
+    this._terrainSun = new THREE.DirectionalLight(dayPreset.sun.getHex(), dayPreset.sunI);
+    this._terrainSun.position.copy(new THREE.Vector3(0.32, 0.9, 0.28).normalize().multiplyScalar(120000));
+    this._terrainSun.castShadow = true;
+    const td = 50000;
+    this._terrainSun.shadow.camera.left = -td;
+    this._terrainSun.shadow.camera.right = td;
+    this._terrainSun.shadow.camera.top = td;
+    this._terrainSun.shadow.camera.bottom = -td;
+    this._terrainSun.shadow.camera.far = 400000;
+    this._terrainSun.shadow.mapSize.width = 1024;
+    this._terrainSun.shadow.mapSize.height = 1024;
+    this._terrainSun.shadow.camera.updateProjectionMatrix();
+    this._terrainSun.layers.set(TERRAIN_LAYER);
+    // Shadow cameras default to layer 0 only; enable the terrain layer so the
+    // terrain (which lives there) is rendered into this rig's shadow map and the
+    // ridge/valley self-shadows survive the layer split.
+    this._terrainSun.shadow.camera.layers.enable(TERRAIN_LAYER);
+    this.scene.add(this._terrainSun);
+    // Target the terrain centre (local origin) so the fixed direction holds.
+    this._terrainSunTarget = new THREE.Object3D();
+    this.scene.add(this._terrainSunTarget);
+    this._terrainSun.target = this._terrainSunTarget;
+
+    this._terrainAmbient = new THREE.AmbientLight(dayPreset.amb.getHex(), dayPreset.ambI);
+    this._terrainAmbient.layers.set(TERRAIN_LAYER);
+    this.scene.add(this._terrainAmbient);
+
+    this._terrainHemi = new THREE.HemisphereLight(dayPreset.hemiS.getHex(), dayPreset.hemiG.getHex(), dayPreset.hemiI);
+    this._terrainHemi.layers.set(TERRAIN_LAYER);
+    this.scene.add(this._terrainHemi);
+
     this._createPrecipitation();
     this._applyEnvironment(this._metricsAtProgress(this._progress));
   }
@@ -1352,8 +1468,14 @@ export class TerrainViewer {
     const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
     const decl = 23.44 * Math.sin(toRad * (360 / 365) * (dayOfYear - 81));
     const localHour = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
-    // 4 min per degree from the 120°E standard meridian (UTC+8).
-    const solarTime = localHour + (lng - 120) * 4 / 60;
+    // Equation of time (minutes): corrects for Earth's orbital eccentricity + axial
+    // tilt, which shift true solar noon by up to ~±15 min across the year. Without
+    // it, sunrise/sunset (the sun-elevation zero-crossing that drives the day/night
+    // look) could be off by that much. Standard day-of-year approximation.
+    const B = toRad * (360 / 365) * (dayOfYear - 81);
+    const eotMin = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+    // 4 min per degree from the 120°E standard meridian (UTC+8), plus EoT.
+    const solarTime = localHour + (lng - 120) * 4 / 60 + eotMin / 60;
     const H = 15 * (solarTime - 12); // hour angle, degrees
 
     const latR = lat * toRad;
@@ -1416,15 +1538,15 @@ export class TerrainViewer {
     const span = this._worldSpan || 2000;
     const sunDist = Math.max(span * 4, 40000);
 
+    // Day/night is permanently on (the toggle was removed). The route-clock sun/
+    // ambient/hemi/moon below drive the sky background + the 3D objects only; the
+    // terrain has its own fixed midday rig on TERRAIN_LAYER (see _setupEnvironment),
+    // so it never darkens with the time of day.
     if (!this._envEnabled) {
-      // Fixed bright-daytime look, independent of the route clock: same sky
-      // colour, sun colour/intensity, fill light and shadows as a high sun, so
-      // turning the day/night cycle off lights the scene like daytime instead of
-      // the old dim, shadowless neutral fallback.
+      // Retained as a defensive fallback if the environment is ever disabled: a
+      // flat bright look for the objects/sky (terrain is unaffected either way).
       const preset = this._skyPreset(55); // high midday sun
       const target = this.controls?.target || new THREE.Vector3();
-      // Sun high overhead but tilted toward the south-east so the relief still
-      // casts legible shadows (a dead-overhead sun flattens them out).
       const dir = new THREE.Vector3(0.32, 0.9, 0.28).normalize();
       this.scene.background = preset.sky.clone();
       this.scene.fog = null;
@@ -1508,6 +1630,29 @@ export class TerrainViewer {
   }
 
   // WMO weather code → coarse visual category used by the FX + sky tint.
+  // Cumulative ascent/descent (metres, both positive) up to each vertex, aligned
+  // to the elevation array. Skips non-finite samples so a hole doesn't inject a
+  // spurious step. Returns { ascent[], descent[] } (index 0 = 0).
+  static _cumulativeElevationChange(elevations) {
+    const n = Array.isArray(elevations) ? elevations.length : 0;
+    const ascent = new Array(n).fill(0);
+    const descent = new Array(n).fill(0);
+    let up = 0, down = 0, prev = null;
+    for (let i = 0; i < n; i++) {
+      const e = elevations[i];
+      if (Number.isFinite(e)) {
+        if (prev != null) {
+          const d = e - prev;
+          if (d > 0) up += d; else down -= d;
+        }
+        prev = e;
+      }
+      ascent[i] = up;
+      descent[i] = down;
+    }
+    return { ascent, descent };
+  }
+
   static weatherCategory(code) {
     const c = Number(code);
     if (!Number.isFinite(c) || c < 0) return 'clear';
@@ -2108,6 +2253,9 @@ export class TerrainViewer {
     this.terrainMesh = new THREE.Mesh(geo, mat);
     this.terrainMesh.receiveShadow = true;
     this.terrainMesh.castShadow = true;
+    // Terrain is lit by the fixed midday rig on TERRAIN_LAYER, not by the
+    // route-clock day/night lights (layer 0), so it never darkens at night.
+    this.terrainMesh.layers.set(TERRAIN_LAYER);
     this.scene.add(this.terrainMesh);
 
     // A rebuild recreates the mesh; re-drape satellite imagery if it was on.
@@ -4333,6 +4481,8 @@ export class TerrainViewer {
       if (wTime > 0) speedKmh = (wDist / 1000) / wTime;
     }
     const gradePct = wDist > 0 ? ((elev[hi] ?? 0) - (elev[lo] ?? 0)) / wDist * 100 : 0;
+    const cumAscentM = this._cumAscent ? lerp(this._cumAscent[idx] ?? 0, this._cumAscent[j] ?? 0) : null;
+    const cumDescentM = this._cumDescent ? lerp(this._cumDescent[idx] ?? 0, this._cumDescent[j] ?? 0) : null;
 
     const dateMs = (this._startMs != null && timeH != null) ? this._startMs + timeH * 3600000 : this._startMs;
 
@@ -4353,6 +4503,12 @@ export class TerrainViewer {
           cat: TerrainViewer.weatherCategory(code),
           icon: code != null ? TerrainViewer.weatherIcon(code) : '',
           temperature: nearest.temperature ?? nearest.temp ?? null,
+          // Display strings carried through from the 2D weather cells (may be
+          // undefined for older data / points without a detailed read-out).
+          precipitation: nearest.precipitation ?? null,
+          precipProb: nearest.precipProb ?? null,
+          humidity: nearest.humidity ?? null,
+          windSpeed: nearest.windSpeed ?? null,
         };
       }
     }
@@ -4368,6 +4524,8 @@ export class TerrainViewer {
       dateMs,
       speedKmh,
       gradePct,
+      cumAscentM,
+      cumDescentM,
       fatiguePct,
       weather,
     };
@@ -4406,6 +4564,10 @@ export class TerrainViewer {
     if (this._featuresData) {
       try { this._buildMapFeatures(this._featuresData, bbox); } catch (err) { console.warn('map features failed:', err); }
     }
+    // Redraw catchment basins from the retained data onto the fresh terrain.
+    if (this._catchmentBasinsData && this._catchmentBasinsData.length) {
+      try { this._drawCatchmentBasins(); } catch (err) { console.warn('catchment redraw failed:', err); }
+    }
 
     // Reapply the persisted layer/label state to the freshly built objects.
     this.setLabelScale(this._labelScale);
@@ -4430,6 +4592,144 @@ export class TerrainViewer {
     this._updatePlayerPosition();
     this._emitMetrics(true);
     if (this._onInfo) this._onInfo(this._terrainInfo);
+  }
+
+  _ensureCatchmentGroup() {
+    if (!this.scene) return;
+    if (!this._catchmentGroup) {
+      this._catchmentGroup = new THREE.Group();
+      this._catchmentGroup.visible = this._catchmentVisible;
+      this.scene.add(this._catchmentGroup);
+    }
+  }
+
+  _disposeCatchmentGroup() {
+    const grp = this._catchmentGroup;
+    if (!grp) return;
+    grp.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+    if (this.scene) this.scene.remove(grp);
+    this._catchmentGroup = null;
+  }
+
+  // Rebuild the whole catchment group from the retained basin data.
+  _drawCatchmentBasins() {
+    this._disposeCatchmentGroup();
+    if (!this.scene || !this._bbox || !this._catchmentBasinsData || !this._catchmentBasinsData.length) return;
+    this._ensureCatchmentGroup();
+    for (const basin of this._catchmentBasinsData) this._buildOneCatchmentBasin(basin, this._catchmentGroup);
+  }
+
+  // Drape ONE basin (translucent fill + boundary outline + outlet marker) onto the
+  // terrain surface. Reuses the same clip/hole/triangulate helpers as the 圖資
+  // water fills. Unlit materials (MeshBasic/LineBasic) so the analytic overlay
+  // stays legible regardless of the day/night lighting.
+  _buildOneCatchmentBasin(basin, parentGroup) {
+    if (!parentGroup || !this._bbox || !basin || !Array.isArray(basin.outer) || basin.outer.length < 3) return;
+    const bbox = this._bbox;
+    const color = new THREE.Color(basin.color || 0x38bdf8);
+    const range = Math.max(1, (this._fieldMaxV ?? 0) - (this._fieldMinV ?? 0));
+    const baseLift = Math.max(2, range * 0.004);
+    const lift = baseLift * 1.2;
+    const dLatCell = (bbox.maxLat - bbox.minLat) / (FIELD_SIZE - 1);
+    const dLngCell = (bbox.maxLng - bbox.minLng) / (FIELD_SIZE - 1);
+
+    const world = (lat, lng, h) => {
+      const elev = this._sampleGridElevation(lat, lng);
+      const p = this._latLngToLocal(lat, lng, elev + h, bbox);
+      return new THREE.Vector3(p.x, p.y, p.z);
+    };
+    const drapeLine = (pts, h) => {
+      const out = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [la, lo] = pts[i];
+        const [lb, lob] = pts[i + 1];
+        const steps = Math.min(14, Math.max(1, Math.ceil(Math.max(Math.abs(lb - la) / dLatCell, Math.abs(lob - lo) / dLngCell))));
+        for (let st = 0; st < steps; st++) { const t = st / steps; out.push(world(la + (lb - la) * t, lo + (lob - lo) * t, h)); }
+      }
+      out.push(world(pts[pts.length - 1][0], pts[pts.length - 1][1], h));
+      return out;
+    };
+    // Drop a closed ring's repeated last vertex before clipping/triangulating.
+    const toShape = (ring) => {
+      const r = ring.slice();
+      if (r.length > 1) { const a = r[0], z = r[r.length - 1]; if (a[0] === z[0] && a[1] === z[1]) r.pop(); }
+      return r;
+    };
+
+    const grp = new THREE.Group();
+    const outer = this._clipRingToBbox(toShape(basin.outer), bbox);
+    if (outer.length >= 3) {
+      const holes = (basin.holes || [])
+        .map((h) => this._clipRingToBbox(toShape(h), bbox))
+        .filter((h) => h.length >= 3);
+
+      // Filled surface, per-vertex draped so it hugs the relief.
+      const localXZ = (lat, lng) => { const p = this._latLngToLocal(lat, lng, 0, bbox); return new THREE.Vector2(p.x, p.z); };
+      const contour2D = outer.map(([la, lo]) => localXZ(la, lo));
+      const holes2D = holes.map((h) => h.map(([la, lo]) => localXZ(la, lo)));
+      let faces = null;
+      try { faces = THREE.ShapeUtils.triangulateShape(contour2D, holes2D); } catch { faces = null; }
+      if (faces && faces.length) {
+        const combinedLL = [...outer, ...holes.flat()];
+        const verts3D = combinedLL.map(([la, lo]) => world(la, lo, lift));
+        const combinedHole = combinedLL.map(([la, lo]) => this._isOverHole(la, lo));
+        const positions = [];
+        for (const f of faces) {
+          if (f.some((idx) => combinedHole[idx])) continue;  // skip triangles over terrain holes
+          for (const idx of f) { const v = verts3D[idx]; if (v) positions.push(v.x, v.y, v.z); }
+        }
+        if (positions.length) {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geo.computeVertexNormals();
+          const mat = new THREE.MeshBasicMaterial({
+            color, transparent: true, opacity: 0.26, side: THREE.DoubleSide,
+            depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.renderOrder = 2;
+          grp.add(mesh);
+        }
+      }
+
+      // Boundary outline (outer + holes), split at terrain holes so it never
+      // draws across blank tiles.
+      const ov = [];
+      const addOutline = (ring) => {
+        for (const seg of this._splitPolylineAtHoles([...ring, ring[0]])) {
+          const ow = drapeLine(seg, lift + baseLift * 0.6);
+          for (let i = 0; i < ow.length - 1; i++) ov.push(ow[i].x, ow[i].y, ow[i].z, ow[i + 1].x, ow[i + 1].y, ow[i + 1].z);
+        }
+      };
+      addOutline(outer);
+      holes.forEach(addOutline);
+      if (ov.length >= 6) {
+        const lgeo = new THREE.BufferGeometry();
+        lgeo.setAttribute('position', new THREE.Float32BufferAttribute(ov, 3));
+        const lmat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 });
+        const lines = new THREE.LineSegments(lgeo, lmat);
+        lines.renderOrder = 3;
+        grp.add(lines);
+      }
+    }
+
+    // Outlet (pour point) marker: a small downward cone tip at the outlet.
+    if (Array.isArray(basin.outlet) && basin.outlet.length === 2 && !this._isOverHole(basin.outlet[0], basin.outlet[1])) {
+      const coneH = Math.max(baseLift * 6, range * 0.02);
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(coneH * 0.5, coneH, 12),
+        new THREE.MeshBasicMaterial({ color })
+      );
+      cone.position.copy(world(basin.outlet[0], basin.outlet[1], lift + coneH * 0.6));
+      cone.rotation.x = Math.PI;   // tip points down onto the pour point
+      cone.renderOrder = 4;
+      grp.add(cone);
+    }
+
+    if (grp.children.length) parentGroup.add(grp);
   }
 
   _clearScene() {
@@ -4467,6 +4767,9 @@ export class TerrainViewer {
     this.featureGroup = null;
     this.featureLabelGroup = null;
     this.landmarkGroup = null;
+    // The traversal above disposed + removed the catchment group; drop the handle
+    // (the basin DATA is retained so _rebuildInPlace can redraw it).
+    this._catchmentGroup = null;
     this._labelSprites = [];
     this._landCoverField = null;
     this._slopeField = null;
@@ -4486,6 +4789,10 @@ export class TerrainViewer {
     this._moon = null;
     this._ambient = null;
     this._hemi = null;
+    this._terrainSun = null;
+    this._terrainSunTarget = null;
+    this._terrainAmbient = null;
+    this._terrainHemi = null;
     this._rain = null;
     this._snow = null;
     // The rigs' GPU resources were freed by the traversal above; drop the handle

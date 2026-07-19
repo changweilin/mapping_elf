@@ -7993,7 +7993,7 @@ html.light-theme .panel-bottom-logo {
 
 .tv-wp-card-inner {
   position: relative;
-  width: 250px;
+  width: 300px;
   max-width: calc(100% - 40px);
   padding: 14px 16px 16px;
   border-radius: 16px;
@@ -8081,13 +8081,22 @@ html.light-theme .panel-bottom-logo {
 }
 
 .tv-wp-card-cats { display: flex; flex-direction: column; gap: 9px; }
+/* Rows are laid out two-per-line (2-column grid) so the taller card — now with
+   累積爬升/下降 + 雨量/降雨機率/濕度/風速 — stays compact. The section title spans
+   both columns. Falls back to a single column on very narrow cards (see below). */
 .tv-wp-cat {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
   padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: baseline;
 }
 .tv-wp-cat-title {
+  grid-column: 1 / -1;
   font-size: 10px;
   font-weight: 700;
   color: var(--wp-card-color, #9ca3af);
@@ -8098,9 +8107,14 @@ html.light-theme .panel-bottom-logo {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   font-size: 12px;
   padding: 1px 0;
+  min-width: 0;
+}
+/* Very narrow viewports: the card shrinks (max-width), so drop back to 1 column. */
+@media (max-width: 360px) {
+  .tv-wp-cat { grid-template-columns: 1fr; }
 }
 .tv-wp-row-label { color: var(--text-secondary); }
 .tv-wp-row-value {
