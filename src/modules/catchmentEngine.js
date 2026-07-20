@@ -240,7 +240,7 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
   // --- 8. Trace the raster boundary into lat/lng rings -----------------------
   const cornerLat = (cr) => latOf(0) + dLat / 2 - cr * dLat;
   const cornerLng = (cc) => lngOf(0) - dLng / 2 + cc * dLng;
-  const { outer, holes } = traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng);
+  const { outer, holes } = traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng, dem);
 
   return {
     status: 'ok',
@@ -422,7 +422,7 @@ function isLargeFlat(raw, N, idx, inGrid) {
  * March the boundary of the catchment raster into rings, CCW with the interior
  * on the left, so shoelace sign separates the outer ring (positive) from holes.
  */
-function traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng) {
+function traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng, dem) {
   const inCatch = (r, c) => inGrid(r, c) && inSet[idx(r, c)];
   const node = (cr, cc) => cr * (N + 1) + cc;
   const outAdj = new Map();          // directed corner-graph, interior on the left
@@ -457,10 +457,10 @@ function traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng) {
     }
   }
 
-  const toLatLng = (ring) => simplifyRing(ring.map((n) => {
-    const cr = (n / (N + 1)) | 0, cc = n % (N + 1);
-    return [cornerLat(cr), cornerLng(cc)];
-  }));
+  const toLatLng = (ring) => chaikinSmooth(
+    simplifyRing(ridgeAdjust(ring, N, idx, inGrid, dem, cornerLat, cornerLng)),
+    BOUNDARY_SMOOTH_ITERS,
+  );
 
   let outer = null, outerArea = -Infinity;
   const holes = [];
@@ -478,6 +478,65 @@ function traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng) {
   return { outer: outer || [], holes };
 }
 
+const RIDGE_MAX_SHIFT = 0.4;   // hard cap on the divide nudge, in cells (<½ ⇒ topology-safe)
+const RIDGE_RELIEF_M = 30;     // cross-edge Δelev giving a half-strength shift
+
+/** Saturating shift magnitude (cells) from the relief across a boundary edge. */
+function ridgeShift(zA, zB) {
+  const dz = Math.abs(zA - zB);
+  return RIDGE_MAX_SHIFT * dz / (dz + RIDGE_RELIEF_M);
+}
+
+/**
+ * Sub-cell divide refinement (geographic, not cosmetic). Each boundary segment
+ * lies on the edge between an in-cell and an out-cell, drawn on the arbitrary
+ * cell-edge midline. The real watershed divide follows the ridge crest, so nudge
+ * every vertex off that midline toward the HIGHER of the two cells straddling
+ * its incident edges, by a bounded amount that grows with the cross-edge relief
+ * (flat saddle → stay put; sharp ridge → shift most). A vertex is shared by two
+ * segments; its displacement is the mean of the two segment normals, so the ring
+ * stays connected. The cap (<½ cell) keeps the polygon simple and its winding
+ * sign intact — outer/hole classification downstream is unaffected. Elevations
+ * are the real, hole-filled DEM (pre-sink-fill); reported area stays cell-based.
+ *
+ * @param {number[]} ring corner-node ids (cyclic, unit steps), interior on the left
+ * @returns {Array<[number,number]>} displaced [lat,lng] vertices
+ */
+function ridgeAdjust(ring, N, idx, inGrid, dem, cornerLat, cornerLng) {
+  const W = N + 1;
+  const n = ring.length;
+  const crOf = (id) => (id / W) | 0;
+  const ccOf = (id) => id % W;
+  const cell = (r, c) => (inGrid(r, c) ? dem[idx(r, c)] : null);
+
+  // Per-segment normal displacement in (dcr, dcc) corner-space, toward the higher
+  // straddling cell. +cr is south (cornerLat decreases), +cc is east.
+  const seg = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n];
+    const cr = crOf(a), cc = ccOf(a), br = crOf(b), bc = ccOf(b);
+    let dcr = 0, dcc = 0;
+    if (cr === br) {                                   // horizontal edge → N/S cells
+      const col = Math.min(cc, bc);
+      const zN = cell(cr - 1, col), zS = cell(cr, col);
+      if (zN != null && zS != null) dcr = ridgeShift(zN, zS) * (zS > zN ? 1 : -1);
+    } else {                                           // vertical edge → W/E cells
+      const row = Math.min(cr, br);
+      const zW = cell(row, cc - 1), zE = cell(row, cc);
+      if (zW != null && zE != null) dcc = ridgeShift(zW, zE) * (zE > zW ? 1 : -1);
+    }
+    seg[i] = [dcr, dcc];
+  }
+
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = seg[(i - 1 + n) % n], q = seg[i];        // the two incident segments
+    const cr = crOf(ring[i]), cc = ccOf(ring[i]);
+    out[i] = [cornerLat(cr + (p[0] + q[0]) / 2), cornerLng(cc + (p[1] + q[1]) / 2)];
+  }
+  return out;
+}
+
 /** Drop collinear vertices along the axis-aligned raster boundary. */
 function simplifyRing(pts) {
   const out = [];
@@ -488,6 +547,33 @@ function simplifyRing(pts) {
     if (Math.abs(cross) > 1e-12) out.push(b);
   }
   return out.length >= 3 ? out : pts;
+}
+
+const BOUNDARY_SMOOTH_ITERS = 2;   // Chaikin passes that round the raster staircase
+
+/**
+ * Chaikin corner-cutting on a CLOSED ring (first vertex not repeated), run AFTER
+ * collinear removal so only the true 90° raster corners get rounded rather than
+ * every sample along a straight edge. Each pass replaces every edge with its ¼
+ * and ¾ points, converging on a smooth, continuous boundary that stays within
+ * half a cell of the staircase. Winding (shoelace sign) and simplicity are
+ * preserved, so the outer/hole classification and every downstream point-in-ring
+ * test are unaffected; the reported area comes from the cell count, not this
+ * ring, so smoothing never shifts the hydrology numbers.
+ */
+function chaikinSmooth(ring, iters) {
+  let pts = ring;
+  for (let it = 0; it < iters && pts.length >= 3; it++) {
+    const n = pts.length;
+    const next = new Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n];
+      next[i * 2] = [a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25];
+      next[i * 2 + 1] = [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75];
+    }
+    pts = next;
+  }
+  return pts;
 }
 
 function signedArea(pts) {
