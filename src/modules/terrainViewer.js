@@ -89,6 +89,12 @@ export class TerrainViewer {
     this._labelScale = 'large';
     this._labelSprites = [];
     this._LABEL_FACTORS = { large: 1, small: 0.6, none: 0 };
+    // Text labels whose name is wider than the fixed billboard get a 跑馬燈
+    // (marquee): the name scrolls horizontally inside the box so the full text is
+    // readable. Redraw is throttled by _marqueeAccum (see _animate) to keep the
+    // per-frame canvas re-upload cheap on mobile.
+    this._marqueeLabels = [];
+    this._marqueeAccum = 0;
 
     // --- Map features (roads / water / land cover / buildings) ---
     this.featureGroup = null;
@@ -3256,47 +3262,43 @@ export class TerrainViewer {
     entry.texture.needsUpdate = true;
   }
 
+  // Rounded-rect path builder shared by the static and marquee label draws.
+  static _labelRoundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
   _createLabel(text, x, y, z, colorHex) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     canvas.width = 256;
     canvas.height = 80;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    ctx.font = 'bold 32px Inter, "Noto Sans TC", sans-serif';
-    const metrics = ctx.measureText(text);
-    const tw = metrics.width;
+    const font = 'bold 32px Inter, "Noto Sans TC", sans-serif';
+    ctx.font = font;
+    const tw = ctx.measureText(text).width;
 
     const pad = 16;
-    const bw = tw + pad * 2;
     const bh = 50;
+    // A name wider than the billboard scrolls (跑馬燈) inside a fixed-width box
+    // instead of overflowing the canvas and getting clipped mid-glyph.
+    const maxBoxW = canvas.width - 8;
+    const isMarquee = tw + pad * 2 > maxBoxW;
+    const bw = isMarquee ? maxBoxW : tw + pad * 2;
     const bx = (canvas.width - bw) / 2;
     const by = (canvas.height - bh) / 2;
 
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    const r = 8;
-    ctx.beginPath();
-    ctx.moveTo(bx + r, by);
-    ctx.lineTo(bx + bw - r, by);
-    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + r);
-    ctx.lineTo(bx + bw, by + bh - r);
-    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - r, by + bh);
-    ctx.lineTo(bx + r, by + bh);
-    ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - r);
-    ctx.lineTo(bx, by + r);
-    ctx.quadraticCurveTo(bx, by, bx + r, by);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
-
     const spriteMat = new THREE.SpriteMaterial({
       map: texture,
       transparent: true,
@@ -3306,7 +3308,90 @@ export class TerrainViewer {
     const sprite = new THREE.Sprite(spriteMat);
     sprite.position.set(x, y, z);
     sprite.scale.set(60, 20, 1);
+
+    if (!isMarquee) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      TerrainViewer._labelRoundRectPath(ctx, bx, by, bw, bh, 8);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+      return sprite;
+    }
+
+    // Pre-render the full name once onto a scroll strip [name][gap]; each frame
+    // blits a shifted window from it, wrapping at `cycle` for a seamless loop —
+    // far cheaper than re-shaping CJK text every frame.
+    const gap = 64;
+    const cycle = Math.ceil(tw + gap);
+    const strip = document.createElement('canvas');
+    strip.width = cycle;
+    strip.height = bh;
+    const sctx = strip.getContext('2d');
+    sctx.font = font;
+    sctx.fillStyle = '#ffffff';
+    sctx.textAlign = 'left';
+    sctx.textBaseline = 'middle';
+    sctx.fillText(text, 0, bh / 2 + 1);
+
+    sprite.userData.marquee = {
+      ctx, canvas, texture, strip,
+      bx, by, bw, bh, pad,
+      inner: bw - pad * 2,
+      cycle,
+      offset: 0,
+      speed: 46,   // px/sec in canvas space
+    };
+    this._marqueeLabels.push(sprite);
+    this._drawMarqueeLabel(sprite.userData.marquee);
     return sprite;
+  }
+
+  // Advance every visible marquee label by `step` seconds and redraw it.
+  _updateMarqueeLabels(step) {
+    for (const sprite of this._marqueeLabels) {
+      const m = sprite.userData.marquee;
+      if (!m) continue;
+      // Skip labels hidden by the label-size control ('none') or by a hidden
+      // parent group (圖資 off) — no point redrawing a canvas nothing renders.
+      if (!sprite.visible || (sprite.parent && !sprite.parent.visible)) continue;
+      m.offset += m.speed * step;
+      if (m.offset >= m.cycle) m.offset -= m.cycle;
+      this._drawMarqueeLabel(m);
+    }
+  }
+
+  _drawMarqueeLabel(m) {
+    const { ctx, canvas, texture, strip, bx, by, bw, bh, pad, inner, cycle } = m;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    TerrainViewer._labelRoundRectPath(ctx, bx, by, bw, bh, 8);
+    ctx.fill();
+
+    const dstX = bx + pad;
+    const srcX = Math.floor(m.offset);
+    const first = Math.min(inner, cycle - srcX);
+    ctx.drawImage(strip, srcX, 0, first, bh, dstX, by, first, bh);
+    if (first < inner) {
+      ctx.drawImage(strip, 0, 0, inner - first, bh, dstX + first, by, inner - first, bh);
+    }
+
+    // Fade the two scroll edges into the box so glyphs enter/leave softly.
+    const fadeW = 18;
+    let grad = ctx.createLinearGradient(dstX, 0, dstX + fadeW, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0.6)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(dstX, by, fadeW, bh);
+    grad = ctx.createLinearGradient(dstX + inner - fadeW, 0, dstX + inner, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.6)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(dstX + inner - fadeW, by, fadeW, bh);
+
+    texture.needsUpdate = true;
   }
 
   // ---------- Map features (道路 / 河流 / 水體 / 綠地 / 荒地 / 建築) ----------
@@ -4828,6 +4913,8 @@ export class TerrainViewer {
     // (the basin DATA is retained so _rebuildInPlace can redraw it).
     this._catchmentGroup = null;
     this._labelSprites = [];
+    this._marqueeLabels = [];
+    this._marqueeAccum = 0;
     this._landCoverField = null;
     this._slopeField = null;
     this.playerMarker = null;
@@ -4937,6 +5024,16 @@ export class TerrainViewer {
         // Deal the finish card over the end-of-route orbit (metrics read at u=1).
         if (this._onWaypointArrive && this._endDetail) this._onWaypointArrive(this._endDetail);
         if (this._onPlayStateChange) this._onPlayStateChange(false);
+      }
+    }
+
+    // Scroll long map-feature name labels (跑馬燈). Throttled to ~30fps so the
+    // per-label canvas redraw + texture upload stays cheap on mobile.
+    if (this._marqueeLabels.length) {
+      this._marqueeAccum += dt;
+      if (this._marqueeAccum >= 1 / 30) {
+        this._updateMarqueeLabels(this._marqueeAccum);
+        this._marqueeAccum = 0;
       }
     }
 
