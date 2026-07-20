@@ -2575,7 +2575,9 @@ function renderTerrainInfoPanel(routeData) {
     `<div class="tv-stat-item"><span class="tv-stat-label">${st.label}</span><span class="tv-stat-value">${st.value}</span></div>`
   ).join('');
 
-  const wps = routeData.waypoints || [];
+  // Return-leg entries are playback-only (no marker, no list row); the sidebar
+  // list mirrors the physical outbound waypoints.
+  const wps = (routeData.waypoints || []).filter((wp) => !wp.isReturn);
   if (tvWpCount) tvWpCount.textContent = wps.length ? `(${wps.length})` : '';
   if (tvWpList) {
     tvWpList.innerHTML = wps.map((wp, i) => {
@@ -2810,6 +2812,24 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       };
     });
 
+    // Out-and-back / O-loop return-leg waypoints become playback stops too, so the
+    // Relive close-up cards deal for every waypoint on the walked path — not just
+    // the outbound half. Reuse weatherPoints' already-computed return cumulative
+    // distance (_cum, full-route metres) + deduped label, flagged isReturn so the
+    // viewer plants no duplicate flag/sign at the shared ground point and the
+    // info-panel waypoint list stays outbound-only.
+    const returnWaypoints = (weatherPoints || [])
+      .filter((p) => p.isWaypoint && p.isReturn && Number.isFinite(p._cum))
+      .map((p) => ({
+        coords: [p.lat, p.lng],
+        label: p.label,
+        elevation: p._ele ?? null,
+        color: waypointGradColors[p.wpIndex] || null,
+        distanceM: p._cum,
+        isReturn: true,
+      }));
+    const terrainWaypoints = returnWaypoints.length ? [...waypoints, ...returnWaypoints] : waypoints;
+
     // Whether a point's weather icon shows in 3D follows the same 主航點/副航點
     // checkboxes as the 2D map; the WMO code + temperature themselves live in the
     // weather cache (weatherPoints entries don't carry them directly), same as
@@ -2853,7 +2873,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     const routeData = {
       coords: routeCoords,
       elevations: routeElevs,
-      waypoints,
+      waypoints: terrainWaypoints,
       weatherPoints: weatherPointsData,
       routeStats,
       routeColors: buildTerrainRouteColors(routeCoords),

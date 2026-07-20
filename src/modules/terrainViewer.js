@@ -666,7 +666,6 @@ export class TerrainViewer {
     // opens with a fly-in from a high overview down into the chase position.
     if (!this._routeReveal && !this._playbackReveal) {
       this._playbackReveal = true;
-      this._applyRouteReveal();
     }
     if (this._followCam && this._progress <= 0.001) this._introElapsed = 0;
     // Resume immediately (don't stay parked in a waypoint pause) and re-arm the
@@ -674,6 +673,9 @@ export class TerrainViewer {
     this._pauseUntil = 0;
     this._syncStopIdx();
     this._playing = true;
+    // Now that playback is live, clamp the track back to the walked fraction (it
+    // was restored to full while paused).
+    this._applyRouteReveal();
     this._followUserOverride = false;
     if (this.controls) this.controls.autoRotate = false;
     if (this._onPlayStateChange) this._onPlayStateChange(true);
@@ -686,6 +688,8 @@ export class TerrainViewer {
   pause() {
     const was = this._playing;
     this._playing = false;
+    // Pausing restores the full track; play() re-clamps it to the walked fraction.
+    this._applyRouteReveal();
     if (was && this._onPlayStateChange) this._onPlayStateChange(false);
   }
 
@@ -2916,7 +2920,10 @@ export class TerrainViewer {
   // or restore it in full (reveal off). Cheap — no geometry rebuild — so it can be
   // called every frame from _updatePlayerPosition.
   _applyRouteReveal() {
-    const revealOn = this._routeReveal || this._playbackReveal;
+    // Automatic playback reveal only clamps the track while the walk is actually
+    // running: pausing restores the full track (the reveal resumes on play). The
+    // explicit 揭示 toggle (_routeReveal) stays reveal-as-walked regardless.
+    const revealOn = this._routeReveal || (this._playbackReveal && this._playing);
     const tube = this.routeTube;
     const line = this.routeLine;
     if (tube && tube.geometry) {
@@ -2972,36 +2979,43 @@ export class TerrainViewer {
         distanceM: wp.distanceM ?? null,
         isStart: i === 0,
         isEnd: i === waypoints.length - 1,
+        isReturn: !!wp.isReturn,
       };
       if (detail.isStart) this._startDetail = detail;
       if (detail.isEnd) this._endDetail = detail;
 
-      // Colour-matched flag-on-pole planted at the waypoint itself (旗幟標示),
-      // echoing the 2D map's pin colour so the ground point reads clearly even
-      // when the floating name plaque is scrolled/zoomed out of legibility.
-      const flag = this._buildWaypointFlag(colorCss, ms);
-      flag.position.set(p.x, p.y, p.z);
-      flag.userData.detail = detail;
-      this.scene.add(flag);
-      this.waypointMarkers.push(flag);
-      this._pickables.push(flag);
+      // Return-leg waypoints ride the same ground point as their outbound twin, so
+      // they deal a playback card/stop but plant no duplicate flag or signboard.
+      if (!wp.isReturn) {
+        // Colour-matched flag-on-pole planted at the waypoint itself (旗幟標示),
+        // echoing the 2D map's pin colour so the ground point reads clearly even
+        // when the floating name plaque is scrolled/zoomed out of legibility.
+        const flag = this._buildWaypointFlag(colorCss, ms);
+        flag.position.set(p.x, p.y, p.z);
+        flag.userData.detail = detail;
+        this.scene.add(flag);
+        this.waypointMarkers.push(flag);
+        this._pickables.push(flag);
 
-      // Signboard billboard whose downward pin points at the waypoint — no ground
-      // sphere. Half the previous size. Click → detail.
-      const sign = this._createBillboard(name, colorCss);
-      const signH = 13 * ms;
-      sign.scale.set(signH * (256 / 96), signH, 1);
-      this._registerLabel(sign);
-      sign.position.set(p.x, p.y, p.z);
-      sign.userData.detail = detail;
-      this.scene.add(sign);
-      this.waypointMarkers.push(sign);
-      this._pickables.push(sign);
+        // Signboard billboard whose downward pin points at the waypoint — no ground
+        // sphere. Half the previous size. Click → detail.
+        const sign = this._createBillboard(name, colorCss);
+        const signH = 13 * ms;
+        sign.scale.set(signH * (256 / 96), signH, 1);
+        this._registerLabel(sign);
+        sign.position.set(p.x, p.y, p.z);
+        sign.userData.detail = detail;
+        this.scene.add(sign);
+        this.waypointMarkers.push(sign);
+        this._pickables.push(sign);
+      }
 
-      // Register a Relive stop at this waypoint's progress fraction (skip the
-      // trailhead and the finish — playback already handles those).
+      // Register a Relive stop at this waypoint's progress fraction. Skip the
+      // trailhead and the finish (start/end cards are dealt by the fly-in and the
+      // finish orbit) — the isEnd guard also stops a round-trip's return-to-start
+      // from double-dealing if its u rounds just under 1.
       const total = this._totalDistM || 0;
-      if (total > 0 && wp.distanceM != null) {
+      if (total > 0 && wp.distanceM != null && !detail.isStart && !detail.isEnd) {
         const u = wp.distanceM / total;
         if (u > 0.01 && u < 0.99) stops.push({ u, detail });
       }
