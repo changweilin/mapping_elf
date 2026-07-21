@@ -2221,7 +2221,6 @@ const btnView3d = document.getElementById('btn-view-3d');
 const tvView2d = document.getElementById('tv-view-2d');
 const terrainViewerEl = document.getElementById('terrain-viewer');
 const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
-const tvCloseBtn = document.getElementById('tv-close-btn');
 const tvRedrawBtn = document.getElementById('tv-redraw-btn');
 const tvExportBtn = document.getElementById('tv-export-btn');
 const tvExportMenu = document.getElementById('tv-export-menu');
@@ -3173,7 +3172,6 @@ btnView2d?.addEventListener('click', () => {
   if (!terrainViewerEl?.classList.contains('hidden')) closeTerrainViewer();
 });
 tvView2d?.addEventListener('click', closeTerrainViewer);
-tvCloseBtn?.addEventListener('click', closeTerrainViewer);
 tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
 
 // ---- 3D player playlist ---------------------------------------------------

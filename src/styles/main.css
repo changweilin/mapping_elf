@@ -7751,24 +7751,6 @@ html.light-theme .panel-bottom-logo {
 @keyframes tv-redraw-spin {
   to { transform: rotate(360deg); }
 }
-.terrain-viewer-toolbar .tv-close-btn {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.terrain-viewer-toolbar .tv-close-btn:hover {
-  background: rgba(255,255,255,0.08);
-  color: var(--text-primary);
-}
-
 .terrain-viewer-canvas-wrap {
   flex: 1;
   position: relative;
@@ -8467,8 +8449,7 @@ html.light-theme .tv-loading-overlay.tv-loading-bg .tv-loading-card { background
 .terrain-viewer-overlay.tv-busy .tv-info-panel,
 .terrain-viewer-overlay.tv-busy .tv-live-hud,
 .terrain-viewer-overlay.tv-busy .tv-redraw-btn,
-.terrain-viewer-overlay.tv-busy .tv-view-mode-toggle,
-.terrain-viewer-overlay.tv-busy .tv-close-btn {
+.terrain-viewer-overlay.tv-busy .tv-view-mode-toggle {
   pointer-events: none;
   opacity: 0.45;
   filter: grayscale(0.3);
