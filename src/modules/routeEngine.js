@@ -79,8 +79,12 @@ export class RouteEngine {
           osrmDuration: duration
         }];
       } catch (err) {
-        console.warn('BRouter routing failed, using fallback:', err.message);
-        rawRoutes = [{ coords: [...waypoints], osrmDistance: 0, osrmDuration: 0 }];
+        // BRouter 400s the WHOLE request when a single via-point can't be snapped
+        // (e.g. a newly-added waypoint slightly off a mapped way). Rather than
+        // collapsing the entire route to naive straight lines, route each leg
+        // independently and only straight-line the leg(s) that genuinely fail.
+        console.warn('BRouter combined routing failed, falling back to per-segment:', err.message);
+        rawRoutes = [await this._routeBrouterPerSegment(waypoints)];
       }
     } else {
       const profile = PROFILE_MAP[this.mode] || 'foot';
@@ -260,6 +264,58 @@ export class RouteEngine {
     }
 
     return routesWithElevation;
+  }
+
+  /**
+   * Route a single hiking leg through BRouter. Returns [lat,lng] coords (the
+   * only place BRouter's [lng,lat] order is swapped — see INC-101). Throws if
+   * BRouter can't map the leg, so the caller can straight-line just this one.
+   */
+  async _routeBrouterSegment(a, b) {
+    const url = `https://brouter.de/brouter?lonlats=${a[1]},${a[0]}|${b[1]},${b[0]}&profile=hiking-mountain&alternativeidx=0&format=geojson`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`BRouter segment error: ${resp.status}`);
+    const data = await resp.json();
+    if (!data.features || data.features.length === 0) throw new Error('No segment route');
+    return data.features[0].geometry.coordinates.map((c) => [c[1], c[0]]);
+  }
+
+  /**
+   * Per-leg fallback for the hiking path: route consecutive waypoint pairs
+   * independently and concatenate. A leg BRouter can't snap degrades to a
+   * straight segment for that leg only, leaving the rest of the route intact.
+   * Never throws — worst case (BRouter fully down) every leg is straight, i.e.
+   * the old whole-route fallback. Elevations are left to the shared sampler
+   * (inlineElevations: null) so mixed real/straight legs stay consistent.
+   */
+  async _routeBrouterPerSegment(waypoints) {
+    const legs = [];
+    for (let i = 0; i < waypoints.length - 1; i++) legs.push([waypoints[i], waypoints[i + 1]]);
+
+    const legCoords = await Promise.all(legs.map(async ([a, b]) => {
+      let coords;
+      try {
+        coords = await this._routeBrouterSegment(a, b);
+      } catch (err) {
+        console.warn('BRouter segment failed, straight-lining leg:', err.message);
+        coords = [[...a], [...b]];
+      }
+      // Anchor each leg's endpoints exactly on the original waypoints (INC-133);
+      // this also guarantees adjacent legs meet at an identical join point.
+      if (coords.length > 0) coords[0] = [...a];
+      if (coords.length > 1) coords[coords.length - 1] = [...b];
+      return coords;
+    }));
+
+    const coords = [];
+    legCoords.forEach((leg, i) => {
+      // Drop each leg's first point after the first leg — it duplicates the
+      // shared waypoint already appended as the previous leg's last point.
+      if (i === 0) coords.push(...leg);
+      else coords.push(...leg.slice(1));
+    });
+
+    return { coords, inlineElevations: null, osrmDistance: 0, osrmDuration: 0 };
   }
 
   /**

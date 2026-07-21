@@ -18,6 +18,9 @@ const WEATHER_STATE_KEYS = [
   'mappingElf_weather',
   'mappingElf_weatherCells',
   'mappingElf_weatherCache',
+  'mappingElf_catchmentCache',
+  'mappingElf_catchmentCells',
+  'mappingElf_cardCatchmentView',
   'mappingElf_weatherCacheEnabled',
   'mappingElf_weatherCacheDistanceM',
   'mappingElf_weatherCacheElevationM',
@@ -45,6 +48,10 @@ const PREFERENCE_STATE_KEYS = [
   'mappingElf_waypointCentering',
   'mappingElf_showWpIcon',
   'mappingElf_showImIcon',
+  'mappingElf_wpDetailWeather',
+  'mappingElf_wpDetailCatchment',
+  'mappingElf_imDetailWeather',
+  'mappingElf_imDetailCatchment',
   'mappingElf_windyLayer',
   'mappingElf_windyModel',
   'mappingElf_theme',
@@ -54,6 +61,7 @@ const LAYOUT_STATE_KEYS = [
   'mappingElf_panelWidth',
   'mappingElf_panelHeight',
   'mappingElf_panelHeightRatio',
+  'mappingElf_bpView',
 ];
 
 const SESSION_STATE_KEYS = [

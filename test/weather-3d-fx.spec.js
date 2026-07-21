@@ -85,7 +85,7 @@ test('3D weather: volumetric rigs build, animate and rebuild without errors', as
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   await page.locator('#gpx-file-input').setInputFiles(sampleKml);
   await expect(page.locator('#waypoint-list .waypoint-item').first()).toBeVisible();
-  await expect(page.locator('#btn-open-3d-viewer')).toBeEnabled();
+  await expect(page.locator('#btn-view-3d')).toBeEnabled();
   // Wait for the per-point weather load to actually START then FINISH, so the
   // saved weather cells (which feed the 3D rigs) are fully populated before the
   // model is built — otherwise weatherPointsData is empty and no rigs are grown.
@@ -98,7 +98,7 @@ test('3D weather: volumetric rigs build, animate and rebuild without errors', as
   // Build the 3D terrain (+ weather rigs).
   const open = await page.locator('#side-panel').evaluate((el) => el.classList.contains('open'));
   if (!open) await page.locator('#btn-toggle-panel').click();
-  await page.locator('#btn-open-3d-viewer').click();
+  await page.locator('#btn-view-3d').click();
   await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/);
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);

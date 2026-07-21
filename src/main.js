@@ -8,7 +8,7 @@ import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize, projectMileage } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeTripStats, computeFatigueSeries, formatDuration, formatDurationHHMM, defaultSpeed, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, LANGUAGES, setLanguage, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
@@ -16,6 +16,8 @@ import { estimateMapPackTiles } from './modules/tileEstimator.js';
 import { buildWeatherPointsFromState } from './modules/weatherPointBuilder.js';
 import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
+import { computeCatchment } from './modules/catchmentEngine.js';
+import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -131,12 +133,14 @@ function showImportedTrackEditNotice(duration = 3200) {
   showNotification(IMPORTED_TRACK_EDIT_NOTICE, 'warning', duration);
 }
 
+// Undo/redo are intentionally absent: their enabled/blocked state is owned solely
+// by _updateHistoryButtons so a data load ('edit' scope) can keep them live while a
+// full route lock keeps them disabled. #waypoint-list button is scoped with
+// :not(.wp-remove-live) so the delete-last button stays clickable during a load.
 const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
   '#btn-clear-route',
   '#btn-replan-route',
   '#btn-reverse-replan-route',
-  '#btn-undo',
-  '#btn-redo',
   '.search-result-add',
 ].join(',');
 
@@ -144,11 +148,10 @@ const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
   '#btn-clear-route',
   '#btn-replan-route',
   '#btn-reverse-replan-route',
-  '#btn-undo',
-  '#btn-redo',
   '#btn-fit-route',
   '#btn-my-location',
-  '#waypoint-list button',
+  '#btn-import-gpx',
+  '#waypoint-list button:not(.wp-remove-live)',
   '#weather-table-container button',
   '#weather-table-container input',
   '#weather-table-container select',
@@ -161,7 +164,20 @@ const WEATHER_CARD_BUSY_DISABLE_SELECTOR = [
   '.weather-card select',
 ].join(',');
 
+// During a data load ('edit' scope) cards stay fully interactive (open/close/
+// resize/navigate) EXCEPT their date/time editors — changing the time is an edit,
+// only allowed once the load is stopped.
+const WEATHER_CARD_EDIT_DISABLE_SELECTOR = [
+  '.weather-card .wc-date-input',
+  '.weather-card .wc-time-select',
+  '.weather-card .wc-time-adj-btn',
+  '.weather-card .wc-now-btn',
+].join(',');
+
 let routeWeatherBusyTasks = new Map();
+// Active, pausable data loads (weather + catchment). The progress bar's 停止/繼續
+// toggle acts on all of them; each run exposes { paused, _resume, busyTask }.
+const pausableLoadRuns = new Set();
 let deferredBusySettings = new Map();
 let busyInteractionNoticeAt = 0;
 let deferredSettingsNoticeAt = 0;
@@ -173,12 +189,30 @@ function hasRouteWeatherBusyTasks() {
   return routeWeatherBusyTasks.size > 0;
 }
 
+// lockScope: 'route' locks route editing + weather cards; 'edit' locks route
+// editing + card date/time (but leaves cards open/close/resize free) — used by the
+// weather/catchment data loads; 'weather-card' locks only weather cards; 'none' is
+// display-only (progress readout, no locking — e.g. a paused load).
 function isRouteWeatherBusy() {
-  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'weather-card');
+  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'weather-card' && task.lockScope !== 'none');
 }
 
 function isWeatherCardInteractionLocked() {
-  return hasRouteWeatherBusyTasks();
+  // 'edit' scope deliberately does NOT lock card open/close/resize.
+  return Array.from(routeWeatherBusyTasks.values()).some(task => task.lockScope !== 'none' && task.lockScope !== 'edit');
+}
+
+// True while the ONLY thing holding the lock is a running data load (weather/
+// catchment, lockScope 'edit') — the route geometry is settled, so a limited set of
+// edits is allowed mid-load: append a waypoint (map-click), delete the LAST one,
+// undo, redo. Each cancels the load and re-plans, which is the intended flow. A
+// 'route'-scope task (route (re)planning) or an imported track keeps EVERYTHING
+// locked (returns false). Paused loads flip to 'none' and unlock fully on their own.
+function isDataLoadEditMode() {
+  if (importedTrackMode) return false;
+  const tasks = Array.from(routeWeatherBusyTasks.values());
+  if (tasks.some(task => task.lockScope !== 'edit' && task.lockScope !== 'none' && task.lockScope !== 'weather-card')) return false;
+  return tasks.some(task => task.lockScope === 'edit');
 }
 
 function showRouteWeatherBusyNotice(duration = 2200) {
@@ -227,17 +261,22 @@ function updateRouteWeatherBusyOverlay() {
   const busy = hasRouteWeatherBusyTasks();
   const routeLocked = isRouteWeatherBusy();
   const weatherCardLocked = isWeatherCardInteractionLocked();
+  const dataLoadEdit = isDataLoadEditMode();
   const wasRouteLocked = document.body.classList.contains('route-weather-busy');
+  const wasDataLoadEdit = document.body.classList.contains('data-load-edit');
   document.body.classList.toggle('route-weather-busy', routeLocked);
   document.body.classList.toggle('weather-card-busy', weatherCardLocked);
   document.body.classList.toggle('route-weather-progress-busy', busy);
+  document.body.classList.toggle('data-load-edit', dataLoadEdit);
 
   const overlay = document.getElementById('route-weather-busy-overlay');
   const titleEl = document.getElementById('route-weather-busy-title');
   const detailEl = document.getElementById('route-weather-busy-detail');
   const progressEl = document.getElementById('route-weather-busy-progress');
   const fillEl = document.getElementById('route-weather-busy-fill');
-  const barEl = overlay?.querySelector('.loading-bar');
+  const countEl = document.getElementById('route-weather-busy-count');
+  // Scope to the card: the hidden brand-reserve block also contains a .loading-bar.
+  const barEl = overlay?.querySelector('.loading-content .loading-bar');
   const brandEl = document.getElementById('route-weather-busy-brand');
   const brandTextEl = brandEl?.querySelector('.route-busy-brand-text');
   if (brandTextEl && !brandTextEl.dataset.defaultText) {
@@ -261,6 +300,12 @@ function updateRouteWeatherBusyOverlay() {
     }
     if (titleEl) titleEl.textContent = task?.title || '處理中';
     if (detailEl) detailEl.textContent = task?.detail || '請稍候...';
+    if (countEl) {
+      // The pill shows the newest task; surface how many more run behind it.
+      const extra = routeWeatherBusyTasks.size - 1;
+      countEl.classList.toggle('hidden', extra < 1);
+      if (extra >= 1) countEl.textContent = `+${extra}`;
+    }
     if (progressEl) progressEl.textContent = progress == null ? '處理中' : `${Math.round(progress)}%`;
     if (fillEl) {
       fillEl.classList.toggle('is-determinate', progress != null);
@@ -280,21 +325,49 @@ function updateRouteWeatherBusyOverlay() {
     fillEl.style.removeProperty('--busy-progress');
   }
 
+  // 停止/繼續 toggle — only while a pausable data load (weather/catchment) runs.
+  // Label + spinner flip with the paused state.
+  const toggleBtn = document.getElementById('route-weather-busy-toggle');
+  const pausedBadge = document.getElementById('route-weather-busy-paused');
+  const pausable = busy && hasPausableLoad();
+  const paused = pausable && anyLoadPaused();
+  if (overlay) overlay.classList.toggle('is-paused', paused);
+  if (toggleBtn) {
+    toggleBtn.classList.toggle('hidden', !pausable);
+    if (pausable) {
+      toggleBtn.textContent = translatePhrase(paused ? '繼續' : '停止');
+      toggleBtn.setAttribute('aria-pressed', String(paused));
+    }
+  }
+  if (pausedBadge) pausedBadge.classList.toggle('hidden', !paused);
+
   syncBusyDisabledControls(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR, routeLocked, 'route-edit-control');
   syncBusyDisabledControls(WEATHER_CARD_BUSY_DISABLE_SELECTOR, weatherCardLocked, 'weather-edit-control');
+  // Card date/time editors: locked while a load holds the 'edit' lock (routeLocked),
+  // even though the card itself stays open/close/resize-able.
+  syncBusyDisabledControls(WEATHER_CARD_EDIT_DISABLE_SELECTOR, routeLocked, 'wc-time-edit-control');
   // Re-evaluate the 3D button: it must stay locked while any route/weather task
   // runs and re-enable as soon as they all finish.
   if (typeof update3dButtonBadge === 'function') update3dButtonBadge();
 
   if (typeof mapManager !== 'undefined' && mapManager) {
     mapManager.setFrozen(!!importedTrackMode || routeLocked);
+    // Map-click append stays live while a data load holds the (relaxed) lock.
+    mapManager.allowAppendWhileFrozen = dataLoadEdit;
+  }
+  // Undo/redo live/disabled state is owned here (they were removed from the blunt
+  // disable selector): recompute on every busy transition, not just when going idle.
+  if (typeof _updateHistoryButtons === 'function') _updateHistoryButtons();
+  // Entering/leaving data-load-edit re-renders the waypoint list so the delete-last
+  // affordance appears (or disappears) without waiting for the next waypoint change.
+  if (wasDataLoadEdit !== dataLoadEdit && typeof updateWaypointList === 'function' && typeof mapManager !== 'undefined' && mapManager) {
+    updateWaypointList(mapManager.waypoints);
   }
   if (!busy && typeof syncTrackModeUI === 'function') {
     syncTrackModeUI();
     if (wasRouteLocked && !routeLocked && typeof updateWaypointList === 'function' && typeof mapManager !== 'undefined' && mapManager) {
       updateWaypointList(mapManager.waypoints);
     }
-    if (typeof _updateHistoryButtons === 'function') _updateHistoryButtons();
   }
 }
 
@@ -336,7 +409,59 @@ function flushDeferredBusySettings() {
   pending.forEach((applyFn) => applyFn());
 }
 
+// --- Load pause/resume (progress-bar 停止/繼續 toggle) -------------------------
+// A pausable load (weather/catchment) registers its run; its loop parks on
+// waitIfLoadPaused() while paused. Pausing flips the load's busy task to
+// display-only ('none') so date/time, track-load and waypoint edits unlock;
+// resuming restores its 'edit' lock and wakes the parked loop.
+function anyLoadPaused() {
+  return Array.from(pausableLoadRuns).some((r) => r.paused);
+}
+function hasPausableLoad() {
+  return pausableLoadRuns.size > 0;
+}
+function waitIfLoadPaused(run) {
+  if (!run || !run.paused) return Promise.resolve();
+  return new Promise((resolve) => { run._resume = resolve; });
+}
+function pauseAllLoads() {
+  let changed = false;
+  pausableLoadRuns.forEach((run) => {
+    if (!run.paused && !run.cancelled) {
+      run.paused = true;
+      run.busyTask?.set({ lockScope: 'none' });   // unlock editing while stopped
+      changed = true;
+    }
+  });
+  if (changed) updateRouteWeatherBusyOverlay();
+}
+function resumeAllLoads() {
+  pausableLoadRuns.forEach((run) => {
+    if (run.paused) {
+      run.paused = false;
+      run.busyTask?.set({ lockScope: run.lockScope || 'edit' });   // re-lock editing
+      const cb = run._resume; run._resume = null; cb?.();
+    }
+  });
+  updateRouteWeatherBusyOverlay();
+}
+function toggleLoadPause() {
+  if (anyLoadPaused()) resumeAllLoads(); else pauseAllLoads();
+}
+// Wake a parked loop so a cancel (route replan) can unwind it cleanly.
+function unparkLoadRun(run) {
+  if (run && run._resume) { const cb = run._resume; run._resume = null; cb?.(); }
+}
+
 function installRouteWeatherBusyGuard() {
+  const toggleBtn = document.getElementById('route-weather-busy-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleLoadPause();
+    });
+  }
   const blockPointerEvent = (e) => {
     const target = e.target;
     const isWeatherBadgeClick = e.type === 'click' && target?.closest?.('.wp-weather-badge');
@@ -366,7 +491,10 @@ function installRouteWeatherBusyGuard() {
     if (!isRouteWeatherBusy()) return;
     const tag = target?.tagName?.toLowerCase();
     if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
-    const editKey = e.key === 'Delete' || e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase()));
+    const isUndoRedoKey = (e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase());
+    // Undo/redo stay live while a data load holds the relaxed lock.
+    if (isUndoRedoKey && isDataLoadEditMode()) return;
+    const editKey = e.key === 'Delete' || e.key === 'Backspace' || isUndoRedoKey;
     if (!editKey) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -375,6 +503,62 @@ function installRouteWeatherBusyGuard() {
 }
 
 installRouteWeatherBusyGuard();
+
+// Hover explanation for info-card / catchment-table items. A single translucent
+// bubble follows whichever `[data-tip]` element the pointer is over; the tip text
+// is the Chinese label's description (WC_INFO_TIPS), translated at show-time. Pure
+// progressive enhancement — no-op on touch/no-hover devices.
+let _wcTipBubble = null;
+function getInfoTipBubble() {
+  if (_wcTipBubble) return _wcTipBubble;
+  const el = document.createElement('div');
+  el.className = 'wc-tip-bubble';
+  el.setAttribute('role', 'tooltip');
+  el.setAttribute('data-i18n-skip', '');   // text is pre-translated; keep the observer off it
+  document.body.appendChild(el);
+  _wcTipBubble = el;
+  return el;
+}
+function hideInfoTip() {
+  if (_wcTipBubble) _wcTipBubble.classList.remove('visible');
+  _infoTipCurrent = null;
+}
+function showInfoTipFor(el) {
+  const label = el?.dataset?.tip;
+  const desc = label && WC_INFO_TIPS[label];
+  if (!desc) { hideInfoTip(); return; }
+  const bubble = getInfoTipBubble();
+  bubble.textContent = translatePhrase(desc);
+  bubble.classList.add('visible');
+  const r = el.getBoundingClientRect();
+  const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+  const margin = 8;
+  let left = r.left + r.width / 2 - bw / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - bw - margin));
+  let top = r.top - bh - margin;                  // prefer above the item
+  bubble.classList.toggle('below', top < margin);
+  if (top < margin) top = r.bottom + margin;      // …flip below when clipped at the top
+  bubble.style.left = `${Math.round(left)}px`;
+  bubble.style.top = `${Math.round(top)}px`;
+}
+let _infoTipCurrent = null;
+function installInfoTipController() {
+  if (!window.matchMedia?.('(hover: hover)').matches) return;  // skip touch-only devices
+  document.addEventListener('mouseover', (e) => {
+    const el = e.target?.closest?.('[data-tip]');
+    if (el === _infoTipCurrent) return;
+    _infoTipCurrent = el;
+    if (el) showInfoTipFor(el); else hideInfoTip();
+  });
+  document.addEventListener('mouseout', (e) => {
+    // Hide only when the pointer truly leaves the current tip target.
+    if (_infoTipCurrent && !e.relatedTarget?.closest?.('[data-tip]')) hideInfoTip();
+  });
+  // A moved/closed card must not leave a stale bubble hanging over the map.
+  window.addEventListener('scroll', hideInfoTip, true);
+  document.addEventListener('mousedown', hideInfoTip, true);
+}
+installInfoTipController();
 
 let routeExportersPromise = null;
 async function ensureRouteExporters() {
@@ -702,6 +886,22 @@ const LS_SHOW_WP_ICON_KEY = 'mappingElf_showWpIcon';
 const LS_SHOW_IM_ICON_KEY = 'mappingElf_showImIcon';
 let showWpIcon = localStorage.getItem(LS_SHOW_WP_ICON_KEY) !== '0'; // default true
 let showImIcon = localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== null ? localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== '0' : window.innerWidth > 768;
+
+// Info-card detail toggles, split by 主航點 (waypoint) / 副航點 (intermediate).
+// When a detail flag is off, that point class's card shows only the info above
+// the 天氣/集水區 toggle plus 雨量/降雨機率/濕度/風速 — and the hidden data is not
+// loaded (catchment: no DEM/hydro compute, no basin overlay). 主航點 defaults on,
+// 副航點 defaults off.
+const LS_WP_DETAIL_WEATHER_KEY = 'mappingElf_wpDetailWeather';
+const LS_WP_DETAIL_CATCHMENT_KEY = 'mappingElf_wpDetailCatchment';
+const LS_IM_DETAIL_WEATHER_KEY = 'mappingElf_imDetailWeather';
+const LS_IM_DETAIL_CATCHMENT_KEY = 'mappingElf_imDetailCatchment';
+let wpDetailWeather = localStorage.getItem(LS_WP_DETAIL_WEATHER_KEY) !== '0';   // default true
+let wpDetailCatchment = localStorage.getItem(LS_WP_DETAIL_CATCHMENT_KEY) !== '0'; // default true
+let imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';    // default false
+let imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1'; // default false
+const weatherDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailWeather : imDetailWeather);
+const catchmentDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailCatchment : imDetailCatchment);
 
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
@@ -1052,7 +1252,10 @@ function historyRedo() {
 }
 
 function _updateHistoryButtons() {
-  const frozen = !!importedTrackMode || isRouteWeatherBusy();
+  // A data load ('edit' scope) keeps undo/redo live; a full route lock / imported
+  // track disables them. (These buttons are no longer in the blunt disable selector,
+  // so this is their single source of truth.)
+  const frozen = !!importedTrackMode || (isRouteWeatherBusy() && !isDataLoadEditMode());
   if (btnUndo) btnUndo.disabled = frozen || history.undo.length === 0;
   if (btnRedo) btnRedo.disabled = frozen || history.redo.length === 0;
 }
@@ -1098,12 +1301,28 @@ function applySettingsFromStorage() {
   } catch {
     cachedWeatherData = {};
   }
+  try {
+    cachedCatchmentData = normalizeCatchmentCacheStore(JSON.parse(localStorage.getItem(LS_CATCHMENT_CACHE_KEY) || '{}'));
+    pruneCatchmentCache({ persist: true });
+  } catch {
+    cachedCatchmentData = {};
+  }
+  try {
+    savedCatchmentCells = JSON.parse(localStorage.getItem(LS_CATCHMENT_CELLS_KEY) || '{}');
+  } catch {
+    savedCatchmentCells = {};
+  }
+  loadCardCatchmentViewMemory();   // restore per-card 天氣/集水區 view choice from the imported state
   collectiveMarked = localStorage.getItem(LS_COLLECTIVE_MARKED_KEY) !== '0';
   collectiveIntermediate = localStorage.getItem(LS_COLLECTIVE_INTERMEDIATE_KEY) !== '0';
   collectiveAll = localStorage.getItem(LS_COLLECTIVE_ALL_KEY) === '1';
   waypointCentering = localStorage.getItem(LS_WAYPOINT_CENTERING_KEY) !== '0';
   showWpIcon = localStorage.getItem(LS_SHOW_WP_ICON_KEY) !== '0';
   showImIcon = localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== null ? localStorage.getItem(LS_SHOW_IM_ICON_KEY) !== '0' : window.innerWidth > 768;
+  wpDetailWeather = localStorage.getItem(LS_WP_DETAIL_WEATHER_KEY) !== '0';
+  wpDetailCatchment = localStorage.getItem(LS_WP_DETAIL_CATCHMENT_KEY) !== '0';
+  imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';
+  imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1';
   try {
     paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
   } catch {
@@ -1169,6 +1388,14 @@ function applySettingsFromStorage() {
   if (showWpIconEl) showWpIconEl.checked = showWpIcon;
   const showImIconEl = document.getElementById('show-intermediate-weather-icon');
   if (showImIconEl) showImIconEl.checked = showImIcon;
+  const wpDetailWeatherEl = document.getElementById('wp-detail-weather');
+  if (wpDetailWeatherEl) wpDetailWeatherEl.checked = wpDetailWeather;
+  const wpDetailCatchmentEl = document.getElementById('wp-detail-catchment');
+  if (wpDetailCatchmentEl) wpDetailCatchmentEl.checked = wpDetailCatchment;
+  const imDetailWeatherEl = document.getElementById('im-detail-weather');
+  if (imDetailWeatherEl) imDetailWeatherEl.checked = imDetailWeather;
+  const imDetailCatchmentEl = document.getElementById('im-detail-catchment');
+  if (imDetailCatchmentEl) imDetailCatchmentEl.checked = imDetailCatchment;
   syncWeatherCacheSettingsUI();
 
   // Refresh UI
@@ -1276,6 +1503,7 @@ mapManager.onMapCursorAction = (action, lat, lng) => {
   }
   if (action === 'clear') {
     mapManager.clearMapCursor();
+    _resetCursorCatchment();
     showNotification('已清除 GPS 游標', 'info', 1200);
     return;
   }
@@ -1316,9 +1544,6 @@ const btnRedo = document.getElementById('btn-redo');
 const btnResetDefaults = document.getElementById('btn-reset-defaults');
 const gpxFileInput = document.getElementById('gpx-file-input');
 
-const progressContainer = document.getElementById('download-progress-container');
-const progressText = document.getElementById('download-progress-text');
-const progressFill = document.getElementById('download-progress-fill');
 const mappackImportModal = document.getElementById('mappack-import-modal');
 // const btnFetchWeather = document.getElementById('btn-fetch-weather'); (Moved to weather table)
 
@@ -1337,8 +1562,6 @@ const statKcal = document.getElementById('stat-kcal');
 const statKcalCard = document.getElementById('stat-kcal-card');
 const statIntake = document.getElementById('stat-intake');
 const statIntakeCard = document.getElementById('stat-intake-card');
-
-const btnToggleElevation = document.getElementById('btn-toggle-elevation');
 
 const layerBtns = document.querySelectorAll('.layer-btn');
 const routeModeRadios = document.querySelectorAll('input[name="route-mode"]');
@@ -1738,6 +1961,29 @@ function initWaypointSettings() {
     });
   }
 
+  // Info-card detail toggles (主/副航點 × 天氣/集水區). On change, re-render open
+  // cards to the new detail level and reconcile basin overlays (catchment detail
+  // off means no basin for that point). Deferred while a route/weather load runs.
+  const bindDetailToggle = (id, storageKey, initial, apply) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.checked = initial;
+    el.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting(id, () => el.dispatchEvent(new Event('change')));
+        return;
+      }
+      apply(el.checked);
+      localStorage.setItem(storageKey, el.checked ? '1' : '0');
+      refreshOpenWeatherCards();
+      syncCatchmentBasins();
+    });
+  };
+  bindDetailToggle('wp-detail-weather', LS_WP_DETAIL_WEATHER_KEY, wpDetailWeather, (v) => { wpDetailWeather = v; });
+  bindDetailToggle('wp-detail-catchment', LS_WP_DETAIL_CATCHMENT_KEY, wpDetailCatchment, (v) => { wpDetailCatchment = v; });
+  bindDetailToggle('im-detail-weather', LS_IM_DETAIL_WEATHER_KEY, imDetailWeather, (v) => { imDetailWeather = v; });
+  bindDetailToggle('im-detail-catchment', LS_IM_DETAIL_CATCHMENT_KEY, imDetailCatchment, (v) => { imDetailCatchment = v; });
+
   const importAutoSortEl = document.getElementById('import-auto-sort-enable');
   if (importAutoSortEl) {
     importAutoSortEl.checked = importAutoSortMode;
@@ -1767,7 +2013,7 @@ function initWaypointSettings() {
   btnMinimize?.addEventListener('click', () => {
     const targetCols = getCollectiveIndices();
     if (targetCols.length === 0) {
-      showNotification('未選取任何操作目標 (標示點 / 中繼點)', 'warning');
+      showNotification('未選取任何操作目標 (主航點 / 副航點)', 'warning');
       return;
     }
     targetCols.forEach(idx => closeWeatherCard(idx));
@@ -1969,10 +2215,12 @@ btnToggleTheme?.addEventListener('click', toggleAppTheme);
 btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'));
 
 // =========== 3D Terrain Viewer ===========
-const btnOpen3d = document.getElementById('btn-open-3d-viewer');
+const btnFavoriteQuick = document.getElementById('btn-favorite-quick');
+const btnView2d = document.getElementById('btn-view-2d');
+const btnView3d = document.getElementById('btn-view-3d');
+const tvView2d = document.getElementById('tv-view-2d');
 const terrainViewerEl = document.getElementById('terrain-viewer');
 const terrainCanvasWrap = document.getElementById('terrain-canvas-wrap');
-const tvCloseBtn = document.getElementById('tv-close-btn');
 const tvRedrawBtn = document.getElementById('tv-redraw-btn');
 const tvExportBtn = document.getElementById('tv-export-btn');
 const tvExportMenu = document.getElementById('tv-export-menu');
@@ -1981,6 +2229,7 @@ const tvExport3mf = document.getElementById('tv-export-3mf');
 const tvLanguageSelect = document.getElementById('tv-language-select');
 const tvToggleTheme = document.getElementById('tv-toggle-theme');
 const tpPlay = document.getElementById('tp-play');
+const tpFollow = document.getElementById('tp-follow');
 const tpSlider = document.getElementById('tp-slider');
 const tpProgressLabel = document.getElementById('tp-progress-label');
 const tpTimeLabel = document.getElementById('tp-time-label');
@@ -2000,16 +2249,15 @@ const tvContourLabel = document.getElementById('tv-contour-label');
 const tvToggleContourLabels = document.getElementById('tv-toggle-contour-labels');
 const tvToggleWeather = document.getElementById('tv-toggle-weather');
 const tvWeatherLabel = document.getElementById('tv-weather-label');
-const tvToggleDaynight = document.getElementById('tv-toggle-daynight');
 const tvToggleEffects = document.getElementById('tv-toggle-effects');
 const tvToggleFeatures = document.getElementById('tv-toggle-features');
+const tvToggleCatchment = document.getElementById('tv-toggle-catchment');
+const tvToggleSatellite = document.getElementById('tv-toggle-satellite');
 const tvToggleLabelSize = document.getElementById('tv-toggle-labelsize');
 const tvLabelSizeLabel = document.getElementById('tv-labelsize-label');
 const tvToggleView = document.getElementById('tv-toggle-view');
 const tvViewLabel = document.getElementById('tv-view-label');
 const tvToggleNormalize = document.getElementById('tv-toggle-normalize');
-const tvToggleAbsolute = document.getElementById('tv-toggle-absolute');
-const tvToggleTrail = document.getElementById('tv-toggle-trail');
 const tvLiveHud = document.getElementById('tv-live-hud');
 const tvHudCollapse = document.getElementById('tv-hud-collapse');
 const tvMarkerDetail = document.getElementById('tv-marker-detail');
@@ -2032,6 +2280,10 @@ const tvLoadingDetail = document.getElementById('tv-loading-detail');
 const tvLoadingFill = document.getElementById('tv-loading-fill');
 const tvLoadingPercent = document.getElementById('tv-loading-percent');
 const tvLoadingAbort = document.getElementById('tv-loading-abort');
+const tvWpCard = document.getElementById('tv-wp-card');
+const tvWpCardBody = document.getElementById('tv-wp-card-body');
+let tvWpCardLeaveTimer = null;
+let tvWpCardHideTimer = null;
 
 let terrainViewer = null;
 // True while the toolbar "更新" rebuild is running. A redraw must never kick the
@@ -2109,14 +2361,16 @@ const TERRAIN_DISPLAY_DEFAULTS = Object.freeze({
   contour: 'high',        // high | low | none
   contourLabels: true,
   weather: 'on',          // on (hints+動畫) | noAnim (hints only) | off (all off)
-  daynight: true,
   effects: true,          // 地標裝飾（峰頂／樹木／高塔／觀景點／紀念碑模型）
   features: true,
+  catchment3d: false,     // 集水區疊加（開啟時自動計算各主航點集水範圍，貼合地形）
   labelSize: 'none',      // none | large | small
   elevNormalized: false,
-  absElev: false,         // 絕對海拔懸空（軌跡懸空＋支柱）
-  trailReveal: false,     // 軌跡時序揭示（依播放進度）
+  followCam: true,        // Relive 式運鏡：播放時鏡頭跟拍人物
+  satellite: false,       // 衛星影像疊加（Esri 空拍圖貼合地形表面）
 });
+// 日夜光照恆為開啟（早期版本有 daynight 開關，已移除）：日夜只影響 3D 物件與天空
+// 背景，地形網格改由固定日照 rig 渲染（見 terrainViewer 的 layers 設定）。
 
 function loadTerrainDisplaySettings() {
   try {
@@ -2320,7 +2574,9 @@ function renderTerrainInfoPanel(routeData) {
     `<div class="tv-stat-item"><span class="tv-stat-label">${st.label}</span><span class="tv-stat-value">${st.value}</span></div>`
   ).join('');
 
-  const wps = routeData.waypoints || [];
+  // Return-leg entries are playback-only (no marker, no list row); the sidebar
+  // list mirrors the physical outbound waypoints.
+  const wps = (routeData.waypoints || []).filter((wp) => !wp.isReturn);
   if (tvWpCount) tvWpCount.textContent = wps.length ? `(${wps.length})` : '';
   if (tvWpList) {
     tvWpList.innerHTML = wps.map((wp, i) => {
@@ -2555,7 +2811,25 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
       };
     });
 
-    // Whether a point's weather icon shows in 3D follows the same 主航點/中繼點
+    // Out-and-back / O-loop return-leg waypoints become playback stops too, so the
+    // Relive close-up cards deal for every waypoint on the walked path — not just
+    // the outbound half. Reuse weatherPoints' already-computed return cumulative
+    // distance (_cum, full-route metres) + deduped label, flagged isReturn so the
+    // viewer plants no duplicate flag/sign at the shared ground point and the
+    // info-panel waypoint list stays outbound-only.
+    const returnWaypoints = (weatherPoints || [])
+      .filter((p) => p.isWaypoint && p.isReturn && Number.isFinite(p._cum))
+      .map((p) => ({
+        coords: [p.lat, p.lng],
+        label: p.label,
+        elevation: p._ele ?? null,
+        color: waypointGradColors[p.wpIndex] || null,
+        distanceM: p._cum,
+        isReturn: true,
+      }));
+    const terrainWaypoints = returnWaypoints.length ? [...waypoints, ...returnWaypoints] : waypoints;
+
+    // Whether a point's weather icon shows in 3D follows the same 主航點/副航點
     // checkboxes as the 2D map; the WMO code + temperature themselves live in the
     // weather cache (weatherPoints entries don't carry them directly), same as
     // what feeds the 2D marker badges.
@@ -2565,11 +2839,22 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
         const cells = getSavedWeatherCells(wp);
         const code = cells?._weatherCode;
         const tempNum = cells?.temp != null ? parseFloat(cells.temp) : NaN;
+        // Pass the detailed weather rows through as-is (already unit-formatted
+        // display strings) for the playback card; null when absent/blank.
+        const cellStr = (k) => {
+          const v = cells?.[k];
+          const s = v != null ? String(v).trim() : '';
+          return (s === '' || s === '—') ? null : s;
+        };
         return {
           coords: wp.coords || [wp.lat, wp.lng],
           elevation: wp.elevation || 0,
           weatherCode: Number.isFinite(code) ? code : null,
           temperature: Number.isFinite(tempNum) ? tempNum : null,
+          precipitation: cellStr('precipitation'),
+          precipProb: cellStr('precipProb'),
+          humidity: cellStr('humidity'),
+          windSpeed: cellStr('windSpeed'),
           label: wp.label || null,
         };
       })
@@ -2587,7 +2872,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     const routeData = {
       coords: routeCoords,
       elevations: routeElevs,
-      waypoints,
+      waypoints: terrainWaypoints,
       weatherPoints: weatherPointsData,
       routeStats,
       routeColors: buildTerrainRouteColors(routeCoords),
@@ -2649,6 +2934,16 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     terrainViewer.onMetrics((m) => renderTerrainMetrics(m));
     terrainViewer.onLoad((state) => handleTerrainLoadState(state));
     terrainViewer.onMarkerClick((detail) => renderTerrainMarkerDetail(detail));
+    // Relive-style: deal the TCG close-up card (personal/terrain/weather) while
+    // the camera pauses on the waypoint.
+    terrainViewer.onWaypointArrive((detail) => showWaypointCard(detail));
+    // Satellite drape couldn't load (offline / no coverage): reset the toggle.
+    terrainViewer.onSatelliteError(() => {
+      terrainDisplaySettings.satellite = false;
+      saveTerrainDisplaySettings();
+      syncTerrainSatelliteButton();
+      showNotification('無法載入衛星影像，已切回地形著色', 'warning');
+    });
     // Persist a freshly downloaded grid against this route/favourite for reuse.
     terrainViewer.onTerrainComputed(({ grid, bbox }) => {
       if (cacheKey) saveTerrainCacheEntry(cacheKey, grid, bbox);
@@ -2683,6 +2978,9 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     applyTerrainDisplayToViewer();
     updateTerrainToggleAvailability();
     updateTerrainPlayerUI();
+    // A fresh build wipes the viewer's catchment basins; if the 集水區 toggle is
+    // on, recompute them for this route (fire-and-forget; manages its own progress).
+    if (terrainLastLoadOk && terrainDisplaySettings.catchment3d) loadTerrain3DCatchments();
     // Remember what we just built so an unchanged re-entry can skip the rebuild —
     // but only if the build actually finished (an aborted redraw keeps the old
     // scene, which no longer matches this signature).
@@ -2700,12 +2998,14 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
 }
 
 function closeTerrainViewer() {
+  cancelTerrain3DCatchments();     // abort any in-flight 集水區 compute
   if (terrainViewer) {
     if (terrainViewer.isLoading()) terrainViewer.abort();
     terrainViewer.pause();
     terrainViewer.hide();
   }
   setTerrainBusy(false);
+  hideWaypointCard();
   tvLoading?.classList.add('hidden');
   tvLoading?.classList.remove('tv-loading-bg');
   terrainViewerEl.classList.add('hidden');
@@ -2864,8 +3164,14 @@ async function refreshTerrainViewer() {
   }
 }
 
-btnOpen3d?.addEventListener('click', build3dForCurrentRoute);
-tvCloseBtn?.addEventListener('click', closeTerrainViewer);
+btnFavoriteQuick?.addEventListener('click', handleAddFavorite);
+// Segmented 2D/3D switch: the toolbar's 3D side builds the current route's
+// terrain; the mirrored control inside the viewer flips back to the 2D map.
+btnView3d?.addEventListener('click', build3dForCurrentRoute);
+btnView2d?.addEventListener('click', () => {
+  if (!terrainViewerEl?.classList.contains('hidden')) closeTerrainViewer();
+});
+tvView2d?.addEventListener('click', closeTerrainViewer);
 tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
 
 // ---- 3D player playlist ---------------------------------------------------
@@ -3147,7 +3453,12 @@ tvToggleTheme?.addEventListener('click', toggleAppTheme);
 function update3dButtonBadge() {
   const hasRoute = currentRouteCoords && currentRouteCoords.length >= 2;
   const busy = hasRouteWeatherBusyTasks();
-  if (btnOpen3d) btnOpen3d.disabled = !hasRoute || busy;
+  const disabled = !hasRoute || busy;
+  if (btnView3d) {
+    btnView3d.disabled = disabled;
+    // Disabled state explains itself instead of looking broken.
+    btnView3d.title = disabled ? '規劃路線後即可切換 3D' : '建立 3D 地形';
+  }
 }
 
 // Hook into route update flow
@@ -3157,6 +3468,35 @@ setCurrentRouteData = function (coords, elevations) {
   update3dButtonBadge();
 };
 update3dButtonBadge();
+
+// --- Route summary chips (Hikingbook-style always-visible key numbers) ------
+// Mirrors the side-panel stat values into the floating strip above the bottom
+// panel by observing the existing nodes, so every stats write site (route
+// update, clear, import, pace change) stays untouched.
+(function initRouteSummaryBar() {
+  const bar = document.getElementById('route-summary-bar');
+  if (!bar) return;
+  const pairs = [
+    [statDistance, document.getElementById('rsb-distance'), null],
+    [document.getElementById('stat-time'), document.getElementById('rsb-time'), document.getElementById('rsb-time-chip')],
+    [statAscent, document.getElementById('rsb-ascent'), null],
+    [document.getElementById('stat-descent'), document.getElementById('rsb-descent'), null],
+  ];
+  const sync = () => {
+    for (const [src, dst, chip] of pairs) {
+      if (!src || !dst) continue;
+      const v = (src.textContent || '—').trim();
+      if (dst.textContent !== v) dst.textContent = v;
+      // 預估時間 only exists in speed mode; hide its chip instead of showing "—".
+      if (chip) chip.classList.toggle('hidden', v === '—');
+    }
+  };
+  const obs = new MutationObserver(sync);
+  for (const [src] of pairs) {
+    if (src) obs.observe(src, { childList: true, characterData: true, subtree: true });
+  }
+  sync();
+})();
 
 // Player controls
 tpPlay?.addEventListener('click', () => {
@@ -3340,6 +3680,15 @@ function updateTerrainToggleAvailability() {
       : '此區域沒有可顯示的地圖圖資';
   }
 
+  // 集水區 needs 主航點 to delineate around.
+  const hasWaypoints = (terrainViewer.getWaypointCoords?.()?.length ?? 0) > 0;
+  if (tvToggleCatchment) {
+    tvToggleCatchment.disabled = !hasWaypoints;
+    tvToggleCatchment.title = hasWaypoints
+      ? '集水區（開啟時自動計算各主航點的集水範圍並貼合地形顯示）'
+      : '此路線沒有可計算集水區的主航點';
+  }
+
   // 3D-print export is available once a terrain solid exists.
   const canExport = terrainViewer.hasExportableModel?.() ?? false;
   if (tvExportBtn) tvExportBtn.disabled = !canExport;
@@ -3367,11 +3716,10 @@ function syncTerrainDisplayToggleUI() {
     tvToggleWeather.classList.toggle('active', terrainWeatherState !== 'off');
     tvToggleWeather.classList.toggle('tv-weather-off', terrainWeatherState === 'off');
   }
-  tvToggleDaynight?.classList.toggle('active', !!s.daynight);
   tvToggleEffects?.classList.toggle('active', !!s.effects);
   tvToggleFeatures?.classList.toggle('active', !!s.features);
-  tvToggleAbsolute?.classList.toggle('active', !!s.absElev);
-  tvToggleTrail?.classList.toggle('active', !!s.trailReveal);
+  tvToggleCatchment?.classList.toggle('active', !!s.catchment3d);
+  tpFollow?.classList.toggle('active', !!s.followCam);
 
   terrainLabelState = TERRAIN_LABEL_STATES.includes(s.labelSize) ? s.labelSize : 'none';
   if (tvLabelSizeLabel) tvLabelSizeLabel.textContent = TERRAIN_LABEL_LABELS[terrainLabelState];
@@ -3390,13 +3738,15 @@ function applyTerrainDisplayToViewer() {
   terrainViewer.setContourPrecision(terrainContourState);
   terrainViewer.setContourLabelsVisible(!!s.contourLabels);
   terrainViewer.setWeatherVisible(terrainWeatherState !== 'off');
-  terrainViewer.setEnvironmentEnabled(!!s.daynight);
+  // 日夜光照恆為開啟（開關已移除）。
+  terrainViewer.setEnvironmentEnabled(true);
   terrainViewer.setWeatherAnimEnabled(terrainWeatherState === 'on');
   terrainViewer.setEffectsEnabled(!!s.effects);
   terrainViewer.setFeaturesVisible(!!s.features);
   terrainViewer.setLabelScale(terrainLabelState);
-  terrainViewer.setAbsoluteElevation(!!s.absElev);
-  terrainViewer.setRouteRevealMode(!!s.trailReveal);
+  terrainViewer.setFollowCamera(!!s.followCam);
+  terrainViewer.setSatelliteEnabled(!!s.satellite);
+  syncTerrainSatelliteButton();
   // Vertical normalization is baked into the build via routeData.elevNormalized;
   // here we only keep the button state in sync.
   syncTerrainNormalizeButton();
@@ -3405,6 +3755,95 @@ function applyTerrainDisplayToViewer() {
 function syncTerrainNormalizeButton() {
   if (tvToggleNormalize) {
     tvToggleNormalize.classList.toggle('active', !!terrainDisplaySettings.elevNormalized);
+  }
+}
+
+function syncTerrainSatelliteButton() {
+  if (tvToggleSatellite) {
+    tvToggleSatellite.classList.toggle('active', !!terrainDisplaySettings.satellite);
+  }
+}
+
+// --- 3D 集水區 (Task 1) --------------------------------------------------------
+// Cache-first delineation of each 主航點's catchment, draped on the 3D terrain.
+// Mirrors the 2D catchment load: progress bar + 停止/繼續 (pausable) + editing lock,
+// and reuses getCatchmentFor (offline DEM aware, persists to the shared cache).
+let terrain3dCatchmentToken = 0;
+let terrain3dCatchmentAbort = null;
+let terrain3dCatchmentRun = null;
+
+function cancelTerrain3DCatchments() {
+  terrain3dCatchmentToken++;
+  if (terrain3dCatchmentRun) {
+    terrain3dCatchmentRun.cancelled = true;
+    unparkLoadRun(terrain3dCatchmentRun);   // wake a 停止-parked loop so it can unwind
+  }
+  terrain3dCatchmentAbort?.abort();
+  terrain3dCatchmentAbort = null;
+}
+
+async function loadTerrain3DCatchments() {
+  if (!terrainViewer) return;
+  const wps = terrainViewer.getWaypointCoords?.() || [];
+  if (!wps.length) { showNotification('此路線沒有可計算集水區的主航點', 'warning', 1800); return; }
+
+  cancelTerrain3DCatchments();                 // supersede any earlier run
+  const token = ++terrain3dCatchmentToken;
+  const abort = new AbortController();
+  terrain3dCatchmentAbort = abort;
+
+  terrainViewer.setCatchmentBasins([]);        // clear prior basins, keep group ready
+  terrainViewer.setCatchmentVisible(true);
+
+  const total = wps.length;
+  let done = 0, okCount = 0;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在計算集水區', detail: `計算集水區 0/${total}`, progress: 0, lockScope: 'edit',
+  });
+  const run = { id: `terrain3dcatch_${token}`, cancelled: false, paused: false, lockScope: 'edit', _resume: null, busyTask };
+  terrain3dCatchmentRun = run;
+  pausableLoadRuns.add(run);
+
+  try {
+    for (let i = 0; i < wps.length; i++) {
+      const wp = wps[i];
+      if (token !== terrain3dCatchmentToken || run.cancelled) break;
+      await waitIfLoadPaused(run);              // park here while 停止 is active
+      if (token !== terrain3dCatchmentToken || run.cancelled) break;
+      const [lat, lng] = wp.coords;
+      let result = null;
+      try {
+        result = await getCatchmentFor(lat, lng, { signal: abort.signal });
+      } catch (err) {
+        if (isAbortError(err)) break;
+        console.warn('3D catchment failed:', err);
+      }
+      if (token !== terrain3dCatchmentToken || run.cancelled) break;
+      if (result?.status === 'ok' && result.outer?.length) {
+        // Match the 2D basin / waypoint pin colour; fall back to the route
+        // gradient by position so every basin is still distinctly coloured.
+        const basinColor = wp.color || interpolateRouteColor(total > 1 ? i / (total - 1) : 0);
+        terrainViewer.addCatchmentBasin({
+          outer: result.outer,
+          holes: result.holes || [],
+          outlet: result.outlet || null,
+          color: basinColor,
+        });
+        okCount++;
+      }
+      done++;
+      busyTask.set({ detail: `計算集水區 ${done}/${total}`, progress: done / total });
+    }
+  } finally {
+    pausableLoadRuns.delete(run);
+    if (terrain3dCatchmentRun === run) terrain3dCatchmentRun = null;
+    if (terrain3dCatchmentAbort === abort) terrain3dCatchmentAbort = null;
+    busyTask.end();
+  }
+
+  if (token === terrain3dCatchmentToken) {
+    if (okCount > 0) showNotification(`已顯示 ${okCount} 個集水區`, 'success', 1500);
+    else showNotification('這些航點沒有可顯示的集水區範圍', 'info', 1800);
   }
 }
 
@@ -3436,12 +3875,6 @@ tvToggleWeather?.addEventListener('click', () => {
   const next = TERRAIN_WEATHER_STATES[(TERRAIN_WEATHER_STATES.indexOf(terrainWeatherState) + 1) % TERRAIN_WEATHER_STATES.length];
   applyTerrainWeatherState(next);
 });
-tvToggleDaynight?.addEventListener('click', () => {
-  const on = tvToggleDaynight.classList.toggle('active');
-  terrainViewer?.setEnvironmentEnabled(on);
-  terrainDisplaySettings.daynight = on;
-  saveTerrainDisplaySettings();
-});
 // 特效: purely declutters the decorative landmark models (peaks/trees/towers/
 // viewpoints/monuments) — independent of the 天氣 button above.
 tvToggleEffects?.addEventListener('click', () => {
@@ -3456,6 +3889,27 @@ tvToggleFeatures?.addEventListener('click', () => {
   terrainViewer?.setFeaturesVisible(on);
   terrainDisplaySettings.features = on;
   saveTerrainDisplaySettings();
+});
+// 集水區: on → auto-compute each 主航點's catchment (cache-first) and drape it;
+// off → hide the overlay and abort any in-flight compute.
+tvToggleCatchment?.addEventListener('click', () => {
+  if (tvToggleCatchment.disabled) return;
+  const on = tvToggleCatchment.classList.toggle('active');
+  terrainDisplaySettings.catchment3d = on;
+  saveTerrainDisplaySettings();
+  if (on) {
+    loadTerrain3DCatchments();
+  } else {
+    cancelTerrain3DCatchments();
+    terrainViewer?.setCatchmentVisible(false);
+  }
+});
+tvToggleSatellite?.addEventListener('click', () => {
+  const on = tvToggleSatellite.classList.toggle('active');
+  terrainDisplaySettings.satellite = on;
+  saveTerrainDisplaySettings();
+  if (on) showNotification('載入衛星影像…', 'info');
+  terrainViewer?.setSatelliteEnabled(on);
 });
 
 // Camera view preset toggle: 45° oblique ⇄ straight-down, both north-up. Snaps
@@ -3485,21 +3939,12 @@ tvToggleNormalize?.addEventListener('click', () => {
   terrainViewer?.setElevationNormalized(on);
 });
 
-// 絕對海拔懸空 toggle (Plan §II-4) — shows the track floating at true elevation
-// with vertical support stems to the ground. Visibility flip only; no rebuild.
-tvToggleAbsolute?.addEventListener('click', () => {
-  const on = tvToggleAbsolute.classList.toggle('active');
-  terrainViewer?.setAbsoluteElevation(on);
-  terrainDisplaySettings.absElev = on;
-  saveTerrainDisplaySettings();
-});
-
-// 軌跡時序揭示 toggle (Plan §II-1) — reveals the track progressively as playback
-// advances (CZML-Path style) instead of drawing the whole line at once.
-tvToggleTrail?.addEventListener('click', () => {
-  const on = tvToggleTrail.classList.toggle('active');
-  terrainViewer?.setRouteRevealMode(on);
-  terrainDisplaySettings.trailReveal = on;
+// Relive 式運鏡 toggle — while playing, the camera chases the hiker from behind
+// and ends on a slow orbit; off = classic free orbit camera.
+tpFollow?.addEventListener('click', () => {
+  const on = tpFollow.classList.toggle('active');
+  terrainViewer?.setFollowCamera(on);
+  terrainDisplaySettings.followCam = on;
   saveTerrainDisplaySettings();
 });
 
@@ -3580,6 +4025,99 @@ function renderTerrainMarkerDetail(detail) {
   tvMarkerDetail.classList.remove('hidden');
 }
 
+// ---- Relive close-up waypoint card (TCG-style "draw" reveal) ----
+// When the 3D playback camera pauses for a close-up on a waypoint, deal a card
+// surfacing that moment's personal / terrain / weather info. The numbers come
+// from the same position-driven metrics that feed the live HUD
+// (terrainViewer.metricsAt) merged with the waypoint's own detail.
+function hideWaypointCard() {
+  if (tvWpCardLeaveTimer) { clearTimeout(tvWpCardLeaveTimer); tvWpCardLeaveTimer = null; }
+  if (tvWpCardHideTimer) { clearTimeout(tvWpCardHideTimer); tvWpCardHideTimer = null; }
+  if (!tvWpCard) return;
+  tvWpCard.classList.add('hidden');
+  tvWpCard.classList.remove('dealing', 'leaving');
+}
+
+function showWaypointCard(detail) {
+  if (!tvWpCard || !tvWpCardBody || !detail) return;
+  const m = terrainViewer?.metricsAt?.(terrainViewer.getProgress?.()) || {};
+  const colorCss = detail.colorCss || '#44aaff';
+  const lang = getLanguage();
+
+  const rowsHtml = (rows) => rows
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([label, v]) => `<div class="tv-wp-row"><span class="tv-wp-row-label">${tvEscapeHtml(label)}</span><span class="tv-wp-row-value">${tvEscapeHtml(v)}</span></div>`)
+    .join('') || '<div class="tv-wp-row"><span class="tv-wp-row-label">—</span></div>';
+
+  // 個人資訊
+  const arrival = (m.dateMs != null && Number.isFinite(m.dateMs))
+    ? new Date(m.dateMs).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+  const elapsed = m.timeH != null ? formatDurationHHMM(m.timeH) : null;
+  const speed = (m.speedKmh != null && Number.isFinite(m.speedKmh)) ? `${m.speedKmh.toFixed(1)} km/h` : null;
+  const fatigue = (m.fatiguePct != null && Number.isFinite(m.fatiguePct))
+    ? `${Math.round(Math.max(0, Math.min(100, m.fatiguePct)))}%` : null;
+  const personRows = rowsHtml([['抵達時刻', arrival], ['歷時', elapsed], ['移動速度', speed], ['疲勞度', fatigue]]);
+
+  // 軌跡地形資訊
+  const mileageM = (m.distM != null) ? m.distM : detail.distanceM;
+  const mileage = mileageM != null ? formatDistance(mileageM) : null;
+  const elevVal = (m.elevM != null) ? m.elevM : detail.elevation;
+  const elev = elevVal != null ? formatElevation(elevVal) : null;
+  let grade = null;
+  if (m.gradePct != null && Number.isFinite(m.gradePct)) {
+    const g = m.gradePct;
+    const sign = g > 0.5 ? '↗' : (g < -0.5 ? '↘' : '→');
+    grade = `${sign}${Math.abs(g).toFixed(1)}%`;
+  }
+  const ascent = (m.cumAscentM != null && Number.isFinite(m.cumAscentM)) ? `↑${formatElevation(m.cumAscentM)}` : null;
+  const descent = (m.cumDescentM != null && Number.isFinite(m.cumDescentM)) ? `↓${formatElevation(m.cumDescentM)}` : null;
+  const terrainRows = rowsHtml([['里程', mileage], ['海拔', elev], ['坡度', grade], ['累積爬升', ascent], ['累積下降', descent]]);
+
+  // 當下天氣資訊
+  const wx = m.weather || null;
+  const wxEmoji = wx?.icon || '🧭';
+  const wxTemp = (wx && wx.temperature != null) ? `${Math.round(wx.temperature)}°C` : null;
+  const wxCond = (wx && wx.code != null) ? tWmo(wx.code) : null;
+  const weatherRows = rowsHtml([
+    ['天氣狀況', wxCond], ['溫度', wxTemp],
+    ['雨量', wx?.precipitation ?? null],
+    ['降雨機率', wx?.precipProb ?? null],
+    ['濕度', wx?.humidity ?? null],
+    ['風速', wx?.windSpeed ?? null],
+  ]);
+
+  const tag = detail.isStart ? '起點' : (detail.isEnd ? '終點' : '副航點');
+
+  tvWpCard.style.setProperty('--wp-card-color', colorCss);
+  tvWpCardBody.innerHTML = `
+    <div class="tv-wp-card-top">
+      <span class="tv-wp-card-tag" style="background:${colorCss}">${tvEscapeHtml(tag)}</span>
+      <span class="tv-wp-card-name">${tvEscapeHtml(detail.label || '航點')}</span>
+    </div>
+    <div class="tv-wp-card-hero">
+      <span class="tv-wp-card-emoji">${tvEscapeHtml(wxEmoji)}</span>
+      ${wxTemp ? `<span class="tv-wp-card-hero-temp">${tvEscapeHtml(wxTemp)}</span>` : ''}
+    </div>
+    <div class="tv-wp-card-cats">
+      <section class="tv-wp-cat"><div class="tv-wp-cat-title">👤 個人</div>${personRows}</section>
+      <section class="tv-wp-cat"><div class="tv-wp-cat-title">⛰️ 地形</div>${terrainRows}</section>
+      <section class="tv-wp-cat"><div class="tv-wp-cat-title">🌦️ 天氣</div>${weatherRows}</section>
+    </div>`;
+
+  // Replay the deal animation from scratch on every arrival.
+  if (tvWpCardLeaveTimer) { clearTimeout(tvWpCardLeaveTimer); tvWpCardLeaveTimer = null; }
+  if (tvWpCardHideTimer) { clearTimeout(tvWpCardHideTimer); tvWpCardHideTimer = null; }
+  tvWpCard.classList.remove('hidden', 'leaving', 'dealing');
+  void tvWpCard.offsetWidth;           // force reflow so the keyframes restart
+  tvWpCard.classList.add('dealing');
+
+  // Auto-dismiss just before the close-up pause ends (~2.6s in the viewer).
+  tvWpCardLeaveTimer = setTimeout(() => {
+    tvWpCard.classList.add('leaving');
+    tvWpCardHideTimer = setTimeout(hideWaypointCard, 420);
+  }, 2200);
+}
+
 tvMarkerDetailClose?.addEventListener('click', hideTerrainMarkerDetail);
 
 tvLoadingAbort?.addEventListener('click', () => {
@@ -3619,18 +4157,43 @@ sidePanel.addEventListener('touchend', (e) => {
   }
 }, { passive: true });
 
-btnToggleElevation?.addEventListener('click', () => {
-  const container = document.getElementById('elevation-chart-container');
-  container.classList.toggle('collapsed');
-  elevationProfile.toggleCollapse();
+// F5: bottom-panel content toggle — the lower block switches between the
+// elevation (vertical-track) chart and the detailed weather table instead of
+// stacking both. Mode class on #bottom-panel drives visibility (see main.css).
+const LS_BP_VIEW_KEY = 'mappingElf_bpView';
+const bottomPanelEl = document.getElementById('bottom-panel');
+const BP_VIEWS = ['elev', 'weather', 'catchment'];
+// False until the weather panel has rendered once (weatherPoints initialised). The
+// module-eval bootstrap below sets the mode class but MUST NOT touch weatherPoints
+// (TDZ), so catchment render/fetch side-effects are gated on this.
+let bottomPanelReady = false;
+function getBottomPanelView() {
+  if (bottomPanelEl?.classList.contains('bp-mode-weather')) return 'weather';
+  if (bottomPanelEl?.classList.contains('bp-mode-catchment')) return 'catchment';
+  return 'elev';
+}
+function setBottomPanelView(view, persist = true) {
+  const mode = BP_VIEWS.includes(view) ? view : 'elev';
+  bottomPanelEl?.classList.toggle('bp-mode-weather', mode === 'weather');
+  bottomPanelEl?.classList.toggle('bp-mode-catchment', mode === 'catchment');
+  bottomPanelEl?.classList.toggle('bp-mode-elev', mode === 'elev');
+  document.querySelectorAll('#bp-view-toggle .bp-view-btn').forEach((b) => {
+    const on = b.dataset.bpView === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  // Chart.js needs a resize when its container becomes visible again.
+  if (mode === 'elev') requestAnimationFrame(() => elevationProfile?.chart?.resize());
+  // Opening the catchment view renders the table, then lazily backfills any
+  // waypoint whose 集水區 read-out isn't cached yet (progress-bar managed).
+  if (mode === 'catchment' && bottomPanelReady) { renderCatchmentPanel(); autoFetchCatchment({ notify: true }); }
+  if (persist) { try { localStorage.setItem(LS_BP_VIEW_KEY, mode); } catch (_) { } }
+}
+document.getElementById('bp-view-toggle')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.bp-view-btn');
+  if (btn) setBottomPanelView(btn.dataset.bpView);
 });
-
-// Double-click on chart container to toggle collapse as well
-document.getElementById('elevation-chart-container')?.addEventListener('dblclick', () => {
-  const container = document.getElementById('elevation-chart-container');
-  container.classList.toggle('collapsed');
-  elevationProfile.toggleCollapse();
-});
+setBottomPanelView(BP_VIEWS.includes(localStorage.getItem(LS_BP_VIEW_KEY)) ? localStorage.getItem(LS_BP_VIEW_KEY) : 'elev', false);
 
 
 // 手機平板螢幕下，點擊地圖自動收合側拉面板
@@ -3650,6 +4213,514 @@ btnMyLocation.addEventListener('click', async () => {
     showNotification('無法取得目前位置，請確認定位權限已開啟', 'error');
   }
 });
+
+// =========== F2: 2D map measurement tools ===========
+// Two modes share one panel + Leaflet overlay layer:
+//   segment — click two points; snap each to the planned track and report the
+//             along-track distance plus asc/ descent between them.
+//   area    — click any number of free points; report the cumulative straight-
+//             line length and, from 3 points on, the enclosed polygon area.
+const measurePanel = document.getElementById('measure-panel');
+const measureHintEl = document.getElementById('measure-hint');
+const measureReadoutEl = document.getElementById('measure-readout');
+const btnMeasureTool = document.getElementById('btn-measure-tool');
+let measureMode = 'segment';
+let measurePoints = [];            // clicked [lat, lng] points (raw)
+let measureLayer = null;           // L.layerGroup on the map
+let catchmentAbort = null;         // AbortController for the in-flight DEM fetch
+let catchmentToken = 0;            // guards against a stale async result landing
+let catchmentEnvAbort = null;      // AbortController for the weather+hydrology fetch
+let catchmentEnvToken = 0;         // guards a stale env result (geometry or time changed)
+let catchmentLast = null;          // { lat, lng, result } — geometry kept for re-eval on time change
+let catchmentDate = '';            // chosen date YYYY-MM-DD, seeded from the weather anchor
+let catchmentHour = null;          // chosen hour 0-23, kept for the session
+
+function measureTrack() {
+  const pts = (elevationProfile?.points && elevationProfile.points.length >= 2)
+    ? elevationProfile.points
+    : currentRouteCoords;
+  return Array.isArray(pts) && pts.length >= 2 ? pts : null;
+}
+
+function ensureMeasureLayer() {
+  if (!measureLayer) measureLayer = L.layerGroup().addTo(mapManager.map);
+  return measureLayer;
+}
+
+function clearMeasureOverlay() {
+  cancelCatchment();
+  measurePoints = [];
+  measureLayer?.clearLayers();
+  if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+}
+
+function measureDot(latlng, label) {
+  return L.marker(latlng, {
+    icon: L.divIcon({
+      className: 'measure-dot-icon',
+      html: `<span class="measure-dot">${label ?? ''}</span>`,
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    }),
+    interactive: false,
+    keyboard: false,
+  });
+}
+
+// Latitude-corrected planar area (shoelace) in m² — good to <0.5% for the
+// city-scale polygons this tool measures.
+function polygonAreaM2(pts) {
+  if (!Array.isArray(pts) || pts.length < 3) return 0;
+  const R = 6371000.785, toRad = Math.PI / 180;
+  const lat0 = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const cosLat0 = Math.cos(lat0 * toRad);
+  const xy = pts.map(([la, ln]) => [ln * toRad * R * cosLat0, la * toRad * R]);
+  let a = 0;
+  for (let i = 0; i < xy.length; i++) {
+    const j = (i + 1) % xy.length;
+    a += xy[i][0] * xy[j][1] - xy[j][0] * xy[i][1];
+  }
+  return Math.abs(a) / 2;
+}
+
+function formatArea(m2) {
+  if (m2 >= 1e6) return `${(m2 / 1e6).toFixed(2)} km²`;
+  if (m2 >= 1e4) return `${(m2 / 1e4).toFixed(2)} ha`;
+  return `${Math.round(m2)} m²`;
+}
+
+function latLngAtMileage(track, dists, m) {
+  if (m <= 0) return track[0];
+  const last = dists[dists.length - 1];
+  if (m >= last) return track[track.length - 1];
+  for (let i = 1; i < track.length; i++) {
+    if (dists[i] >= m) {
+      const segLen = dists[i] - dists[i - 1] || 1;
+      const t = (m - dists[i - 1]) / segLen;
+      const a = track[i - 1], b = track[i];
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    }
+  }
+  return track[track.length - 1];
+}
+
+function renderMeasureReadout(rows) {
+  if (!measureReadoutEl) return;
+  measureReadoutEl.innerHTML = rows.map(([label, value]) =>
+    `<div class="mr-row"><span class="mr-label">${label}</span><span class="mr-value">${value}</span></div>`
+  ).join('');
+}
+
+function computeSegmentMeasure() {
+  const track = measureTrack();
+  if (!track) { showNotification('先規劃路線再量測軌跡', 'warning'); return; }
+  const D = elevationProfile?.distances || [];
+  const E = elevationProfile?.elevations || [];
+  const aligned = D.length === track.length;
+  const m1r = projectMileage(track, measurePoints[0], 0);
+  const m2r = projectMileage(track, measurePoints[1], 0);
+  const lo = Math.min(m1r.mileage, m2r.mileage);
+  const hi = Math.max(m1r.mileage, m2r.mileage);
+  const pLo = latLngAtMileage(track, aligned ? D : cumulativeDistances(track), lo);
+  const pHi = latLngAtMileage(track, aligned ? D : cumulativeDistances(track), hi);
+
+  // Ascent / descent between the two mileages, sampled at the enclosed vertices.
+  let asc = 0, desc = 0;
+  if (aligned && E.length === track.length && elevationProfile._interpolateElevAtCumM) {
+    const samples = [elevationProfile._interpolateElevAtCumM(lo)];
+    for (let i = 0; i < D.length; i++) if (D[i] > lo && D[i] < hi) samples.push(E[i]);
+    samples.push(elevationProfile._interpolateElevAtCumM(hi));
+    for (let i = 1; i < samples.length; i++) {
+      const d = samples[i] - samples[i - 1];
+      if (d > 0) asc += d; else desc += d;
+    }
+  }
+
+  // Highlight the track slice between the two snapped points.
+  const dd = aligned ? D : cumulativeDistances(track);
+  const slice = [pLo];
+  for (let i = 0; i < track.length; i++) if (dd[i] > lo && dd[i] < hi) slice.push(track[i]);
+  slice.push(pHi);
+  const layer = ensureMeasureLayer();
+  layer.clearLayers();
+  L.polyline(slice, { color: '#f59e0b', weight: 5, opacity: 0.9 }).addTo(layer);
+  measureDot(pLo, 'A').addTo(layer);
+  measureDot(pHi, 'B').addTo(layer);
+
+  renderMeasureReadout([
+    ['沿軌跡距離', formatDistance(hi - lo)],
+    ['直線距離', formatDistance(haversineDistance(pLo, pHi))],
+    ['爬升', asc ? '+' + formatElevation(asc) : '—'],
+    ['下降', desc ? '−' + formatElevation(Math.abs(desc)) : '—'],
+  ]);
+}
+
+function computeAreaMeasure() {
+  const layer = ensureMeasureLayer();
+  layer.clearLayers();
+  measurePoints.forEach((p, i) => measureDot(p, String(i + 1)).addTo(layer));
+  let straight = 0;
+  for (let i = 1; i < measurePoints.length; i++) straight += haversineDistance(measurePoints[i - 1], measurePoints[i]);
+  if (measurePoints.length >= 3) {
+    L.polygon(measurePoints, { color: '#38bdf8', weight: 3, opacity: 0.9, fillOpacity: 0.12 }).addTo(layer);
+  } else if (measurePoints.length === 2) {
+    L.polyline(measurePoints, { color: '#38bdf8', weight: 3, opacity: 0.9 }).addTo(layer);
+  }
+  const rows = [
+    ['點數', String(measurePoints.length)],
+    ['直線總長', formatDistance(straight)],
+  ];
+  if (measurePoints.length >= 3) rows.push(['包圍面積', formatArea(polygonAreaM2(measurePoints))]);
+  renderMeasureReadout(rows);
+}
+
+function cancelCatchment() {
+  catchmentToken++;
+  catchmentAbort?.abort();
+  catchmentAbort = null;
+  catchmentEnvToken++;
+  catchmentEnvAbort?.abort();
+  catchmentEnvAbort = null;
+  catchmentLast = null;
+}
+
+// Smallest-bbox cached 3D-terrain grid whose extent covers the click, so the
+// catchment can be computed offline (or when the elevation API is failing).
+function findCachedDemAt(lat, lng) {
+  const cache = loadTerrainCache();
+  let best = null, bestSpan = Infinity;
+  for (const key of Object.keys(cache)) {
+    const e = cache[key];
+    const b = e?.bbox;
+    if (!b || !Array.isArray(e.grid)) continue;
+    if (lat < b.minLat || lat > b.maxLat || lng < b.minLng || lng > b.maxLng) continue;
+    const span = (b.maxLat - b.minLat) + (b.maxLng - b.minLng);
+    if (span < bestSpan) { bestSpan = span; best = { grid: e.grid, bbox: b }; }
+  }
+  return best;
+}
+
+// Delineate a catchment, cache-first. The persistent cache (localStorage +
+// .melmap) is checked before the expensive DEM fetch + flow analysis, and every
+// fresh 'ok' delineation is stored — so both this measure tool and the weather
+// cards populate and reuse the same 集水區 暫存.
+async function getCatchmentFor(lat, lng, { signal } = {}) {
+  const cached = getCatchmentCacheHit(lat, lng);
+  if (cached) return cached;
+  const result = await computeCatchment(lat, lng, {
+    signal,
+    offlineDem: findCachedDemAt(lat, lng),
+  });
+  if (result?.status === 'ok') setCatchmentCacheData(lat, lng, result);
+  return result;
+}
+
+async function runCatchment(lat, lng) {
+  cancelCatchment();                       // supersede any earlier in-flight run
+  const token = catchmentToken;
+  catchmentAbort = new AbortController();
+
+  const layer = ensureMeasureLayer();
+  layer.clearLayers();
+  measureDot([lat, lng], '▼').addTo(layer);
+  renderMeasureReadout([['提示', '計算集水區中…']]);
+
+  let result;
+  try {
+    result = await getCatchmentFor(lat, lng, { signal: catchmentAbort.signal });
+  } catch (err) {
+    if (token !== catchmentToken) return;  // a newer click already took over
+    console.warn('Catchment failed:', err);
+    result = { status: 'error' };
+  }
+  if (token !== catchmentToken) return;     // stale result — discard silently
+  catchmentAbort = null;
+
+  if (result.status === 'aborted') return;
+  if (result.status === 'flat') {
+    layer.clearLayers();
+    if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+    showNotification('此處為大面積平地，無法判定集水方向', 'info');
+    return;
+  }
+  if (result.status === 'error') {
+    layer.clearLayers();
+    if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+    showNotification('海拔資料取得失敗，請稍後再試', 'warning');
+    return;
+  }
+  if (result.status === 'empty' || !result.outer?.length) {
+    layer.clearLayers();
+    if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+    showNotification('此處集水範圍過小', 'info');
+    return;
+  }
+
+  layer.clearLayers();
+  L.polygon([result.outer, ...result.holes], {
+    color: '#2563eb', weight: 2, opacity: 0.9,
+    fillColor: '#3b82f6', fillOpacity: 0.25,
+  }).addTo(layer);
+  measureDot(result.outlet, '▼').addTo(layer);
+
+  catchmentLast = { lat, lng, result };
+  seedCatchmentDateTime();
+  renderCatchmentBase(result);
+  loadCatchmentEnv();
+  if (result.source === 'cached') showNotification('集水區為近似值（來自已快取地形）', 'info');
+  else if (result.touchesBorder) showNotification('集水區可能延伸至分析範圍外', 'info');
+}
+
+// Seed the catchment date/hour from the weather anchor (col-0 date+hour, else
+// today 08:00) on first use, then keep the user's choice for the session so
+// clicking a new point doesn't reset the time. See getTerrainStartMs().
+function seedCatchmentDateTime() {
+  if (catchmentDate && catchmentHour != null) return;
+  const d = new Date(getTerrainStartMs());
+  const p2 = (n) => String(n).padStart(2, '0');
+  catchmentDate = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  catchmentHour = d.getHours();
+}
+
+const CATCHMENT_WEATHER_KEYS = [
+  ['weather', '天氣'], ['temp', '溫度'], ['feelsLike', '體感溫度'],
+  ['humidity', '濕度'], ['windSpeed', '風速'], ['precipitation', '雨量'], ['precipProb', '降雨機率'],
+];
+
+// Weather rows shown inside a weather-CARD's catchment view. Drops weather/溫度/體感
+// 溫度 (already in the card header line) and is ordered 雨量/降雨機率/濕度/風速 so it
+// reads the same as the minimal weather view; rendered at the TOP of the catchment
+// card (above 地形/水文).
+const CATCHMENT_CARD_WEATHER_KEYS = [
+  ['precipitation', '雨量'], ['precipProb', '降雨機率'], ['humidity', '濕度'], ['windSpeed', '風速'],
+];
+
+// Hydrology row count for the "no data" fill fallback; order/labels mirror
+// computeHydroIndicators (catchmentHydro.js) — see buildCatchmentSkeletonHtml.
+const CATCHMENT_HYDRO_LABELS = ['土壤含水量', '前期降雨', '預估逕流量', '河川流量', '溪水暴漲風險', '土石流風險'];
+
+// Terrain-row labels (order MUST match the terrain[] array saved by saveCatchmentCells:
+// area, outlet, then computeGeometryRows → 海拔範圍/平均坡度/主流長度).
+const CATCHMENT_TERRAIN_LABELS = ['集水區面積', '出水口海拔', '海拔範圍', '平均坡度', '主流長度'];
+
+// Info-card item explanations (Chinese label → Chinese description). The description
+// sentences are registered in i18n PHRASES, so the hover tooltip translates them at
+// show-time via translatePhrase(). Labels shared across weather/catchment views map to
+// one description. Missing keys simply show no tooltip.
+const WC_INFO_TIPS = {
+  '天氣': '該時段的天氣狀況與代表圖示',
+  '溫度': '該時段的預估氣溫（攝氏）',
+  '雨量': '該時段每小時累積降雨量（毫米）',
+  '降雨機率': '該時段出現降雨的機率百分比',
+  '最高溫': '當日預報的最高氣溫',
+  '最低溫': '當日預報的最低氣溫',
+  '體感溫度': '綜合氣溫、濕度與風速後的人體實際感受溫度',
+  '濕度': '空氣相對濕度百分比',
+  '露點': '空氣達到飽和凝結的溫度，愈接近氣溫代表愈潮濕',
+  '雲量': '天空被雲層覆蓋的比例',
+  '風速': '該時段的平均風速',
+  '陣風': '該時段的最大瞬間風速',
+  'UV': '紫外線指數，數值愈高愈需加強防曬',
+  '能見度': '水平方向可看清物體的最大距離',
+  '日照': '當日可照射到陽光的總時數',
+  '輻射': '太陽短波輻射強度',
+  '日出': '當日太陽升起的時刻',
+  '日落': '當日太陽落下的時刻',
+  '距離': '沿路線從起點累積到此點的里程',
+  '海拔': '此點地面的高程',
+  '坐標': '此點的經緯度座標（點擊可複製）',
+  '集水區面積': '雨水最終匯流至此出水口的地表範圍面積',
+  '出水口海拔': '集水區最低匯流點（出水口）的高程',
+  '海拔範圍': '集水區內最低到最高的高程差',
+  '平均坡度': '集水區地表的平均傾斜角度',
+  '主流長度': '集水區內最長匯流路徑（主河道）的長度',
+  '土壤含水量': '根區土壤的水分飽和百分比，愈高愈易形成逕流',
+  '前期降雨': '事件前 24／72 小時的累積雨量，反映地表既有濕度',
+  '預估逕流量': '依 SCS-CN 法估算此次降雨形成的地表逕流體積',
+  '河川流量': '區域河道的模擬流量，以及相對於常態的距平',
+  '溪水暴漲風險': '綜合降雨強度、土壤濕度與地形研判的溪水暴漲參考等級（非官方警報）',
+  '土石流風險': '依降雨強度—延時門檻與坡度、濕度研判的土石流參考等級（非官方警報）',
+};
+
+// ` data-tip="<label>"` when the label has an explanation; '' otherwise. The
+// hover controller (installInfoTipController) resolves + translates the text.
+function wcTipAttr(label) {
+  return WC_INFO_TIPS[label] ? ` data-tip="${label}"` : '';
+}
+
+// severity (0-3 | -1 | null) → risk-chip CSS suffix.
+function catchmentSevClass(sev) {
+  return sev == null ? '' : ['low', 'mid', 'high', 'ext'][sev] || 'na';
+}
+
+function catchmentRowsHtml(rows) {
+  return rows.map((r) => {
+    const chip = r.level
+      ? ` <span class="risk-chip risk-${catchmentSevClass(r.severity)}">${r.level}</span>`
+      : '';
+    return `<div class="mr-row"><span class="mr-label">${r.label}</span>`
+      + `<span class="mr-value">${r.value || ''}${chip}</span></div>`;
+  }).join('');
+}
+
+function catchmentWeatherHtml(data) {
+  if (!data) return '<div class="ct-nodata">—</div>';
+  return CATCHMENT_WEATHER_KEYS.map(([key, label]) =>
+    `<div class="mr-row"><span class="mr-label">${label}</span>`
+    + `<span class="mr-value">${getCellValue(data, key)}</span></div>`
+  ).join('');
+}
+
+// Full readout skeleton for a catchment result: area/outlet + terrain + an
+// adjustable date/hour picker + async weather & hydrology sections.
+function renderCatchmentBase(result) {
+  if (!measureReadoutEl) return;
+  const geoRows = computeGeometryRows(result);
+  const outletRow = Number.isFinite(result.outletEle)
+    ? `<div class="mr-row"><span class="mr-label">出水口海拔</span><span class="mr-value">${formatElevation(result.outletEle)}</span></div>`
+    : '';
+  const hourOpts = Array.from({ length: 24 }, (_, h) =>
+    `<option value="${h}"${h === catchmentHour ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
+  ).join('');
+
+  measureReadoutEl.innerHTML = `
+    <div class="ct-sec">
+      <div class="mr-row"><span class="mr-label">集水區面積</span><span class="mr-value">${formatArea(result.areaM2)}</span></div>
+      ${outletRow}
+      ${catchmentRowsHtml(geoRows)}
+    </div>
+    <div class="ct-time-row">
+      <span class="mr-label">時間</span>
+      <input type="date" id="ct-date" class="ct-date-input" value="${catchmentDate}">
+      <select id="ct-hour" class="ct-hour-select">${hourOpts}</select>
+    </div>
+    <div class="mr-section">天氣</div>
+    <div class="ct-sec" id="ct-weather"><div class="ct-loading">載入天氣與水文中…</div></div>
+    <div class="mr-section">水文</div>
+    <div class="ct-sec" id="ct-hydro"><div class="ct-loading">載入天氣與水文中…</div></div>
+    <div class="ct-disclaimer">水文指標為粗略估算，僅供參考</div>`;
+
+  const onChange = () => {
+    const dv = document.getElementById('ct-date')?.value;
+    const hv = parseInt(document.getElementById('ct-hour')?.value ?? '', 10);
+    if (dv) catchmentDate = dv;
+    if (Number.isFinite(hv)) catchmentHour = hv;
+    loadCatchmentEnv();
+  };
+  document.getElementById('ct-date')?.addEventListener('change', onChange);
+  document.getElementById('ct-hour')?.addEventListener('change', onChange);
+}
+
+function setCatchmentSectionsLoading() {
+  for (const id of ['ct-weather', 'ct-hydro']) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="ct-loading">載入天氣與水文中…</div>';
+  }
+}
+
+// Fetch weather (existing service) + hydrology (new module) for the catchment at
+// the chosen time and render both sections. Token-guarded so a superseded fetch
+// (new point clicked, or time changed again) never lands stale (INC race rule).
+async function loadCatchmentEnv() {
+  if (!catchmentLast) return;
+  catchmentEnvToken++;
+  const token = catchmentEnvToken;
+  catchmentEnvAbort?.abort();
+  catchmentEnvAbort = new AbortController();
+  const { lat, lng } = catchmentLast;
+  const dateStr = catchmentDate, hour = catchmentHour;
+  setCatchmentSectionsLoading();
+
+  const swallow = (err) => {
+    if (err?.name === 'AbortError') throw err;
+    console.warn('Catchment env fetch failed:', err?.message);
+    return null;
+  };
+
+  let weatherData = null, hydroEnv = null;
+  try {
+    [weatherData, hydroEnv] = await Promise.all([
+      weatherService.getWeatherAtPoint(lat, lng, dateStr, hour, { signal: catchmentEnvAbort.signal }).catch(swallow),
+      fetchHydroData(lat, lng, dateStr, hour, { signal: catchmentEnvAbort.signal }).catch(swallow),
+    ]);
+  } catch (err) {
+    if (token !== catchmentEnvToken) return;   // superseded — discard silently
+  }
+  if (token !== catchmentEnvToken) return;
+  catchmentEnvAbort = null;
+
+  const wEl = document.getElementById('ct-weather');
+  const hEl = document.getElementById('ct-hydro');
+  if (wEl) wEl.innerHTML = catchmentWeatherHtml(weatherData);
+  if (hEl) {
+    hEl.innerHTML = (hydroEnv && hydroEnv.available)
+      ? catchmentRowsHtml(computeHydroIndicators(catchmentLast.result, hydroEnv))
+      : '<div class="ct-nodata">此日期無水文資料</div>';
+  }
+}
+
+function handleMeasureClick(lat, lng) {
+  if (measureMode === 'catchment') {
+    runCatchment(lat, lng);
+    return;
+  }
+  if (measureMode === 'segment') {
+    if (!measureTrack()) { showNotification('先規劃路線再量測軌跡', 'warning'); return; }
+    if (measurePoints.length >= 2) measurePoints = [];   // start a fresh pair
+    measurePoints.push([lat, lng]);
+    if (measurePoints.length === 2) {
+      computeSegmentMeasure();
+    } else {
+      const track = measureTrack();
+      const dd = (elevationProfile?.distances?.length === track.length)
+        ? elevationProfile.distances : cumulativeDistances(track);
+      const snapped = latLngAtMileage(track, dd, projectMileage(track, measurePoints[0], 0).mileage);
+      const layer = ensureMeasureLayer();
+      layer.clearLayers();
+      measureDot(snapped, 'A').addTo(layer);
+      renderMeasureReadout([['提示', '再點一下第二點']]);
+    }
+  } else {
+    measurePoints.push([lat, lng]);
+    computeAreaMeasure();
+  }
+}
+
+const MEASURE_HINTS = {
+  segment: '點擊軌跡上兩點以量測區間距離與爬升下降',
+  area: '依序點擊地圖任意點，計算直線距離與包圍面積',
+  catchment: '點擊地圖任意點，繪製該處集水區範圍',
+};
+
+function setMeasureMode(mode) {
+  measureMode = MEASURE_HINTS[mode] ? mode : 'segment';
+  document.querySelectorAll('#measure-mode-toggle .measure-mode-btn').forEach((b) =>
+    b.classList.toggle('active', b.dataset.measureMode === measureMode));
+  if (measureHintEl) measureHintEl.textContent = MEASURE_HINTS[measureMode];
+  clearMeasureOverlay();
+}
+
+function setMeasureActive(active) {
+  if (!measurePanel) return;
+  mapManager.measureMode = active ? measureMode : null;
+  measurePanel.classList.toggle('hidden', !active);
+  btnMeasureTool?.setAttribute('aria-pressed', String(active));
+  if (!active) clearMeasureOverlay();
+}
+
+mapManager.onMeasureClick = handleMeasureClick;
+btnMeasureTool?.addEventListener('click', () => {
+  setMeasureActive(measurePanel?.classList.contains('hidden'));
+});
+document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.measure-mode-btn');
+  if (!btn) return;
+  setMeasureMode(btn.dataset.measureMode);
+  mapManager.measureMode = measureMode;
+});
+document.getElementById('btn-measure-clear')?.addEventListener('click', clearMeasureOverlay);
+document.getElementById('btn-measure-close')?.addEventListener('click', () => setMeasureActive(false));
+setMeasureMode('segment');
 
 function pickRouteFile() {
   return platform.pickFile({
@@ -4055,7 +5126,9 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', pl
     : null;
   const routeMeta = includeRoute ? buildExportRouteMeta(routeName, exportCoords) : null;
 
-  progressContainer.classList.remove('hidden');
+  // Display-only progress: exporting snapshots the data up front, so the user
+  // may keep editing while tiles download/zip.
+  const busyTask = beginRouteWeatherBusyTask({ title: '匯出分享包', detail: '準備資料...', lockScope: 'none' });
 
   try {
     const { MapPackExporter } = await ensureMapPackModules();
@@ -4080,10 +5153,10 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', pl
       filenameBase,
       onProgress: (cur, total, phase) => {
         const pct = Math.round((cur / Math.max(total, 1)) * 100);
-        progressText.textContent = phase === 'zip'
-          ? `打包中 ${pct}%`
-          : `圖磚 ${pct}% (${cur}/${total})`;
-        progressFill.style.width = `${pct}%`;
+        busyTask.set({
+          detail: phase === 'zip' ? '打包中...' : `圖磚 ${cur}/${total}`,
+          progress: pct,
+        });
       },
     });
     await platform.shareFile({
@@ -4108,9 +5181,7 @@ async function doExportMapPack(filenameBase, routeName = 'Mapping Elf Track', pl
     showNotification(err.message || '匯出失敗', 'error');
     console.error(err);
   } finally {
-    progressContainer.classList.add('hidden');
-    progressText.textContent = '0%';
-    progressFill.style.width = '0%';
+    busyTask.end();
   }
 }
 
@@ -4214,10 +5285,9 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
   const parsed = _pendingMappack;
   _closeMappackImportModal(); // Centralized close path handles body class removal
 
-  // Use the global progress variables defined at the top of the file
-  if (progressContainer) progressContainer.classList.remove('hidden');
-  if (progressText) progressText.textContent = '準備還原...';
-  if (progressFill) progressFill.style.width = '0%';
+  // Display-only progress (the pre-unification widget never locked editing
+  // during restore either; route apply below drives its own busy tasks).
+  const busyTask = beginRouteWeatherBusyTask({ title: '匯入離線地圖包', detail: '準備還原...', lockScope: 'none' });
 
   try {
     const { MapPackImporter } = await ensureMapPackModules();
@@ -4227,12 +5297,10 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
       restoreState,
       onProgress: (cur, total, phase) => {
         const pct = Math.round((cur / Math.max(total, 1)) * 100);
-        if (progressText) {
-          progressText.textContent = phase === 'tiles'
-            ? `還原圖磚 ${pct}% (${cur}/${total})`
-            : `${pct}%`;
-        }
-        if (progressFill) progressFill.style.width = `${pct}%`;
+        busyTask.set({
+          detail: phase === 'tiles' ? `還原圖磚 ${cur}/${total}` : '還原中...',
+          progress: pct,
+        });
       },
     });
 
@@ -4271,9 +5339,7 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
     showNotification(err.message || '匯入失敗', 'error');
     console.error('Mappack apply failed:', err);
   } finally {
-    if (progressContainer) progressContainer.classList.add('hidden');
-    if (progressText) progressText.textContent = '0%';
-    if (progressFill) progressFill.style.width = '0%';
+    busyTask.end();
     _pendingMappack = null;
   }
 });
@@ -4535,6 +5601,7 @@ async function applyRestoredRouteResult(restore) {
 
 async function onWaypointsChanged(waypoints) {
   cancelWeatherFetchForRouteReplan();
+  cancelCatchmentFetchForRouteReplan();
   ensureWaypointIds();
   bumpWaypointVersion();
   invalidateRoutePlanRun();
@@ -4653,6 +5720,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   }
 
   cancelWeatherFetchForRouteReplan();
+  cancelCatchmentFetchForRouteReplan();
   isProcessing = true;
   pendingUpdate = false;
   const routePlanSnapshot = createRoutePlanSnapshot(waypoints);
@@ -4817,9 +5885,12 @@ async function selectAlternative(index, options = {}) {
   renderWeatherPanel();
 
   // Automatically fetch weather data whenever the route is finalized.
-  // We trigger a general auto-fetch (force:false) so that all points (new waypoints, 
+  // We trigger a general auto-fetch (force:false) so that all points (new waypoints,
   // return waypoints, and intermediate points) get weather info if missing.
   autoFetchWeather({ force: false });
+  // Mirror the same auto-load for 集水區: if the catchment view is open, backfill
+  // the newly-planned points (deferred internally until this plan/weather settles).
+  autoFetchCatchment();
   pendingNewWaypointIndex = null;
   return true;
 }
@@ -4870,6 +5941,10 @@ function hideAlternatives() {
 function updateWaypointList(waypoints) {
   updateRouteLibraryCurrent();
   const frozen = !!importedTrackMode || isRouteWeatherBusy();
+  // While a data load holds the relaxed lock, the only in-list edit allowed is
+  // deleting the LAST waypoint — surface just that one button (marked
+  // .wp-remove-live so the busy disable-selector skips it).
+  const dataLoadEdit = isDataLoadEditMode();
   if (waypoints.length === 0) {
     waypointList.innerHTML = `
       <div class="empty-state">
@@ -4897,18 +5972,28 @@ function updateWaypointList(waypoints) {
       const safeDisplayName = _escapeHtml(displayName);
       const cumM = waypointCumDistM[i];
       const distLabel = (cumM != null && cumM > 0) ? formatDistance(cumM) : '';
+      const isLast = i === waypoints.length - 1;
+      // Data-load-edit: last row shows a single delete-last button; all other rows
+      // show no actions. Normal/full-frozen keep the existing up/down/remove set.
+      const actionsHtml = dataLoadEdit
+        ? (isLast
+            ? `<div class="wp-actions">
+            <button class="wp-action wp-remove wp-remove-live" data-index="${i}" title="刪除最後航點">×</button>
+          </div>`
+            : '')
+        : `<div class="wp-actions" style="${frozen ? 'display:none' : ''}">
+            <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button class="wp-action wp-down" data-index="${i}" title="向下移" ${isLast ? 'disabled' : ''}>↓</button>
+            <button class="wp-action wp-remove" data-index="${i}" title="移除">×</button>
+          </div>`;
       return `
-        <div class="waypoint-item ${frozen ? 'is-frozen' : ''}">
+        <div class="waypoint-item ${frozen && !dataLoadEdit ? 'is-frozen' : ''}">
           <span class="wp-index ${cls}" style="background:${gradColor}">${i + 1}</span>
           <span class="wp-coords" title="單擊高亮" style="color:${gradColor}">
             <span class="wp-place-name">${safeDisplayName}</span>
             ${distLabel ? `<span class="wp-cum-dist">${distLabel}</span>` : ''}
           </span>
-          <div class="wp-actions" style="${frozen ? 'display:none' : ''}">
-            <button class="wp-action wp-up" data-index="${i}" title="向上移" ${i === 0 ? 'disabled' : ''}>↑</button>
-            <button class="wp-action wp-down" data-index="${i}" title="向下移" ${i === waypoints.length - 1 ? 'disabled' : ''}>↓</button>
-            <button class="wp-action wp-remove" data-index="${i}" title="移除">×</button>
-          </div>
+          ${actionsHtml}
         </div>`;
     })
     .join('');
@@ -5434,7 +6519,7 @@ function resetPaceToAnchor() {
     _wcStates.forEach((mode, colIdx) => _renderWeatherCard(colIdx));
   }
 
-  const label = anchorPt.label || (anchorPt.isWaypoint ? `航點 ${anchorPt.wpIndex + 1}` : '中繼點');
+  const label = anchorPt.label || (anchorPt.isWaypoint ? `航點 ${anchorPt.wpIndex + 1}` : '副航點');
   showNotification(`已依據「${label}」重置配速時間`, 'success');
   historyRecord();
 }
@@ -6144,6 +7229,7 @@ function updateRouteLibraryCurrent() {
   const stateEl = document.getElementById('route-library-current-state');
   const saveButtons = [
     document.getElementById('btn-favorite-add'),
+    document.getElementById('btn-favorite-quick'),
   ].filter(Boolean);
   const exportButton = document.getElementById('btn-export-gpx');
   const hasRoute = mapManager.waypoints.length >= 2 || currentRouteCoords.length >= 2;
@@ -7195,6 +8281,15 @@ const WEATHER_CARD_TOP_STAT_ROWS = WEATHER_TOP_ROWS.filter(row => row.key === 'p
 const WEATHER_CARD_MIDDLE_ROWS = WEATHER_MIDDLE_ROWS;
 const WEATHER_CARD_BOTTOM_ROWS = WEATHER_BOTTOM_ROWS;
 
+// Reduced weather-card body shown when 詳細天氣資訊 is off for a point's class:
+// only 雨量/降雨機率/濕度/風速 below the shared header (temp/desc/time controls).
+const WEATHER_CARD_MINIMAL_ROWS = [
+  { key: 'precipitation', label: '雨量' },
+  { key: 'precipProb', label: '降雨機率' },
+  { key: 'humidity', label: '濕度' },
+  { key: 'windSpeed', label: '風速' },
+];
+
 let weatherPoints = [];
 const LS_WEATHER_KEY = 'mappingElf_weather';
 const LS_WEATHER_CELLS_KEY = 'mappingElf_weatherCells';
@@ -7204,6 +8299,24 @@ let savedWeatherCells = (() => {
   try { return JSON.parse(localStorage.getItem(LS_WEATHER_CELLS_KEY) || '{}'); }
   catch { return {}; }
 })();
+
+// Persisted catchment readout (terrain + hydrology fill-ready HTML) keyed by the
+// SAME semantic point key as savedWeatherCells, so a waypoint's 集水區 info is
+// remembered across refresh / .melmap and shows instantly — the catchment data
+// flows through the same save/prune/restore pipeline as the weather cells.
+const LS_CATCHMENT_CELLS_KEY = 'mappingElf_catchmentCells';
+let savedCatchmentCells = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_CATCHMENT_CELLS_KEY) || '{}'); }
+  catch { return {}; }
+})();
+function saveCatchmentCells(semKey, cells) {
+  if (!semKey) return;
+  savedCatchmentCells[semKey] = cells;
+  try { localStorage.setItem(LS_CATCHMENT_CELLS_KEY, JSON.stringify(savedCatchmentCells)); } catch (_) { }
+}
+function getSavedCatchmentCells(semKey) {
+  return (semKey && savedCatchmentCells[semKey]) || null;
+}
 
 /**
  * Stable semantic key for a weather column point, based on coordinates.
@@ -8076,6 +9189,83 @@ function getWeatherCacheData(pt, dateStr, hour) {
   return getWeatherCacheHit(pt, dateStr, hour)?.data || null;
 }
 
+// --- Catchment (集水區) result cache ----------------------------------------
+// Delineation geometry is terrain-derived and time-independent, so it is keyed
+// by coordinate only. Mirrors the weather cache: localStorage-backed, pruned by
+// the shared max-age setting, gated on weatherCacheEnabled, and exported inside
+// .melmap via mappingElf_catchmentCache (see stateKeys.js). The hydrology/weather
+// overlay stays time-dependent and is fetched fresh, not stored here.
+const LS_CATCHMENT_CACHE_KEY = 'mappingElf_catchmentCache';
+const CATCHMENT_CACHE_SCHEMA_VERSION = 1;
+
+let cachedCatchmentData = (() => {
+  try { return normalizeCatchmentCacheStore(JSON.parse(localStorage.getItem(LS_CATCHMENT_CACHE_KEY) || '{}')); }
+  catch { return {}; }
+})();
+
+function normalizeCatchmentCacheStore(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const now = Date.now();
+  const out = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    const result = value?.result;
+    const lat = finiteOrNull(value?.lat);
+    const lng = finiteOrNull(value?.lng);
+    if (lat == null || lng == null) return;
+    if (!result || result.status !== 'ok' || !Array.isArray(result.outer) || !result.outer.length) return;
+    out[key] = {
+      schema: CATCHMENT_CACHE_SCHEMA_VERSION,
+      lat, lng,
+      updatedAt: finiteOrNull(value?.updatedAt) || now,
+      result,
+    };
+  });
+  return out;
+}
+
+function catchmentCoordKey(lat, lng) {
+  return `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
+}
+
+function persistCatchmentCache() {
+  try { localStorage.setItem(LS_CATCHMENT_CACHE_KEY, JSON.stringify(cachedCatchmentData)); } catch (_) { }
+}
+
+function pruneCatchmentCache({ persist = false } = {}) {
+  const maxAgeMs = Math.max(0.1, Number(weatherCacheMaxAgeDays) || WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS) * 86400000;
+  const cutoff = Date.now() - maxAgeMs;
+  let changed = false;
+  Object.entries(cachedCatchmentData || {}).forEach(([key, entry]) => {
+    const updatedAt = finiteOrNull(entry?.updatedAt);
+    if (!updatedAt || updatedAt < cutoff || entry?.result?.status !== 'ok') {
+      delete cachedCatchmentData[key];
+      changed = true;
+    }
+  });
+  if (changed && persist) persistCatchmentCache();
+  return changed;
+}
+
+function getCatchmentCacheHit(lat, lng) {
+  if (!weatherCacheEnabled) return null;
+  pruneCatchmentCache({ persist: true });
+  const entry = cachedCatchmentData[catchmentCoordKey(lat, lng)];
+  return entry?.result || null;
+}
+
+function setCatchmentCacheData(lat, lng, result) {
+  if (!weatherCacheEnabled || result?.status !== 'ok') return;
+  cachedCatchmentData[catchmentCoordKey(lat, lng)] = {
+    schema: CATCHMENT_CACHE_SCHEMA_VERSION,
+    lat: Number(lat),
+    lng: Number(lng),
+    updatedAt: Date.now(),
+    result,
+  };
+  persistCatchmentCache();
+}
+pruneCatchmentCache({ persist: true });
+
 function isWeatherCacheEntryUsable(entry, pt, dateStr, hour, options = {}) {
   if (!entry?.data) return false;
   if (entry.date !== dateStr || Number(entry.hour) !== Number(hour)) return false;
@@ -8445,6 +9635,23 @@ function initWeatherControls() {
     }
   });
 
+  // Detailed-catchment table: manual "取得集水區" (force re-fetch of all columns);
+  // clicking a failed/stale data column retries just that one (parity with a weather
+  // "?" badge click); clicking an OK column highlights its point like the weather table.
+  document.getElementById('catchment-table-container')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="fetch-catchment"]');
+    if (btn) { fetchAllCatchmentData({ force: true }); return; }
+    if (e.target.closest('[data-action="toggle-weather-table"]')) { toggleWeatherTableCollapsed(); return; }
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    const cell = e.target.closest('[data-cat-col]');
+    if (!cell) return;
+    const colIdx = parseInt(cell.dataset.catCol);
+    if (isNaN(colIdx)) return;
+    const pt = weatherPoints[colIdx];
+    if (pt && catchmentColumnNeedsFetch(pt, colIdx)) fetchCatchmentForUnloadedColumn(colIdx);
+    else highlightPoint(colIdx, true);
+  });
+
   const panel = document.getElementById('bottom-panel');
   const handle = document.getElementById('bp-resize-handle');
   if (!panel) return;
@@ -8483,10 +9690,14 @@ function initWeatherControls() {
     } else if (legacyH > 0) {
       h = legacyH;
     } else {
-      // Default: Handle + Elevation Chart row only.
-      // We use the computed height of .bp-chart-row to handle responsive scaling.
-      const chartRow = panel.querySelector('.bp-chart-row');
-      h = (handle.offsetHeight || 18) + (chartRow?.offsetHeight || 0);
+      // Default: handle + summary chips + elevation-chart height. Measured from
+      // the always-visible summary bar plus the chart so the default stays right
+      // regardless of the active view (F5 toggle) — the chart's offsetHeight is 0
+      // while hidden in weather mode, so fall back to a sensible constant then.
+      const summaryBar = panel.querySelector('#route-summary-bar');
+      const chart = panel.querySelector('#elevation-chart-container');
+      const chartH = chart?.offsetHeight || 148;
+      h = (handle.offsetHeight || 18) + (summaryBar?.offsetHeight || 0) + chartH + 16;
     }
 
     if (h > 0) {
@@ -8879,6 +10090,7 @@ function refreshOpenWeatherCards() {
       _renderWeatherCard(cIdx);
     });
   }
+  syncCatchmentBasins();   // keep basins in step with the catchment-view memory
 }
 
 const timeOpts = (sel) => Array.from({ length: 24 }, (_, h) =>
@@ -9174,6 +10386,10 @@ function renderWeatherPanel() {
     });
   }
   weatherPoints = buildWeatherPoints();
+  // Basin overlays are keyed by colIdx; a rebuild re-maps colIdx→point. Clear them
+  // all, then (below) redraw for every catchment-view point at its new position —
+  // independent of whether its card is open, so 副航點/compact/closed basins survive.
+  clearAllCardCatchments();
   if (previousCardStates.size > 0 && typeof _wcStates !== 'undefined') {
     _wcStates.clear();
     weatherPoints.forEach((pt, colIdx) => {
@@ -9182,6 +10398,7 @@ function renderWeatherPanel() {
     });
     mapManager.closeWeatherPopup();
   }
+  syncCatchmentBasins();
   const container = document.getElementById('weather-table-container');
   if (!container) return;
 
@@ -9190,9 +10407,10 @@ function renderWeatherPanel() {
     return;
   }
 
-  // Prune savedWeatherCells: remove entries whose coordinate key no longer matches
-  // any point in the current panel. This prevents stale data from accumulating in
-  // localStorage when waypoints are moved far or deleted.
+  // Prune savedWeatherCells + savedCatchmentCells: remove entries whose key no
+  // longer matches any point in the current panel. Prevents stale data from
+  // accumulating in localStorage when waypoints are moved far or deleted. Both
+  // stores share the semantic-key namespace, so they prune in one pass.
   {
     const validKeys = new Set(weatherPoints.flatMap(p => [getSemanticKey(p), getLegacySemanticKey(p)]));
     let pruned = false;
@@ -9201,6 +10419,13 @@ function renderWeatherPanel() {
     });
     if (pruned) {
       try { localStorage.setItem(LS_WEATHER_CELLS_KEY, JSON.stringify(savedWeatherCells)); } catch (_) { }
+    }
+    let prunedCatch = false;
+    Object.keys(savedCatchmentCells).forEach(k => {
+      if (!validKeys.has(k)) { delete savedCatchmentCells[k]; prunedCatch = true; }
+    });
+    if (prunedCatch) {
+      try { localStorage.setItem(LS_CATCHMENT_CELLS_KEY, JSON.stringify(savedCatchmentCells)); } catch (_) { }
     }
   }
 
@@ -9501,6 +10726,12 @@ function renderWeatherPanel() {
   saveWeatherSettings();
   refreshOpenWeatherCards();
   if (isRouteWeatherBusy()) updateRouteWeatherBusyOverlay();
+
+  // weatherPoints is now initialised; the bottom-panel side-effects are safe.
+  // Keep the detailed-catchment table in step with the rebuilt columns (cache-only
+  // repaint — new columns show cached values or '…', backfilled by 取得集水區).
+  bottomPanelReady = true;
+  if (getBottomPanelView() === 'catchment') renderCatchmentPanel();
 }
 
 /**
@@ -9866,6 +11097,18 @@ function cancelWeatherFetchForRouteReplan() {
   if (!activeWeatherFetchRun || activeWeatherFetchRun.cancelled) return;
   activeWeatherFetchRun.cancelled = true;
   activeWeatherFetchRun.controller?.abort();
+  unparkLoadRun(activeWeatherFetchRun);   // wake a paused loop so it can unwind
+}
+
+// Stable partition putting 主航點 (isWaypoint — user-placed points, incl. return
+// legs) before 副航點 (intermediate points), so a long weather/集水區 load fills the
+// important named points first and the many intermediates afterwards. Geographic
+// order is preserved within each group.
+function orderMainWaypointsFirst(items, ptOf) {
+  const main = [];
+  const sub = [];
+  for (const it of items) (ptOf(it)?.isWaypoint ? main : sub).push(it);
+  return main.concat(sub);
 }
 
 function autoFetchWeather(options = {}) {
@@ -9970,6 +11213,9 @@ async function fetchAllWeatherData(options = {}) {
     controller,
     signal: controller.signal,
     cancelled: false,
+    paused: false,
+    lockScope: 'edit',
+    _resume: null,
   };
   activeWeatherFetchRun = fetchRun;
   isWeatherFetching = true;
@@ -9979,8 +11225,10 @@ async function fetchAllWeatherData(options = {}) {
       ? `網頁開啟時載入天氣資訊 0/${totalTargets}`
       : `準備天氣欄位 0/${totalTargets}`,
     progress: 0,
-    lockScope: 'weather-card',
+    lockScope: 'edit',
   });
+  fetchRun.busyTask = busyTask;
+  pausableLoadRuns.add(fetchRun);
   const markWeatherProgress = () => {
     busyTask.set({
       detail: isInitialWeatherLoad
@@ -9999,9 +11247,74 @@ async function fetchAllWeatherData(options = {}) {
   const fetchBtn = document.querySelector('[data-action="fetch"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
+  // Network-fetch + apply ONE target's weather. Returns 'ok' | 'fail' | 'cancel'.
+  // 'cancel' = the run was aborted (caller breaks). 'fail' = a genuine data failure,
+  // left as a retry candidate. weatherService already retries transient 429/timeout/
+  // empty responses internally; this outcome drives the post-pass retry sweep so a
+  // failed point is never left stuck as an unopenable "?" badge.
+  const fetchAndApplyWeatherForState = async (state) => {
+    const { pt, i, dateStr, hour, cacheKey } = state;
+    WEATHER_ROWS.forEach(row => {
+      const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+      if (cell) {
+        const valueEl = cell.querySelector('.wt-cell-value');
+        if (valueEl) valueEl.textContent = '...';
+        else cell.textContent = '...';
+        cell.classList.remove('error');
+        cell.classList.add('loading');
+      }
+    });
+    try {
+      const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
+      if (isWeatherFetchRunCancelled(fetchRun)) return 'cancel';
+      setWeatherCacheData(pt, dateStr, hour, data, { cacheKey });
+      const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
+      WEATHER_ROWS.forEach(row => {
+        const val = getCellValue(data, row.key, pt);
+        cells[row.key] = val;
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) {
+          updateWeatherTableCell(cell, row.key, val);
+          cell.classList.remove('loading', 'error');
+        }
+      });
+      saveWeatherCells(getSemanticKey(pt), cells);
+      // Update only the outbound map badge; return markers carry their own icon.
+      if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
+        mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
+      // Refresh chart/map weather markers when it will not interrupt an active waypoint drag.
+      refreshWeatherMarkersAfterWeatherUpdate();
+      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      return 'ok';
+    } catch (err) {
+      if (isWeatherFetchRunCancelled(fetchRun) || isAbortError(err)) return 'cancel';
+      console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
+      WEATHER_ROWS.forEach(row => {
+        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
+        if (cell) {
+          const valueEl = cell.querySelector('.wt-cell-value');
+          if (valueEl) valueEl.textContent = '—';
+          else cell.textContent = '—';
+          cell.classList.remove('loading');
+          cell.classList.add('error');
+        }
+      });
+      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      return 'fail';
+    }
+  };
+
+  // 主航點 first, 副航點 after (requirement: load the important named points before
+  // the many intermediates). Failures are collected for a single retry sweep.
+  const orderedTargets = orderMainWaypointsFirst(targetStates, (s) => s.pt);
+  const failedStates = [];
+  let remainingFailures = 0;
+
   try {
-    for (const state of targetStates) {
+    for (const state of orderedTargets) {
       if (isWeatherFetchRunCancelled(fetchRun)) break;
+      await waitIfLoadPaused(fetchRun);            // park here while 停止 is active
+      if (isWeatherFetchRunCancelled(fetchRun)) break;   // cancelled while paused
       let { pt, i, dateStr, hour, cacheKey, cacheHit, saved, savedLoaded } = state;
       if (fetchBtn) {
         const labelSpan = fetchBtn.querySelector('span');
@@ -10060,53 +11373,9 @@ async function fetchAllWeatherData(options = {}) {
         }
       }
 
-      WEATHER_ROWS.forEach(row => {
-        const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-        if (cell) {
-          const valueEl = cell.querySelector('.wt-cell-value');
-          if (valueEl) valueEl.textContent = '...';
-          else cell.textContent = '...';
-          cell.classList.remove('error');
-          cell.classList.add('loading');
-        }
-      });
-
-      try {
-        data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
-        if (isWeatherFetchRunCancelled(fetchRun)) break;
-        setWeatherCacheData(pt, dateStr, hour, data, { cacheKey });
-        const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
-        WEATHER_ROWS.forEach(row => {
-          const val = getCellValue(data, row.key, pt);
-          cells[row.key] = val;
-          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-          if (cell) {
-            updateWeatherTableCell(cell, row.key, val);
-            cell.classList.remove('loading', 'error');
-          }
-        });
-        saveWeatherCells(getSemanticKey(pt), cells);
-        // Update only the outbound map badge; return markers carry their own icon.
-        if (pt.isWaypoint && !pt.isReturn && pt.wpIndex !== undefined && data.weatherIcon)
-          mapManager.setWaypointWeather(pt.wpIndex, data.weatherIcon);
-
-        // Refresh chart/map weather markers when it will not interrupt an active waypoint drag.
-        refreshWeatherMarkersAfterWeatherUpdate();
-      } catch (err) {
-        if (isWeatherFetchRunCancelled(fetchRun) || isAbortError(err)) break;
-        console.warn(`Weather fetch failed for ${pt.label}:`, err.message);
-        WEATHER_ROWS.forEach(row => {
-          const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
-          if (cell) {
-            const valueEl = cell.querySelector('.wt-cell-value');
-            if (valueEl) valueEl.textContent = '—';
-            else cell.textContent = '—';
-            cell.classList.remove('loading');
-            cell.classList.add('error');
-          }
-        });
-      }
-      if (typeof _wcStates !== 'undefined' && _wcStates.has(i)) _renderWeatherCard(i);
+      const outcome = await fetchAndApplyWeatherForState(state);
+      if (outcome === 'cancel') break;
+      if (outcome === 'fail') failedStates.push(state);
       processedTargets++;
       markWeatherProgress();
       await maybePaintWeatherProgress();
@@ -10116,8 +11385,36 @@ async function fetchAllWeatherData(options = {}) {
         if (!shouldContinue || isWeatherFetchRunCancelled(fetchRun)) break;
       }
     }
+
+    // Retry sweep: a burst load's TAIL is the most 429/timeout-prone, and the
+    // progress bar reaching 100% while those points sit at "?" is exactly the
+    // reported bug. By now the rate-limit window has had time to recover — re-attempt
+    // the failures once (主航點 first). Whatever still fails is surfaced honestly.
+    let stillFailed = failedStates;
+    if (!isWeatherFetchRunCancelled(fetchRun) && stillFailed.length) {
+      const retryList = orderMainWaypointsFirst(stillFailed, (s) => s.pt);
+      stillFailed = [];
+      const retryTotal = retryList.length;
+      let retryDone = 0;
+      for (const state of retryList) {
+        if (isWeatherFetchRunCancelled(fetchRun)) { stillFailed.push(state); continue; }
+        await waitIfLoadPaused(fetchRun);
+        if (isWeatherFetchRunCancelled(fetchRun)) { stillFailed.push(state); continue; }
+        busyTask.set({ detail: `重試載入天氣資訊 ${retryDone + 1}/${retryTotal}`, progress: 100 });
+        const outcome = await fetchAndApplyWeatherForState(state);
+        if (outcome === 'cancel') { stillFailed.push(state); break; }
+        if (outcome === 'fail') stillFailed.push(state);
+        retryDone++;
+        if (retryDone < retryTotal) {
+          const shouldContinue = await waitForWeatherFetchDelay(500, fetchRun.signal);
+          if (!shouldContinue || isWeatherFetchRunCancelled(fetchRun)) break;
+        }
+      }
+    }
+    remainingFailures = stillFailed.length;
   } finally {
     const wasCancelled = isWeatherFetchRunCancelled(fetchRun);
+    pausableLoadRuns.delete(fetchRun);
     if (isInitialWeatherLoad && !wasCancelled) {
       const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - fetchStartedAt;
       if (elapsed < minInitialProgressMs) {
@@ -10139,8 +11436,433 @@ async function fetchAllWeatherData(options = {}) {
       fetchBtn.innerHTML = `<svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor"/></svg><span>更新天氣</span>`;
     }
     if (wasCancelled) return;
-    showNotification('天氣資訊已更新', 'success', 2000);
+    // Honest completion: don't claim success while some points are still "?".
+    // Those badges stay clickable to retry that single point on demand.
+    if (remainingFailures > 0) {
+      showNotification(`部分航點天氣載入失敗（${remainingFailures}），點擊該航點可重試`, 'warning', 3200);
+    } else {
+      showNotification('天氣資訊已更新', 'success', 2000);
+    }
   }
+}
+
+// =========== Detailed Catchment Table (bottom-panel view) ===========
+// A read-only table mirroring the detailed-weather table's look (same
+// .weather-table classes + per-waypoint column widths aligned to the chart X
+// axis): one column per visible weather point, rows = 集水區 terrain + hydrology
+// indicators. Cell values come from the shared 集水區 cache (savedCatchmentCells);
+// fetchAllCatchmentData backfills missing ones under the busy/progress overlay.
+
+// Row plan: label + which saved-cells array (terrain|hydro) + index within it.
+const CATCHMENT_TABLE_ROWS = [
+  ...CATCHMENT_TERRAIN_LABELS.map((label, i) => ({ label, section: 'terrain', i })),
+  ...CATCHMENT_HYDRO_LABELS.map((label, i) => ({ label, section: 'hydro', i })),
+];
+
+// Detailed catchment is kept COLUMN-IDENTICAL to detailed weather (同調): same
+// visible set — primary waypoints + 副航點 (intermediate points) + return legs —
+// and it inherits the weather table's collapse state (which drops to main
+// waypoints only). Each column is still a cache-first per-point DEM read, so the
+// batch loader's progress bar + 300 ms spacing carry a long 副航點-heavy load.
+function getCatchmentColumnIndices() {
+  return getWeatherTableVisibleIndices();
+}
+
+// Column layout matching the weather table's look (voronoi widths over the chosen
+// waypoint columns → the same proportional spread across the panel width).
+function computeCatchmentColumnLayout() {
+  const positions = computeWeatherPointPositions();
+  const visibleIndices = getCatchmentColumnIndices();
+  const visiblePositions = visibleIndices.map(i => positions[i]);
+  const visibleN = visibleIndices.length;
+  const voronoi = visiblePositions.map((p, i) => {
+    const left = i === 0 ? p : (p - visiblePositions[i - 1]) / 2;
+    const right = i === visibleN - 1 ? (1 - p) : (visiblePositions[i + 1] - p) / 2;
+    return left + right;
+  });
+  const panelW = document.getElementById('bottom-panel')?.offsetWidth || window.innerWidth;
+  const labelW = weatherTableCollapsed ? 36 : 68;
+  const minColW = weatherTableCollapsed ? 30 : 110;
+  const dataW = weatherTableCollapsed ? visibleN * minColW : Math.max(panelW - labelW, visibleN * minColW);
+  const colWidths = voronoi.map(v => Math.max(v * dataW, minColW));
+  return { labelW, colWidths, visibleIndices, firstReturnIdx: weatherPoints.findIndex(pt => pt.isReturn) };
+}
+
+// Saved-cell value (HTML, may carry a risk chip) for a catchment row/column, or '…'.
+function catchmentTableCellHtml(pt, row) {
+  const saved = getSavedCatchmentCells(getSemanticKey(pt));
+  if (saved?.status === 'ok') {
+    const arr = row.section === 'terrain' ? saved.terrain : saved.hydro;
+    if (Array.isArray(arr) && arr[row.i] != null) return arr[row.i];
+  }
+  return '…';
+}
+
+function buildCatchmentFetchControlHtml() {
+  return `<th class="wt-label-cell wt-th">
+      <button class="wt-ctrl-fetch" data-action="fetch-catchment" title="取得集水區">
+        <svg class="wt-ctrl-fetch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5C8.2 6.7 5.5 10 5.5 13.4a6.5 6.5 0 0 0 13 0C18.5 10 15.8 6.7 12 2.5z" fill="currentColor"/></svg>
+        <span>取得集水區</span>
+      </button>
+    </th>`;
+}
+
+// Read-only per-column date+hour line (mirrors the weather table's time header,
+// without editors). Reflects each column's live schedule (weather-table DOM → saved).
+function buildCatchmentScheduleRowHtml(visibleIndices, firstReturnIdx, saved) {
+  let html = `<tr class="wt-header-row wt-header-row-time"><th class="wt-label-cell wt-th"><span class="wt-catch-sched-head">時間</span></th>`;
+  visibleIndices.forEach((colIdx) => {
+    const pt = weatherPoints[colIdx];
+    const thClass = buildWeatherColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-col-head wt-th');
+    const sched = getWeatherPointSchedule(pt, colIdx, saved);
+    const txt = sched?.date
+      ? `${sched.date.slice(5).replace('-', '/')} ${String(sched.hour ?? 8).padStart(2, '0')}:00`
+      : '—';
+    html += `<th class="${thClass}" data-idx="${colIdx}"><span class="wt-catch-sched">${txt}</span></th>`;
+  });
+  return `${html}</tr>`;
+}
+
+function buildCatchmentDataRowHtml(row, visibleIndices, firstReturnIdx) {
+  let html = `<tr><td class="wt-label-cell wt-td"${wcTipAttr(row.label)}>${row.label}</td>`;
+  visibleIndices.forEach((colIdx) => {
+    const pt = weatherPoints[colIdx];
+    const tdClass = buildWeatherDataColumnClassNames(pt, colIdx, firstReturnIdx, 'wt-data-cell wt-td');
+    const cellStyle = !pt.isWaypoint ? ' style="opacity: 0.8;"' : '';
+    html += `<td class="${tdClass}" data-cat-col="${colIdx}" data-cat-section="${row.section}" data-cat-i="${row.i}"${cellStyle}>`
+      + `<span class="wt-cell-value">${catchmentTableCellHtml(pt, row)}</span></td>`;
+  });
+  return `${html}</tr>`;
+}
+
+function renderCatchmentPanel() {
+  const container = document.getElementById('catchment-table-container');
+  if (!container) return;
+  if (!Array.isArray(weatherPoints) || weatherPoints.length === 0) {
+    container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得集水區」</p></div>';
+    return;
+  }
+  const { labelW, colWidths, visibleIndices, firstReturnIdx } = computeCatchmentColumnLayout();
+  const saved = loadWeatherSettings();
+
+  // Column-collapse toggle (shared weatherTableCollapsed state) — parity with the
+  // weather table, so the user can drop to 主航點-only columns from catchment view too.
+  let html = buildWeatherCollapseButton();
+  html += `<table class="weather-table catchment-table${weatherTableCollapsed ? ' is-collapsed' : ''}">`;
+  html += buildWeatherColgroupHtml(labelW, colWidths);
+  html += '<thead>';
+  html += `<tr class="wt-header-row wt-header-row-label">${buildCatchmentFetchControlHtml()}`;
+  visibleIndices.forEach((colIdx, visiblePos) => {
+    html += buildWeatherLabelHeaderCellHtml(weatherPoints[colIdx], colIdx, visiblePos, firstReturnIdx);
+  });
+  html += `</tr>`;
+  html += buildCatchmentScheduleRowHtml(visibleIndices, firstReturnIdx, saved);
+  html += '</thead><tbody>';
+  CATCHMENT_TABLE_ROWS.forEach((row) => { html += buildCatchmentDataRowHtml(row, visibleIndices, firstReturnIdx); });
+  html += '</tbody></table>';
+  html += `<div class="ct-disclaimer catchment-table-note">水文指標為粗略估算，僅供參考</div>`;
+  container.innerHTML = html;
+}
+
+let isCatchmentFetching = false;
+let activeCatchmentFetchRun = null;
+let catchmentFetchRunSeq = 0;
+
+function isCatchmentFetchRunCancelled(run) {
+  return !run || run.cancelled || run.signal?.aborted || activeCatchmentFetchRun !== run;
+}
+
+function cancelCatchmentFetchForRouteReplan() {
+  if (!activeCatchmentFetchRun || activeCatchmentFetchRun.cancelled) return;
+  activeCatchmentFetchRun.cancelled = true;
+  activeCatchmentFetchRun.controller?.abort();
+  unparkLoadRun(activeCatchmentFetchRun);   // wake a paused loop so it can unwind
+}
+
+let catchmentAutoFetchTimeout = 0;
+let catchmentReadNoticeAt = 0;
+
+// Hint shown when the catchment view has missing data but the read is currently
+// restricted — a route re-plan / weather load owns the edit lock, or a batch just
+// came back empty (network / API-quota limited). Throttled like the other notices.
+function showCatchmentReadRestrictedNotice(kind = 'busy') {
+  const now = Date.now();
+  if (now - catchmentReadNoticeAt < 1500) return;
+  catchmentReadNoticeAt = now;
+  const msg = kind === 'failed'
+    ? '集水區資訊讀取受限，請稍後再試'
+    : '資料處理中，集水區資訊將於完成後自動載入';
+  showNotification(msg, 'warning', 2400);
+}
+
+// Parity with weather's weatherCellsMatchSchedule: a saved 集水區 readout is stale
+// once the column's date/hour changes, because the hydrology rows depend on
+// dateStr/hour. Terrain is time-independent, but the readout is stored as a unit.
+function catchmentCellsMatchSchedule(saved, dateStr, hour) {
+  if (!saved) return false;
+  const sd = saved.dateStr ?? null;
+  const sh = saved.hour ?? null;
+  if (!sd && sh == null) return true;   // legacy entry with no schedule stamp
+  if (sd && dateStr && sd !== dateStr) return false;
+  if (sh != null && hour != null && Number(sh) !== Number(hour)) return false;
+  return true;
+}
+
+// A catchment column needs (re)fetching when it has no OK readout, or its saved
+// readout was computed for a different schedule than the column shows now — parity
+// with weather's hasCompletedWeatherLoad gating.
+function catchmentColumnNeedsFetch(pt, colIdx) {
+  const saved = getSavedCatchmentCells(getSemanticKey(pt));
+  if (saved?.status !== 'ok') return true;
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  return !catchmentCellsMatchSchedule(saved, schedule?.date || null, schedule?.hour ?? null);
+}
+
+// Auto-load 集水區 for any visible column still missing it — the catchment
+// counterpart to autoFetchWeather, so a freshly-planned route backfills new
+// waypoints without a manual 取得集水區. Only runs while the catchment view is
+// showing; when a route/weather load holds priority it defers (and, if the user
+// just switched in, hints why) then retries once that work settles.
+function autoFetchCatchment({ notify = false } = {}) {
+  if (catchmentAutoFetchTimeout) { clearTimeout(catchmentAutoFetchTimeout); catchmentAutoFetchTimeout = 0; }
+  if (!bottomPanelReady || getBottomPanelView() !== 'catchment') return;
+  if (isCatchmentFetching) return;
+
+  const anyMissing = getCatchmentColumnIndices().some((colIdx) => {
+    const pt = weatherPoints[colIdx];
+    return pt && catchmentColumnNeedsFetch(pt, colIdx);
+  });
+  if (!anyMissing) return;
+
+  // Defer only while an active route re-plan owns the state (columns are still
+  // being rebuilt); a concurrent weather load is fine — catchment loads alongside
+  // it, same as the manual 取得集水區 during a weather fetch.
+  if (isProcessing) {
+    if (notify) showCatchmentReadRestrictedNotice('busy');
+    catchmentAutoFetchTimeout = setTimeout(() => autoFetchCatchment({ notify: false }), 1200);
+    return;
+  }
+  fetchAllCatchmentData();
+}
+
+// Delineate + hydrology for one point, save to the shared cache, return
+// { status, terrain[], hydro[] } (HTML strings). Aborts propagate to the caller.
+async function computeCatchmentReadout(pt, colIdx, signal) {
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+
+  const result = await getCatchmentFor(pt.lat, pt.lng, { signal });
+  if (!result || result.status !== 'ok' || !result.outer?.length) return { status: result?.status || 'error' };
+
+  const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
+  const terrain = [formatArea(result.areaM2), outlet, ...computeGeometryRows(result).map(catchmentValueHtml)];
+
+  let hydroEnv = null;
+  try {
+    hydroEnv = await fetchHydroData(pt.lat, pt.lng, dateStr, hour, { signal });
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    hydroEnv = null;
+  }
+  const hydro = (hydroEnv && hydroEnv.available)
+    ? computeHydroIndicators(result, hydroEnv).map(catchmentValueHtml)
+    : CATCHMENT_HYDRO_LABELS.map(() => '—');
+
+  saveCatchmentCells(getSemanticKey(pt), {
+    status: 'ok', terrain, hydro,
+    dateStr: dateStr || null,
+    hour: Number.isFinite(Number(hour)) ? Number(hour) : null,
+  });
+  return { status: 'ok', terrain, hydro };
+}
+
+function setCatchmentColumnCells(colIdx, valueFor) {
+  const container = document.getElementById('catchment-table-container');
+  if (!container) return;
+  CATCHMENT_TABLE_ROWS.forEach((row) => {
+    const cell = container.querySelector(`[data-cat-col="${colIdx}"][data-cat-section="${row.section}"][data-cat-i="${row.i}"] .wt-cell-value`);
+    if (cell) cell.innerHTML = valueFor(row);
+  });
+}
+
+function fillCatchmentTableColumn(colIdx, readout) {
+  const ok = readout?.status === 'ok';
+  setCatchmentColumnCells(colIdx, (row) => {
+    const arr = ok ? (row.section === 'terrain' ? readout.terrain : readout.hydro) : null;
+    return (arr && arr[row.i] != null) ? arr[row.i] : '—';
+  });
+}
+
+// Batch-load 集水區 read-outs for every visible column, progress-bar managed.
+// `force` re-fetches all columns; otherwise only the uncached ones.
+async function fetchAllCatchmentData(options = {}) {
+  const { force = false, onlyColIndex = null } = options;
+  if (isCatchmentFetching) return;
+  if (!Array.isArray(weatherPoints) || weatherPoints.length === 0) {
+    showNotification('請先建立路線', 'warning');
+    return;
+  }
+  renderCatchmentPanel();   // ensure the cells exist to receive values
+
+  const visibleIndices = getCatchmentColumnIndices();
+  // Progress-bar parity with weather (fetchAllWeatherData): 分母 = 全部可見欄位,
+  // NOT only the uncached ones, so 航點完成數 climbs through the whole route. Each
+  // target carries whether it still needs a DEM read; cached columns are applied
+  // instantly in-loop (no fetch, no inter-request delay) yet still count toward N/total.
+  const allTargets = visibleIndices
+    .filter((colIdx) => onlyColIndex === null || colIdx === onlyColIndex)   // single-column retry
+    .map((colIdx) => ({ colIdx, pt: weatherPoints[colIdx] }))
+    .filter(({ pt }) => pt)
+    .map((t) => ({ ...t, needsFetch: force || catchmentColumnNeedsFetch(t.pt, t.colIdx) }));
+
+  // Nothing needs a fetch → apply saved readouts synchronously, no progress bar
+  // (mirrors weather's !needsNetworkFetch fast path).
+  if (!allTargets.some((t) => t.needsFetch)) {
+    allTargets.forEach(({ colIdx }) =>
+      fillCatchmentTableColumn(colIdx, getSavedCatchmentCells(getSemanticKey(weatherPoints[colIdx]))));
+    showNotification('集水區資訊已更新', 'success', 1500);
+    return;
+  }
+
+  // 主航點 first, 副航點 (intermediates) after — the important named points get their
+  // 集水區 read-out before the many intermediates on a long, DEM-heavy load.
+  const orderedTargets = orderMainWaypointsFirst(allTargets, (t) => t.pt);
+
+  const controller = new AbortController();
+  const run = { id: ++catchmentFetchRunSeq, controller, signal: controller.signal, cancelled: false, paused: false, lockScope: 'edit', _resume: null };
+  activeCatchmentFetchRun = run;
+  isCatchmentFetching = true;
+  const total = allTargets.length;
+  let done = 0;
+  let okCount = 0;
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在載入集水區資訊',
+    detail: `載入集水區資訊 0/${total}`,
+    progress: 0,
+    lockScope: 'edit',
+  });
+  run.busyTask = busyTask;
+  pausableLoadRuns.add(run);
+  const fetchBtn = document.querySelector('[data-action="fetch-catchment"]');
+  if (fetchBtn) fetchBtn.disabled = true;
+
+  // Compute + apply ONE column's 集水區 readout. Returns 'ok' | 'fail' | 'cancel'.
+  // Draws the point's map basin incrementally (cache hit → no refetch), mirroring
+  // weather's per-point setWaypointWeather so 已算完的航點先顯示集水區.
+  const loadOneCatchment = async ({ colIdx, pt }) => {
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    await waitIfLoadPaused(run);                        // park here while 停止 is active
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    setCatchmentColumnCells(colIdx, () => '…');
+    let readout;
+    try {
+      readout = await computeCatchmentReadout(pt, colIdx, run.signal);
+    } catch (err) {
+      if (isAbortError(err) || isCatchmentFetchRunCancelled(run)) return 'cancel';
+      console.warn(`Catchment fetch failed for ${pt.label}:`, err?.message);
+      readout = { status: 'error' };
+    }
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    fillCatchmentTableColumn(colIdx, readout);
+    const ok = readout?.status === 'ok';
+    if (ok && isCatchmentView(colIdx) && !_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx);
+    // Keep an open card that's showing this point's catchment view in sync.
+    if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
+    return ok ? 'ok' : 'fail';
+  };
+
+  // Apply ONE already-cached column instantly (parity with weather's cache path):
+  // fills the table + syncs an open card, no DEM read and no inter-request delay,
+  // but still advances N/total. Basins for cached columns are reconciled by
+  // syncCatchmentBasins() at completion, matching the all-cached fast path.
+  const fillCachedColumn = ({ colIdx, pt }) => {
+    const saved = getSavedCatchmentCells(getSemanticKey(pt));
+    fillCatchmentTableColumn(colIdx, saved);
+    if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
+    return saved?.status === 'ok';
+  };
+
+  const failedTargets = [];
+  let remainingFailures = 0;
+  try {
+    for (const target of orderedTargets) {
+      if (isCatchmentFetchRunCancelled(run)) break;
+      await waitIfLoadPaused(run);                       // park here while 停止 is active
+      if (isCatchmentFetchRunCancelled(run)) break;      // cancelled while paused
+
+      // Cached column: no fetch, no delay — just fill + advance the counter.
+      if (!target.needsFetch) {
+        if (fillCachedColumn(target)) okCount++;
+        done++;
+        busyTask.set({ detail: `載入集水區資訊 ${done}/${total}`, progress: (done / total) * 100 });
+        continue;
+      }
+
+      const outcome = await loadOneCatchment(target);
+      if (outcome === 'cancel') break;
+      if (outcome === 'ok') okCount++;
+      else failedTargets.push(target);
+      done++;
+      busyTask.set({ detail: `載入集水區資訊 ${done}/${total}`, progress: (done / total) * 100 });
+      if (done < total) {
+        const cont = await waitForWeatherFetchDelay(300, run.signal);
+        if (!cont || isCatchmentFetchRunCancelled(run)) break;
+      }
+    }
+
+    // Retry sweep — parity with weather: the burst tail is the most 429/timeout-prone;
+    // re-attempt failures once (主航點 first) now the rate-limit window has recovered.
+    let stillFailed = failedTargets;
+    if (!isCatchmentFetchRunCancelled(run) && stillFailed.length) {
+      const retryList = orderMainWaypointsFirst(stillFailed, (t) => t.pt);
+      stillFailed = [];
+      const retryTotal = retryList.length;
+      let retryDone = 0;
+      for (const target of retryList) {
+        if (isCatchmentFetchRunCancelled(run)) { stillFailed.push(target); continue; }
+        busyTask.set({ detail: `重試載入集水區 ${retryDone + 1}/${retryTotal}`, progress: 100 });
+        const outcome = await loadOneCatchment(target);
+        if (outcome === 'cancel') { stillFailed.push(target); break; }
+        if (outcome === 'ok') okCount++;
+        else stillFailed.push(target);
+        retryDone++;
+        if (retryDone < retryTotal) {
+          const cont = await waitForWeatherFetchDelay(500, run.signal);
+          if (!cont || isCatchmentFetchRunCancelled(run)) break;
+        }
+      }
+    }
+    remainingFailures = stillFailed.length;
+  } finally {
+    const wasCancelled = isCatchmentFetchRunCancelled(run);
+    pausableLoadRuns.delete(run);
+    if (activeCatchmentFetchRun === run) { activeCatchmentFetchRun = null; isCatchmentFetching = false; }
+    if (!wasCancelled) busyTask.set({ detail: '完成', progress: 100 });
+    busyTask.end();
+    if (fetchBtn) fetchBtn.disabled = false;
+    if (!wasCancelled) syncCatchmentBasins();   // reconcile every catchment-view basin at completion
+    // Honest completion (parity with weather): total blackout keeps the restricted
+    // hint; a partial failure warns + invites a per-column retry; else success.
+    if (!wasCancelled) {
+      if (okCount === 0) showCatchmentReadRestrictedNotice('failed');
+      else if (remainingFailures > 0) showNotification(`部分集水區載入失敗（${remainingFailures}），點擊該欄可重試`, 'warning', 3200);
+      else showNotification('集水區資訊已更新', 'success', 2000);
+    }
+  }
+}
+
+// Single-column catchment re-fetch, the parity counterpart of
+// fetchWeatherForUnloadedCard: clicking a failed/stale 集水區 column retries just
+// that column. Deferred (not swallowed) while a batch load already owns the state.
+function fetchCatchmentForUnloadedColumn(colIdx) {
+  if (isCatchmentFetching) {
+    showNotification('集水區載入中，該欄會自動重試', 'info', 1800);
+    return false;
+  }
+  showNotification('開始載入此欄集水區資訊...', 'info', 1600);
+  fetchAllCatchmentData({ onlyColIndex: colIdx, force: true });
+  return true;
 }
 
 // =========== Weather Card (Map Popup) ===========
@@ -10251,9 +11973,18 @@ function fetchWeatherForUnloadedCard(colIdx) {
     return false;
   }
   if (hasLoadedWeatherCardInfo(colIdx)) return false;
+  // A batch load is already running — fetchAllWeatherData would no-op on its
+  // isWeatherFetching guard, silently swallowing the click. That load's retry sweep
+  // re-attempts failed points, so tell the user rather than pretending to fetch.
+  if (isWeatherFetching) {
+    showNotification('天氣載入中，該航點會自動重試', 'info', 1800);
+    return false;
+  }
   closeWeatherCard(colIdx);
   showNotification('開始載入此點天氣資訊...', 'info', 1600);
-  fetchAllWeatherData({ onlyColIndex: colIdx });
+  // force:true guarantees a real re-fetch of this one column (bypasses any stale
+  // partial state); it does NOT clear the whole temp cache (onlyColIndex is set).
+  fetchAllWeatherData({ onlyColIndex: colIdx, force: true });
   return true;
 }
 
@@ -10330,6 +12061,10 @@ function closeWeatherCard(colIdx, options = {}) {
   const prev = _wcStates.get(colIdx);
   rememberWeatherCardMode(colIdx, prev);
   _wcStates.delete(colIdx);
+  // Keep the catchment/weather choice AND (for catchment cards) the basin overlay
+  // so closing/minimizing the card still shows the range on the map; the overlay
+  // only clears on toggle-to-weather or a route rebuild (clearAllCardCatchments).
+  if (!isCatchmentView(colIdx)) clearCardCatchment(colIdx);
   mapManager.closeWeatherPopup(colIdx, { animate: true });
   if (options.centerAfterClose === true && prev === 'full') {
     highlightPoint(colIdx, false, { centerMap: true, centerFullCard: false });
@@ -10405,6 +12140,7 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
   const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
   _renderWeatherCard(colIdx);
+  syncCatchmentBasins();   // ensure this point's basin matches its catchment-view choice
   if (
     options.centerOnMobileExpand === true &&
     prevMode !== 'full' &&
@@ -10476,13 +12212,347 @@ function buildWeatherCardSectionHtml(rows, val, windyUrlForLayer, extraClass = '
     const valuePrefix = layerForRow
       ? buildRowWindyIconHtml(layerForRow, windyUrlForLayer(layerForRow))
       : '';
-    html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}>`;
+    html += `<div class="wc-info-item${isWide ? ' is-wide' : ''}"${fullWidthAttr}${wcTipAttr(row.label)}>`;
     html += `<span class="wc-info-label">${row.label}</span>`;
     html += `<span class="${valueClass}" ${isCoords ? `data-coords="${displayVal}" title="點擊複製"` : ''}>${valuePrefix}${displayVal}</span>`;
     html += `</div>`;
   });
   html += `</div>`;
   return html;
+}
+
+// ---- Weather-card catchment view (shared by waypoint + cursor cards) --------
+// A full card can toggle its body between weather info and 集水區 info: the
+// delineation is fetched cache-first (getCatchmentFor), drawn on the map in the
+// point's own colour, and paired with a time-dependent hydrology read-out.
+// The chosen view is remembered by semantic key (like card size in _wcLastModes)
+// so a card reopens in the same view — and its basin redraws at the same,
+// cache-deterministic position.
+// semanticKey → boolean (catchment view). Persisted so a card reopens in the same
+// view after a page refresh (keys are coordinate/id-derived, stable across reload).
+const LS_CARD_CATCHMENT_VIEW_KEY = 'mappingElf_cardCatchmentView';
+const _wcCatchmentViewMemory = new Map();
+function loadCardCatchmentViewMemory() {
+  _wcCatchmentViewMemory.clear();
+  try {
+    const arr = JSON.parse(localStorage.getItem(LS_CARD_CATCHMENT_VIEW_KEY) || '[]');
+    if (Array.isArray(arr)) arr.forEach((k) => { if (typeof k === 'string') _wcCatchmentViewMemory.set(k, true); });
+  } catch (_) { }
+}
+loadCardCatchmentViewMemory();
+function persistCardCatchmentViewMemory() {
+  try {
+    const keys = [];
+    _wcCatchmentViewMemory.forEach((on, k) => { if (on) keys.push(k); });
+    localStorage.setItem(LS_CARD_CATCHMENT_VIEW_KEY, JSON.stringify(keys));
+  } catch (_) { }
+}
+let cursorCatchmentView = false;            // GPS-cursor card catchment toggle
+const _cardCatchmentToken = new Map();      // key → generation guard for the basin-polygon draw
+const _cardCatchmentAbort = new Map();      // key → AbortController for the polygon delineation
+const _cardCatchmentLayers = new Map();     // key → L.layerGroup drawn on the map
+const _cardPanelToken = new Map();          // key → generation guard for the catchment PANEL fill
+const _cardPanelAbort = new Map();          // key → AbortController for the panel weather/hydrology fetch
+
+function catchmentViewKeyFor(colIdx) {
+  const pt = weatherPoints[colIdx];
+  return pt ? getSemanticKey(pt) : `idx:${colIdx}`;
+}
+function isCatchmentView(colIdx) {
+  return _wcCatchmentViewMemory.get(catchmentViewKeyFor(colIdx)) === true;
+}
+function setCatchmentViewMemory(colIdx, on) {
+  _wcCatchmentViewMemory.set(catchmentViewKeyFor(colIdx), !!on);
+  persistCardCatchmentViewMemory();
+}
+
+function clearCardCatchmentPolygon(key) {
+  const layer = _cardCatchmentLayers.get(key);
+  if (layer) { layer.remove(); _cardCatchmentLayers.delete(key); }
+}
+
+function drawCardCatchmentPolygon(key, result, accentColor) {
+  clearCardCatchmentPolygon(key);
+  if (!result?.outer?.length) return;
+  const grp = L.layerGroup();
+  L.polygon([result.outer, ...(result.holes || [])], {
+    color: accentColor, weight: 2, opacity: 0.9,
+    fillColor: accentColor, fillOpacity: 0.25,
+    className: 'wc-catchment-poly',
+  }).addTo(grp);
+  if (Array.isArray(result.outlet)) measureDot(result.outlet, '▼').addTo(grp);
+  grp.addTo(mapManager.map);
+  _cardCatchmentLayers.set(key, grp);
+}
+
+// Abort any in-flight fill and remove the drawn polygon for a card key.
+function clearCardCatchment(key) {
+  _cardCatchmentToken.set(key, (_cardCatchmentToken.get(key) || 0) + 1);
+  _cardCatchmentAbort.get(key)?.abort();
+  _cardCatchmentAbort.delete(key);
+  clearCardCatchmentPolygon(key);
+}
+
+// Remove every waypoint-card basin overlay (e.g. on a route rebuild, where colIdx
+// keys are re-mapped). Leaves the GPS-cursor overlay alone.
+function clearAllCardCatchments() {
+  Array.from(_cardCatchmentLayers.keys()).forEach((key) => {
+    if (key !== 'cursor') clearCardCatchment(key);
+  });
+}
+
+// Single source of truth for waypoint/intermediate basin overlays: draw one for
+// every point currently in catchment view (regardless of whether its card is
+// full, compact, minimized, or closed — the view choice is what matters), and
+// clear overlays that are no longer wanted (toggled back to weather, point
+// removed, or a stale colIdx after a rebuild). Cache-first + token-guarded, so a
+// no-op reconcile is cheap and never flickers an already-correct basin.
+function syncCatchmentBasins() {
+  const wanted = new Set();
+  // 詳細集水區資訊 off → no basin overlay for that point (range is neither drawn nor read).
+  weatherPoints.forEach((pt, colIdx) => { if (isCatchmentView(colIdx) && catchmentDetailEnabledFor(pt)) wanted.add(colIdx); });
+  Array.from(_cardCatchmentLayers.keys()).forEach((key) => {
+    if (key !== 'cursor' && !wanted.has(key)) clearCardCatchment(key);
+  });
+  wanted.forEach((colIdx) => { if (!_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx); });
+}
+
+// Display-only progress pill (lockScope 'none' — no editing lock) shown while a
+// card's 集水區 basin/data is being delineated. The per-card DEM compute is
+// otherwise silent, so the user faced an empty card + undrawn region with no sign
+// anything was running. Ref-counted so concurrent card computes share one pill,
+// and only raised on a cache MISS (a cache hit returns instantly).
+let _cardCatchmentBusyCount = 0;
+let _cardCatchmentBusyTask = null;
+let _cardCatchmentBusyRun = null;
+let _cardCatchmentBusyRunSeq = 0;
+// Parity with weather's single-point load (fetchWeatherForUnloadedCard →
+// lockScope 'edit' + pausable): the per-card basin compute locks editing to the
+// relaxed data-load set AND registers a pausable run so 停止/繼續 shows and actually
+// parks the compute (callers park on `_cardCatchmentBusyRun` before the DEM read).
+function beginCardCatchmentBusy() {
+  _cardCatchmentBusyCount++;
+  if (!_cardCatchmentBusyTask) {
+    _cardCatchmentBusyTask = beginRouteWeatherBusyTask({
+      title: '正在計算集水區', detail: '計算集水區範圍中…', progress: null, lockScope: 'edit',
+    });
+    _cardCatchmentBusyRun = {
+      id: `cardcatch_${++_cardCatchmentBusyRunSeq}`, cancelled: false, paused: false,
+      lockScope: 'edit', _resume: null, busyTask: _cardCatchmentBusyTask,
+    };
+    pausableLoadRuns.add(_cardCatchmentBusyRun);
+  }
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    _cardCatchmentBusyCount = Math.max(0, _cardCatchmentBusyCount - 1);
+    if (_cardCatchmentBusyCount === 0 && _cardCatchmentBusyTask) {
+      if (_cardCatchmentBusyRun) { pausableLoadRuns.delete(_cardCatchmentBusyRun); _cardCatchmentBusyRun = null; }
+      _cardCatchmentBusyTask.end();
+      _cardCatchmentBusyTask = null;
+    }
+  };
+}
+
+// Delineate (cache-first) and draw ONLY the basin overlay for a card key — no
+// panel — so the range shows on the map independently of the card body (compact,
+// minimized, closed, or the GPS cursor). Token-guarded per key against a newer
+// draw for the same key.
+async function drawBasinOverlay(key, lat, lng, accentColor) {
+  const token = (_cardCatchmentToken.get(key) || 0) + 1;
+  _cardCatchmentToken.set(key, token);
+  _cardCatchmentAbort.get(key)?.abort();
+  const abort = new AbortController();
+  _cardCatchmentAbort.set(key, abort);
+  const endBusy = getCatchmentCacheHit(lat, lng) ? null : beginCardCatchmentBusy();
+  let result = null;
+  try {
+    if (endBusy && _cardCatchmentBusyRun) await waitIfLoadPaused(_cardCatchmentBusyRun);  // honor 停止
+    if (token !== _cardCatchmentToken.get(key)) return;    // superseded while parked
+    result = await getCatchmentFor(lat, lng, { signal: abort.signal });
+  } catch (_) {
+    if (token !== _cardCatchmentToken.get(key)) return;
+  } finally {
+    endBusy?.();
+  }
+  if (token !== _cardCatchmentToken.get(key)) return;
+  if (_cardCatchmentAbort.get(key) === abort) _cardCatchmentAbort.delete(key);
+  if (result?.status === 'ok' && result.outer?.length) drawCardCatchmentPolygon(key, result, accentColor);
+  else clearCardCatchmentPolygon(key);
+}
+
+function drawCatchmentPolygonForCard(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return;
+  drawBasinOverlay(colIdx, pt.lat, pt.lng, _weatherPointGradColor(pt));
+}
+
+function buildWeatherCardViewToggleHtml(showCatchment) {
+  return `<div class="wc-view-toggle" role="tablist">
+    <button class="wc-view-btn${showCatchment ? '' : ' active'}" type="button" data-wc-view="weather" role="tab" aria-selected="${!showCatchment}">天氣</button>
+    <button class="wc-view-btn${showCatchment ? ' active' : ''}" type="button" data-wc-view="catchment" role="tab" aria-selected="${showCatchment}">集水區</button>
+  </div>`;
+}
+
+// A catchment row's value cell: value text + optional risk chip. Matches the
+// weather card's right-aligned .wc-info-value slot.
+function catchmentValueHtml(row) {
+  const chip = row.level
+    ? ` <span class="risk-chip risk-${catchmentSevClass(row.severity)}">${row.level}</span>`
+    : '';
+  return `${row.value ?? ''}${chip}`;
+}
+
+// Full-size skeleton in the weather-card 2-column grid format (terrain / weather
+// / hydrology), rendered up front so the card never resizes when async data
+// lands. Values fill in place by index — row order MUST match the fill order in
+// renderCardCatchment (area, outlet, computeGeometryRows / computeHydroIndicators).
+// `1` = full-width row (like the weather card's is-wide coords row) for the long
+// values that don't fit a half-column.
+function buildCatchmentSkeletonHtml(weatherOnly = false) {
+  const TERRAIN = [['集水區面積', 0], ['出水口海拔', 0], ['海拔範圍', 1], ['平均坡度', 1], ['主流長度', 0]];
+  const WEATHER = CATCHMENT_CARD_WEATHER_KEYS.map(([, label]) => [label, 0]);
+  const HYDRO = [['土壤含水量', 0], ['前期降雨', 1], ['預估逕流量', 0], ['河川流量', 1], ['溪水暴漲風險', 0], ['土石流風險', 0]];
+  const grid = (section, rows) =>
+    `<div class="wc-info-grid wc-catch-grid" data-catch="${section}">` +
+    rows.map(([label, wide]) =>
+      `<div class="wc-info-item${wide ? ' is-wide' : ''}"${wide ? ' style="grid-column: span 2;"' : ''}${wcTipAttr(label)}>`
+      + `<span class="wc-info-label">${label}</span>`
+      + `<span class="wc-info-value wc-catch-val">…</span></div>`).join('') +
+    `</div>`;
+  // Weather sits at the TOP. When 詳細集水區資訊 is off, only the weather group shows
+  // (地形/水文 are neither rendered nor computed).
+  if (weatherOnly) return grid('weather', WEATHER);
+  return grid('weather', WEATHER) + grid('terrain', TERRAIN) + grid('hydro', HYDRO)
+    + `<div class="ct-disclaimer">水文指標為粗略估算，僅供參考</div>`;
+}
+
+// Resolve a waypoint card's weather value for a key, matching the weather view's
+// fallback chain (live data → saved cells → weather-table cell → '—') so the
+// catchment view's weather rows never diverge from the weather view.
+function resolveCardWeatherValue(colIdx, info, key) {
+  if (info.data) return getCellValue(info.data, key, info.pt);
+  if (info.cells && hasSavedWeatherCellField(info.cells, key)) return getSavedWeatherCellValue(info.cells, key);
+  const tableValue = getWeatherTableCellDisplayValue(colIdx, key);
+  return (tableValue !== null && tableValue !== undefined) ? tableValue : '—';
+}
+
+// Fill a full card's `.wc-catchment` PANEL: render the fixed skeleton, delineate
+// (cache-first) for the terrain rows, fill the card's weather, then async
+// hydrology — all in place. The basin OVERLAY on the map is owned separately by
+// syncCatchmentBasins(); this only touches the card body. Guarded by its own
+// per-key panel token/abort so it never fights the polygon draw, and so a
+// superseded fill (time change or a newer card) never lands stale (INC race
+// rule). weatherVal(key) resolves the card's already-shown weather value (same
+// fallback chain as the weather view), so no extra weather fetch is issued here.
+async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weatherVal, container, detailed = true }) {
+  if (!container) return;
+  const token = (_cardPanelToken.get(key) || 0) + 1;
+  _cardPanelToken.set(key, token);
+  _cardPanelAbort.get(key)?.abort();
+  const abort = new AbortController();
+  _cardPanelAbort.set(key, abort);
+  const stale = () => token !== _cardPanelToken.get(key);
+
+  container.innerHTML = buildCatchmentSkeletonHtml(!detailed);
+  const fill = (section, values) => {
+    const cells = container.querySelectorAll(`[data-catch="${section}"] .wc-catch-val`);
+    values.forEach((v, i) => { if (cells[i]) cells[i].innerHTML = v; });
+  };
+  // Weather mirrors the weather view (already loaded) — fill it immediately while the DEM computes.
+  fill('weather', CATCHMENT_CARD_WEATHER_KEYS.map(([k]) => (weatherVal ? weatherVal(k) : '—')));
+
+  // 詳細集水區資訊 off: weather-only card. No DEM delineation, no hydrology read —
+  // the hidden 地形/水文 are not computed at all ("其他不顯示的也不用讀取").
+  if (!detailed) { _cardPanelAbort.delete(key); return; }
+
+  // Prefill terrain + hydrology from the remembered readout so nothing shows "…"
+  // while the live compute runs — and the info survives if a fetch fails / offline.
+  const saved = getSavedCatchmentCells(semKey);
+  const hasSaved = saved?.status === 'ok';
+  if (hasSaved) {
+    if (Array.isArray(saved.terrain)) fill('terrain', saved.terrain);
+    if (Array.isArray(saved.hydro)) fill('hydro', saved.hydro);
+  }
+
+  const endBusy = getCatchmentCacheHit(lat, lng) ? null : beginCardCatchmentBusy();
+  let result;
+  try {
+    if (endBusy && _cardCatchmentBusyRun) await waitIfLoadPaused(_cardCatchmentBusyRun);  // honor 停止
+    if (stale()) return;                                   // superseded while parked
+    result = await getCatchmentFor(lat, lng, { signal: abort.signal });
+  } catch (err) {
+    if (stale()) return;                                   // superseded — discard silently
+    result = { status: 'error' };
+  } finally {
+    endBusy?.();
+  }
+  if (stale()) return;
+
+  if (!result || result.status !== 'ok' || !result.outer?.length) {
+    // Live delineation failed — keep the remembered readout on screen if we have
+    // one; only show the reason when there is nothing to fall back to.
+    if (hasSaved) return;
+    const msg = result?.status === 'flat' ? '此處為大面積平地，無法判定集水方向'
+      : result?.status === 'empty' ? '此處集水範圍過小'
+      : '海拔資料取得失敗，請稍後再試';
+    container.innerHTML = `<div class="ct-nodata wc-catch-msg">${msg}</div>`;
+    return;
+  }
+
+  const geoRows = computeGeometryRows(result);
+  const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
+  const terrainVals = [formatArea(result.areaM2), outlet, ...geoRows.map(catchmentValueHtml)];
+  fill('terrain', terrainVals);
+
+  let hydroEnv = null;
+  try {
+    hydroEnv = await fetchHydroData(lat, lng, dateStr, hour, { signal: abort.signal });
+  } catch (err) {
+    if (stale()) return;
+    hydroEnv = null;
+  }
+  if (stale()) return;
+  if (_cardPanelAbort.get(key) === abort) _cardPanelAbort.delete(key);
+  const hydroVals = (hydroEnv && hydroEnv.available)
+    ? computeHydroIndicators(result, hydroEnv).map(catchmentValueHtml)
+    : null;
+  if (hydroVals) fill('hydro', hydroVals);
+  else if (!(hasSaved && Array.isArray(saved.hydro))) fill('hydro', CATCHMENT_HYDRO_LABELS.map(() => '—'));
+
+  // Remember the freshest complete readout (keyed like the weather cells) so it
+  // shows instantly next time and after a page refresh / .melmap import.
+  saveCatchmentCells(semKey, {
+    status: 'ok',
+    terrain: terrainVals,
+    hydro: hydroVals || (hasSaved ? saved.hydro : null) || CATCHMENT_HYDRO_LABELS.map(() => '—'),
+    dateStr: dateStr || null,
+    hour: Number.isFinite(Number(hour)) ? Number(hour) : null,
+  });
+}
+
+// Per-point "set to now" for a waypoint card. Mirrors the card's ± buttons
+// (shiftWaypointTime shifts only this column, respecting strict-linear order).
+function setWeatherCardTimeToNow(colIdx, mode /* 'day' | 'hour' */) {
+  const container = document.getElementById('weather-table-container');
+  if (!container) return;
+  const thDate = container.querySelector(`.wt-th-date[data-idx="${colIdx}"]`);
+  const di = thDate?.querySelector('.wt-date-input');
+  if (!di || di.disabled) return;
+  const curMs = colToMs(thDate);
+  if (!Number.isFinite(curMs) || curMs <= 0) return;
+  const cur = new Date(curMs);
+  const now = new Date();
+  let deltaMs = 0;
+  if (mode === 'day') {
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const curDay = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()).getTime();
+    deltaMs = today - curDay;
+  } else {
+    deltaMs = (now.getHours() - cur.getHours()) * 3600000;
+  }
+  if (deltaMs !== 0) shiftWaypointTime(colIdx, deltaMs);
 }
 
 function buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour) {
@@ -10514,6 +12584,16 @@ function buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour) {
         <button class="wc-time-adj-btn wc-adj-hour-plus" title="增加 1 小時" aria-label="增加 1 小時"${hourPlusDisabled ? ' disabled' : ''}>+</button>
       </span>
     </div>
+  </div>
+  <div class="wc-now-row">
+    <button class="wc-now-btn wc-adj-date-now" type="button" title="設為今日" aria-label="設為今日"${locked ? ' disabled' : ''}>
+      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z" fill="currentColor"/></svg>
+      <span>今日</span>
+    </button>
+    <button class="wc-now-btn wc-adj-hour-now" type="button" title="設為現在" aria-label="設為現在"${locked ? ' disabled' : ''}>
+      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z" fill="currentColor"/><path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="currentColor"/></svg>
+      <span>現在</span>
+    </button>
   </div>`;
 }
 
@@ -10574,6 +12654,8 @@ function updateCompactWeatherMarquee(root) {
 function _renderWeatherCard(colIdx) {
   const state = _wcStates.get(colIdx);
   if (!state || state === 'minimized') {
+    // Hidden (closed/minimized): keep the basin overlay so 縮小/最小 doesn't
+    // remove the catchment range from the map. It clears on toggle-to-weather.
     mapManager.closeWeatherPopup(colIdx);
     return;
   }
@@ -10588,6 +12670,10 @@ function _renderWeatherCard(colIdx) {
   const { data, cells, pt, dateStr, hour } = info;
   const isCompact = state === 'compact';
   const isFull = state === 'full';
+  // Basin overlays are reconciled centrally by syncCatchmentBasins() (called from
+  // the view toggle, refreshOpenWeatherCards, and route rebuilds), so the overlay
+  // follows the catchment-view choice regardless of card size/open-state — full,
+  // compact, minimized, or closed. This render just draws the card body.
 
   // Check if this card should be highlighted
   const curTh = document.querySelector('#weather-table-container .wt-col-head.wt-col-highlight');
@@ -10657,15 +12743,26 @@ function _renderWeatherCard(colIdx) {
     html += `<div class="wc-weather-main"><button class="wc-weather-icon q-weather-icon-close" type="button" title="關閉天氣卡" aria-label="關閉天氣卡">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</button><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
+    const showCatch = isCatchmentView(colIdx);
+    // Time controls sit in the shared block above the weather/集水區 toggle so they
+    // apply to whichever view is active.
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
-    html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
-    html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer));
-    html += buildWeatherCardSectionHtml(WEATHER_CARD_BOTTOM_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-bottom-facts');
+    html += buildWeatherCardViewToggleHtml(showCatch);
+    if (showCatch) {
+      html += `<div class="wc-catchment"></div>`;
+    } else if (!weatherDetailEnabledFor(pt)) {
+      // 詳細天氣資訊 off: only 雨量/降雨機率/濕度/風速, no full detail / Windy link.
+      html += buildWeatherCardSectionHtml(WEATHER_CARD_MINIMAL_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
+    } else {
+      html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-top-stats');
+      html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer));
+      html += buildWeatherCardSectionHtml(WEATHER_CARD_BOTTOM_ROWS, val, (layer) => buildWindyUrl(pt.lat, pt.lng, dateStr, hour, layer), 'wc-bottom-facts');
 
-    const windyUrl = buildWindyUrl(pt.lat, pt.lng, dateStr, hour);
-    html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
-    html += `<img src="https://www.windy.com/favicon.ico" alt="Windy"><span>在 Windy 開啟</span>`;
-    html += `</a>`;
+      const windyUrl = buildWindyUrl(pt.lat, pt.lng, dateStr, hour);
+      html += `<a class="wc-windy-btn" href="${windyUrl}" target="_blank" rel="noopener" title="在 Windy 開啟">`;
+      html += `<img src="https://www.windy.com/favicon.ico" alt="Windy"><span>在 Windy 開啟</span>`;
+      html += `</a>`;
+    }
   }
 
   html += `</div></div>`;
@@ -10680,6 +12777,24 @@ function _renderWeatherCard(colIdx) {
  * the route's weatherPoints). Fetches today's data at the current hour.
  * Toggles closed if already open.
  */
+// Last-rendered GPS-cursor card context, so the weather ⇄ catchment toggle can
+// rebuild the card without re-fetching.
+let _cursorCardCtx = null;
+
+function _rerenderCursorWeatherCard() {
+  const ctx = _cursorCardCtx;
+  if (!ctx || !mapManager.isCursorWeatherPopupOpen?.()) return;
+  const html = _buildCursorWeatherCardHtml(ctx.lat, ctx.lng, ctx.dateStr, ctx.hour, ctx.data, ctx.status);
+  mapManager.openCursorWeatherPopup(html, (wrapper) => {
+    _bindCursorWeatherCardEvents(wrapper, ctx.lat, ctx.lng);
+  });
+}
+
+function _resetCursorCatchment() {
+  cursorCatchmentView = false;
+  clearCardCatchment('cursor');
+}
+
 async function openCursorWeatherCard(lat, lng) {
   if (isWeatherCardInteractionLocked()) {
     showWeatherCardBusyNotice();
@@ -10687,8 +12802,10 @@ async function openCursorWeatherCard(lat, lng) {
   }
   if (mapManager.isCursorWeatherPopupOpen?.()) {
     mapManager.closeCursorWeatherPopup();
+    _resetCursorCatchment();
     return;
   }
+  _resetCursorCatchment();   // a fresh cursor card always starts in weather view
 
   const now = new Date();
   const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -10696,6 +12813,7 @@ async function openCursorWeatherCard(lat, lng) {
   const cacheKey = weatherCoordKey(lat, lng, dateStr, hour);
 
   const renderCard = (data, status) => {
+    _cursorCardCtx = { lat, lng, dateStr, hour, data, status };
     const html = _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status);
     mapManager.openCursorWeatherPopup(html, (wrapper) => {
       _bindCursorWeatherCardEvents(wrapper, lat, lng);
@@ -10752,7 +12870,11 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
   const tempIcon = buildRowWindyIconHtml('temp', buildWindyUrl(lat, lng, dateStr, hour, 'temp'), 14);
   html += `<div class="wc-weather-main"><button class="wc-weather-icon q-weather-icon-close" type="button" title="關閉天氣卡" aria-label="關閉天氣卡">${buildWeatherRoundIconHtml(wIcon, 'wc-main-weather-icon')}</button><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
 
-  if (status === 'ok') {
+  html += buildWeatherCardViewToggleHtml(cursorCatchmentView);
+
+  if (cursorCatchmentView) {
+    html += `<div class="wc-catchment"></div>`;
+  } else if (status === 'ok') {
     html += buildWeatherCardSectionHtml(WEATHER_CARD_TOP_STAT_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-top-stats');
     html += buildWeatherCardSectionHtml(WEATHER_CARD_MIDDLE_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer));
     html += buildWeatherCardSectionHtml(WEATHER_CARD_BOTTOM_ROWS, val, (layer) => buildWindyUrl(lat, lng, dateStr, hour, layer), 'wc-bottom-facts');
@@ -10773,13 +12895,17 @@ function _buildCursorWeatherCardHtml(lat, lng, dateStr, hour, data, status) {
 
 function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
   if (!wrapper) return;
+  const closeCursorCard = () => {
+    mapManager.closeCursorWeatherPopup();
+    _resetCursorCatchment();
+  };
   wrapper.querySelector('.q-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    mapManager.closeCursorWeatherPopup();
+    closeCursorCard();
   });
   wrapper.querySelector('.q-weather-icon-close')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    mapManager.closeCursorWeatherPopup();
+    closeCursorCard();
   });
   wrapper.querySelectorAll('.clickable-coords').forEach((el) => {
     el.addEventListener('click', (e) => {
@@ -10788,6 +12914,36 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
       copyToClipboard(text, (ok) => showNotification(ok ? `已複製座標 ${text}` : '複製失敗', ok ? 'success' : 'error', 1500));
     });
   });
+
+  // Weather ⇄ catchment view toggle for the GPS-cursor card.
+  wrapper.querySelectorAll('.wc-view-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const toCatch = btn.dataset.wcView === 'catchment';
+      if (toCatch === cursorCatchmentView) return;
+      cursorCatchmentView = toCatch;
+      if (!toCatch) clearCardCatchment('cursor');
+      _rerenderCursorWeatherCard();
+    });
+  });
+
+  if (cursorCatchmentView) {
+    const container = wrapper.querySelector('.wc-catchment');
+    const ctx = _cursorCardCtx;
+    if (container && ctx) {
+      drawBasinOverlay('cursor', ctx.lat, ctx.lng, '#6366f1');   // basin on the map
+      renderCardCatchment({                                       // panel body
+        key: 'cursor',
+        semKey: null,   // GPS cursor is ephemeral — not remembered
+        lat: ctx.lat,
+        lng: ctx.lng,
+        dateStr: ctx.dateStr,
+        hour: ctx.hour,
+        weatherVal: (k) => (ctx.data ? getCellValue(ctx.data, k, { lat: ctx.lat, lng: ctx.lng }) : '—'),
+        container,
+      });
+    }
+  }
 }
 
 function isWeatherCardBlankClickTarget(target, root) {
@@ -10807,6 +12963,9 @@ function isWeatherCardBlankClickTarget(target, root) {
     '.wc-weather-temp',
     '.wc-info-item',
     '.wc-time-edit-wrap',
+    '.wc-now-row',
+    '.wc-view-toggle',
+    '.wc-catchment',
   ].join(',');
   const contentOrControl = target.closest(contentOrControlSelector);
   if (contentOrControl && root.contains(contentOrControl)) return false;
@@ -10919,6 +13078,56 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   bindCardTimeAdjust('.wc-adj-date-plus', 86400000);
   bindCardTimeAdjust('.wc-adj-hour-minus', -3600000);
   bindCardTimeAdjust('.wc-adj-hour-plus', 3600000);
+
+  // "Set to now" buttons — per-point, matching the ± buttons above.
+  root.querySelector('.wc-adj-date-now')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setWeatherCardTimeToNow(colIdx, 'day');
+  });
+  root.querySelector('.wc-adj-hour-now')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setWeatherCardTimeToNow(colIdx, 'hour');
+  });
+
+  // Weather ⇄ catchment view toggle. Applies to the whole collective set (like
+  // the card's expand/close), and the choice is remembered per card so it
+  // reopens in the same view. Re-renders each target; the basin overlay is
+  // drawn/cleared by the catchment fill below.
+  root.querySelectorAll('.wc-view-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const toCatch = btn.dataset.wcView === 'catchment';
+      if (toCatch === isCatchmentView(colIdx)) return;   // already in this view
+      // Remember the choice for the whole collective set (so closed/compact cards
+      // adopt it too), then re-render only the open cards via the safe refresh
+      // path (raw _renderWeatherCard would close a momentarily-unloaded card).
+      getWeatherCardInteractionIndices(colIdx).forEach((idx) => {
+        setCatchmentViewMemory(idx, toCatch);
+      });
+      syncCatchmentBasins();   // draw/clear basins for the whole set (incl. compact/closed)
+      refreshOpenWeatherCards();
+    });
+  });
+
+  // If this full card is in catchment view, fill its panel (the basin overlay on
+  // the map is handled separately by syncCatchmentBasins).
+  if (isCatchmentView(colIdx)) {
+    const container = root.querySelector('.wc-catchment');
+    const info = _getWeatherCardData(colIdx);
+    if (container && info?.pt) {
+      renderCardCatchment({
+        key: colIdx,
+        semKey: getSemanticKey(info.pt),
+        lat: info.pt.lat,
+        lng: info.pt.lng,
+        dateStr: info.dateStr,
+        hour: info.hour,
+        weatherVal: (k) => resolveCardWeatherValue(colIdx, info, k),
+        container,
+        detailed: catchmentDetailEnabledFor(info.pt),
+      });
+    }
+  }
 
   // Touch gestures: swipe detection
   let _touchStartX = 0, _touchStartY = 0;

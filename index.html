@@ -69,13 +69,26 @@
         <div class="loading-bar"></div>
       </div>
     </div>
-    <div class="loading-content">
-      <h2 id="route-weather-busy-title">處理中</h2>
-      <p id="route-weather-busy-detail">請稍候...</p>
+    <div class="loading-content progress-card">
+      <div class="progress-spinner" aria-hidden="true">
+        <svg viewBox="0 0 50 50" width="26" height="26">
+          <circle class="progress-spinner-track" cx="25" cy="25" r="20" fill="none" stroke-width="5"/>
+          <circle class="progress-spinner-arc" cx="25" cy="25" r="20" fill="none" stroke-width="5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="progress-text">
+        <h2 class="progress-title" id="route-weather-busy-title">處理中</h2>
+        <p class="progress-detail" id="route-weather-busy-detail">請稍候...</p>
+      </div>
+      <div class="progress-side">
+        <span class="progress-task-count hidden" id="route-weather-busy-count"></span>
+        <span class="progress-paused-badge hidden" id="route-weather-busy-paused" data-i18n="已暫停">已暫停</span>
+        <div class="loading-progress-text progress-percent" id="route-weather-busy-progress">0%</div>
+        <button type="button" id="route-weather-busy-toggle" class="progress-toggle-btn hidden" aria-pressed="false">停止</button>
+      </div>
       <div class="loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="loading-bar-fill" id="route-weather-busy-fill"></div>
       </div>
-      <div class="loading-progress-text" id="route-weather-busy-progress">0%</div>
     </div>
   </div>
 
@@ -109,6 +122,10 @@
           </svg>
           <span>衛星</span>
         </button>
+      </div>
+      <div class="view-mode-toggle" id="view-mode-toggle" role="group" aria-label="2D / 3D 檢視切換">
+        <button type="button" class="view-mode-btn active" id="btn-view-2d" title="2D 地圖" aria-pressed="true">2D</button>
+        <button type="button" class="view-mode-btn" id="btn-view-3d" title="建立 3D 地形" aria-pressed="false" disabled>3D</button>
       </div>
     </div>
     <div class="toolbar-right">
@@ -150,28 +167,82 @@
           fill="currentColor" />
       </svg>
     </button>
+    <button id="btn-measure-tool" class="map-action-btn" title="量測工具" aria-label="量測工具" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="20" height="20">
+        <path d="M21.71 8.29l-6-6a1 1 0 0 0-1.42 0l-12 12a1 1 0 0 0 0 1.42l6 6a1 1 0 0 0 1.42 0l12-12a1 1 0 0 0 0-1.42zM9 19.59 4.41 15l1.3-1.29 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8L15 4.41 19.59 9 9 19.59z" fill="currentColor" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- F2: Measurement tools panel -->
+  <div id="measure-panel" class="measure-panel hidden" role="group" aria-label="量測工具">
+    <div class="measure-panel-head">
+      <div class="measure-mode-toggle" id="measure-mode-toggle" role="group">
+        <button type="button" class="measure-mode-btn active" data-measure-mode="segment">軌跡量測</button>
+        <button type="button" class="measure-mode-btn" data-measure-mode="area">距離／面積</button>
+        <button type="button" class="measure-mode-btn" data-measure-mode="catchment">集水區</button>
+      </div>
+      <button type="button" class="measure-close-btn" id="btn-measure-close" title="關閉量測" aria-label="關閉量測">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" /></svg>
+      </button>
+    </div>
+    <p class="measure-hint" id="measure-hint">點擊軌跡上兩點以量測區間距離與爬升下降</p>
+    <div class="measure-readout" id="measure-readout"></div>
+    <div class="measure-panel-actions">
+      <button type="button" class="btn-secondary measure-clear-btn" id="btn-measure-clear">清除</button>
+    </div>
   </div>
 
   <!-- Bottom Panel: Elevation Profile + Weather Timeline -->
-  <div id="bottom-panel" class="bottom-panel">
+  <div id="bottom-panel" class="bottom-panel bp-mode-elev">
     <div class="bp-resize-handle" id="bp-resize-handle"></div>
     <div class="bp-chart-row">
+      <!-- Pinned top-right so it stays reachable even where the summary bar is
+           hidden (landscape phones) or scrolled off (narrow portrait). -->
+      <div class="bp-view-toggle" id="bp-view-toggle" role="group" aria-label="下方面板檢視切換">
+        <button type="button" class="bp-view-btn active" data-bp-view="elev" aria-pressed="true">垂直軌跡圖</button>
+        <button type="button" class="bp-view-btn" data-bp-view="weather" aria-pressed="false">詳細天氣</button>
+        <button type="button" class="bp-view-btn" data-bp-view="catchment" aria-pressed="false">詳細集水區</button>
+      </div>
+      <!-- Always-visible route summary chips (mirror the side-panel stats).
+           Lives inside .bp-chart-row so the panel's default-height math
+           (handle + chart row) accounts for it automatically. -->
+      <div id="route-summary-bar" class="route-summary-bar" aria-live="polite">
+        <div class="rsb-chip">
+          <span class="rsb-label">距離</span>
+          <span class="rsb-value" id="rsb-distance">—</span>
+        </div>
+        <div class="rsb-chip hidden" id="rsb-time-chip">
+          <span class="rsb-label">預估時間</span>
+          <span class="rsb-value" id="rsb-time">—</span>
+        </div>
+        <div class="rsb-chip">
+          <span class="rsb-label">總爬升</span>
+          <span class="rsb-value" id="rsb-ascent">—</span>
+        </div>
+        <div class="rsb-chip">
+          <span class="rsb-label">總下降</span>
+          <span class="rsb-value" id="rsb-descent">—</span>
+        </div>
+      </div>
       <div id="elevation-chart-container" class="elevation-chart-container">
         <canvas id="elevation-chart"></canvas>
         <div class="chart-empty-state" id="chart-empty">
           <p>新增路線後顯示高度剖面</p>
         </div>
-        <button id="btn-toggle-elevation" class="chart-toggle-btn" title="收縮/展開高度圖">
-          <svg viewBox="0 0 24 24" width="16" height="16">
-            <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" fill="currentColor" />
-          </svg>
-        </button>
       </div>
     </div>
     <div class="bp-weather-scroll">
       <div id="weather-table-container">
         <div class="weather-empty-state">
           <p>完成規劃路線後點擊「取得天氣」</p>
+        </div>
+      </div>
+    </div>
+    <div class="bp-catchment-scroll">
+      <div id="catchment-table-container">
+        <div class="weather-empty-state">
+          <p>完成規劃路線後點擊「取得集水區」</p>
         </div>
       </div>
     </div>
@@ -268,10 +339,9 @@
                 fill="currentColor" />
             </svg>
           </button>
-          <button class="icon-btn" id="btn-open-3d-viewer" title="建立 3D 地形" aria-label="建立 3D 地形" disabled>
-            <svg viewBox="0 0 24 24" width="16" height="16">
-              <path d="M21 5v14H3V5h18zm-2 2H5v3h14V7zm0 5H5v5h14v-5z" fill="currentColor" opacity="0.7"/>
-              <path d="M7 10l2-3h6l2 3-5 4-5-4z" fill="currentColor" opacity="0.9"/>
+          <button class="icon-btn" id="btn-favorite-quick" title="加到最愛" aria-label="加到最愛" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24z" fill="currentColor" />
             </svg>
           </button>
           <button class="icon-btn danger" id="btn-clear-route" title="清除路線">
@@ -412,7 +482,7 @@
         </div>
         <!-- 按段重算 + 配速時間 並排 -->
         <div class="pace-checks-row">
-          <label class="pace-check-opt" title="勾選後,各段中繼點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
+          <label class="pace-check-opt" title="勾選後,各段副航點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">
             <input type="checkbox" id="pace-per-segment-enable">
             <span>按段重算</span>
           </label>
@@ -482,7 +552,7 @@
           </svg>
           <span class="h3-label">航點設置</span>
         </h3>
-        <div class="section-actions waypoint-header-actions" onclick="event.stopPropagation()" title="中繼點設置">
+        <div class="section-actions waypoint-header-actions" onclick="event.stopPropagation()" title="副航點設置">
           <div class="interval-mode-controls">
             <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
               關</label>
@@ -508,11 +578,11 @@
           style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
           <label class="pace-check-opt">
             <input type="checkbox" id="collective-marked-pts" checked>
-            <span>全標示點</span>
+            <span>全主航點</span>
           </label>
           <label class="pace-check-opt">
             <input type="checkbox" id="collective-intermediate-pts" checked>
-            <span>全中繼點</span>
+            <span>全副航點</span>
           </label>
           <label class="pace-check-opt" title="勾選全航點時將自動包含前兩項">
             <input type="checkbox" id="collective-all-waypoints">
@@ -537,9 +607,33 @@
             <input type="checkbox" id="show-waypoint-weather-icon" checked>
             <span>主航點</span>
           </label>
-          <label class="pace-check-opt" title="在地圖上顯示中繼點的天氣圖示">
+          <label class="pace-check-opt" title="在地圖上顯示副航點的天氣圖示">
             <input type="checkbox" id="show-intermediate-weather-icon" checked>
-            <span>中繼點</span>
+            <span>副航點</span>
+          </label>
+        </div>
+
+        <div class="pace-checks-row" style="margin-bottom: 8px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
+          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">主航點資訊</span>
+          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
+            <input type="checkbox" id="wp-detail-weather" checked>
+            <span>詳細天氣資訊</span>
+          </label>
+          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
+            <input type="checkbox" id="wp-detail-catchment" checked>
+            <span>詳細集水區資訊</span>
+          </label>
+        </div>
+
+        <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
+          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">副航點資訊</span>
+          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
+            <input type="checkbox" id="im-detail-weather">
+            <span>詳細天氣資訊</span>
+          </label>
+          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
+            <input type="checkbox" id="im-detail-catchment">
+            <span>詳細集水區資訊</span>
           </label>
         </div>
 
@@ -628,6 +722,28 @@
             <div class="offline-panel-heading">
               <div class="offline-panel-title">App 離線底圖來源</div>
               <div class="offline-panel-note">魯地圖 .map / MBTiles</div>
+            </div>
+            <div class="offline-map-download" id="offline-map-download-links">
+              <div class="offline-map-download-heading">
+                <div class="offline-panel-title">取得離線底圖</div>
+                <div class="offline-panel-note">下載 .map 圖資後,用下方「匯入底圖」載入</div>
+              </div>
+              <div class="offline-map-download-btn-row">
+                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="rudymap" title="下載魯地圖離線圖資（台灣）">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                  </svg>
+                  <span class="offline-map-download-name">魯地圖</span>
+                  <span class="offline-map-download-region">台灣</span>
+                </button>
+                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="openandromaps" title="下載 OpenAndroMaps 離線圖資（世界地圖）">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                  </svg>
+                  <span class="offline-map-download-name">OpenAndroMaps</span>
+                  <span class="offline-map-download-region">世界</span>
+                </button>
+              </div>
             </div>
             <div class="offline-pack-list" id="offline-map-source-list" aria-live="polite">
               <div class="offline-pack-empty">Web 版不支援魯地圖離線底圖匯入</div>
@@ -1053,17 +1169,6 @@
       </div>
     </section>
 
-    <!-- Map Pack progress (shown during .melmap export / import) -->
-    <div class="download-progress hidden" id="download-progress-container" style="margin: 10px 16px;">
-      <div style="font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between;">
-        <span>進度</span>
-        <span id="download-progress-text">0%</span>
-      </div>
-      <div class="loading-bar">
-        <div class="loading-bar-fill" id="download-progress-fill" style="width: 0%"></div>
-      </div>
-    </div>
-
     <!-- About Me Section -->
     <section class="panel-section about-me-section">
       <div class="about-me-content">
@@ -1258,6 +1363,10 @@
           <span class="app-title">Mapping Elf</span>
         </div>
         <span class="tv-title-sub">3D 地形導航</span>
+        <div class="view-mode-toggle tv-view-mode-toggle" role="group" aria-label="2D / 3D 檢視切換">
+          <button type="button" class="view-mode-btn" id="tv-view-2d" title="返回 2D 地圖" aria-pressed="false">2D</button>
+          <button type="button" class="view-mode-btn active" id="tv-view-3d" title="3D 地形導航" aria-pressed="true">3D</button>
+        </div>
       </div>
       <div class="tv-toolbar-actions">
         <label class="language-switcher tv-language-switcher" title="語言">
@@ -1297,11 +1406,6 @@
           </svg>
           <span>更新</span>
         </button>
-        <button type="button" class="tv-close-btn" id="tv-close-btn" title="關閉">
-          <svg viewBox="0 0 24 24" width="18" height="18">
-            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/>
-          </svg>
-        </button>
       </div>
     </div>
     <div class="terrain-viewer-canvas-wrap" id="terrain-canvas-wrap">
@@ -1320,6 +1424,16 @@
             <div class="tv-info-title">航點 <span class="tv-wp-count" id="tv-wp-count"></span></div>
             <ol class="tv-wp-list" id="tv-wp-list"></ol>
           </div>
+        </div>
+      </div>
+      <!-- Relive close-up waypoint card: TCG-style "draw" reveal that pops in
+           when the playback camera pauses on a waypoint, surfacing the walker's
+           personal / terrain / weather info for that moment. -->
+      <div class="tv-wp-card hidden" id="tv-wp-card" aria-live="polite">
+        <div class="tv-wp-card-inner">
+          <div class="tv-wp-card-glow" aria-hidden="true"></div>
+          <div class="tv-wp-card-shine" aria-hidden="true"></div>
+          <div class="tv-wp-card-body" id="tv-wp-card-body"></div>
         </div>
       </div>
       <!-- Marker detail popup (waypoints / landmarks) -->
@@ -1343,10 +1457,6 @@
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 16a4 4 0 010-8 5 5 0 019.6 1.5A3.5 3.5 0 0117 16H7z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
           <span id="tv-weather-label">天氣</span>
         </button>
-        <button class="tv-layer-btn active" id="tv-toggle-daynight" title="日夜光照">
-          <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-          <span>日夜</span>
-        </button>
         <button class="tv-layer-btn active" id="tv-toggle-effects" title="地標裝飾（峰頂／樹木／高塔／觀景點／紀念碑模型）">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 3v4M9 7h6l-1.2 12h-3.6L9 7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 21h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           <span>地標</span>
@@ -1354,6 +1464,14 @@
         <button class="tv-layer-btn active" id="tv-toggle-features" title="地圖圖資（道路／河流／水體／綠地／荒地／建築）">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 7l6-2 6 2 6-2v12l-6 2-6-2-6 2V7z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 5v12M15 7v12" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
           <span>圖資</span>
+        </button>
+        <button class="tv-layer-btn" id="tv-toggle-catchment" title="集水區（開啟時自動計算各主航點的集水範圍並貼合地形顯示）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 3s6 7 6 11a6 6 0 01-12 0c0-4 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.5 13a3.5 3.5 0 003.5 3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/></svg>
+          <span>集水區</span>
+        </button>
+        <button class="tv-layer-btn" id="tv-toggle-satellite" title="衛星影像（在 3D 地形上疊加即時衛星空拍圖）">
+          <svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4 12a8 8 0 0 1 8-8M12 20a8 8 0 0 0 8-8" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.6"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/></svg>
+          <span>衛星</span>
         </button>
         <button class="tv-layer-btn" id="tv-toggle-labelsize" title="標示字體（關／大／小）— 快捷鍵 L">
           <svg viewBox="0 0 24 24" width="14" height="14"><text x="2" y="18" font-size="15" fill="currentColor">A</text><text x="13" y="18" font-size="10" fill="currentColor">a</text></svg>
@@ -1366,14 +1484,6 @@
         <button class="tv-layer-btn" id="tv-toggle-normalize" title="海拔高度歸一化（誇大地形起伏，讓平緩地形更立體）">
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 20l5-9 4 5 3-4 6 8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M20 3v7M20 3l-1.6 1.8M20 3l1.6 1.8M20 10l-1.6-1.8M20 10l1.6-1.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span id="tv-normalize-label">歸一</span>
-        </button>
-        <button class="tv-layer-btn" id="tv-toggle-absolute" title="絕對海拔懸空（軌跡以真實海拔懸空顯示，並向地表投下垂直支柱）">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M3 18c3-3 6-3 9-6s6-6 9-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M6 15.5V21M12 12.5V21M18 6.5V21" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity="0.7"/></svg>
-          <span>懸空</span>
-        </button>
-        <button class="tv-layer-btn" id="tv-toggle-trail" title="軌跡時序揭示（依播放進度逐步顯示走過的軌跡）">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 17c3 0 4-8 8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 9c3 0 3 4 6 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="1 3" opacity="0.6"/><circle cx="12" cy="9" r="2" fill="currentColor"/></svg>
-          <span>揭示</span>
         </button>
       </div>
       <!-- Position-driven live readout (date/time, mileage, altitude, speed, grade, fatigue, weather) -->
@@ -1412,19 +1522,19 @@
            圖資/map features re-download in the background — one continuous bar
            instead of two separate widgets. -->
       <div class="tv-loading-overlay hidden" id="tv-loading" aria-live="polite">
-        <div class="tv-loading-card">
-          <div class="tv-loading-spinner" aria-hidden="true">
+        <div class="tv-loading-card progress-card">
+          <div class="tv-loading-spinner progress-spinner" aria-hidden="true">
             <svg viewBox="0 0 50 50" width="44" height="44">
-              <circle class="tv-loading-track" cx="25" cy="25" r="20" fill="none" stroke-width="4"/>
-              <circle class="tv-loading-arc" cx="25" cy="25" r="20" fill="none" stroke-width="4" stroke-linecap="round"/>
+              <circle class="tv-loading-track progress-spinner-track" cx="25" cy="25" r="20" fill="none" stroke-width="4"/>
+              <circle class="tv-loading-arc progress-spinner-arc" cx="25" cy="25" r="20" fill="none" stroke-width="4" stroke-linecap="round"/>
             </svg>
           </div>
-          <div class="tv-loading-title" id="tv-loading-title">建立地形模型</div>
-          <div class="tv-loading-detail" id="tv-loading-detail">下載高程資料中…</div>
+          <div class="tv-loading-title progress-title" id="tv-loading-title">建立地形模型</div>
+          <div class="tv-loading-detail progress-detail" id="tv-loading-detail">下載高程資料中…</div>
           <div class="loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="loading-bar-fill tv-loading-fill" id="tv-loading-fill" style="width:0%"></div>
           </div>
-          <div class="tv-loading-percent" id="tv-loading-percent">0%</div>
+          <div class="tv-loading-percent progress-percent" id="tv-loading-percent">0%</div>
           <button class="tv-loading-abort" id="tv-loading-abort">終止</button>
         </div>
       </div>
@@ -1436,6 +1546,11 @@
         </svg>
         <svg id="tp-pause-icon" viewBox="0 0 24 24" width="18" height="18" style="display:none">
           <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" fill="currentColor"/>
+        </svg>
+      </button>
+      <button class="tp-btn active" id="tp-follow" title="運鏡跟隨（播放時鏡頭自動跟拍人物）">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/>
         </svg>
       </button>
       <div class="tp-speed-wrap" id="tp-speed-wrap">

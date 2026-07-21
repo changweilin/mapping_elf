@@ -178,6 +178,9 @@ function waypointPinSvgHtml() {
 export class MapManager {
   constructor(containerId, onWaypointChange) {
     this.isFrozen = false; // Freeze map clicks and waypoint dragging
+    // While frozen for a data load, still permit appending a waypoint by
+    // map-click (the route geometry is settled; move/insert stay blocked).
+    this.allowAppendWhileFrozen = false;
     this.onWaypointChange = onWaypointChange;
     this.onRouteSelect = null; // callback(index)
     this.onRouteHover = null; // callback(lat, lng) | callback(null, null)
@@ -206,6 +209,10 @@ export class MapManager {
     this.stackedWaypointFlags = []; // Per-waypoint flag: outbound marker shares lat/lng with a return marker
     this.waypointLayerSwapped = []; // true if outbound is on top of return at this index
     this.ignoreMapClick = false;
+    // Measurement tools (F2): when set, map clicks feed the measure handler
+    // instead of creating waypoints. Host wires `onMeasureClick`.
+    this.measureMode = null;
+    this.onMeasureClick = null;
     this.dragLine = null;
     this.dragLine = null;
     this._dragWpIndex = undefined;
@@ -272,12 +279,19 @@ export class MapManager {
     });
 
     this.map.on('click', (e) => {
-      if (this.isFrozen) {
+      // A data load allows APPEND-by-click (allowAppendWhileFrozen) even while
+      // frozen; every other frozen interaction is still refused.
+      if (this.isFrozen && !this.allowAppendWhileFrozen) {
         this._notifyFrozenInteraction('map-click');
         return;
       }
       if (Date.now() - this._lastMultiTouchAt < 700) return;
       if (this.ignoreMapClick) return;
+      // Measurement mode intercepts the click: drop a measure point, no waypoint.
+      if (this.measureMode) {
+        this.onMeasureClick?.(e.latlng.lat, e.latlng.lng);
+        return;
+      }
       // A double-tap that just fired (zoom) sometimes still delivers a trailing
       // single `click`; ignore clicks landing within the double-tap window after
       // a dblclick so the second tap doesn't drop a stray waypoint.
@@ -3253,6 +3267,8 @@ export class MapManager {
         this._noteMultiTouchGesture();
         return;
       }
+      // Measurement mode owns track taps — never arm a route-insert long-press.
+      if (this.measureMode) return;
       if (oe.button !== undefined && oe.button !== 0) return;
       lpTriggered = false;
       const point = domEventPoint(oe);
@@ -3412,6 +3428,10 @@ export class MapManager {
     polyline.on('click', (e) => {
       L.DomEvent.stop(e);
       if (Date.now() - this._lastMultiTouchAt < 700) return;
+      // Measurement mode: the polyline's stopped propagation bypasses the
+      // map-level click handler, so forward on-track taps to the measure tool
+      // here instead of inserting a waypoint.
+      if (this.measureMode) { this.onMeasureClick?.(e.latlng.lat, e.latlng.lng); return; }
       if (lpTriggered || routeInsertDragActive) return;
       if (this.isFrozen) {
         this._notifyFrozenInteraction('route-edit');

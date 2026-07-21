@@ -73,10 +73,12 @@ html.light-theme {
   --text-secondary: #475569;
   --text-muted: #94a3b8;
 
-  --accent-primary: #00D16B;
+  /* Light mode: calmer Hikingbook-style trail green (dark mode keeps the
+     neon green that matches the cinematic 3D viewer). */
+  --accent-primary: #00A86B;
   --accent-secondary: #007BFF;
-  --accent-gradient: linear-gradient(135deg, #00D16B 0%, #007BFF 100%);
-  --accent-gradient-subtle: linear-gradient(135deg, rgba(0, 209, 107, 0.1) 0%, rgba(0, 123, 255, 0.1) 100%);
+  --accent-gradient: linear-gradient(135deg, #00A86B 0%, #007BFF 100%);
+  --accent-gradient-subtle: linear-gradient(135deg, rgba(0, 168, 107, 0.1) 0%, rgba(0, 123, 255, 0.1) 100%);
 
   --danger: #ef4444;
   --warning: #f59e0b;
@@ -435,11 +437,94 @@ html.light-theme #loading-screen .loading-bar {
   animation: loadingSlide 1.45s cubic-bezier(0.74, 0, 0.24, 1) infinite;
 }
 
+/* ======== Unified progress card ========
+   Single visual format for every progress readout (3D terrain build, route/
+   weather busy pill, map-pack export/import): circular spinner + title +
+   detail + determinate bar + percent. The 3D build card is the reference. */
+.progress-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(320px, calc(100% - 48px));
+  padding: 28px 26px;
+  background: rgba(20, 23, 31, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+html.light-theme .progress-card {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+}
+
+.progress-spinner svg {
+  display: block;
+}
+
+.progress-spinner-track {
+  stroke: rgba(148, 163, 184, 0.25);
+}
+
+.progress-spinner-arc {
+  stroke: var(--accent-primary);
+  stroke-dasharray: 90 150;
+  transform-origin: center;
+  animation: progressSpin 0.9s linear infinite;
+}
+
+@keyframes progressSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.progress-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-height: 16px;
+}
+
+.progress-card .loading-bar {
+  width: 100%;
+  height: 6px;
+}
+
+.progress-percent {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-task-count {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-overlay);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.progress-task-count.hidden {
+  display: none;
+}
+
 .app-busy-overlay {
   --busy-overlay-edge: 12px;
   --busy-overlay-zoom-reserve: 62px;
   position: fixed;
-  top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 10px);
+  /* Clear the floating 2D/3D pill (fixed at toolbar+10px) instead of covering it. */
+  top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 58px);
   left: var(--busy-overlay-zoom-reserve);
   right: var(--busy-overlay-edge);
   bottom: auto;
@@ -458,24 +543,100 @@ body.app-initial-loading .app-busy-overlay {
   opacity: 0;
 }
 
+/* Compact pill variant of the unified progress card: sits under the toolbar
+   and never blocks the map view. Same anatomy as the 3D build card, laid out
+   horizontally — spinner | title/detail | count+percent, bar across the bottom. */
 .app-busy-overlay .loading-content {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 4px 12px;
+  gap: 2px 10px;
   width: min(520px, 100%);
   min-width: 0;
   margin: 0 auto;
-  padding: 7px 12px 8px;
+  padding: 8px 12px 9px;
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(15, 23, 42, 0.9);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
   text-align: left;
   animation: busyOverlayBreathe 1.9s ease-in-out infinite;
+}
+
+.app-busy-overlay .progress-spinner {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.app-busy-overlay .progress-text {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+}
+
+.app-busy-overlay .progress-side {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 停止/繼續 toggle — the overlay itself is pointer-events:none (clicks pass to
+   the map), so the button must opt back in. */
+.progress-toggle-btn {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  padding: 3px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-primary);
+  background: rgba(110, 231, 183, 0.14);
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.progress-toggle-btn:hover {
+  background: rgba(110, 231, 183, 0.26);
+}
+
+.progress-toggle-btn.hidden {
+  display: none;
+}
+
+.progress-paused-badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.progress-paused-badge.hidden {
+  display: none;
+}
+
+/* Paused look: halt the spinner/bar/breathe animations and amber the toggle. */
+.app-busy-overlay.is-paused .loading-content,
+.app-busy-overlay.is-paused .progress-spinner-arc,
+.app-busy-overlay.is-paused .loading-bar-fill::after {
+  animation-play-state: paused;
+}
+
+.app-busy-overlay.is-paused .progress-toggle-btn {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
 }
 
 .route-busy-center-brand {
@@ -542,7 +703,6 @@ html.light-theme .app-busy-overlay .loading-content {
 }
 
 .app-busy-overlay .loading-content p {
-  grid-column: 1 / -1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -550,13 +710,16 @@ html.light-theme .app-busy-overlay .loading-content {
   margin: 0;
   font-size: 11px;
   line-height: 1.2;
+  min-height: 0;
 }
 
 .app-busy-overlay .loading-bar {
   grid-column: 1 / -1;
+  grid-row: 3;
   width: 100%;
+  height: 4px;
   max-width: none;
-  margin: 0;
+  margin: 4px 0 0;
   position: relative;
 }
 
@@ -583,12 +746,12 @@ html.light-theme .app-busy-overlay .loading-content {
 }
 
 .loading-progress-text {
-  grid-column: 2;
-  grid-row: 1;
   margin: 0;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 body.route-weather-busy .weather-popup .weather-card,
@@ -783,7 +946,8 @@ body.weather-card-busy .weather-edit-control:disabled {
   #loading-screen .loading-bar-fill,
   .app-busy-overlay .loading-content,
   .app-busy-overlay .loading-bar-fill,
-  .app-busy-overlay .loading-bar-fill::after {
+  .app-busy-overlay .loading-bar-fill::after,
+  .progress-spinner-arc {
     animation: none;
   }
 }
@@ -818,6 +982,7 @@ body.weather-card-busy .weather-edit-control:disabled {
 .toolbar-center {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .app-logo {
@@ -871,6 +1036,64 @@ body.weather-card-busy .weather-edit-control:disabled {
   color: var(--bg-primary);
   background: var(--accent-gradient);
   box-shadow: 0 2px 8px rgba(110, 231, 183, 0.3);
+}
+
+/* 2D / 3D view switcher — one segmented pill, fixed at the same viewport spot
+   in both the 2D map and the 3D viewer (both containers are unfiltered
+   position:fixed, so `fixed` here means viewport coordinates in each), so it
+   reads as a single persistent control that survives the dimension flip. */
+.view-mode-toggle {
+  position: fixed;
+  top: calc(var(--toolbar-height) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 940;
+  display: flex;
+  gap: 2px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-radius: 999px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+.view-mode-btn {
+  min-width: 54px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+}
+
+.view-mode-btn:hover:not(:disabled):not(.active) {
+  color: var(--text-primary);
+  background: var(--bg-overlay);
+}
+
+.view-mode-btn.active {
+  color: var(--bg-primary);
+  background: var(--accent-gradient);
+  box-shadow: 0 2px 8px rgba(110, 231, 183, 0.3);
+  cursor: default;
+}
+
+.view-mode-btn:disabled:not(.active) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tv-view-mode-toggle {
+  margin: 0;
+  background: rgba(20, 24, 32, 0.72);
 }
 
 /* Tool Buttons */
@@ -988,6 +1211,273 @@ body.weather-card-busy .weather-edit-control:disabled {
 
 .map-action-btn:active {
   transform: scale(0.95);
+}
+
+.map-action-btn[aria-pressed="true"] {
+  background: var(--accent-primary);
+  color: #fff;
+  border-color: var(--accent-primary);
+}
+
+/* F2: Measurement tools panel */
+.measure-panel {
+  position: fixed;
+  left: 56px;
+  bottom: calc(var(--bottom-panel-height) + 10px);
+  z-index: 620;
+  width: 240px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-lg, var(--shadow-md));
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.measure-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.measure-mode-toggle {
+  display: inline-flex;
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.measure-mode-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.measure-mode-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.measure-close-btn {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.measure-close-btn:hover {
+  color: var(--accent-primary);
+}
+
+.measure-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.measure-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  max-height: min(50vh, 440px);
+  overflow-y: auto;
+}
+
+.measure-readout .ct-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.measure-readout .mr-section {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.ct-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ct-time-row .mr-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ct-date-input,
+.ct-hour-select {
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.ct-date-input { flex: 1; }
+.ct-hour-select { flex: 0 0 auto; width: 66px; }
+
+.risk-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  color: #fff;
+  vertical-align: middle;
+}
+
+.risk-chip.risk-low { background: #16a34a; }
+.risk-chip.risk-mid { background: #eab308; color: #1a1a1a; }
+.risk-chip.risk-high { background: #f97316; }
+.risk-chip.risk-ext { background: #dc2626; }
+.risk-chip.risk-na { background: var(--border); color: var(--text-secondary); }
+
+.ct-loading,
+.ct-nodata {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ct-disclaimer {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.measure-readout .mr-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.measure-readout .mr-label {
+  color: var(--text-secondary);
+}
+
+.measure-readout .mr-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.measure-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.measure-clear-btn {
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+.measure-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 768px) {
+  .measure-panel {
+    width: min(240px, calc(100vw - 68px));
+  }
+}
+
+/* Hikingbook-style route summary strip — the key numbers stay in view above
+   the elevation profile without opening the 路線統計 section. Values are
+   mirrored from the side-panel stats (see initRouteSummaryBar in main.js). */
+.route-summary-bar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 28px;
+  padding: 2px 12px 7px;
+  overflow-x: auto;
+}
+
+.rsb-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rsb-label {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rsb-value {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .route-summary-bar {
+    gap: 14px;
+    padding: 1px 8px 5px;
+  }
+
+  .rsb-value {
+    font-size: 12px;
+  }
+}
+
+/* Landscape phones: vertical space is too scarce for a stats strip, and the
+   extra chart-row height would tip the bottom panel's default height past the
+   50%-of-viewport point its double-tap expand/collapse toggle pivots on. */
+@media (max-height: 500px) {
+  .route-summary-bar {
+    display: none;
+  }
 }
 
 /* Custom Leaflet overrides */
@@ -3761,6 +4251,36 @@ body.route-list-dragging {
   line-height: 1.4;
 }
 
+.offline-map-download {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.offline-map-download-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.offline-map-download-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.offline-map-download-btn {
+  flex: 1 1 130px;
+  min-width: 130px;
+  gap: 6px;
+}
+
+.offline-map-download-region {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
 .offline-pack-list {
   display: flex;
   flex-direction: column;
@@ -4026,6 +4546,17 @@ body.route-list-dragging {
     line-height: 1;
   }
 
+  .view-mode-toggle {
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 8px);
+    padding: 3px;
+  }
+
+  .view-mode-btn {
+    min-width: 44px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
   .tool-btn {
     width: 34px;
     height: 34px;
@@ -4126,6 +4657,10 @@ body.route-list-dragging {
   .bp-chart-row .elevation-chart-container {
     height: 100px;
   }
+  .bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container {
+    flex-basis: 100px;
+    min-height: 70px;
+  }
 
   /* Weather header: tighten padding on mobile */
   .bp-weather-header {
@@ -4150,7 +4685,7 @@ body.route-list-dragging {
   }
 
   .app-busy-overlay {
-    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 6px);
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 50px);
     left: 56px;
     right: 56px;
   }
@@ -4177,6 +4712,10 @@ body.route-list-dragging {
   /* Lower the default elevation chart even further */
   .bp-chart-row .elevation-chart-container {
     height: 80px;
+  }
+  .bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container {
+    flex-basis: 80px;
+    min-height: 60px;
   }
 
   /* Bottom panel cannot exceed landscape viewport */
@@ -4551,6 +5090,112 @@ body.is-resizing {
 
 .bp-chart-row .elevation-chart-container.collapsed {
   height: 32px;
+}
+
+/* Elevation view: let the chart row + chart grow to fill the panel so dragging
+   the divider taller expands the vertical-track chart all the way to the bottom
+   (instead of pinning it to a fixed height and leaving dead space below).
+   flex-basis keeps the default/auto-layout height at the old fixed value. */
+.bottom-panel.bp-mode-elev .bp-chart-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container {
+  flex: 1 1 140px;
+  height: auto;
+  min-height: 90px;
+}
+
+.bottom-panel.bp-mode-elev .bp-chart-row .elevation-chart-container.collapsed {
+  flex: 0 0 32px;
+  min-height: 0;
+  height: 32px;
+}
+
+/* F5: bottom-panel view toggle (elevation chart <-> detailed weather table).
+   Pinned to the chart-row's top-right so it stays reachable regardless of the
+   summary bar (which is hidden on landscape phones / scrolls on narrow portrait). */
+.bp-chart-row {
+  position: relative;
+}
+
+.bp-view-toggle {
+  position: absolute;
+  top: 4px;
+  right: 10px;
+  z-index: 6;
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px);
+}
+
+.bp-view-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.bp-view-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+/* Only one pane shows at a time; the toggle picks which. The chart-row's toggle +
+   summary bar stay visible in every mode — only the chart canvas hides. */
+.bottom-panel:not(.bp-mode-elev) #elevation-chart-container {
+  display: none;
+}
+
+.bottom-panel:not(.bp-mode-weather) .bp-weather-scroll {
+  display: none;
+}
+
+.bottom-panel:not(.bp-mode-catchment) .bp-catchment-scroll {
+  display: none;
+}
+
+.bp-catchment-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+#catchment-table-container {
+  min-width: 100%;
+  position: relative;
+}
+
+/* Read-only catchment table: static per-column schedule line + footnote. */
+.catchment-table .wt-catch-sched-head {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.catchment-table .wt-catch-sched {
+  display: block;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+}
+
+.catchment-table-note {
+  padding: 4px 10px 8px;
+  font-size: 10px;
+  color: var(--text-muted);
 }
 
 .bp-weather-header {
@@ -6409,6 +7054,37 @@ button.wc-weather-icon:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
+/* Hover explanation bubble for [data-tip] info-card / catchment-table items.
+   Translucent, fixed-positioned, follows whichever item is hovered. */
+.wc-info-item[data-tip] .wc-info-label,
+.wt-label-cell[data-tip] {
+  cursor: help;
+}
+
+.wc-tip-bubble {
+  position: fixed;
+  z-index: 4000;
+  max-width: 240px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #f5f5f5;
+  background: rgba(20, 24, 33, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.wc-tip-bubble.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .wc-info-item.is-wide {
   padding: 5px 0;
 }
@@ -6534,6 +7210,102 @@ html:not(.light-theme) .wc-time-select {
 html.light-theme .wc-date-input,
 html.light-theme .wc-time-select {
   color-scheme: light;
+}
+
+/* Weather-card view toggle (weather ⇄ catchment) */
+.wc-view-toggle {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.wc-view-btn {
+  flex: 1;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wc-view-btn:hover:not(.active) {
+  color: var(--text-primary);
+}
+
+.wc-view-btn.active {
+  background: var(--wc-accent, var(--accent-primary));
+  color: #fff;
+}
+
+/* Weather-card "set to now" buttons */
+.wc-now-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.wc-now-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wc-now-btn:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: rgba(110, 231, 183, 0.1);
+}
+
+.wc-now-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wc-now-btn svg {
+  flex: 0 0 auto;
+}
+
+/* Weather-card catchment read-out — reuses the weather-card .wc-info-grid rows
+   so text/data layout matches the weather view. Rendered at full size up front
+   (skeleton) so the card doesn't grow when async values fill in. */
+.wc-catchment {
+  margin-top: 8px;
+}
+
+.wc-catchment .wc-catch-grid + .wc-catch-grid {
+  margin-top: 6px;
+}
+
+.wc-catchment .ct-disclaimer {
+  margin-top: 8px;
+}
+
+.wc-catch-val {
+  font-variant-numeric: tabular-nums;
+}
+
+.wc-catch-msg {
+  margin-top: 8px;
 }
 
 .wc-info-value.clickable-coords {
@@ -6979,27 +7751,17 @@ html.light-theme .panel-bottom-logo {
 @keyframes tv-redraw-spin {
   to { transform: rotate(360deg); }
 }
-.terrain-viewer-toolbar .tv-close-btn {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.terrain-viewer-toolbar .tv-close-btn:hover {
-  background: rgba(255,255,255,0.08);
-  color: var(--text-primary);
-}
-
 .terrain-viewer-canvas-wrap {
   flex: 1;
   position: relative;
+  /* Establish its own stacking context so its absolutely-positioned children
+     (tv-loading-overlay z:30, tv-marker-detail z:14, tv-info-panel/tv-live-hud
+     z:12) can never outrank .terrain-viewer-toolbar / .terrain-player-bar
+     (z:10 flex items, siblings of this element). Without this, those bars —
+     and the tv-export-menu / tp-playlist-menu dropdowns nested inside them at
+     z:40 — would get painted first and then covered whenever the loading
+     overlay (or any canvas-wrap child) is showing, e.g. mid route-switch. */
+  z-index: 1;
   overflow: hidden;
 }
 
@@ -7195,6 +7957,194 @@ html.light-theme .panel-bottom-logo {
 .tv-marker-detail-row .tv-md-label { color: var(--text-muted); }
 .tv-marker-detail-row .tv-md-value { color: var(--text-primary); font-variant-numeric: tabular-nums; text-align: right; }
 
+/* ===== Relive close-up waypoint card (TCG-style draw reveal) =====
+   Full-overlay, pointer-events:none so the 3D canvas stays interactive beneath
+   it. Sits inside #terrain-canvas-wrap (z-index:1) so it stays trapped below the
+   toolbar dropdowns, per the viewer's stacking contract. */
+.tv-wp-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  perspective: 1200px;
+  z-index: 16;
+}
+.tv-wp-card.hidden { display: none; }
+
+.tv-wp-card-inner {
+  position: relative;
+  width: 300px;
+  max-width: calc(100% - 40px);
+  padding: 14px 16px 16px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, rgba(20, 22, 32, 0.96), rgba(10, 11, 18, 0.98));
+  border: 1.5px solid var(--wp-card-color, #44aaff);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 0 28px -6px var(--wp-card-color, #44aaff);
+  color: var(--text-primary);
+  overflow: hidden;
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+}
+
+/* Holographic sheen keyed to the waypoint colour. */
+.tv-wp-card-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 80% at 50% -12%,
+    color-mix(in srgb, var(--wp-card-color, #44aaff) 34%, transparent), transparent 62%);
+  mix-blend-mode: screen;
+  opacity: 0.75;
+}
+
+/* One-shot light sweep on deal. */
+.tv-wp-card-shine {
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 55%;
+  height: 100%;
+  background: linear-gradient(105deg, transparent 0%, rgba(255, 255, 255, 0.3) 45%,
+    rgba(255, 255, 255, 0.55) 50%, transparent 80%);
+  transform: skewX(-18deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tv-wp-card-body { position: relative; z-index: 1; }
+
+.tv-wp-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.tv-wp-card-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: #0b0d12;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tv-wp-card-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tv-wp-card-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 2px 0 12px;
+}
+.tv-wp-card-emoji {
+  font-size: 44px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
+}
+.tv-wp-card-hero-temp {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tv-wp-card-cats { display: flex; flex-direction: column; gap: 9px; }
+/* Rows are laid out two-per-line (2-column grid) so the taller card — now with
+   累積爬升/下降 + 雨量/降雨機率/濕度/風速 — stays compact. The section title spans
+   both columns. Falls back to a single column on very narrow cards (see below). */
+.tv-wp-cat {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: baseline;
+}
+.tv-wp-cat-title {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--wp-card-color, #9ca3af);
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+.tv-wp-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  padding: 1px 0;
+  min-width: 0;
+}
+/* Very narrow viewports: the card shrinks (max-width), so drop back to 1 column. */
+@media (max-width: 360px) {
+  .tv-wp-cat { grid-template-columns: 1fr; }
+}
+.tv-wp-row-label { color: var(--text-secondary); }
+.tv-wp-row-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tv-wp-card.dealing .tv-wp-card-inner {
+  animation: tvWpDraw 620ms cubic-bezier(0.18, 0.9, 0.28, 1.2) 1 both;
+}
+.tv-wp-card.dealing .tv-wp-card-shine {
+  animation: tvWpShine 900ms ease-out 260ms 1;
+}
+.tv-wp-card.leaving .tv-wp-card-inner {
+  animation: tvWpLeave 380ms ease-in 1 both;
+}
+
+@keyframes tvWpDraw {
+  0%   { opacity: 0; transform: translateY(46%) rotateX(35deg) rotateZ(-10deg) scale(0.55); }
+  55%  { opacity: 1; transform: translateY(-6%) rotateX(-6deg) rotateZ(3deg) scale(1.06); }
+  75%  { transform: translateY(0) rotateX(2deg) rotateZ(-1deg) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) rotateX(0) rotateZ(0) scale(1); }
+}
+@keyframes tvWpShine {
+  0%   { left: -60%; opacity: 0; }
+  30%  { opacity: 1; }
+  100% { left: 120%; opacity: 0; }
+}
+@keyframes tvWpLeave {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-10%) scale(0.9); }
+}
+
+@media (max-width: 768px) {
+  .tv-wp-card-inner { width: 220px; padding: 12px 13px 13px; }
+  .tv-wp-card-emoji { font-size: 38px; }
+  .tv-wp-card-hero-temp { font-size: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tv-wp-card.dealing .tv-wp-card-inner { animation: tvWpFade 200ms ease-out both; }
+  .tv-wp-card.dealing .tv-wp-card-shine { animation: none; }
+  .tv-wp-card.leaving .tv-wp-card-inner { animation: tvWpFade 200ms ease-in reverse both; }
+}
+@keyframes tvWpFade { from { opacity: 0; } to { opacity: 1; } }
+
 /* Layer toggle controls */
 .tv-layer-controls {
   position: absolute;
@@ -7305,6 +8255,7 @@ html.light-theme .tv-live-hud {
   /* Keep the brand compact and drop the subtitle so the action cluster fits. */
   .terrain-viewer-toolbar { padding: 0 10px; }
   .terrain-viewer-toolbar .tv-title-sub { display: none; }
+  .terrain-viewer-toolbar .tv-view-mode-toggle { margin: 0; }
   .terrain-viewer-toolbar .tv-redraw-btn span { display: none; }
   .terrain-viewer-toolbar .tv-redraw-btn { padding: 0 9px; }
   .terrain-viewer-toolbar .tv-toolbar-actions { gap: 6px; }
@@ -7428,50 +8379,11 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
   -webkit-backdrop-filter: blur(4px);
 }
 .tv-loading-overlay.hidden { display: none; }
-.tv-loading-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  width: min(320px, calc(100% - 48px));
-  padding: 28px 26px;
-  background: rgba(20, 23, 31, 0.92);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: 0 18px 50px rgba(0,0,0,0.45);
-  text-align: center;
-}
-.tv-loading-spinner svg { display: block; }
-.tv-loading-track { stroke: rgba(255,255,255,0.12); }
-.tv-loading-arc {
-  stroke: var(--accent-primary);
-  stroke-dasharray: 90 150;
-  transform-origin: center;
-  animation: tvSpin 0.9s linear infinite;
-}
-@keyframes tvSpin { to { transform: rotate(360deg); } }
-.tv-loading-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.tv-loading-detail {
-  font-size: 12px;
-  color: var(--text-secondary);
-  min-height: 16px;
-}
-.tv-loading-card .loading-bar {
-  width: 100%;
-  height: 6px;
-}
+/* Card visuals come from the shared .progress-card component (see the unified
+   progress card section near .loading-bar). Only tv-specific bits live here. */
 .tv-loading-fill {
   animation: none;
   transition: width 0.25s ease;
-}
-.tv-loading-percent {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
 }
 .tv-loading-abort {
   margin-top: 4px;
@@ -7537,14 +8449,13 @@ html.light-theme .tv-loading-overlay.tv-loading-bg .tv-loading-card { background
 .terrain-viewer-overlay.tv-busy .tv-info-panel,
 .terrain-viewer-overlay.tv-busy .tv-live-hud,
 .terrain-viewer-overlay.tv-busy .tv-redraw-btn,
-.terrain-viewer-overlay.tv-busy .tv-close-btn {
+.terrain-viewer-overlay.tv-busy .tv-view-mode-toggle {
   pointer-events: none;
   opacity: 0.45;
   filter: grayscale(0.3);
 }
 
 html.light-theme .tv-loading-overlay { background: rgba(240, 244, 250, 0.72); }
-html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
 
 /* Player Controls Bar */
 .terrain-player-bar {
@@ -7588,6 +8499,20 @@ html.light-theme .tv-loading-card { background: rgba(255,255,255,0.95); }
 }
 .terrain-player-bar .tp-btn.active:hover {
   background: #00d16b;
+}
+/* Relive-style hero play button — the one control that should read instantly. */
+.terrain-player-bar #tp-play {
+  width: 46px;
+  height: 46px;
+  background: var(--accent-gradient);
+  border: none;
+  color: var(--bg-primary);
+  box-shadow: 0 4px 14px rgba(0, 209, 107, 0.35);
+}
+.terrain-player-bar #tp-play:hover {
+  color: var(--bg-primary);
+  filter: brightness(1.08);
+  transform: scale(1.05);
 }
 /* Speed control: a single toggle button (current rate) that expands a small
    menu of preset rates. The toggle itself also responds to mouse-wheel while
@@ -7780,6 +8705,7 @@ html.light-theme .terrain-player-bar .tp-slider::-webkit-slider-thumb {
 @media (max-width: 640px) {
   .terrain-player-bar { gap: 6px; padding: 8px 10px; }
   .terrain-player-bar .tp-btn { width: 32px; height: 32px; }
+  .terrain-player-bar #tp-play { width: 40px; height: 40px; }
   .terrain-player-bar .tp-speed-toggle { padding: 4px 7px; font-size: 10px; }
   .terrain-player-bar .tp-slider { min-width: 40px; }
   .terrain-player-bar .tp-label { min-width: 30px; font-size: 10px; }

@@ -28,6 +28,15 @@ const GRID_SIZE = 25;
 const SUBDIV = 6;
 const FIELD_SIZE = (GRID_SIZE - 1) * SUBDIV + 1; // 145
 
+// Render layer for the terrain surface. Day/night lighting (the route-clock sun/
+// ambient/hemi/moon) lives on the default layer 0 and lights the 3D objects
+// (landmarks, buildings, route, weather rigs) + the sky background only. The
+// terrain mesh is moved to this dedicated layer and lit by a fixed midday rig
+// (also on this layer), so the ground stays legible regardless of the time of
+// day — "日夜只影響 3D 物件與背景，地形不受日夜效果渲染". The camera renders both
+// layers; picking is unaffected (the terrain is not a raycast target).
+const TERRAIN_LAYER = 1;
+
 export class TerrainViewer {
   constructor(container) {
     this.container = container;
@@ -80,6 +89,12 @@ export class TerrainViewer {
     this._labelScale = 'large';
     this._labelSprites = [];
     this._LABEL_FACTORS = { large: 1, small: 0.6, none: 0 };
+    // Text labels whose name is wider than the fixed billboard get a 跑馬燈
+    // (marquee): the name scrolls horizontally inside the box so the full text is
+    // readable. Redraw is throttled by _marqueeAccum (see _animate) to keep the
+    // per-frame canvas re-upload cheap on mobile.
+    this._marqueeLabels = [];
+    this._marqueeAccum = 0;
 
     // --- Map features (roads / water / land cover / buildings) ---
     this.featureGroup = null;
@@ -130,6 +145,12 @@ export class TerrainViewer {
     // that doesn't re-download anything.
     this._buildCtx = null;
     this._featuresData = null;
+    // Catchment basins draped on the terrain (Task 1). Data ({ outer, holes,
+    // outlet, color }[]) is kept so an in-place rebuild can redraw them; the
+    // group is rebuilt from it, and its visibility follows _catchmentVisible.
+    this._catchmentBasinsData = null;
+    this._catchmentGroup = null;
+    this._catchmentVisible = false;
     // Bbox the in-memory _featuresData were built for, so a redraw can safely
     // reuse them as a fallback only when the area hasn't changed.
     this._featuresDataBbox = null;
@@ -167,6 +188,8 @@ export class TerrainViewer {
     this._distances = null;       // cumulative metres, aligned to routePoints
     this._times = null;           // cumulative elapsed hours, aligned to routePoints
     this._fatigue = null;         // per-vertex fatigue fraction 0..1
+    this._cumAscent = null;       // cumulative climb (m) up to each vertex
+    this._cumDescent = null;      // cumulative descent (m, positive) up to each vertex
     this._startMs = null;         // departure timestamp (ms epoch)
     this._totalDistM = 0;
     this._weatherPoints = [];
@@ -183,6 +206,11 @@ export class TerrainViewer {
     this._moon = null;
     this._ambient = null;
     this._hemi = null;
+    // Fixed midday rig that lights only the terrain (see _setupEnvironment).
+    this._terrainSun = null;
+    this._terrainSunTarget = null;
+    this._terrainAmbient = null;
+    this._terrainHemi = null;
     this._rain = null;
     this._snow = null;
     this._currentWeatherCat = 'clear';
@@ -202,6 +230,44 @@ export class TerrainViewer {
     // --- Animated hiker ---
     this._person = null;
     this._personPhase = 0;
+    // Smoothed facing direction: like the chase cam's _followDir, the figure
+    // turns toward a look-ahead chord (temporally low-passed) instead of the
+    // jittery instantaneous tangent, so it stops twitching on wiggly tracks and
+    // walks a smoother path.
+    this._personDir = new THREE.Vector3(0, 0, 1);
+
+    // --- Relive-style follow camera (chase cam during playback) ---
+    this._followCam = true;           // user preference (persisted by the host UI)
+    this._followUserOverride = false; // user grabbed the camera mid-playback; wins until next play()
+    this._followPosTmp = new THREE.Vector3();
+    this._followTargetTmp = new THREE.Vector3();
+    // Smoothed chase heading: follows the route's big-picture direction (a
+    // look-ahead chord, temporally low-passed) instead of the jittery
+    // instantaneous tangent, so the camera stops shaking on wiggly tracks.
+    this._followDir = new THREE.Vector3(0, 0, 1);
+    // Relive-style waypoint stops: pause + close-up orbit when the walker
+    // reaches each waypoint, then continue. Built in _createWaypoints.
+    this._waypointStops = [];         // sorted [{ u, detail }]
+    this._nextStopIdx = 0;
+    this._pauseUntil = 0;             // performance.now() ms; >now = holding at a stop
+    this._orbitAngle = 0;
+    this._waypointPauseMs = 2600;
+    this._onWaypointArrive = null;
+    // Start/end waypoint details, dealt as playback cards at the trailhead and
+    // finish (mid-route stops live in _waypointStops).
+    this._startDetail = null;
+    this._endDetail = null;
+    // Satellite imagery draped over the terrain surface (F3). Lazily fetched
+    // Esri tiles mosaicked into a CanvasTexture; falls back to the procedural
+    // land-cover colours when tiles can't load (offline / CORS / no coverage).
+    this._satelliteEnabled = false;
+    this._satTexture = null;
+    this._satTextureKey = null;
+    this._onSatelliteError = null;
+    // Playback staging: reveal-as-walked engaged by play() (independent of the
+    // persisted 揭示 toggle), and the opening fly-in timer (Infinity = no intro).
+    this._playbackReveal = false;
+    this._introElapsed = Infinity;
 
     this._lastMetricsEmit = 0;
   }
@@ -383,6 +449,54 @@ export class TerrainViewer {
     return !!(this.featureGroup && this.featureGroup.children.length);
   }
 
+  // ---------- Catchment basins (Task 1) ----------
+  // The main.js host owns the 集水區 computation (cache-first DEM delineation of
+  // each 主航點); it feeds the resulting lat/lng rings here to be draped on the
+  // terrain surface. Coordinates for the currently displayed model's 主航點 (so a
+  // favourite-peek uses the right waypoints).
+  getWaypointCoords() {
+    const wps = this._buildCtx?.waypoints;
+    if (!Array.isArray(wps)) return [];
+    return wps
+      .map((w) => ({
+        coords: w.coords || (w.lat != null ? [w.lat, w.lng] : null),
+        color: w.color || null,
+        label: w.label || null,
+      }))
+      .filter((w) => Array.isArray(w.coords) && w.coords.length === 2);
+  }
+
+  // Replace the whole basin set. basins: { outer:[[lat,lng]…], holes:[[…]],
+  // outlet:[lat,lng], color? }[].
+  setCatchmentBasins(basins) {
+    this._catchmentBasinsData = Array.isArray(basins) ? basins.slice() : null;
+    this._drawCatchmentBasins();
+  }
+
+  // Append one basin incrementally (主航點 draw-as-computed), without disposing the
+  // group — so basins pop in one by one as their DEM finishes.
+  addCatchmentBasin(basin) {
+    if (!basin || !Array.isArray(basin.outer) || basin.outer.length < 3) return;
+    if (!this._catchmentBasinsData) this._catchmentBasinsData = [];
+    this._catchmentBasinsData.push(basin);
+    this._ensureCatchmentGroup();
+    if (this._catchmentGroup) this._buildOneCatchmentBasin(basin, this._catchmentGroup);
+  }
+
+  setCatchmentVisible(on) {
+    this._catchmentVisible = !!on;
+    if (this._catchmentGroup) this._catchmentGroup.visible = this._catchmentVisible;
+  }
+
+  isCatchmentVisible() {
+    return this._catchmentVisible;
+  }
+
+  clearCatchmentBasins() {
+    this._catchmentBasinsData = null;
+    this._disposeCatchmentGroup();
+  }
+
   // Re-attempt the background 圖資 download for the scene the caller is about to
   // re-show without a rebuild (main.js's cache-signature "already built" shortcut)
   // when it never ran to completion last time — e.g. the user switched to another
@@ -463,6 +577,12 @@ export class TerrainViewer {
   // cb(detail) — fired when a 3D billboard/waypoint marker is clicked.
   onMarkerClick(cb) {
     this._onMarkerClick = cb;
+  }
+
+  // cb(detail) — fired when Relive-style playback reaches a waypoint stop, so
+  // the host can surface that waypoint's content during the close-up pause.
+  onWaypointArrive(cb) {
+    this._onWaypointArrive = cb;
   }
 
   // Toggles the weather badge/label layer (the 3-state 天氣 button's "hints").
@@ -547,13 +667,35 @@ export class TerrainViewer {
       this._updatePlayerPosition();
       if (this._onProgressChange) this._onProgressChange(this._progress);
     }
+    // Relive-style playback staging: the track reveals as it is walked (without
+    // flipping the user's persisted 揭示 toggle), and starting from the trailhead
+    // opens with a fly-in from a high overview down into the chase position.
+    if (!this._routeReveal && !this._playbackReveal) {
+      this._playbackReveal = true;
+    }
+    if (this._followCam && this._progress <= 0.001) this._introElapsed = 0;
+    // Resume immediately (don't stay parked in a waypoint pause) and re-arm the
+    // next Relive stop for wherever playback is resuming from.
+    this._pauseUntil = 0;
+    this._syncStopIdx();
     this._playing = true;
+    // Now that playback is live, clamp the track back to the walked fraction (it
+    // was restored to full while paused).
+    this._applyRouteReveal();
+    this._followUserOverride = false;
+    if (this.controls) this.controls.autoRotate = false;
     if (this._onPlayStateChange) this._onPlayStateChange(true);
+    // Deal the trailhead card as the fly-in sweeps down (metrics read at u=0).
+    if (this._progress <= 0.001 && this._onWaypointArrive && this._startDetail) {
+      this._onWaypointArrive(this._startDetail);
+    }
   }
 
   pause() {
     const was = this._playing;
     this._playing = false;
+    // Pausing restores the full track; play() re-clamps it to the walked fraction.
+    this._applyRouteReveal();
     if (was && this._onPlayStateChange) this._onPlayStateChange(false);
   }
 
@@ -562,14 +704,33 @@ export class TerrainViewer {
   }
 
   setProgress(t) {
+    if (this.controls) this.controls.autoRotate = false;
     this._progress = Math.max(0, Math.min(1, t));
+    // Scrubbing cancels any active waypoint pause and re-arms the next stop.
+    this._pauseUntil = 0;
+    this._syncStopIdx();
     this._updatePlayerPosition();
     this._emitMetrics(true);
     if (this._onProgressChange) this._onProgressChange(this._progress);
   }
 
+  // Point _nextStopIdx at the first Relive stop still ahead of the playhead.
+  _syncStopIdx() {
+    const stops = this._waypointStops || [];
+    let i = 0;
+    while (i < stops.length && stops[i].u <= this._progress) i++;
+    this._nextStopIdx = i;
+  }
+
   getProgress() {
     return this._progress;
+  }
+
+  // Public read-only snapshot of the position-driven metrics (date/time, mileage,
+  // altitude, speed, grade, fatigue, weather) at a given playback fraction — used
+  // by the host to populate the Relive close-up waypoint card.
+  metricsAt(u = this._progress) {
+    return this._metricsAtProgress(u);
   }
 
   isPlaying() {
@@ -602,6 +763,90 @@ export class TerrainViewer {
     this.controls.update();
     if (Number.isFinite(state.speed)) this._speed = state.speed;
     if (Number.isFinite(state.progress)) this.setProgress(state.progress);
+  }
+
+  // Relive-style chase cam: while playing, the camera glides behind the hiker
+  // along the travel direction and looks slightly ahead. Off = classic free
+  // orbit. A manual drag mid-playback suspends it until the next play().
+  setFollowCamera(on) {
+    this._followCam = !!on;
+    if (!this._followCam && this.controls) this.controls.autoRotate = false;
+    if (this._followCam) this._followUserOverride = false;
+  }
+
+  isFollowCamera() {
+    return this._followCam;
+  }
+
+  _updateFollowCamera(dt) {
+    if (!this._followCam || this._followUserOverride) return;
+    if (!this.camera || !this.controls || !this.playerPath) return;
+    const u = this._clampU(this._progress);
+    const pt = this.playerPath.getPointAt(u);
+    if (!pt) return;
+
+    // Big-picture heading: instead of the instantaneous tangent (which wiggles
+    // with every Catmull-Rom kink and makes the camera shake), use a chord over
+    // a look-ahead window, then temporally low-pass it. The result tracks the
+    // route's general direction and ignores small zig-zags.
+    const pA = this.playerPath.getPointAt(this._clampU(this._progress + 0.05));
+    const pB = this.playerPath.getPointAt(this._clampU(this._progress - 0.03));
+    let dirX = 0, dirZ = 1;
+    if (pA && pB) {
+      const vx = pA.x - pB.x, vz = pA.z - pB.z;
+      const len = Math.hypot(vx, vz);
+      if (len > 1e-6) { dirX = vx / len; dirZ = vz / len; }
+    }
+    const dk = 1 - Math.exp(-dt * 1.1);   // slow heading convergence = steady cam
+    this._followDir.x += (dirX - this._followDir.x) * dk;
+    this._followDir.z += (dirZ - this._followDir.z) * dk;
+    const dl = Math.hypot(this._followDir.x, this._followDir.z) || 1;
+    const fdx = this._followDir.x / dl, fdz = this._followDir.z / dl;
+
+    // Rig proportions scale with the model so any route frames the same way.
+    // Markers are sized ~span/300 (cone height 13×that ≈ 0.043·span), so the
+    // camera must sit a few tenths of a span back or it ends up inside them.
+    const span = this._worldSpan || 2000;
+
+    // Relive-style close-up: while parked at a waypoint stop, pull in and slowly
+    // orbit the point so its content reads before playback continues.
+    if (this._pauseUntil > performance.now()) {
+      this._orbitAngle += dt * 0.5;
+      const back = span * 0.3, lift = span * 0.2;
+      const ca = Math.cos(this._orbitAngle), sa = Math.sin(this._orbitAngle);
+      const ox = fdx * ca - fdz * sa, oz = fdx * sa + fdz * ca;
+      const desired = this._followPosTmp.set(pt.x - ox * back, pt.y + lift, pt.z - oz * back);
+      const look = this._followTargetTmp.set(pt.x, pt.y + lift * 0.1, pt.z);
+      const k = 1 - Math.exp(-dt * 2.4);
+      this.camera.position.lerp(desired, k);
+      this.controls.target.lerp(look, Math.min(1, k * 1.4));
+      this.camera.lookAt(this.controls.target);
+      return;
+    }
+
+    let back = span * 0.5;
+    let lift = span * 0.3;
+    let ahead = span * 0.06;
+    // Opening fly-in: for the first seconds of a from-the-start playback the rig
+    // is blended from a high overview down to the chase pose (smoothstep), so
+    // pressing play sweeps down into the scene instead of cutting to it.
+    const INTRO_DUR = 2.6;
+    if (this._introElapsed < INTRO_DUR) {
+      this._introElapsed += dt;
+      const p = Math.min(1, this._introElapsed / INTRO_DUR);
+      const e = p * p * (3 - 2 * p);
+      back += (span * 1.15 - back) * (1 - e);
+      lift += (span * 0.8 - lift) * (1 - e);
+      ahead *= e;
+    }
+    const desired = this._followPosTmp.set(pt.x - fdx * back, pt.y + lift, pt.z - fdz * back);
+    const look = this._followTargetTmp.set(pt.x + fdx * ahead, pt.y + lift * 0.15, pt.z + fdz * ahead);
+    // Frame-rate-independent exponential smoothing; the target converges a bit
+    // faster than the camera so turns read as the camera "swinging around".
+    const k = 1 - Math.exp(-dt * 2.2);
+    this.camera.position.lerp(desired, k);
+    this.controls.target.lerp(look, Math.min(1, k * 1.35));
+    this.camera.lookAt(this.controls.target);
   }
 
   // Snap the camera to a preset viewing angle with north (+Z) pointing up, while
@@ -656,6 +901,10 @@ export class TerrainViewer {
   async loadRouteData(routeData) {
     const { coords, elevations, waypoints, weatherPoints, routeStats, timing, routeColors, cachedTerrain } = routeData;
     if (!coords || coords.length < 2) return;
+    // A fresh route starts staged from scratch: full track until played, no
+    // leftover fly-in from the previous route.
+    this._playbackReveal = false;
+    this._introElapsed = Infinity;
 
     // Honour the persisted "海拔高度歸一化" preference for the initial build so the
     // first paint uses the right vertical scale (no rebuild needed on open).
@@ -687,6 +936,8 @@ export class TerrainViewer {
     this._totalDistM = this._distances[this._distances.length - 1] || 0;
     this._times = Array.isArray(timing?.times) && timing.times.length === coords.length ? timing.times : null;
     this._fatigue = Array.isArray(timing?.fatigue) && timing.fatigue.length === coords.length ? timing.fatigue : null;
+    // Cumulative climb / descent (m) aligned to routePoints, for the playback card.
+    ({ ascent: this._cumAscent, descent: this._cumDescent } = TerrainViewer._cumulativeElevationChange(this.routeElevations));
     this._startMs = Number.isFinite(timing?.startMs) ? timing.startMs : Date.now();
 
     this._aborted = false;
@@ -775,6 +1026,9 @@ export class TerrainViewer {
     this._emitLoad({ active: true, percent: 88, title: '建立地形模型', detail: '計算等高線與軌跡…' });
 
     this._clearScene();
+    // A fresh route/model invalidates any previous route's catchment basins; the
+    // host re-triggers the compute if its 集水區 toggle is still on.
+    this._catchmentBasinsData = null;
     this._createTerrain(bbox);
     this._createContours(bbox);
     this._createRoutePath(coords, elevations, bbox);
@@ -1048,7 +1302,16 @@ export class TerrainViewer {
     this.scene.background = new THREE.Color(0x1a1a2e);
 
     this.camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 500000);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    // Render the terrain layer in addition to the default one (the terrain mesh
+    // lives on TERRAIN_LAYER so the day/night lights skip it — see _setupEnvironment).
+    this.camera.layers.enable(TERRAIN_LAYER);
+    // logarithmicDepthBuffer: the scene spans tens of thousands of world units
+    // with a 0.1 near / 500000 far range; a linear depth buffer has nowhere near
+    // the precision for that ratio, so coplanar surfaces (route draped on
+    // terrain, buildings, the hiker's cone on the ground) z-fight and shimmer as
+    // the camera glides. A log buffer distributes precision across the range and
+    // kills the flicker. All materials here are built-in, so it's safe.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -1061,6 +1324,13 @@ export class TerrainViewer {
     this.controls.maxPolarAngle = Math.PI / 2.1;
     this.controls.minDistance = 10;
     this.controls.maxDistance = 200000;
+    // A manual grab always wins the camera fight: it cancels the end-of-route
+    // orbit and pauses the chase cam until the next play().
+    this.controls.addEventListener('start', () => {
+      this.controls.autoRotate = false;
+      this._introElapsed = Infinity; // a grab also cancels the opening fly-in
+      if (this._playing && this._followCam) this._followUserOverride = true;
+    });
 
     this._bindPointerHandlers();
     this._bindContextLossHandlers();
@@ -1156,6 +1426,44 @@ export class TerrainViewer {
     this._moon = new THREE.DirectionalLight(0xaaccff, 0.0);
     this.scene.add(this._moon);
 
+    // The day/night rig above lives on layer 0 and therefore lights only the 3D
+    // objects (landmarks/buildings/route/weather rigs) + the sky background. The
+    // terrain is on TERRAIN_LAYER, so it is lit exclusively by this fixed midday
+    // rig — a stable SE-tilted sun that keeps the relief readable (with hillshade)
+    // no matter the route clock. Directions/intensities mirror the old
+    // day/night-off "bright daytime" look.
+    const dayPreset = this._skyPreset(55);
+    this._terrainSun = new THREE.DirectionalLight(dayPreset.sun.getHex(), dayPreset.sunI);
+    this._terrainSun.position.copy(new THREE.Vector3(0.32, 0.9, 0.28).normalize().multiplyScalar(120000));
+    this._terrainSun.castShadow = true;
+    const td = 50000;
+    this._terrainSun.shadow.camera.left = -td;
+    this._terrainSun.shadow.camera.right = td;
+    this._terrainSun.shadow.camera.top = td;
+    this._terrainSun.shadow.camera.bottom = -td;
+    this._terrainSun.shadow.camera.far = 400000;
+    this._terrainSun.shadow.mapSize.width = 1024;
+    this._terrainSun.shadow.mapSize.height = 1024;
+    this._terrainSun.shadow.camera.updateProjectionMatrix();
+    this._terrainSun.layers.set(TERRAIN_LAYER);
+    // Shadow cameras default to layer 0 only; enable the terrain layer so the
+    // terrain (which lives there) is rendered into this rig's shadow map and the
+    // ridge/valley self-shadows survive the layer split.
+    this._terrainSun.shadow.camera.layers.enable(TERRAIN_LAYER);
+    this.scene.add(this._terrainSun);
+    // Target the terrain centre (local origin) so the fixed direction holds.
+    this._terrainSunTarget = new THREE.Object3D();
+    this.scene.add(this._terrainSunTarget);
+    this._terrainSun.target = this._terrainSunTarget;
+
+    this._terrainAmbient = new THREE.AmbientLight(dayPreset.amb.getHex(), dayPreset.ambI);
+    this._terrainAmbient.layers.set(TERRAIN_LAYER);
+    this.scene.add(this._terrainAmbient);
+
+    this._terrainHemi = new THREE.HemisphereLight(dayPreset.hemiS.getHex(), dayPreset.hemiG.getHex(), dayPreset.hemiI);
+    this._terrainHemi.layers.set(TERRAIN_LAYER);
+    this.scene.add(this._terrainHemi);
+
     this._createPrecipitation();
     this._applyEnvironment(this._metricsAtProgress(this._progress));
   }
@@ -1170,8 +1478,14 @@ export class TerrainViewer {
     const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
     const decl = 23.44 * Math.sin(toRad * (360 / 365) * (dayOfYear - 81));
     const localHour = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
-    // 4 min per degree from the 120°E standard meridian (UTC+8).
-    const solarTime = localHour + (lng - 120) * 4 / 60;
+    // Equation of time (minutes): corrects for Earth's orbital eccentricity + axial
+    // tilt, which shift true solar noon by up to ~±15 min across the year. Without
+    // it, sunrise/sunset (the sun-elevation zero-crossing that drives the day/night
+    // look) could be off by that much. Standard day-of-year approximation.
+    const B = toRad * (360 / 365) * (dayOfYear - 81);
+    const eotMin = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+    // 4 min per degree from the 120°E standard meridian (UTC+8), plus EoT.
+    const solarTime = localHour + (lng - 120) * 4 / 60 + eotMin / 60;
     const H = 15 * (solarTime - 12); // hour angle, degrees
 
     const latR = lat * toRad;
@@ -1234,15 +1548,15 @@ export class TerrainViewer {
     const span = this._worldSpan || 2000;
     const sunDist = Math.max(span * 4, 40000);
 
+    // Day/night is permanently on (the toggle was removed). The route-clock sun/
+    // ambient/hemi/moon below drive the sky background + the 3D objects only; the
+    // terrain has its own fixed midday rig on TERRAIN_LAYER (see _setupEnvironment),
+    // so it never darkens with the time of day.
     if (!this._envEnabled) {
-      // Fixed bright-daytime look, independent of the route clock: same sky
-      // colour, sun colour/intensity, fill light and shadows as a high sun, so
-      // turning the day/night cycle off lights the scene like daytime instead of
-      // the old dim, shadowless neutral fallback.
+      // Retained as a defensive fallback if the environment is ever disabled: a
+      // flat bright look for the objects/sky (terrain is unaffected either way).
       const preset = this._skyPreset(55); // high midday sun
       const target = this.controls?.target || new THREE.Vector3();
-      // Sun high overhead but tilted toward the south-east so the relief still
-      // casts legible shadows (a dead-overhead sun flattens them out).
       const dir = new THREE.Vector3(0.32, 0.9, 0.28).normalize();
       this.scene.background = preset.sky.clone();
       this.scene.fog = null;
@@ -1326,6 +1640,29 @@ export class TerrainViewer {
   }
 
   // WMO weather code → coarse visual category used by the FX + sky tint.
+  // Cumulative ascent/descent (metres, both positive) up to each vertex, aligned
+  // to the elevation array. Skips non-finite samples so a hole doesn't inject a
+  // spurious step. Returns { ascent[], descent[] } (index 0 = 0).
+  static _cumulativeElevationChange(elevations) {
+    const n = Array.isArray(elevations) ? elevations.length : 0;
+    const ascent = new Array(n).fill(0);
+    const descent = new Array(n).fill(0);
+    let up = 0, down = 0, prev = null;
+    for (let i = 0; i < n; i++) {
+      const e = elevations[i];
+      if (Number.isFinite(e)) {
+        if (prev != null) {
+          const d = e - prev;
+          if (d > 0) up += d; else down -= d;
+        }
+        prev = e;
+      }
+      ascent[i] = up;
+      descent[i] = down;
+    }
+    return { ascent, descent };
+  }
+
   static weatherCategory(code) {
     const c = Number(code);
     if (!Number.isFinite(c) || c < 0) return 'clear';
@@ -1491,6 +1828,19 @@ export class TerrainViewer {
     return { x, y, z };
   }
 
+  // Inverse of _latLngToLocal's horizontal projection: recover lat/lng from a
+  // world (x, z). Used to re-drape a resampled track point onto the surface,
+  // which only exists as a function of lat/lng.
+  _localToLatLng(x, z, bbox) {
+    const cx = (bbox.minLng + bbox.maxLng) / 2;
+    const cy = (bbox.minLat + bbox.maxLat) / 2;
+    const R = 6371000;
+    const toRad = Math.PI / 180;
+    const lat = cy + z / (R * toRad);
+    const lng = cx + x / (R * toRad * Math.cos(toRad * cy));
+    return { lat, lng };
+  }
+
   // Interpolated terrain elevation (metres) at a lat/lng on the rendered surface,
   // so points can be dropped onto it. Samples the same fine field as the mesh;
   // falls back to the datum height over a hole.
@@ -1515,6 +1865,20 @@ export class TerrainViewer {
     const gx = (lng - bbox.minLng) / (bbox.maxLng - bbox.minLng) * (FIELD_SIZE - 1);
     const gy = (lat - bbox.minLat) / (bbox.maxLat - bbox.minLat) * (FIELD_SIZE - 1);
     return this._isHole(this._sampleSmooth(field, gy, gx, FIELD_SIZE));
+  }
+
+  // Ray-casting point-in-polygon on a [lat,lng][] ring (lat=y, lng=x). Used to
+  // rasterise a catchment fill against the terrain's own grid so the fill drapes
+  // over the interior relief instead of tenting flatly between boundary vertices.
+  _pointInRing(lat, lng, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const yi = ring[i][0], xi = ring[i][1];
+      const yj = ring[j][0], xj = ring[j][1];
+      if (((yi > lat) !== (yj > lat)) &&
+        (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi)) inside = !inside;
+    }
+    return inside;
   }
 
   // Split a polyline ([lat,lng][]) into runs of consecutive points that sit on
@@ -1926,7 +2290,122 @@ export class TerrainViewer {
     this.terrainMesh = new THREE.Mesh(geo, mat);
     this.terrainMesh.receiveShadow = true;
     this.terrainMesh.castShadow = true;
+    // Terrain is lit by the fixed midday rig on TERRAIN_LAYER, not by the
+    // route-clock day/night lights (layer 0), so it never darkens at night.
+    this.terrainMesh.layers.set(TERRAIN_LAYER);
     this.scene.add(this.terrainMesh);
+
+    // A rebuild recreates the mesh; re-drape satellite imagery if it was on.
+    if (this._satelliteEnabled) this._applySatelliteTexture();
+  }
+
+  // cb() — fired when satellite imagery can't be draped (offline / no tiles) so
+  // the host can reset its toggle and notify the user.
+  onSatelliteError(cb) {
+    this._onSatelliteError = cb;
+  }
+
+  isSatelliteEnabled() {
+    return !!this._satelliteEnabled;
+  }
+
+  // 衛星影像: drape live Esri imagery over the terrain surface. The height-field
+  // mesh already carries a 0..1 UV grid spanning the bbox (u→lng, v→lat), so the
+  // texture maps straight on. Off → back to the procedural land-cover colours.
+  setSatelliteEnabled(on) {
+    this._satelliteEnabled = !!on;
+    if (this._satelliteEnabled) this._applySatelliteTexture();
+    else this._removeSatelliteTexture();
+    return this._satelliteEnabled;
+  }
+
+  _removeSatelliteTexture() {
+    if (!this.terrainMesh) return;
+    const mat = this.terrainMesh.material;
+    mat.map = null;
+    mat.vertexColors = true;
+    mat.color.setRGB(1, 1, 1);
+    mat.needsUpdate = true;
+  }
+
+  async _applySatelliteTexture() {
+    if (!this.terrainMesh || !this._bbox) return;
+    const b = this._bbox;
+    const key = `${b.minLat.toFixed(5)},${b.minLng.toFixed(5)},${b.maxLat.toFixed(5)},${b.maxLng.toFixed(5)}`;
+    try {
+      if (!this._satTexture || this._satTextureKey !== key) {
+        const tex = await this._buildSatelliteTexture(b);
+        if (!tex) throw new Error('no satellite tiles loaded');
+        this._satTexture?.dispose?.();
+        this._satTexture = tex;
+        this._satTextureKey = key;
+      }
+      // Guard: the user may have toggled it off, or the scene rebuilt, while the
+      // tiles were downloading.
+      if (!this._satelliteEnabled || !this.terrainMesh) return;
+      const mat = this.terrainMesh.material;
+      mat.map = this._satTexture;
+      mat.vertexColors = false;   // show the imagery, not the terrain tint × image
+      mat.color.setRGB(1, 1, 1);
+      mat.needsUpdate = true;
+    } catch (err) {
+      console.warn('satellite drape failed, falling back to land cover:', err);
+      this._satelliteEnabled = false;
+      this._removeSatelliteTexture();
+      if (this._onSatelliteError) this._onSatelliteError();
+    }
+  }
+
+  // Mosaic Esri World Imagery tiles covering the bbox into a CanvasTexture.
+  // Returns null if no tile could be fetched (offline / no coverage).
+  async _buildSatelliteTexture(bbox) {
+    const TILE = 256;
+    const lngToX = (lng, z) => (lng + 180) / 360 * (1 << z);
+    const latToY = (lat, z) => {
+      const r = lat * Math.PI / 180;
+      return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (1 << z);
+    };
+    // Highest zoom whose bbox still fits in ~5 tiles per side (caps downloads).
+    let z = 17;
+    for (; z >= 2; z--) {
+      const xs = lngToX(bbox.maxLng, z) - lngToX(bbox.minLng, z);
+      const ys = latToY(bbox.minLat, z) - latToY(bbox.maxLat, z);
+      if (Math.max(xs, ys) <= 5) break;
+    }
+    const x0 = lngToX(bbox.minLng, z), x1 = lngToX(bbox.maxLng, z);
+    const y0 = latToY(bbox.maxLat, z), y1 = latToY(bbox.minLat, z);  // y0 = north/top
+    const w = Math.max(1, Math.round((x1 - x0) * TILE));
+    const h = Math.max(1, Math.round((y1 - y0) * TILE));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const n = 1 << z;
+    let loaded = 0;
+    const jobs = [];
+    for (let tx = Math.floor(x0); tx <= Math.floor(x1); tx++) {
+      for (let ty = Math.floor(y0); ty <= Math.floor(y1); ty++) {
+        if (ty < 0 || ty >= n) continue;
+        const wx = ((tx % n) + n) % n;
+        jobs.push(new Promise((res) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            ctx.drawImage(img, (tx - x0) * TILE, (ty - y0) * TILE, TILE, TILE);
+            loaded++; res();
+          };
+          img.onerror = () => res();
+          // Esri World Imagery (same source as the 2D 衛星 layer): z/y/x order.
+          img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${wx}`;
+        }));
+      }
+    }
+    await Promise.all(jobs);
+    if (loaded === 0) return null;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = this.renderer?.capabilities?.getMaxAnisotropy?.() || 1;
+    tex.needsUpdate = true;
+    return tex;
   }
 
   // Smooth analytic normals (N×N×3, vertex order matching _createTerrain) from
@@ -2284,46 +2763,70 @@ export class TerrainViewer {
     return cols[idx].clone();
   }
 
+  // World-space clearance for the draped track (and the hiker riding it). The
+  // tube body has radius 6, so lifting the centreline by radius + a small
+  // span-scaled margin seats the tube just above the terrain: the track hugs the
+  // relief without z-fighting or piercing it, and the constant world-unit lift
+  // stays glued at any vertical exaggeration (unlike a metric lift, which the
+  // normalization scale would inflate into a visible float).
+  _routeDrapeLift() {
+    return 6 + Math.max(2, (this._worldSpan || 2000) * 0.001);
+  }
+
   _createRoutePath(coords, elevations, bbox) {
     if (!coords || coords.length < 2) return;
 
     const hasGradient = !!(this._routeColors && this._routeColors.length === coords.length);
     const legacyColor = new THREE.Color(0x00d4ff);
-    // Dynamic minor draping offset (Plan §II): lift the track a small,
-    // relief-proportional amount above the surface instead of a fixed +5 m. On a
-    // tall model +5 m disappears into the terrain (Z-fighting / track sinking);
-    // scaling with the elevation range keeps a consistent visible float at any
-    // model size while never lifting the track conspicuously off the ground.
-    const relief = Math.max(1, this._fieldMaxV - this._fieldMinV);
-    const routeLift = Math.max(5, relief * 0.01);
-    const pts = coords.map(([lat, lng], i) => {
-      const elev = elevations?.[i] ?? 0;
-      const p = this._latLngToLocal(lat, lng, elev + routeLift, bbox);
-      return new THREE.Vector3(p.x, p.y, p.z);
-    });
 
-    // Centripetal Catmull-Rom curve (Plan §II): centripetal parameterisation
-    // never overshoots or loops at sharp turns the way the uniform variant does,
-    // so tight switchbacks read as smooth curves rather than cusps. The curve is
-    // then resampled at an even arc-length spacing dense enough that both the 3D
-    // tube AND the overlay line follow the real bends instead of cutting the
-    // corner between sparsely-sampled GPS vertices (the "straight-line cutting"
-    // artefact). Sample count scales with the track's on-model length, clamped.
-    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    // The track is DRAPED onto the rendered terrain surface (grid-sampled), not
+    // hung at the raw GPS elevation. The surface mesh is a smoothed 25×25 DEM, so
+    // the GPS track diverges from it by tens of metres over ridges/valleys — that
+    // mismatch is what left the old track visibly floating above (or sunk into)
+    // the relief. Draping makes it hug whatever the viewer actually sees.
+    const drapeLift = this._routeDrapeLift();
+
+    // Build the smooth path in the HORIZONTAL plane first, then resolve every
+    // point's height by draping. Centripetal Catmull-Rom never overshoots/loops
+    // at sharp turns (switchbacks read as smooth curves, not cusps); the curve is
+    // resampled at an even spacing dense enough that both the tube and the
+    // overlay line follow the real bends instead of cutting corners between
+    // sparsely-sampled GPS vertices. Sample count scales with the on-model
+    // length, clamped.
+    const horizPts = coords.map(([lat, lng]) => {
+      const p = this._latLngToLocal(lat, lng, this._elevBase || 0, bbox);
+      return new THREE.Vector3(p.x, 0, p.z);
+    });
+    const horizCurve = new THREE.CatmullRomCurve3(horizPts, false, 'centripetal');
     let curveLen = 0;
-    try { curveLen = curve.getLength(); } catch { curveLen = 0; }
+    try { curveLen = horizCurve.getLength(); } catch { curveLen = 0; }
     const targetSpacing = Math.max(6, (this._worldSpan || 2000) / 500);
     const segCount = Math.max(
-      pts.length * 2,
-      Math.min(4000, Math.round((curveLen || pts.length * targetSpacing) / targetSpacing))
+      horizPts.length * 2,
+      Math.min(4000, Math.round((curveLen || horizPts.length * targetSpacing) / targetSpacing))
     );
-    // Arc-length-even samples: even tube rings + gradient fraction == distance
-    // fraction, so the resampled colours line up with the 2D route gradient.
-    const sampled = curve.getSpacedPoints(segCount);
+
+    // Re-drape EVERY resampled point (not just the GPS vertices) onto the surface
+    // so the densified track follows the relief end to end and never dips through
+    // it between sparse vertices. Over a terrain hole (missing DEM tile) carry the
+    // last valid height so the track doesn't dive to the basin datum across the
+    // data gap. Arc-length-even in the horizontal plane keeps the gradient
+    // fraction ≈ distance fraction, so the colours still line up with the 2D route.
+    let carrySurf = null;
+    const sampled = horizCurve.getSpacedPoints(segCount).map((v) => {
+      const { lat, lng } = this._localToLatLng(v.x, v.z, bbox);
+      let surf = this._sampleGridElevation(lat, lng);
+      if (this._isOverHole(lat, lng)) surf = (carrySurf != null ? carrySurf : surf);
+      else carrySurf = surf;
+      const base = this._latLngToLocal(lat, lng, surf, bbox);
+      return new THREE.Vector3(base.x, base.y + drapeLift, base.z);
+    });
 
     // Tube geometry gives the track a shaded 3D body. Gradient colours are applied
-    // ring-by-ring so it reads like the 2D route line.
-    const tubularSegments = segCount;
+    // ring-by-ring so it reads like the 2D route line. Built from the draped
+    // samples so the body hugs the surface too.
+    const curve = new THREE.CatmullRomCurve3(sampled, false, 'centripetal');
+    const tubularSegments = Math.max(1, sampled.length - 1);
     const radialSegments = 8;
     const tubeGeo = new THREE.TubeGeometry(curve, tubularSegments, 6, radialSegments, false);
     const tubeMat = new THREE.MeshStandardMaterial({
@@ -2389,46 +2892,8 @@ export class TerrainViewer {
     // resampled points) — the reveal mode limits instanceCount to this fraction.
     this._routeLineSegs = Math.max(1, sampled.length - 1);
 
-    // ----- Suspended-absolute drop stems (Plan §II-4) -----
-    // Thin vertical lines from the track down to the terrain surface beneath each
-    // (subsampled) route vertex, making the track's suspension in 3D space legible
-    // when the 絕對海拔 mode is on. Built once, hidden until toggled.
-    this._buildRouteStems(coords, elevations, routeLift, bbox);
-
     // Honour a persisted trail-reveal preference for the freshly built geometry.
     this._applyRouteReveal();
-  }
-
-  // Build the vertical drop-lines connecting the suspended track to the ground.
-  // Subsampled so a dense track doesn't spawn thousands of stems. Stems are
-  // skipped where the track barely floats (< ~4 m above terrain) or over a hole.
-  _buildRouteStems(coords, elevations, routeLift, bbox) {
-    if (!coords || coords.length < 2) return;
-    const step = Math.max(1, Math.floor(coords.length / 80));
-    const verts = [];
-    const pushStem = (i) => {
-      const [lat, lng] = coords[i];
-      if (this._isOverHole(lat, lng)) return;
-      const routeElev = (elevations?.[i] ?? 0) + routeLift;
-      const groundElev = this._sampleGridElevation(lat, lng);
-      if (routeElev - groundElev < 4) return; // barely floating → no stem needed
-      const top = this._latLngToLocal(lat, lng, routeElev, bbox);
-      const bot = this._latLngToLocal(lat, lng, groundElev, bbox);
-      verts.push(top.x, top.y, top.z, bot.x, bot.y, bot.z);
-    };
-    for (let i = 0; i < coords.length; i += step) pushStem(i);
-    pushStem(coords.length - 1);
-    if (verts.length < 6) return;
-
-    const geo = new LineSegmentsGeometry();
-    geo.setPositions(verts);
-    const mat = new LineMaterial({ color: 0xffb066, linewidth: 1.2, transparent: true, opacity: 0.55 });
-    const stems = new LineSegments2(geo, mat);
-    stems.computeLineDistances();
-    stems.visible = this._absoluteElevation;
-    this._routeStemGroup = stems;
-    this.scene.add(stems);
-    this._lineMaterials.push(mat);
   }
 
   // Suspended-absolute mode (Plan §II-4): show the drop stems so the track reads
@@ -2447,6 +2912,9 @@ export class TerrainViewer {
   // draw up to the player's progress; when off, the whole track is shown.
   setRouteRevealMode(on) {
     this._routeReveal = !!on;
+    // An explicit 揭示-off also cancels the automatic playback reveal, so the
+    // toggle always restores the full track.
+    if (!on) this._playbackReveal = false;
     this._applyRouteReveal();
   }
 
@@ -2458,12 +2926,16 @@ export class TerrainViewer {
   // or restore it in full (reveal off). Cheap — no geometry rebuild — so it can be
   // called every frame from _updatePlayerPosition.
   _applyRouteReveal() {
+    // Automatic playback reveal only clamps the track while the walk is actually
+    // running: pausing restores the full track (the reveal resumes on play). The
+    // explicit 揭示 toggle (_routeReveal) stays reveal-as-walked regardless.
+    const revealOn = this._routeReveal || (this._playbackReveal && this._playing);
     const tube = this.routeTube;
     const line = this.routeLine;
     if (tube && tube.geometry) {
       const idx = tube.geometry.index;
       if (idx) {
-        if (!this._routeReveal) {
+        if (!revealOn) {
           tube.geometry.setDrawRange(0, idx.count);
         } else {
           const segs = this._routeTubeSegs || 0;
@@ -2474,7 +2946,7 @@ export class TerrainViewer {
       }
     }
     if (line && line.geometry) {
-      if (!this._routeReveal) {
+      if (!revealOn) {
         line.geometry.instanceCount = Infinity;
       } else {
         const segs = this._routeLineSegs || 0;
@@ -2486,6 +2958,11 @@ export class TerrainViewer {
   _createWaypoints(waypoints, bbox) {
     if (!waypoints || waypoints.length === 0) return;
     const ms = this._markerScale || 1;
+    const stops = [];
+    // Start/end aren't Relive pause-stops (playback's fly-in and finish-orbit
+    // handle those beats), but playback still deals their cards — captured here.
+    this._startDetail = null;
+    this._endDetail = null;
 
     waypoints.forEach((wp, i) => {
       const [lat, lng] = wp.coords || wp;
@@ -2508,30 +2985,52 @@ export class TerrainViewer {
         distanceM: wp.distanceM ?? null,
         isStart: i === 0,
         isEnd: i === waypoints.length - 1,
+        isReturn: !!wp.isReturn,
       };
+      if (detail.isStart) this._startDetail = detail;
+      if (detail.isEnd) this._endDetail = detail;
 
-      // Colour-matched flag-on-pole planted at the waypoint itself (旗幟標示),
-      // echoing the 2D map's pin colour so the ground point reads clearly even
-      // when the floating name plaque is scrolled/zoomed out of legibility.
-      const flag = this._buildWaypointFlag(colorCss, ms);
-      flag.position.set(p.x, p.y, p.z);
-      flag.userData.detail = detail;
-      this.scene.add(flag);
-      this.waypointMarkers.push(flag);
-      this._pickables.push(flag);
+      // Return-leg waypoints ride the same ground point as their outbound twin, so
+      // they deal a playback card/stop but plant no duplicate flag or signboard.
+      if (!wp.isReturn) {
+        // Colour-matched flag-on-pole planted at the waypoint itself (旗幟標示),
+        // echoing the 2D map's pin colour so the ground point reads clearly even
+        // when the floating name plaque is scrolled/zoomed out of legibility.
+        const flag = this._buildWaypointFlag(colorCss, ms);
+        flag.position.set(p.x, p.y, p.z);
+        flag.userData.detail = detail;
+        this.scene.add(flag);
+        this.waypointMarkers.push(flag);
+        this._pickables.push(flag);
 
-      // Signboard billboard whose downward pin points at the waypoint — no ground
-      // sphere. Half the previous size. Click → detail.
-      const sign = this._createBillboard(name, colorCss);
-      const signH = 13 * ms;
-      sign.scale.set(signH * (256 / 96), signH, 1);
-      this._registerLabel(sign);
-      sign.position.set(p.x, p.y, p.z);
-      sign.userData.detail = detail;
-      this.scene.add(sign);
-      this.waypointMarkers.push(sign);
-      this._pickables.push(sign);
+        // Signboard billboard whose downward pin points at the waypoint — no ground
+        // sphere. Half the previous size. Click → detail.
+        const sign = this._createBillboard(name, colorCss);
+        const signH = 13 * ms;
+        sign.scale.set(signH * (256 / 96), signH, 1);
+        this._registerLabel(sign);
+        sign.position.set(p.x, p.y, p.z);
+        sign.userData.detail = detail;
+        this.scene.add(sign);
+        this.waypointMarkers.push(sign);
+        this._pickables.push(sign);
+      }
+
+      // Register a Relive stop at this waypoint's progress fraction. Skip the
+      // trailhead and the finish (start/end cards are dealt by the fly-in and the
+      // finish orbit) — the isEnd guard also stops a round-trip's return-to-start
+      // from double-dealing if its u rounds just under 1.
+      const total = this._totalDistM || 0;
+      if (total > 0 && wp.distanceM != null && !detail.isStart && !detail.isEnd) {
+        const u = wp.distanceM / total;
+        if (u > 0.01 && u < 0.99) stops.push({ u, detail });
+      }
     });
+
+    stops.sort((a, b) => a.u - b.u);
+    this._waypointStops = stops;
+    this._nextStopIdx = 0;
+    this._pauseUntil = 0;
   }
 
   // A small flag-on-pole marker (旗幟標示) planted at a route waypoint's ground
@@ -2763,47 +3262,43 @@ export class TerrainViewer {
     entry.texture.needsUpdate = true;
   }
 
+  // Rounded-rect path builder shared by the static and marquee label draws.
+  static _labelRoundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
   _createLabel(text, x, y, z, colorHex) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     canvas.width = 256;
     canvas.height = 80;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    ctx.font = 'bold 32px Inter, "Noto Sans TC", sans-serif';
-    const metrics = ctx.measureText(text);
-    const tw = metrics.width;
+    const font = 'bold 32px Inter, "Noto Sans TC", sans-serif';
+    ctx.font = font;
+    const tw = ctx.measureText(text).width;
 
     const pad = 16;
-    const bw = tw + pad * 2;
     const bh = 50;
+    // A name wider than the billboard scrolls (跑馬燈) inside a fixed-width box
+    // instead of overflowing the canvas and getting clipped mid-glyph.
+    const maxBoxW = canvas.width - 8;
+    const isMarquee = tw + pad * 2 > maxBoxW;
+    const bw = isMarquee ? maxBoxW : tw + pad * 2;
     const bx = (canvas.width - bw) / 2;
     const by = (canvas.height - bh) / 2;
 
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    const r = 8;
-    ctx.beginPath();
-    ctx.moveTo(bx + r, by);
-    ctx.lineTo(bx + bw - r, by);
-    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + r);
-    ctx.lineTo(bx + bw, by + bh - r);
-    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - r, by + bh);
-    ctx.lineTo(bx + r, by + bh);
-    ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - r);
-    ctx.lineTo(bx, by + r);
-    ctx.quadraticCurveTo(bx, by, bx + r, by);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
-
     const spriteMat = new THREE.SpriteMaterial({
       map: texture,
       transparent: true,
@@ -2813,7 +3308,90 @@ export class TerrainViewer {
     const sprite = new THREE.Sprite(spriteMat);
     sprite.position.set(x, y, z);
     sprite.scale.set(60, 20, 1);
+
+    if (!isMarquee) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      TerrainViewer._labelRoundRectPath(ctx, bx, by, bw, bh, 8);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+      return sprite;
+    }
+
+    // Pre-render the full name once onto a scroll strip [name][gap]; each frame
+    // blits a shifted window from it, wrapping at `cycle` for a seamless loop —
+    // far cheaper than re-shaping CJK text every frame.
+    const gap = 64;
+    const cycle = Math.ceil(tw + gap);
+    const strip = document.createElement('canvas');
+    strip.width = cycle;
+    strip.height = bh;
+    const sctx = strip.getContext('2d');
+    sctx.font = font;
+    sctx.fillStyle = '#ffffff';
+    sctx.textAlign = 'left';
+    sctx.textBaseline = 'middle';
+    sctx.fillText(text, 0, bh / 2 + 1);
+
+    sprite.userData.marquee = {
+      ctx, canvas, texture, strip,
+      bx, by, bw, bh, pad,
+      inner: bw - pad * 2,
+      cycle,
+      offset: 0,
+      speed: 46,   // px/sec in canvas space
+    };
+    this._marqueeLabels.push(sprite);
+    this._drawMarqueeLabel(sprite.userData.marquee);
     return sprite;
+  }
+
+  // Advance every visible marquee label by `step` seconds and redraw it.
+  _updateMarqueeLabels(step) {
+    for (const sprite of this._marqueeLabels) {
+      const m = sprite.userData.marquee;
+      if (!m) continue;
+      // Skip labels hidden by the label-size control ('none') or by a hidden
+      // parent group (圖資 off) — no point redrawing a canvas nothing renders.
+      if (!sprite.visible || (sprite.parent && !sprite.parent.visible)) continue;
+      m.offset += m.speed * step;
+      if (m.offset >= m.cycle) m.offset -= m.cycle;
+      this._drawMarqueeLabel(m);
+    }
+  }
+
+  _drawMarqueeLabel(m) {
+    const { ctx, canvas, texture, strip, bx, by, bw, bh, pad, inner, cycle } = m;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    TerrainViewer._labelRoundRectPath(ctx, bx, by, bw, bh, 8);
+    ctx.fill();
+
+    const dstX = bx + pad;
+    const srcX = Math.floor(m.offset);
+    const first = Math.min(inner, cycle - srcX);
+    ctx.drawImage(strip, srcX, 0, first, bh, dstX, by, first, bh);
+    if (first < inner) {
+      ctx.drawImage(strip, 0, 0, inner - first, bh, dstX + first, by, inner - first, bh);
+    }
+
+    // Fade the two scroll edges into the box so glyphs enter/leave softly.
+    const fadeW = 18;
+    let grad = ctx.createLinearGradient(dstX, 0, dstX + fadeW, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0.6)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(dstX, by, fadeW, bh);
+    grad = ctx.createLinearGradient(dstX + inner - fadeW, 0, dstX + inner, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.6)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(dstX + inner - fadeW, by, fadeW, bh);
+
+    texture.needsUpdate = true;
   }
 
   // ---------- Map features (道路 / 河流 / 水體 / 綠地 / 荒地 / 建築) ----------
@@ -3721,22 +4299,28 @@ export class TerrainViewer {
     if (!coords || coords.length < 2) return;
     const ms = this._markerScale || 1;
 
-    const pts = coords.map(([lat, lng], i) => {
-      const elev = elevations?.[i] ?? 0;
-      const p = this._latLngToLocal(lat, lng, elev + 20, bbox);
-      return new THREE.Vector3(p.x, p.y, p.z);
+    // Ride the hiker on the same draped surface as the track (see
+    // _createRoutePath) so the cursor cone stays seated on the trail instead of
+    // floating at the raw GPS elevation.
+    const drapeLift = this._routeDrapeLift();
+    const pts = coords.map(([lat, lng]) => {
+      const surf = this._sampleGridElevation(lat, lng);
+      const p = this._latLngToLocal(lat, lng, surf, bbox);
+      return new THREE.Vector3(p.x, p.y + drapeLift, p.z);
     });
 
     this.playerPath = new THREE.CatmullRomCurve3(pts);
     this.playerMarker = null;   // no sphere — the inverted-cone cursor marks the spot
 
     // 3D position cursor: a single inverted cone (tip pointing down at the route
-    // point) sitting just below the hiker. Half the previous marker size.
+    // point) sitting just below the hiker. Shrunk to 1/3 of the previous size;
+    // the figure's standing height derives from coneH below, so it drops to sit
+    // just above the point automatically.
     this._cursorGroup = new THREE.Group();
-    const coneH = 13 * ms;
+    const coneH = (13 / 3) * ms;
     this._cursorHeight = coneH;
     const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(6 * ms, coneH, 16),
+      new THREE.ConeGeometry(2 * ms, coneH, 16),
       new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff5500, emissiveIntensity: 0.9 })
     );
     cone.rotation.x = Math.PI;        // apex points straight down at the point
@@ -3749,17 +4333,6 @@ export class TerrainViewer {
     // primitives with pivoting limbs so it can actually run.
     this._person = this._createPersonFigure(ms);
     this.scene.add(this._person);
-
-    // Progress ring (half size).
-    const ringGeo = new THREE.RingGeometry(6.5 * ms, 9 * ms, 32);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xff6600,
-      transparent: true,
-      opacity: 0.6,
-      side: THREE.DoubleSide,
-    });
-    this.playerRing = new THREE.Mesh(ringGeo, ringMat);
-    this.scene.add(this.playerRing);
 
     // Trail line behind player
     const trailMat = new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.3 });
@@ -3914,11 +4487,25 @@ export class TerrainViewer {
       // Stand on top of the cursor cone.
       this._person.position.set(pt.x, pt.y + coneH + bob, pt.z);
 
-      // Face the direction of travel (path tangent).
-      const tan = this.playerPath.getTangentAt
-        ? this.playerPath.getTangentAt(this._clampU(this._progress))
-        : null;
-      if (tan && (tan.x || tan.z)) this._person.rotation.y = Math.atan2(tan.x, tan.z);
+      // Face the direction of travel. The raw Catmull-Rom tangent kinks at every
+      // GPS wiggle and made the figure snap-turn constantly; instead aim it at a
+      // look-ahead chord (same window the chase cam uses) and low-pass the result
+      // so heading changes are gradual and the walked path reads as smooth. Snap
+      // instantly while scrubbing (not playing) so it faces right at rest.
+      const pA = this.playerPath.getPointAt(this._clampU(this._progress + 0.05));
+      const pB = this.playerPath.getPointAt(this._clampU(this._progress - 0.03));
+      if (pA && pB) {
+        const vx = pA.x - pB.x, vz = pA.z - pB.z;
+        const len = Math.hypot(vx, vz);
+        if (len > 1e-6) {
+          const tx = vx / len, tz = vz / len;
+          const k = moving ? 0.1 : 1;   // per-frame turn rate; instant at rest
+          this._personDir.x += (tx - this._personDir.x) * k;
+          this._personDir.z += (tz - this._personDir.z) * k;
+          const dl = Math.hypot(this._personDir.x, this._personDir.z) || 1;
+          this._person.rotation.y = Math.atan2(this._personDir.x / dl, this._personDir.z / dl);
+        }
+      }
       this._person.rotation.x = moving ? 0.2 : 0.0; // lean forward when running
 
       if (parts) {
@@ -3927,11 +4514,6 @@ export class TerrainViewer {
         parts.armL.rotation.x = -swing * amp * 0.9;
         parts.armR.rotation.x = swing * amp * 0.9;
       }
-    }
-
-    if (this.playerRing) {
-      this.playerRing.position.copy(pt);
-      this.playerRing.lookAt(this.camera.position);
     }
 
     if (this.playerTrail) {
@@ -3955,7 +4537,7 @@ export class TerrainViewer {
     }
 
     // Reveal the track up to the current position when trail mode is on.
-    if (this._routeReveal) this._applyRouteReveal();
+    if (this._routeReveal || this._playbackReveal) this._applyRouteReveal();
 
     const metrics = this._metricsAtProgress(this._progress);
     this._applyEnvironment(metrics);
@@ -4015,6 +4597,8 @@ export class TerrainViewer {
       if (wTime > 0) speedKmh = (wDist / 1000) / wTime;
     }
     const gradePct = wDist > 0 ? ((elev[hi] ?? 0) - (elev[lo] ?? 0)) / wDist * 100 : 0;
+    const cumAscentM = this._cumAscent ? lerp(this._cumAscent[idx] ?? 0, this._cumAscent[j] ?? 0) : null;
+    const cumDescentM = this._cumDescent ? lerp(this._cumDescent[idx] ?? 0, this._cumDescent[j] ?? 0) : null;
 
     const dateMs = (this._startMs != null && timeH != null) ? this._startMs + timeH * 3600000 : this._startMs;
 
@@ -4035,6 +4619,12 @@ export class TerrainViewer {
           cat: TerrainViewer.weatherCategory(code),
           icon: code != null ? TerrainViewer.weatherIcon(code) : '',
           temperature: nearest.temperature ?? nearest.temp ?? null,
+          // Display strings carried through from the 2D weather cells (may be
+          // undefined for older data / points without a detailed read-out).
+          precipitation: nearest.precipitation ?? null,
+          precipProb: nearest.precipProb ?? null,
+          humidity: nearest.humidity ?? null,
+          windSpeed: nearest.windSpeed ?? null,
         };
       }
     }
@@ -4050,6 +4640,8 @@ export class TerrainViewer {
       dateMs,
       speedKmh,
       gradePct,
+      cumAscentM,
+      cumDescentM,
       fatiguePct,
       weather,
     };
@@ -4088,6 +4680,10 @@ export class TerrainViewer {
     if (this._featuresData) {
       try { this._buildMapFeatures(this._featuresData, bbox); } catch (err) { console.warn('map features failed:', err); }
     }
+    // Redraw catchment basins from the retained data onto the fresh terrain.
+    if (this._catchmentBasinsData && this._catchmentBasinsData.length) {
+      try { this._drawCatchmentBasins(); } catch (err) { console.warn('catchment redraw failed:', err); }
+    }
 
     // Reapply the persisted layer/label state to the freshly built objects.
     this.setLabelScale(this._labelScale);
@@ -4105,10 +4701,177 @@ export class TerrainViewer {
       this._progress = Math.max(0, Math.min(1, prevView.progress));
       this.controls.update();
     }
+    // _createWaypoints reset the stop cursor to 0; re-arm it for the restored
+    // playhead so a rebuild mid-track doesn't replay already-passed stops.
+    this._syncStopIdx();
     this._updateLineResolutions();
     this._updatePlayerPosition();
     this._emitMetrics(true);
     if (this._onInfo) this._onInfo(this._terrainInfo);
+  }
+
+  _ensureCatchmentGroup() {
+    if (!this.scene) return;
+    if (!this._catchmentGroup) {
+      this._catchmentGroup = new THREE.Group();
+      this._catchmentGroup.visible = this._catchmentVisible;
+      this.scene.add(this._catchmentGroup);
+    }
+  }
+
+  _disposeCatchmentGroup() {
+    const grp = this._catchmentGroup;
+    if (!grp) return;
+    grp.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+    if (this.scene) this.scene.remove(grp);
+    this._catchmentGroup = null;
+  }
+
+  // Rebuild the whole catchment group from the retained basin data.
+  _drawCatchmentBasins() {
+    this._disposeCatchmentGroup();
+    if (!this.scene || !this._bbox || !this._catchmentBasinsData || !this._catchmentBasinsData.length) return;
+    this._ensureCatchmentGroup();
+    for (const basin of this._catchmentBasinsData) this._buildOneCatchmentBasin(basin, this._catchmentGroup);
+  }
+
+  // Drape ONE basin (translucent fill + boundary outline + outlet marker) onto the
+  // terrain surface. Reuses the same clip/hole/triangulate helpers as the 圖資
+  // water fills. Unlit materials (MeshBasic/LineBasic) so the analytic overlay
+  // stays legible regardless of the day/night lighting.
+  _buildOneCatchmentBasin(basin, parentGroup) {
+    if (!parentGroup || !this._bbox || !basin || !Array.isArray(basin.outer) || basin.outer.length < 3) return;
+    const bbox = this._bbox;
+    const color = new THREE.Color(basin.color || 0x38bdf8);
+    const range = Math.max(1, (this._fieldMaxV ?? 0) - (this._fieldMinV ?? 0));
+    const baseLift = Math.max(2, range * 0.004);
+    const lift = baseLift * 1.2;
+    const dLatCell = (bbox.maxLat - bbox.minLat) / (FIELD_SIZE - 1);
+    const dLngCell = (bbox.maxLng - bbox.minLng) / (FIELD_SIZE - 1);
+
+    const world = (lat, lng, h) => {
+      const elev = this._sampleGridElevation(lat, lng);
+      const p = this._latLngToLocal(lat, lng, elev + h, bbox);
+      return new THREE.Vector3(p.x, p.y, p.z);
+    };
+    const drapeLine = (pts, h) => {
+      const out = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [la, lo] = pts[i];
+        const [lb, lob] = pts[i + 1];
+        const steps = Math.min(14, Math.max(1, Math.ceil(Math.max(Math.abs(lb - la) / dLatCell, Math.abs(lob - lo) / dLngCell))));
+        for (let st = 0; st < steps; st++) { const t = st / steps; out.push(world(la + (lb - la) * t, lo + (lob - lo) * t, h)); }
+      }
+      out.push(world(pts[pts.length - 1][0], pts[pts.length - 1][1], h));
+      return out;
+    };
+    // Drop a closed ring's repeated last vertex before clipping/triangulating.
+    const toShape = (ring) => {
+      const r = ring.slice();
+      if (r.length > 1) { const a = r[0], z = r[r.length - 1]; if (a[0] === z[0] && a[1] === z[1]) r.pop(); }
+      return r;
+    };
+
+    const grp = new THREE.Group();
+    const outer = this._clipRingToBbox(toShape(basin.outer), bbox);
+    if (outer.length >= 3) {
+      const holes = (basin.holes || [])
+        .map((h) => this._clipRingToBbox(toShape(h), bbox))
+        .filter((h) => h.length >= 3);
+
+      // Filled surface: rasterise the basin over its OWN bbox with a resolution
+      // decoupled from the (whole-route) terrain field, sampling the terrain height
+      // per node. This gives full coverage even for a small local catchment (a few
+      // terrain-field cells wide) — the earlier field-index approach left small
+      // basins with a sparse/empty fill under the outline — while still hugging the
+      // interior relief (each node's height comes from _sampleGridElevation).
+      let bLatMin = Infinity, bLatMax = -Infinity, bLngMin = Infinity, bLngMax = -Infinity;
+      for (const [la, lo] of outer) {
+        if (la < bLatMin) bLatMin = la; if (la > bLatMax) bLatMax = la;
+        if (lo < bLngMin) bLngMin = lo; if (lo > bLngMax) bLngMax = lo;
+      }
+      const latSpan = bLatMax - bLatMin, lngSpan = bLngMax - bLngMin;
+      // Sample ~1.5× the terrain-field density where the basin is large, but never
+      // fewer than 24 steps so a tiny basin is still smoothly and fully filled.
+      const stepsY = Math.max(24, Math.min(140, Math.ceil(latSpan / dLatCell * 1.5)));
+      const stepsX = Math.max(24, Math.min(140, Math.ceil(lngSpan / dLngCell * 1.5)));
+      const nLat = (i) => bLatMin + (i / stepsY) * latSpan;
+      const nLng = (j) => bLngMin + (j / stepsX) * lngSpan;
+      const cols = stepsX + 1;
+      const cornerVert = new Array((stepsY + 1) * cols).fill(null);
+      for (let i = 0; i <= stepsY; i++) {
+        for (let j = 0; j <= stepsX; j++) {
+          const la = nLat(i), lo = nLng(j);
+          cornerVert[i * cols + j] = this._isOverHole(la, lo) ? null : world(la, lo, lift);
+        }
+      }
+      const inBasin = (la, lo) => this._pointInRing(la, lo, outer) && !holes.some((h) => this._pointInRing(la, lo, h));
+      const positions = [];
+      for (let i = 0; i < stepsY; i++) {
+        for (let j = 0; j < stepsX; j++) {
+          // Cell-centre test keeps the fill inside the true boundary (drawn crisply
+          // by the outline below); half-cell stair-stepping hides under it.
+          if (!inBasin(nLat(i + 0.5), nLng(j + 0.5))) continue;
+          const v00 = cornerVert[i * cols + j];
+          const v10 = cornerVert[i * cols + (j + 1)];
+          const v01 = cornerVert[(i + 1) * cols + j];
+          const v11 = cornerVert[(i + 1) * cols + (j + 1)];
+          if (!v00 || !v10 || !v01 || !v11) continue;   // touches a terrain hole → skip
+          positions.push(v00.x, v00.y, v00.z, v10.x, v10.y, v10.z, v11.x, v11.y, v11.z);
+          positions.push(v00.x, v00.y, v00.z, v11.x, v11.y, v11.z, v01.x, v01.y, v01.z);
+        }
+      }
+      if (positions.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geo.computeVertexNormals();
+        const mat = new THREE.MeshBasicMaterial({
+          color, transparent: true, opacity: 0.34, side: THREE.DoubleSide,
+          depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 2;
+        grp.add(mesh);
+      }
+
+      // Boundary outline (outer + holes), split at terrain holes so it never
+      // draws across blank tiles.
+      const ov = [];
+      const addOutline = (ring) => {
+        for (const seg of this._splitPolylineAtHoles([...ring, ring[0]])) {
+          const ow = drapeLine(seg, lift + baseLift * 0.6);
+          for (let i = 0; i < ow.length - 1; i++) ov.push(ow[i].x, ow[i].y, ow[i].z, ow[i + 1].x, ow[i + 1].y, ow[i + 1].z);
+        }
+      };
+      addOutline(outer);
+      holes.forEach(addOutline);
+      if (ov.length >= 6) {
+        const lgeo = new THREE.BufferGeometry();
+        lgeo.setAttribute('position', new THREE.Float32BufferAttribute(ov, 3));
+        const lmat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 });
+        const lines = new THREE.LineSegments(lgeo, lmat);
+        lines.renderOrder = 3;
+        grp.add(lines);
+      }
+    }
+
+    // Outlet (pour point) marker: a small downward cone tip at the outlet.
+    if (Array.isArray(basin.outlet) && basin.outlet.length === 2 && !this._isOverHole(basin.outlet[0], basin.outlet[1])) {
+      const coneH = Math.max(baseLift * 6, range * 0.02);
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(coneH * 0.5, coneH, 12),
+        new THREE.MeshBasicMaterial({ color })
+      );
+      cone.position.copy(world(basin.outlet[0], basin.outlet[1], lift + coneH * 0.6));
+      cone.rotation.x = Math.PI;   // tip points down onto the pour point
+      cone.renderOrder = 4;
+      grp.add(cone);
+    }
+
+    if (grp.children.length) parentGroup.add(grp);
   }
 
   _clearScene() {
@@ -4129,6 +4892,10 @@ export class TerrainViewer {
     this.waypointMarkers = [];
     this.weatherLabels = [];
     this._weatherIconEntries = [];
+    // The terrain material's `.map` (the satellite texture) was just disposed
+    // above; drop our cached handle so a re-drape rebuilds a fresh one.
+    this._satTexture = null;
+    this._satTextureKey = null;
     this.terrainMesh = null;
     this.routeLine = null;
     this.routeTube = null;
@@ -4142,7 +4909,12 @@ export class TerrainViewer {
     this.featureGroup = null;
     this.featureLabelGroup = null;
     this.landmarkGroup = null;
+    // The traversal above disposed + removed the catchment group; drop the handle
+    // (the basin DATA is retained so _rebuildInPlace can redraw it).
+    this._catchmentGroup = null;
     this._labelSprites = [];
+    this._marqueeLabels = [];
+    this._marqueeAccum = 0;
     this._landCoverField = null;
     this._slopeField = null;
     this.playerMarker = null;
@@ -4161,6 +4933,10 @@ export class TerrainViewer {
     this._moon = null;
     this._ambient = null;
     this._hemi = null;
+    this._terrainSun = null;
+    this._terrainSunTarget = null;
+    this._terrainAmbient = null;
+    this._terrainHemi = null;
     this._rain = null;
     this._snow = null;
     // The rigs' GPU resources were freed by the traversal above; drop the handle
@@ -4207,19 +4983,58 @@ export class TerrainViewer {
     const dt = Math.min(this.clock.getDelta(), 0.1);
 
     if (this._playing && this.playerPath) {
-      this._personPhase += dt * this._speed;
-      this._progress += dt * this._speed * 0.05;
       let reachedEnd = false;
-      if (this._progress >= 1) {
-        this._progress = 1;
-        this._playing = false;
-        reachedEnd = true;
+      const now = performance.now();
+      if (this._pauseUntil > now) {
+        // Parked at a Relive waypoint stop: hold the playhead, keep the close-up
+        // orbit and weather alive, resume automatically when the timer expires.
+      } else {
+        this._personPhase += dt * this._speed;
+        const prev = this._progress;
+        this._progress += dt * this._speed * 0.05;
+        // Reached the next waypoint this frame → snap to it and begin the pause.
+        const stops = this._waypointStops;
+        if (this._nextStopIdx < stops.length && this._progress >= stops[this._nextStopIdx].u) {
+          const stop = stops[this._nextStopIdx];
+          this._nextStopIdx++;
+          if (stop.u > prev && stop.u < 1) {
+            this._progress = stop.u;
+            this._pauseUntil = now + this._waypointPauseMs;
+            this._orbitAngle = 0;
+            if (this._onWaypointArrive) this._onWaypointArrive(stop.detail);
+          }
+        }
+        if (this._progress >= 1) {
+          this._progress = 1;
+          this._playing = false;
+          reachedEnd = true;
+        }
       }
       this._updatePlayerPosition();
+      this._updateFollowCamera(dt);
       if (this._onProgressChange) this._onProgressChange(this._progress);
       // The hiker walked to the end: stop playback and let the UI reset its
-      // play/pause button.
-      if (reachedEnd && this._onPlayStateChange) this._onPlayStateChange(false);
+      // play/pause button. With the chase cam engaged, finish Relive-style on a
+      // slow orbit around the final position (any grab or scrub cancels it).
+      if (reachedEnd) {
+        if (this._followCam && !this._followUserOverride && this.controls) {
+          this.controls.autoRotate = true;
+          this.controls.autoRotateSpeed = 0.6;
+        }
+        // Deal the finish card over the end-of-route orbit (metrics read at u=1).
+        if (this._onWaypointArrive && this._endDetail) this._onWaypointArrive(this._endDetail);
+        if (this._onPlayStateChange) this._onPlayStateChange(false);
+      }
+    }
+
+    // Scroll long map-feature name labels (跑馬燈). Throttled to ~30fps so the
+    // per-label canvas redraw + texture upload stays cheap on mobile.
+    if (this._marqueeLabels.length) {
+      this._marqueeAccum += dt;
+      if (this._marqueeAccum >= 1 / 30) {
+        this._updateMarqueeLabels(this._marqueeAccum);
+        this._marqueeAccum = 0;
+      }
     }
 
     // Weather keeps moving even while paused so a scrubbed-to frame still reads

@@ -99,7 +99,7 @@ async function openWithRoute(page, { weather = false } = {}) {
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   await page.locator('#gpx-file-input').setInputFiles(sampleKml);
   await expect(page.locator('#waypoint-list .waypoint-item').first()).toBeVisible();
-  await expect(page.locator('#btn-open-3d-viewer')).toBeEnabled();
+  await expect(page.locator('#btn-view-3d')).toBeEnabled();
 }
 
 async function ensurePanelOpen(page) {
@@ -111,7 +111,7 @@ async function ensurePanelOpen(page) {
 // Build the current route's 3D terrain via the route-planning button.
 async function open3dForCurrentRoute(page) {
   await ensurePanelOpen(page);
-  await page.locator('#btn-open-3d-viewer').click();
+  await page.locator('#btn-view-3d').click();
 }
 
 // Mock the OSRM routing service so planning a routed (non-imported) route is
@@ -156,7 +156,7 @@ async function openRoutedRoute(page, fractions = [[0.4, 0.42], [0.6, 0.58]]) {
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   await ensurePanelOpen(page);
   await addWaypointsAtFractions(page, fractions);
-  await expect(page.locator('#btn-open-3d-viewer')).toBeEnabled({ timeout: 20_000 });
+  await expect(page.locator('#btn-view-3d')).toBeEnabled({ timeout: 20_000 });
   // Let the route + its weather finish so the 3D button won't refuse to open.
   await page.locator('#route-weather-busy-overlay').waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
 }
@@ -339,7 +339,7 @@ test('3D terrain: the route caches its elevation grid + 圖資 so reopening skip
   // Reopen the same route: cached grid + 圖資 (Cache-API-backed, see
   // saveTerrainFeaturesEntry) are both reused — no new elevation or Overpass
   // requests, and the page never re-hits the network for either.
-  await page.locator('#btn-open-3d-viewer').click();
+  await page.locator('#btn-view-3d').click();
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
   expect(elevation.count).toBe(firstRunElevation);
@@ -579,7 +579,9 @@ test('3D terrain: scrubbing playback drives the live position readout', async ({
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
 
-  await expect(page.locator('#tv-toggle-daynight')).toHaveClass(/active/);
+  // Day/night is permanently on now (its toggle was removed); use the default-on
+  // 等高線 toggle as the "toolbar rendered" readiness proxy instead.
+  await expect(page.locator('#tv-toggle-contour')).toHaveClass(/active/);
 
   const slider = page.locator('#tp-slider');
   await slider.evaluate((el) => {
@@ -611,4 +613,43 @@ test('3D terrain: abort button cancels computation and closes the viewer', async
 
   await page.locator('#tv-loading-abort').click();
   await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/, { timeout: 20_000 });
+});
+
+test('3D terrain: removed toggles are gone and 集水區 toggle drives the basin overlay', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await mockElevation(page, { delayMs: 30 });
+  await mockFeatures(page);
+  await openWithRoute(page);
+  await open3dForCurrentRoute(page);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+
+  // The 日夜 / 懸空 / 揭示 toggles were removed (day/night is permanently on).
+  await expect(page.locator('#tv-toggle-daynight')).toHaveCount(0);
+  await expect(page.locator('#tv-toggle-absolute')).toHaveCount(0);
+  await expect(page.locator('#tv-toggle-trail')).toHaveCount(0);
+
+  // The 集水區 toggle is present, enabled (route has 主航點) and starts off.
+  const catchmentBtn = page.locator('#tv-toggle-catchment');
+  await expect(catchmentBtn).toBeEnabled();
+  await expect(catchmentBtn).not.toHaveClass(/active/);
+
+  // Turning it on runs the (cache-first / offline-DEM) compute and persists.
+  await catchmentBtn.click();
+  await expect(catchmentBtn).toHaveClass(/active/);
+  await expect
+    .poll(async () => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_terrain3dDisplay') || '{}').catchment3d))
+    .toBe(true);
+  // The delineation eventually settles (its busy overlay clears).
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 30_000 });
+
+  // Turning it off hides the overlay and clears the persisted flag.
+  await catchmentBtn.click();
+  await expect(catchmentBtn).not.toHaveClass(/active/);
+  await expect
+    .poll(async () => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_terrain3dDisplay') || '{}').catchment3d))
+    .toBe(false);
+
+  expect(errors).toEqual([]);
 });

@@ -20,6 +20,13 @@ import {
   removeOfflineMapSource,
 } from './offlineMapSourceIndex.js';
 
+// External sources for Mapsforge .map base maps that the user imports via importOfflineMapSource().
+// rudymap = Taiwan TOPO (weekly OSM + 20m DEM contours); openandromaps = worldwide hiking maps.
+const OFFLINE_MAP_DOWNLOAD_URLS = {
+  rudymap: 'https://rudymap.tw/',
+  openandromaps: 'https://www.openandromaps.org/en/downloads',
+};
+
 export class OfflineManager {
   constructor() {
     this.isOnline = platform.getNetworkStatus().connected;
@@ -30,6 +37,7 @@ export class OfflineManager {
     this._clearCacheBtn = document.getElementById('btn-clear-offline-cache');
     this._offlineMapSourceList = document.getElementById('offline-map-source-list');
     this._importOfflineMapBtn = document.getElementById('btn-import-offline-map-source');
+    this._offlineMapDownloadLinks = document.getElementById('offline-map-download-links');
 
     this._unsubscribeNetworkStatus = platform.subscribeNetworkStatus?.((status) => {
       this._updateStatus(status.connected);
@@ -38,6 +46,7 @@ export class OfflineManager {
     this._clearCacheBtn?.addEventListener('click', () => this._handleClearAllClick());
     this._offlineMapSourceList?.addEventListener('click', (event) => this._handleOfflineMapSourceListClick(event));
     this._importOfflineMapBtn?.addEventListener('click', () => this._handleImportOfflineMapClick());
+    this._offlineMapDownloadLinks?.addEventListener('click', (event) => this._handleOfflineMapDownloadClick(event));
 
     this._updateStatus(this.isOnline);
   }
@@ -176,6 +185,20 @@ export class OfflineManager {
     this._importOfflineMapBtn.title = translatePhrase(
       supported ? '匯入離線底圖來源' : '離線底圖匯入僅支援 Android App'
     );
+  }
+
+  _handleOfflineMapDownloadClick(event) {
+    const button = event.target.closest?.('[data-offline-map-download]');
+    if (!button) return;
+    const url = OFFLINE_MAP_DOWNLOAD_URLS[button.dataset.offlineMapDownload];
+    if (!url) return;
+    try {
+      // Capacitor opens the native browser; web falls back to window.open.
+      platform.openExternalUrl(url);
+    } catch (err) {
+      console.warn('Offline map download link open failed:', err);
+      this._notify('開啟下載頁面失敗', 'error');
+    }
   }
 
   async _handleImportOfflineMapClick() {
