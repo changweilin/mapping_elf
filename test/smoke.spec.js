@@ -108,6 +108,11 @@ test('app shell loads without console errors', async ({ page }) => {
   await clickStable(page, '#btn-weather-quick-view');
   await expect(page.locator('#bottom-panel')).toHaveClass(/bp-mode-weather/);
 
+  // Map-side search entry opens the panel and focuses the keyword search.
+  await clickStable(page, '#btn-map-search');
+  await expect(page.locator('#side-panel')).toHaveClass(/open/);
+  await expect(page.locator('#search-input')).toBeFocused();
+
   expect(consoleErrors).toEqual([]);
 });
 

@@ -13919,6 +13919,17 @@ async function init() {
     });
   });
 
+  // --- Map-side search entry: opens the side panel with the keyword search
+  //     focused, so "find a place → add waypoint" starts from the map itself.
+  //     Results and the add-waypoint flow stay in the side panel unchanged. ---
+  document.getElementById('btn-map-search')?.addEventListener('click', () => {
+    sidePanel.classList.add('open');
+    const searchInput = document.getElementById('search-input');
+    document.getElementById('search-section')?.scrollIntoView({ block: 'nearest' });
+    searchInput?.focus();
+    searchInput?.select();
+  });
+
   // --- Weather center quick entries: 取得 (update weather) and 查看/調整 (open
   //     the detailed weather view, where per-column date/time adjustments live) ---
   {
