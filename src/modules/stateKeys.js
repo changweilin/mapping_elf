@@ -57,6 +57,7 @@ const PREFERENCE_STATE_KEYS = [
   'mappingElf_theme',
   'mappingElf_shapeRouteDistanceKm',
   'mappingElf_shapeRouteAngleTolDeg',
+  'mappingElf_shapeRouteTrimSpurs',
 ];
 
 const LAYOUT_STATE_KEYS = [

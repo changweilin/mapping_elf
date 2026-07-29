@@ -23,16 +23,29 @@ import {
 } from '../src/modules/tileEstimator.js';
 import {
   countShapeCorners,
+  detectRouteSpurs,
   needsDistanceCalibration,
   nextCalibratedTarget,
+  offShapeRouteSpurs,
   pickShapeWaypoints,
+  planRefinementTs,
+  planSpurRetraction,
   resampleClosedStroke,
+  ringFeatureTs,
   ringPerimeter,
+  ringPointAtT,
+  ringRouteDeviation,
   rotationCandidates,
+  selectWaypointTs,
   shapeSimilarity,
   strokeToLatLngRing,
   suggestWaypointCount,
+  totalSpurLengthM,
+  trimRouteSpurs,
+  waypointsFromTs,
 } from '../src/modules/shapeRoutePlanner.js';
+import { SHAPE_NAMES, shapeStroke } from './helpers/testShapes.mjs';
+import { makeGridWorld } from './helpers/gridWorld.mjs';
 
 const closeTo = (actual, expected, epsilon = 1e-6) => {
   assert.ok(
@@ -203,13 +216,13 @@ for (let i = 1; i < shapeWps.length; i++) {
   assert.ok(gap > TARGET_M / 8 * 0.4 && gap < TARGET_M / 8 * 1.8, `gap ${i} = ${gap}`);
 }
 
-assert.equal(suggestWaypointCount(2000), 6);
-assert.equal(suggestWaypointCount(5000), 8);
-assert.equal(suggestWaypointCount(20000), 16);
-// Complexity raises the count: corners + extra strokes, capped at 16.
-assert.equal(suggestWaypointCount(2000, { strokeCount: 1, corners: 4 }), 8);
-assert.equal(suggestWaypointCount(2000, { strokeCount: 3, corners: 8 }), 16);
-assert.equal(suggestWaypointCount(2000, { strokeCount: 2, corners: 0 }), 6);
+assert.equal(suggestWaypointCount(2000), 8);
+assert.equal(suggestWaypointCount(5000), 11);
+assert.equal(suggestWaypointCount(20000), 26);
+// Complexity raises the count: corners + extra strokes, capped at 26.
+assert.equal(suggestWaypointCount(2000, { strokeCount: 1, corners: 4 }), 12);
+assert.equal(suggestWaypointCount(2000, { strokeCount: 3, corners: 8 }), 22);
+assert.equal(suggestWaypointCount(2000, { strokeCount: 2, corners: 0 }), 8);
 
 // Corner counting: a square has 4 sharp turns; resampling noise adds none.
 assert.equal(countShapeCorners(squareStroke), 4);
@@ -249,5 +262,261 @@ closeTo(shapeSimilarity([...geoRing, geoRing[0]], geoRing), 1, 0.05);
 const offsetRoute = geoRing.map(([la, ln]) => [la + 0.02, ln]);
 assert.ok(shapeSimilarity(offsetRoute, geoRing) < 0.5);
 assert.equal(shapeSimilarity([], geoRing), 0);
+
+// --- Shape fidelity: feature-aware waypoints + deviation refinement ---
+
+// Arc-fraction addressing: t=0 is the anchor vertex; the point half a
+// perimeter away sits on the far side of the square (straight-line distance
+// between one side length and one diagonal, depending on where the anchor
+// vertex landed on the ring).
+assert.deepEqual(ringPointAtT(geoRing, 0), geoRing[0]);
+const halfway = haversineDistance(ringPointAtT(geoRing, 0.5), geoRing[0]);
+assert.ok(halfway > (TARGET_M / 4) * 0.98 && halfway < (TARGET_M / 4) * Math.SQRT2 * 1.02, `halfway ${halfway}`);
+
+// ringRouteDeviation: directed drawn→route distance; a route on the ring is 0,
+// a parallel-shifted route is the shift everywhere.
+closeTo(ringRouteDeviation(geoRing, [...geoRing, geoRing[0]]).maxM, 0, 1e-6);
+assert.ok(ringRouteDeviation(geoRing, offsetRoute).maxM > 1500);
+
+// Star: all 10 sharp corners are curvature features and every one must get a
+// waypoint — a shortest-path router chords across any tip without one.
+const starRing = strokeToLatLngRing(shapeStroke('star'), shapeAnchor, TARGET_M);
+const starFeats = ringFeatureTs(starRing, { thresholdDeg: 40 });
+assert.ok(starFeats.length >= 10, `star features ${starFeats.length}`);
+const starTs = selectWaypointTs(starRing, 20);
+assert.equal(starTs[0], 0);
+assert.deepEqual([...starTs].sort((a, b) => a - b), starTs);
+assert.ok(starTs.length <= 20);
+const starPerim = ringPerimeter(starRing);
+for (const f of starFeats.slice(0, 10)) {
+  const covered = starTs.some((t) => {
+    let d = Math.abs(t - f.t) % 1;
+    if (d > 0.5) d = 1 - d;
+    return d * starPerim < 60;
+  });
+  assert.ok(covered, `star feature at t=${f.t.toFixed(3)} has no waypoint`);
+}
+assert.deepEqual(waypointsFromTs(starRing, [0])[0], starRing[0]);
+
+// Refinement: a route already on the ring converges (null); a sparse chorded
+// loop gets ≤4 insertions inside the worst legs, keeping the original ts.
+const sqTs = [0, 0.25, 0.5, 0.75];
+const sqWps = waypointsFromTs(geoRing, sqTs);
+assert.equal(planRefinementTs(geoRing, sqTs, [...geoRing, geoRing[0]], sqWps), null);
+const sparseTs = [0, 0.2, 0.4, 0.6, 0.8];
+const sparseWps = waypointsFromTs(starRing, sparseTs);
+const refined = planRefinementTs(starRing, sparseTs, [...sparseWps, sparseWps[0]], sparseWps, { minDevM: 55 });
+assert.ok(Array.isArray(refined), 'sparse star loop should refine');
+assert.ok(refined.length > sparseTs.length && refined.length <= sparseTs.length + 4);
+assert.deepEqual([...refined].sort((a, b) => a - b), refined);
+for (const t of sparseTs) assert.ok(refined.includes(t), `refinement dropped t=${t}`);
+
+// --- Out-and-back spur detection / trimming / waypoint retraction ---
+
+// Splice a zero-area whisker (junction → A → tip → A → back) into the square
+// loop: it must be detected, classified off-shape, trimmable, and its
+// waypoint retractable to the junction.
+const spurBase = geoRing[20];
+const spurA = [spurBase[0] + 100 / 111320, spurBase[1]];
+const spurTip = [spurBase[0] + 220 / 111320, spurBase[1]];
+const spurRoute = [...geoRing, geoRing[0]];
+spurRoute.splice(21, 0, spurA, spurTip, spurA);
+const foundSpurs = detectRouteSpurs(spurRoute);
+assert.equal(foundSpurs.length, 1);
+assert.equal(foundSpurs[0].junction, 20);
+assert.deepEqual(spurRoute[foundSpurs[0].tip], spurTip);
+closeTo(foundSpurs[0].lengthM, 220, 30);
+
+const offSpurs = offShapeRouteSpurs(spurRoute, geoRing);
+assert.equal(offSpurs.length, 1);
+assert.ok(offSpurs[0].tipDistM > 150, `tipDist ${offSpurs[0].tipDistM}`);
+closeTo(totalSpurLengthM(offSpurs), foundSpurs[0].lengthM, 1e-6);
+
+// A short whisker staying near the drawn line is detected but NOT off-shape
+// (that is how routers trace sharp tips — it must be kept).
+const nearA = [spurBase[0] + 15 / 111320, spurBase[1]];
+const nearTip = [spurBase[0] + 45 / 111320, spurBase[1]];
+const nearRoute = [...geoRing, geoRing[0]];
+nearRoute.splice(21, 0, nearA, nearTip, nearA);
+assert.ok(detectRouteSpurs(nearRoute).length >= 1);
+assert.equal(offShapeRouteSpurs(nearRoute, geoRing).length, 0);
+
+// Trimming collapses the whisker back to the plain loop length.
+closeTo(
+  totalDistance(trimRouteSpurs(spurRoute, offSpurs)),
+  totalDistance([...geoRing, geoRing[0]]),
+  30,
+);
+
+// Retraction pulls the whisker waypoint to the junction (anchor never moves).
+const spurWps = [geoRing[0], spurTip, geoRing[48]];
+const spurTs = [0, 20.5 / 96, 0.5];
+const retractPlan = planSpurRetraction(spurRoute, spurWps, spurTs, geoRing);
+assert.ok(retractPlan && retractPlan.retracted === 1);
+closeTo(haversineDistance(retractPlan.wps[1], geoRing[20]), 0, 1);
+closeTo(retractPlan.trimmedM, 220, 30);
+assert.equal(retractPlan.wps.length, retractPlan.ts.length);
+// A spur touched only by the anchor is left alone (run must start there).
+assert.equal(planSpurRetraction(spurRoute, [spurTip, geoRing[30]], [0, 0.3], geoRing), null);
+
+// Bystander protection: a main-route waypoint that merely passes near a
+// whisker's mouth is closer to the rest of the route than to the whisker —
+// it must keep its place while the whisker's own waypoint retracts.
+{
+  const lngAt = (xM) => [25.034, 121.564 + xM / (111320 * Math.cos((25.034 * Math.PI) / 180))];
+  const at = (xM, yM) => [25.034 + yM / 111320, lngAt(xM)[1]];
+  const lineRoute = [
+    at(0, 0), at(40, 0), at(80, 0), at(120, 0), at(160, 0),
+    at(200, 0), at(200, 45), at(200, 90), at(200, 45), at(200, 0),
+    at(240, 0), at(280, 0), at(320, 0),
+  ];
+  const bystander = at(222, 0);   // 22 m from the whisker mouth, on the main line
+  const lineWps = [at(0, 0), at(200, 90), bystander, at(320, 0)];
+  const linePlan = planSpurRetraction(lineRoute, lineWps, [0, 0.3, 0.5, 0.7], geoRing);
+  assert.ok(linePlan && linePlan.retracted === 1, 'whisker waypoint should retract');
+  assert.ok(linePlan.wps.some((w) => haversineDistance(w, bystander) < 1), 'bystander must keep its place');
+  assert.ok(!linePlan.wps.some((w) => haversineDistance(w, at(200, 90)) < 1), 'tip waypoint must be gone');
+}
+
+// Default policy retracts even near-shape whiskers (the figure should
+// enclose area); passing offShapeM restores the tracing-whisker exemption.
+const nearWps = [geoRing[0], nearTip, geoRing[48]];
+const nearTs = [0, 20.5 / 96, 0.5];
+const nearPlan = planSpurRetraction(nearRoute, nearWps, nearTs, geoRing);
+assert.ok(nearPlan && nearPlan.retracted === 1, 'near-shape whisker should retract by default');
+assert.equal(planSpurRetraction(nearRoute, nearWps, nearTs, geoRing, { offShapeM: 50 }), null);
+
+// --- End-to-end fidelity on a synthetic street grid (worst-case L-router) ---
+// Replays the main.js drawing-board loop (select → snap → route → calibrate →
+// refine → post-calibrate) against a deterministic Manhattan grid and guards
+// the improvement over the old even-spacing behaviour.
+{
+  const world = makeGridWorld({ anchor: shapeAnchor, spacingM: 80, tieBreak: 'lshape' });
+  const distXY = (a, b) => {
+    const A = world.toXY(a);
+    const B = world.toXY(b);
+    return Math.hypot(B[0] - A[0], B[1] - A[1]);
+  };
+  const snapPairs = (ring, ts) => {
+    const kept = [];
+    for (const t of ts) {
+      const s = world.snap(ringPointAtT(ring, t)).point;
+      const prev = kept[kept.length - 1];
+      if (prev && distXY(prev.wp, s) < 30) continue;
+      kept.push({ t, wp: s });
+    }
+    if (kept.length >= 2 && distXY(kept[0].wp, kept[kept.length - 1].wp) < 30) kept.pop();
+    return { ts: kept.map((k) => k.t), wps: kept.map((k) => k.wp) };
+  };
+  const legacyCount = (m) => Math.max(6, Math.min(16, Math.round((m / 1000) * 1.6)));
+
+  const runPipeline = (strokePts, targetM, mode) => {
+    const wpCount = mode === 'v0'
+      ? legacyCount(targetM)
+      : suggestWaypointCount(targetM, { strokeCount: 1, corners: countShapeCorners(strokePts) });
+    let scaled = targetM;
+    let ring, ts, wps, coords, actual;
+    const plan = () => {
+      ring = strokeToLatLngRing(strokePts, shapeAnchor, scaled);
+      const sel = mode === 'v0' ? null : selectWaypointTs(ring, wpCount);
+      if (mode === 'v0') {
+        wps = snapPairs(ring, pickShapeWaypoints(ring, wpCount).map((_, i) => i / wpCount)).wps;
+        ts = null;
+      } else {
+        ({ ts, wps } = snapPairs(ring, sel));
+      }
+      coords = world.routeLoop(wps);
+      actual = totalDistance(coords);
+    };
+    plan();
+    for (let a = 0; a < 2 && needsDistanceCalibration(actual, targetM); a++) {
+      scaled = nextCalibratedTarget(scaled, actual, targetM);
+      plan();
+    }
+    if (mode !== 'v0') {
+      for (let r = 0; r < 3; r++) {
+        const next = planRefinementTs(ring, ts, coords, wps, { minDevM: Math.max(45, targetM * 0.01), maxInsert: 4, maxTotal: 30 });
+        if (!next) break;
+        const before = { ts, wps, coords, actual, dev: ringRouteDeviation(ring, coords) };
+        ({ ts, wps } = snapPairs(ring, next));
+        coords = world.routeLoop(wps);
+        actual = totalDistance(coords);
+        const dev = ringRouteDeviation(ring, coords);
+        if (!(dev.maxM <= before.dev.maxM * 0.9 || dev.meanM <= before.dev.meanM * 0.85)) {
+          ({ ts, wps, coords, actual } = before);
+          break;
+        }
+      }
+      // Damped mileage recalibration with keep-best revert; budget shared
+      // across v4's trim/calibrate alternation.
+      let calibBudget = mode === 'v4' ? 4 : 2;
+      const dampedCalib = () => {
+        while (calibBudget > 0 && needsDistanceCalibration(actual, targetM, 0.08)) {
+          calibBudget--;
+          const before = { scaled, ring, ts, wps, coords, actual };
+          scaled = Math.max(targetM * 0.4, Math.min(targetM * 2.5, scaled * Math.sqrt(targetM / actual)));
+          ring = strokeToLatLngRing(strokePts, shapeAnchor, scaled);
+          ({ ts, wps } = snapPairs(ring, before.ts));
+          coords = world.routeLoop(wps);
+          actual = totalDistance(coords);
+          if (Math.abs(actual - targetM) > Math.abs(before.actual - targetM)) {
+            ({ scaled, ring, ts, wps, coords, actual } = before);
+            return false;
+          }
+        }
+        return true;
+      };
+      // v4: retract ALL waypoint whiskers (the figure should enclose area),
+      // alternating with recalibration; kept only when the whisker total
+      // strictly shrinks.
+      if (mode === 'v4') {
+        for (let s = 0; s < 3; s++) {
+          const spurBefore = totalSpurLengthM(detectRouteSpurs(coords));
+          if (spurBefore > 0) {
+            const before = { ts, wps, coords, actual };
+            const plan = planSpurRetraction(coords, wps, ts, ring);
+            if (plan) {
+              ({ ts, wps } = plan);
+              coords = world.routeLoop(wps);
+              actual = totalDistance(coords);
+              if (totalSpurLengthM(detectRouteSpurs(coords)) >= spurBefore) {
+                ({ ts, wps, coords, actual } = before);
+              }
+            }
+          }
+          if (!dampedCalib()) break;
+        }
+      } else {
+        dampedCalib();
+      }
+    }
+    return {
+      maxDev: ringRouteDeviation(ring, coords).maxM,
+      simPct: shapeSimilarity(coords, ring) * 100,
+      actual,
+      wpCount: wps.length,
+      spurM: totalSpurLengthM(detectRouteSpurs(coords)),
+    };
+  };
+
+  assert.ok(SHAPE_NAMES.includes('star') && SHAPE_NAMES.includes('palm'));
+  for (const [shape, v0Min, v3Max] of [['star', 100, 80], ['palm', 110, 90]]) {
+    const strokePts = shapeStroke(shape);
+    const v0 = runPipeline(strokePts, 5000, 'v0');
+    const v3 = runPipeline(strokePts, 5000, 'v3');
+    assert.ok(v0.maxDev > v0Min, `${shape}: legacy pipeline maxDev ${v0.maxDev.toFixed(0)} unexpectedly good (< ${v0Min})`);
+    assert.ok(v3.maxDev < v3Max, `${shape}: refined pipeline maxDev ${v3.maxDev.toFixed(0)} too high (>= ${v3Max})`);
+    assert.ok(v3.simPct >= 88, `${shape}: similarity ${v3.simPct.toFixed(0)}% < 88%`);
+    assert.ok(v3.wpCount <= 30, `${shape}: waypoint count ${v3.wpCount} > 30`);
+    assert.ok(Math.abs(v3.actual - 5000) / 5000 <= 0.12, `${shape}: mileage error ${(Math.abs(v3.actual - 5000) / 50).toFixed(0)}%`);
+    // All-whisker retraction (畫作要有包圍面積): the whisker total must
+    // clearly shrink, at a bounded cost in tip sharpness and mileage.
+    const v4 = runPipeline(strokePts, 5000, 'v4');
+    assert.ok(v4.spurM <= v3.spurM - 80, `${shape}: whiskers ${v4.spurM.toFixed(0)} m not clearly below v3 ${v3.spurM.toFixed(0)} m`);
+    assert.ok(v4.maxDev < 210, `${shape}: trimmed pipeline maxDev ${v4.maxDev.toFixed(0)} too high (>= 210)`);
+    assert.ok(v4.simPct >= 88, `${shape}: trimmed similarity ${v4.simPct.toFixed(0)}% < 88%`);
+    assert.ok(Math.abs(v4.actual - 5000) / 5000 <= 0.13, `${shape}: trimmed mileage error ${(Math.abs(v4.actual - 5000) / 50).toFixed(0)}%`);
+  }
+}
 
 console.log('Numeric regression ok');
