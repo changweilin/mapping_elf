@@ -99,6 +99,15 @@ test('app shell loads without console errors', async ({ page }) => {
     window.dispatchEvent(new Event('online'));
   });
   await expect(page.locator('.offline-status span:last-child')).toContainText(/Online|線上/);
+
+  // Weather-center quick entries live in the weather settings section and the
+  // view shortcut switches the bottom panel to the detailed weather table.
+  await clickStable(page, '#settings-toggle-header h3');
+  await expect(page.locator('#settings-body')).not.toHaveClass(/collapsed/);
+  await expect(page.locator('#btn-weather-quick-fetch')).toBeVisible();
+  await clickStable(page, '#btn-weather-quick-view');
+  await expect(page.locator('#bottom-panel')).toHaveClass(/bp-mode-weather/);
+
   expect(consoleErrors).toEqual([]);
 });
 

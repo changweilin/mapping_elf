@@ -36,7 +36,7 @@ Last updated: 2026-07-29
 | --- | --- | --- | --- | --- |
 | P1 | 完成 | 路線模式與配速活動整合 | 路線模式切換時帶出對應配速活動，並讓不適用的配速/熱量欄位在駕車模式下退場。 | 2026-05-24 完成；步行/山徑/自行車/駕車會同步配速活動，手動配速活動覆寫仍可用，完整 GUI suite 維持綠燈。 |
 | P2 | 完成 | 保存與分享整併 | 將 GPX/KML 匯入匯出、`.melmap`、離線圖磚與我的最愛收斂成「我的最愛 / 匯出」流程。 | 2026-05-25 完成第二階段微調；單一入口可加到最愛、匯入、匯出、管理離線包，且路線規劃 header 不再重複放保存/分享入口；既有 `.melmap` 與 favorites 契約維持相容。 |
-| P3 | 待辦 | 天氣中心整併 | 將天氣表、天氣卡、Windy 連結與天氣快取收斂成「取得、調整、查看、比對」的任務流。 | 更新天氣、調整時間、Windy 比對與快取設定入口清楚；不改變 weather column persistence 邊界。 |
+| P3 | 完成 | 天氣中心整併 | 將天氣表、天氣卡、Windy 連結與天氣快取收斂成「取得、調整、查看、比對」的任務流。 | 2026-07-29 完成；天氣設置區塊頂部新增「更新天氣／詳細天氣」任務流快速入口（取得＋跳到詳細天氣表的調整介面），與 Windy 比對選單（header）、天氣快取設定同區收斂；weather column persistence 邊界未動。待本機完整 GUI suite 綠燈複核。 |
 | P4 | 待辦 | 航點顯示與批次操作整併 | 將中繼點生成、天氣圖示顯示、天氣卡批次收合與航點置中拆成更清楚的顯示/航點設定。 | 航點/中繼點與地圖顯示設定分組明確；現有集體操作與 weather card 行為維持。 |
 | P5 | 待辦 | 搜尋工具輕量化 | 將搜尋從側欄完整面板調整為更靠近地圖操作的工具入口，側欄保留結果與加入航點流程。 | 關鍵字與座標搜尋仍可用；新增航點流程更短；手機與桌面 layout 不遮擋核心控制。 |
 
@@ -62,6 +62,14 @@ Last updated: 2026-07-29
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-07-29 P3 Update
+
+- 狀態變更：`P3 天氣中心整併` 完成（待本機 GUI suite 綠燈複核）；`P4-P5` 留在產品體驗整併主線。
+- 影響範圍：「天氣設置」body 頂部新增 `.weather-quick-actions` 任務流入口：「更新天氣」（切到詳細天氣視圖並 `fetchAllWeatherData({ force: true })`，沿用既有 `isWeatherFetching` 重入護欄）與「詳細天氣」（`setBottomPanelView('weather')`，通往表內既有的日期/時間 ± 調整）。取得、調整、查看、比對（Windy header 選單）、快取設定自此在同一區塊收斂。另補 `.side-panel` 的 `scroll-padding-top`，避免捲動目標被 sticky 側欄 header 蓋住。
+- 契約確認：weather column persistence 邊界未動；無新增 durable key；按鈕文字重用「更新天氣」「詳細天氣」既有 i18n key，零新增翻譯字串。
+- 驗證：`npm run test:numeric`、`npm run build` 通過；`smoke.spec.js` 新增「展開天氣設置 → 點詳細天氣 → 底部面板切到 `bp-mode-weather`」斷言通過（依 A2 慣例用 `clickStable` 點 h3 避開 header actions 的 stopPropagation 區）；整體失敗清單仍與未修改基準一致（sandbox 網路封鎖既有現象）。
+- 仍需追蹤：本機 Windows 完整 GUI suite 綠燈與視覺確認；`P4 航點顯示與批次操作整併`、`P5 搜尋工具輕量化`。
 
 ### 2026-07-29 GUI Reorganization Phase 3 Update
 

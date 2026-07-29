@@ -2329,6 +2329,9 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   border-left: 1px solid var(--border);
   overflow-y: auto;
   overflow-x: hidden;
+  /* Keep scrolled-to targets (focus jumps, scrollIntoView) clear of the
+     sticky .side-panel-header that overlays the top of the scroll area. */
+  scroll-padding-top: 52px;
   transform: translateX(100%);
   transition: transform var(--transition-smooth), bottom 0.3s ease;
   box-shadow: var(--shadow-lg);
@@ -3689,6 +3692,24 @@ body.route-list-dragging {
 
 .settings-row select:focus {
   border-color: var(--accent-primary);
+}
+
+/* Weather center quick entries: update weather / open the detailed table */
+.weather-quick-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.weather-quick-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 6px;
+  font-size: 12px;
 }
 
 .weather-cache-settings {

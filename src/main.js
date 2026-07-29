@@ -13919,6 +13919,17 @@ async function init() {
     });
   });
 
+  // --- Weather center quick entries: 取得 (update weather) and 查看/調整 (open
+  //     the detailed weather view, where per-column date/time adjustments live) ---
+  {
+    const openWeatherView = () => setBottomPanelView('weather');
+    document.getElementById('btn-weather-quick-view')?.addEventListener('click', openWeatherView);
+    document.getElementById('btn-weather-quick-fetch')?.addEventListener('click', () => {
+      openWeatherView();
+      fetchAllWeatherData({ force: true });
+    });
+  }
+
   // --- Instructions modal (help content lives outside the side panel) ---
   {
     const instructionsModal = document.getElementById('instructions-modal');
