@@ -2338,6 +2338,38 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   transform: translateX(0);
 }
 
+/* Persistent panel header: sticks to the top of the scrolling side panel so
+   the width controls and theme toggle stay reachable at any scroll depth.
+   Needs its own opaque-ish background because section content scrolls under it. */
+.side-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.side-panel-header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .side-panel-width-btn {
   flex: 0 0 28px;
   height: 28px;

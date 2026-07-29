@@ -129,17 +129,6 @@
       </div>
     </div>
     <div class="toolbar-right">
-      <button class="tool-btn" id="btn-toggle-theme" title="切換深淺色">
-        <svg id="icon-moon" viewBox="0 0 24 24" width="20" height="20" style="display: block;">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor" />
-        </svg>
-        <svg id="icon-sun" viewBox="0 0 24 24" width="20" height="20" style="display: none;">
-          <circle cx="12" cy="12" r="5" fill="currentColor" />
-          <path
-            d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-        </svg>
-      </button>
       <button class="tool-btn" id="btn-toggle-panel" title="設置面板">
         <svg viewBox="0 0 24 24" width="20" height="20">
           <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor" />
@@ -250,6 +239,34 @@
 
   <!-- Side Panel -->
   <aside id="side-panel" class="side-panel open">
+    <!-- Persistent panel header: width controls + theme toggle stay reachable
+         no matter which sections are collapsed or how far the list is scrolled. -->
+    <div class="side-panel-header" id="side-panel-header">
+      <div class="side-panel-header-title">設置面板</div>
+      <div class="side-panel-header-actions">
+        <button class="icon-btn panel-width-btn side-panel-width-btn" id="btn-panel-widen" title="加寬側欄" aria-label="加寬側欄">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d="M4 12l6-6v4h10v4H10v4l-6-6z" fill="currentColor" />
+          </svg>
+        </button>
+        <button class="icon-btn panel-width-btn side-panel-width-btn" id="btn-panel-narrow" title="縮窄側欄" aria-label="縮窄側欄">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d="M20 12l-6 6v-4H4v-4h10V6l6 6z" fill="currentColor" />
+          </svg>
+        </button>
+        <button class="icon-btn" id="btn-toggle-theme" title="切換深淺色">
+          <svg id="icon-moon" viewBox="0 0 24 24" width="18" height="18" style="display: block;">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor" />
+          </svg>
+          <svg id="icon-sun" viewBox="0 0 24 24" width="18" height="18" style="display: none;">
+            <circle cx="12" cy="12" r="5" fill="currentColor" />
+            <path
+              d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
     <!-- Keyword Search -->
     <section class="panel-section collapsible" id="search-section">
       <div class="section-header collapsible-header collapsed" id="search-toggle-header">
@@ -1007,18 +1024,6 @@
           </svg>
           操作說明
         </h3>
-        <div class="section-actions instructions-header-actions" onclick="event.stopPropagation()">
-          <button class="icon-btn panel-width-btn side-panel-width-btn" id="btn-panel-widen" title="加寬側欄" aria-label="加寬側欄">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M4 12l6-6v4h10v4H10v4l-6-6z" fill="currentColor" />
-            </svg>
-          </button>
-          <button class="icon-btn panel-width-btn side-panel-width-btn" id="btn-panel-narrow" title="縮窄側欄" aria-label="縮窄側欄">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M20 12l-6 6v-4H4v-4h10V6l6 6z" fill="currentColor" />
-            </svg>
-          </button>
-        </div>
         <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
           <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
         </svg>
