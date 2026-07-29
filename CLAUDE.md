@@ -1,53 +1,54 @@
-# CLAUDE.md — Mapping Elf 操作守則（權威版）
+# CLAUDE.md — Mapping Elf 記憶主檔（權威版）
 
-## 1. 專案定位與架構
-- 純前端 Vanilla JS (ESM) + Vite (rolldown)。無框架、無 TypeScript、無後端。函式庫：Leaflet（2D 地圖）、Three.js（3D 地形）、Chart.js（高度剖面）、JSZip（.melmap / 圖資包）、Capacitor 8（Android/iOS 外殼）。
-- 資料流心智模型：`src/main.js`（12k 行 orchestrator，持有全域 UI 狀態）→ 呼叫 `src/modules/*`（純邏輯，各自負責 route/pace/weather/offline/terrain）→ 持久化一律走 `localStorage`（key 由 `stateKeys.js` 統一列管）。模組之間**不得**互相 import UI 狀態；只有 main.js 有權接線。
-- 外部 API：BRouter (brouter.de, hiking) / OSRM demo（路線）、Open-Meteo（天氣＋高程）。全部是免費公開端點，**必定會偶發失敗**，每個呼叫點都已有 fallback 路徑。
-- 平台抽象：`src/platform/`（webPlatform / capacitorPlatform）。**MUST NOT** 在模組內直接呼叫 Capacitor plugin；一律經由 `src/platform/index.js`。
-- 離線：PWA via `public/sw.js` + `offlineManager.js`（圖磚快取）。部署目標 GitHub Pages（`.github/workflows/deploy.yml`）。
+本檔只放三種東西：**宏觀原則、歷史地雷、核心工作流**。領域細節一律放在 `.claude/skills/*`（見 §5），不在此重複。文件敘述與程式碼衝突時，以程式碼為準，並回頭修正文件。
 
-## 2. 通用開發規範 (RFC-2119)
+## 1. 專案快照
 
-### 程式碼品質與型別安全
-- 本專案無 TS。所有跨模組資料形狀（waypoint、route、weather point）**MUST** 沿用既有物件欄位，新增欄位 **MUST** 允許 undefined（舊 localStorage/.melmap 資料不含新欄位）。
-- 外部 API 回應 **MUST** 先驗證再使用（`if (!resp.ok) throw`、欄位存在性檢查），並保留 console.warn + fallback，**MUST NOT** 讓單一 API 失敗炸掉整個 UI。
-- **SHOULD** 用 early return 與循序程式碼；**MUST NOT** 為了「乾淨」引入新抽象層或 class 階層。
+- 純前端 Vanilla JS (ESM) + Vite (rolldown)。無框架、無 TS、無後端。函式庫：Leaflet（2D）、Three.js（3D 地形）、Chart.js（剖面）、JSZip（.melmap）、Capacitor 8（App 外殼）。
+- 資料流：`src/main.js`（12k 行 orchestrator，持有全域 UI 狀態）→ `src/modules/*`（純邏輯）→ 持久化走 `localStorage`。**只有 main.js 有權接線**；模組之間不得互相 import UI 狀態。
+- 外部 API：BRouter / OSRM demo（路線）、Open-Meteo（天氣＋高程）、Nominatim（地名）。全是免費公開端點，**必定偶發失敗**。
+- 部署：GitHub Pages（web, base=`/mapping_elf/`）＋ Capacitor（app, base=`./`）。離線：PWA (`public/sw.js`) + `offlineManager.js`（Cache API 圖磚快取）。
 
-### 狀態管理與資料流
-- 新增任何 localStorage key：**MUST** 加上 `mappingElf_` 前綴並登錄進 `src/modules/stateKeys.js` 的正確分類陣列。`MELMAP_STATE_KEYS` 決定 .melmap 匯出/匯入內容 — 漏登錄 = 使用者存檔靜默遺失該設定。
-- `DEFAULT_PACE_PARAMS`（paceEngine.js）是資料契約：新參數 **MUST** 給預設值，讀取端一律 `{ ...DEFAULT_PACE_PARAMS, ...params }` merge，**MUST NOT** 假設參數齊全。
-- i18n：所有使用者可見字串 **MUST** 進 `src/modules/i18n.js` 的 STRINGS，並補齊全部 8 個語系（zh-TW/en/ja/ko/fr/de/es/it）。**MUST NOT** 在 main.js 硬編中文字串。
-- 天氣資料有多層快取（記憶體＋`mappingElf_weatherCache`，含距離/高度/時效門檻）。修改天氣流程前 **MUST** 先讀 `weatherService.js` 的快取判斷，**MUST NOT** 假設「沒看到 fetch = 有 bug」— 先開 dev server 實測再下結論。
+## 2. 五大原則（所有細則的源頭）
 
-### 效能與安全邊界
-- 路線可達數千點。對 track 座標的迴圈 **MUST NOT** 在 drag/mousemove 事件內做 O(n) 以上運算；重算一律 debounce（main.js 已有既有模式，先找再寫）。
-- 併發 API 請求已有 race-guard（見 `test/request-race.spec.js`）。新增非同步流程 **MUST** 處理「回應到達時使用者已改變路線」的情境（token/generation 比對）。
-- **MUST NOT** 引入新的 runtime 依賴或 CDN 資源；bundle 分包規則寫死在 `vite.config.js` codeSplitting groups，新增大型依賴前 **MUST** 停下來詢問。
+1. **邊界原則** — 轉換與副作用只發生在指定邊界，其他地方一律視為唯讀：
+   座標順序（`[lat,lng]` ↔ `[lng,lat]`）只在 `routeEngine.js` 轉換；Capacitor plugin 只經 `src/platform/index.js`；UI 狀態接線只在 main.js；資產路徑只透過 Vite base，不寫死絕對路徑。
+2. **資料契約原則** — 分清「使用者輸入」與「程式產生」的資料，只持久化前者。
+   所有 localStorage key 加 `mappingElf_` 前綴並登錄 `src/modules/stateKeys.js` 的正確分類陣列（漏登錄 = .melmap 存檔靜默遺失該設定）；讀取一律 default-merge（`{ ...DEFAULT_PACE_PARAMS, ...params }`），不假設參數齊全；新欄位必須容忍 undefined（舊存檔無此欄位）；程式產生的資料（interval 時間、cumTimes）永不當作使用者輸入存檔。
+3. **防禦原則** — 外部世界一定會壞，UI 不准跟著壞。
+   API 回應先驗證再用（`!resp.ok` throw、欄位檢查），失敗走 console.warn + fallback，單一 API 失敗不得炸掉 UI；非同步流程必做 race-guard（token/generation 比對，見 `test/request-race.spec.js`）；使用者可見字串全數進 `i18n.js` 並補齊 8 語系（zh-TW/en/ja/ko/fr/de/es/it），不硬編中文。
+4. **最小手術原則** — 修改以最小 diff 為準。
+   不為「乾淨」引入抽象層、class 階層、新 runtime 依賴或 CDN 資源（bundle 分包寫死在 `vite.config.js`，加大型依賴前先詢問）；main.js 不拆檔不搬函式（INC-207）；路線可達數千點，drag/mousemove 內不做 O(n) 以上運算，重算一律 debounce（先找 main.js 既有模式再寫）。
+5. **實證原則** — 先實測再下結論，改完必跑對應測試。
+   天氣有多層快取（記憶體＋`mappingElf_weatherCache`，含距離/高度/時效門檻），「沒看到 fetch」多半是快取命中而非 bug — 先讀 `weatherService.js` 再開 dev server 實測；關鍵事實以程式碼為準，不信過時記憶。
 
-## 3. 危險模式與歷史地雷（事件標記）
+## 3. 歷史地雷（事故標記，勿刪）
 
-- `[2025-11-04 #INC-101]` **座標順序**：專案內部一律 `[lat, lng]`；BRouter/OSRM GeoJSON 回傳 `[lng, lat, ele?]`。轉換只發生在 `routeEngine.js` 邊界。**MUST NOT** 在其他任何地方 swap 座標；看到「地圖跑到海上」先查這裡。
-- `[2025-12-18 #INC-133]` **路線端點錨定**：BRouter/OSRM 會把端點吸附到道路，`routeEngine.js` 刻意把首尾座標覆寫回原始 waypoint。**MUST NOT** 「修正」這段看似多餘的覆寫，否則往返里程與 GPX 匯出端點會漂移。
-- `[2026-02-09 #INC-207]` **main.js 重構禁令**：main.js 12k 行是已知技術債，但函式間靠共享閉包狀態耦合。**MUST NOT** 未經指示拆檔或搬移函式；一律最小 diff 手術式修改。
-- `[2026-03-22 #INC-251]` **sw.js 快取版本**：改動任何會進 precache 的資產 **MUST** 檢查 `public/sw.js` 的 cache 版本策略（`test/cache-versioning.spec.js` 守門），否則使用者收到舊版白畫面。
-- `[2026-04-15 #INC-278]` **Vite base path**：web 模式 base=`/mapping_elf/`、app 模式=`./`。**MUST NOT** 寫死絕對路徑引用資產；GitHub Pages 空白頁 90% 是這個。
-- `[2026-05-30 #INC-310]` **3D 地形時序**：3D viewer 的天氣點徽章要等 per-point 天氣載入完成才出現；Playwright 測試 **MUST** 等 loading 指示「先出現、後消失」。另外 `waitForSelector('#el.hidden')` 會永久卡住 — 改 poll classList 或用 `state:'attached'`。既有 mock 在 `test/terrain-3d.spec.js`，**MUST** 先讀再寫新測試。
-- `[2026-06-12 #INC-325]` **z-index 疊層**：3D viewer 的 `canvas-wrap` 需要 `z-index:1` 把 loading overlay 壓在 toolbar 下拉選單之下。動 overlay/dropdown 樣式 **MUST** 同時驗證兩者疊層。
+- `[2025-11-04 #INC-101]` **座標順序**：只在 `routeEngine.js` 邊界轉換 `[lng,lat]`→`[lat,lng]`。「地圖跑到海上」先查這裡。
+- `[2025-12-18 #INC-133]` **端點錨定**：`routeEngine.js` 刻意把路線首尾覆寫回原始 waypoint（抵銷 BRouter/OSRM 道路吸附）。勿「修正」這段看似多餘的覆寫，否則往返里程與 GPX 端點漂移。
+- `[2026-02-09 #INC-207]` **main.js 重構禁令**：函式間靠共享閉包耦合，未經指示不得拆檔或搬移函式。
+- `[2026-03-22 #INC-251]` **sw.js 快取版本**：改動 precache 資產必查 `public/sw.js` cache 版本策略（`test/cache-versioning.spec.js` 守門），否則使用者收到舊版白畫面。
+- `[2026-04-15 #INC-278]` **Vite base 雙模式**：web=`/mapping_elf/`、app=`./`。GitHub Pages 空白頁 90% 是寫死絕對路徑。
+- `[2026-05-30 #INC-310]` **3D 地形時序**：天氣點徽章等 per-point 載入完成才出現；Playwright 要等 loading「先出現、後消失」；`waitForSelector('#el.hidden')` 會永久卡住 — 改 poll classList 或 `state:'attached'`。寫新測試前先讀 `test/terrain-3d.spec.js` 既有 mock。
+- `[2026-06-12 #INC-325]` **z-index 疊層**：3D viewer `canvas-wrap` 需 `z-index:1` 把 loading overlay 壓在 toolbar 下拉之下。動 overlay/dropdown 樣式必同時驗證兩者疊層。
 
 ## 4. 核心指令與工作流
 
 ```bash
-npm run dev              # Vite dev server (--host)
-npm run build:web        # Web 版建置 (base=/mapping_elf/)
-npm run build:app        # Capacitor 版建置 (base=./)
-npm run test:smoke       # Playwright GUI 冒煙測試（自動起 preview server）
+npm run dev              # dev server (--host)
+npm run build:web        # base=/mapping_elf/
+npm run build:app        # base=./（Capacitor）
 npm run test:numeric     # 數值回歸（距離/爬升/配速，純 node，最快）
-npm run test:weather-points
-node test/run-playwright-with-preview.mjs test/<file>.spec.js   # 跑單一 spec
-npm run cap:sync:android # 建置並同步到 Android 專案
+npm run test:smoke       # Playwright 冒煙（自動起 preview server）
+node test/run-playwright-with-preview.mjs test/<file>.spec.js   # 單一 spec
+npm run cap:sync:android # 建置並同步 Android 專案
 ```
 
-- 測試策略：改數值邏輯 → `test:numeric` 必跑；改 UI/流程 → 對應 Playwright spec；改匯入匯出 → `test:import-export`。無 linter 設定 — 風格以周邊程式碼為準。
-- 環境：Windows + PowerShell 5.1（無 `&&`，用 `;`）。本機無 chromium-cli；驗證一律用專案自帶 Playwright 驅動 dev/preview server。
-- 專屬 sub-agent/skill 已就位：改核心邏輯先掛 `mapping-elf-core-modules`，改樣式掛 `mapping-elf-frontend-design`，動 localStorage/資料契約掛 `mapping-elf-parameter-data-steward`，review 用 `mapping-elf-review`，部署用 `mapping-elf-deploy`。
+- 測試對應：改數值邏輯 → `test:numeric` 必跑；改 UI/流程 → 對應 Playwright spec；改匯入匯出 → `test:import-export`。無 linter — 風格以周邊程式碼為準。
+- 本機環境：Windows + PowerShell 5.1（無 `&&`，用 `;`）。驗證一律用專案自帶 Playwright 驅動 dev/preview server。
+
+## 5. 記憶檔案架構與維護規則
+
+- **分層**：CLAUDE.md（宏觀原則）→ `.claude/skills/*/SKILL.md`（領域規則與 gotchas）→ `references/*`（深度細節，如 `pace-engine/formulas.md`）。改核心邏輯掛 `mapping-elf-core-modules`、樣式掛 `mapping-elf-frontend-design`、資料契約掛 `mapping-elf-parameter-data-steward`、review 掛 `mapping-elf-review`、部署掛 `mapping-elf-deploy`；完整路由表見 `mapping-elf-sub-agent-coordinator`。
+- **單一真相源**：localStorage key 清單 = `stateKeys.js`；配速公式 = `references/pace-engine/formulas.md`；部署事實 = `.github/workflows/deploy.yml` + `vite.config.js`。文件引用它們，**不複製清單** — 複製品必過時。
+- **新教訓歸檔**：領域性教訓 → 寫進所屬 skill 的 Gotchas；跨領域、會再咬人的事故 → 升級為 §3 一行地雷（附日期＋INC 編號）。定期把過細、重複、過時的條目往下層搬或刪除。

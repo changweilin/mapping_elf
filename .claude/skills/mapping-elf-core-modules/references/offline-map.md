@@ -1,28 +1,26 @@
 ---
 name: mapping-elf-offline-map
-description: Reference for offline map tile downloading, PWA config, Service Worker (sw.js) caching, and IndexedDB usage. Trigger when modifying offlineManager.js, caching strategies, or fixing PWA silent failures.
+description: Reference for offline map tile downloading, PWA config, Service Worker (sw.js) caching, and offline tile storage. Trigger when modifying offlineManager.js, caching strategies, or fixing PWA silent failures.
 type: library
 ---
 
 # Mapping Elf — Offline Map & PWA Reference
 
-Source: `src/modules/offlineManager.js`, `public/sw.js`
+Source: `src/modules/offlineManager.js`, `public/sw.js`, `src/modules/offlineTileIndex.js`
 
 ## Core Responsibilities
-- Caching Leaflet map tiles for offline usage (usually via IndexedDB or Cache API).
+- Caching Leaflet map tiles for offline usage via the **Cache API** (`caches.open(OFFLINE_TILE_CACHE_NAME)` in `offlineManager.js`; `sw.js` intercepts tile-domain fetches with its own `TILE_CACHE` / `APP_CACHE`). Not IndexedDB.
 - Managing PWA lifecycle and precaching core assets.
-- Handling CORS when fetching map tiles from external domains (e.g., OpenStreetMap, SunRiver).
+- Handling CORS when fetching map tiles from external domains.
 
 ## PWA & Service Worker Rules
-- `sw.js` MUST use relative paths when caching assets to ensure it works properly under GitHub Pages subdirectories (`/mapping_elf/`).
-- Cache busting and versioning should be explicitly managed in `sw.js` (e.g., `CACHE_NAME = 'mapping-elf-v2'`).
+- SW registration uses `import.meta.env.BASE_URL + 'sw.js'` so it works under both Vite base modes (CLAUDE.md INC-278). Never hard-code the path.
+- Cache versioning is explicit in `sw.js` cache names and gated by `test/cache-versioning.spec.js` (CLAUDE.md INC-251) — check it whenever precached assets change.
 
 ## Offline Manager Logic
-- Map tiles are often handled by local storage mechanisms or Service Worker interceptions.
-- Downloading map tiles requires estimating bounds, determining zoom levels (usually Z13 to Z15 for hiking), and calculating tile URL coordinates (X/Y/Z).
+- Downloading tiles = estimate bounds → pick zoom levels (typically Z13–Z15 for hiking) → compute X/Y/Z tile URLs.
 - Downloading must be throttled to prevent IP bans from public tile servers.
 
 ## Gotchas
-- **Silent Failures:** Cache API failing silently due to CORS (Opaque responses) can bloat storage or render blank tiles. Make sure to set `mode: 'cors'` if the server allows, or handle opaque responses defensively.
-- **Storage Quota:** Downloading large areas on high zoom levels will hit browser storage limits fast. Ensure there are UI constraints on bounding boxes or zoom depths.
-- **Vite Build:** Service worker registration must happen correctly after Vite builds; ensure URLs reflect the Vite `dist/` structure securely.
+- **Silent failures:** Cache API failing silently on CORS (opaque responses) can bloat storage or render blank tiles. Use `mode: 'cors'` where the server allows, or handle opaque responses defensively.
+- **Storage quota:** large areas at high zoom hit browser storage limits fast; keep UI constraints on bounding box and zoom depth.

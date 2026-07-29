@@ -6,66 +6,22 @@ type: cicd
 
 # Mapping Elf — Deploy Reference
 
-## Stack
+Source of truth: `.github/workflows/deploy.yml` + `vite.config.js`. Verify against them before acting — do not trust this file over the code.
 
-- **Build**: Vite (`npm run build` → `dist/`)
-- **Deploy**: GitHub Actions → GitHub Pages (`gh-pages` branch)
-- **Workflow file**: `.github/workflows/deploy.yml`
+## Facts
 
-## Build
-
-```bash
-npm run build
-```
-
-Output in `dist/`. Always verify:
-- `dist/index.html` — asset paths must be **relative** (e.g., `./assets/...`), NOT absolute (`/assets/...`)
-- Service worker registration path must also be relative
-
-The `vite.config.js` sets `base: './'` to enforce relative paths. If this is ever changed or removed, GitHub Pages deployments will show a blank page.
-
-## Critical: Relative Asset Paths
-
-GitHub Pages serves from a subdirectory (`/<repo-name>/`), not from root. Absolute paths like `/assets/main.js` resolve to the domain root and 404.
-
-Fix: ensure `vite.config.js` has:
-```js
-export default defineConfig({
-  base: './',
-  // ...
-})
-```
-
-If you see a blank page after deploy, check browser DevTools → Network tab for 404s on `/assets/...` (missing base).
-
-## Service Worker
-
-Registered in `main.js` or via `offlineManager.js`. The registration path must be relative:
-```js
-navigator.serviceWorker.register('./sw.js')  // correct
-navigator.serviceWorker.register('/sw.js')   // wrong on subdirectory deploys
-```
-
-## GitHub Actions Workflow
-
-Manual trigger via `workflow_dispatch` or push to `main`. Check status:
-```bash
-gh run list --workflow=deploy.yml --limit=5
-gh run view <run-id>
-```
-
-If the workflow fails on the build step, run `npm run build` locally first to reproduce.
+- **Base path is mode-dependent** (`vite.config.js`, see CLAUDE.md INC-278): `--mode app` → `./` (Capacitor); all other modes → `/mapping_elf/` (web / GitHub Pages).
+- **CI pipeline**: push to `main` or `workflow_dispatch` → `npm ci` → `npm run build` → `actions/upload-pages-artifact` → `actions/deploy-pages`. There is **no `gh-pages` branch**; Pages serves the workflow artifact directly.
+- **Service worker** is registered in `offlineManager.js` via `import.meta.env.BASE_URL + 'sw.js'`, so it follows the Vite base automatically. Never hard-code `/sw.js` or `./sw.js`.
+- **No staging**: `main` deploys straight to the production Pages URL. Test locally with `npm run build:web` + `npm run preview` before pushing.
 
 ## Debugging a Broken Deploy
 
-1. Open browser DevTools → Console + Network tabs
-2. Check for 404s — usually an asset path issue (see above)
-3. Check if `dist/index.html` references `./assets/` or `/assets/`
-4. Check if `sw.js` is present in `dist/`
-5. Run `gh run list` to see if the latest action succeeded
+1. **Blank page** → DevTools Console + Network. 404s on assets almost always mean a hard-coded absolute path bypassing the Vite base (INC-278).
+2. **Stale page after deploy** → check `public/sw.js` cache versioning (INC-251, gated by `test/cache-versioning.spec.js`). User workaround: hard reload (Ctrl+Shift+R).
+3. **Workflow fails on build** → reproduce locally with `npm run build`.
+4. Confirm `dist/index.html` asset URLs use the expected base and `dist/sw.js` exists.
 
 ## Gotchas
 
-- **Leaflet marker icons**: Leaflet's default icons use `_getIconUrl` which doesn't work with Vite bundling. The fix in `main.js` hard-codes unpkg.com URLs — do NOT revert to the default Leaflet icon setup.
-- **Cache busting**: After deploying, users may see stale cached pages. The service worker should handle this, but for a forced refresh instruct users to do hard reload (Ctrl+Shift+R).
-- **No staging environment**: Changes go directly to the GitHub Pages production URL. Test locally with `npm run preview` before pushing.
+- **Leaflet marker icons**: `main.js` hard-codes unpkg.com icon URLs because Leaflet's default `_getIconUrl` breaks under Vite bundling. Do NOT revert to the default icon setup or local imports.

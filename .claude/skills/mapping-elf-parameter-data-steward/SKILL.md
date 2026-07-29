@@ -14,6 +14,7 @@ Do not use this skill for route math itself; hand off numeric model questions to
 ## Primary Ownership
 
 - `LS_*_KEY` constants and load/save code in `src/main.js`
+- The key registry `src/modules/stateKeys.js` — every persistent key must be registered in the correct category array; `MELMAP_STATE_KEYS` drives .melmap export/import, so a missed registration silently drops the setting from user save files
 - `DEFAULT_PACE_PARAMS` and related pace parameter shape in `src/modules/paceEngine.js`
 - `.melmap` state handled by map pack importer/exporter modules
 - Weather table saved column data and cascade/persistence boundaries
@@ -27,7 +28,7 @@ Do not use this skill for route math itself; hand off numeric model questions to
 
 ## Gotchas
 
-- Every persistent state variable needs a named `LS_*_KEY`; avoid magic localStorage strings.
+- Every persistent state variable needs a named `LS_*_KEY` (prefix `mappingElf_`) **and** registration in `stateKeys.js`; avoid magic localStorage strings.
 - `paceParams` must merge from `{ ...DEFAULT_PACE_PARAMS, ...userParams }`.
 - Do not persist generated interval weather times as if they were waypoint user input.
 - Changing `.melmap` state requires backward-compatible import behavior.
