@@ -2353,6 +2353,13 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   border-bottom: none;
 }
 
+/* Task-flow group separators: a slightly taller band between the side panel's
+   functional groups (plan/analyze → display settings → files → help) so the
+   section list reads as grouped clusters instead of one flat stack. */
+.panel-group-start {
+  border-top: 6px solid var(--border);
+}
+
 .section-header {
   display: flex;
   align-items: center;
@@ -4125,17 +4132,6 @@ body.route-list-dragging {
 .search-gmaps-link:hover {
   background: var(--bg-glass-hover);
   text-decoration: underline;
-}
-
-.search-coord-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.search-coord-row .search-input {
-  font-size: 12px;
-  padding: 6px 10px;
 }
 
 /* Weather Cards */
