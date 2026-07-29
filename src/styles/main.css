@@ -2423,8 +2423,7 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 #pace-toggle-header h3,
 #waypoint-settings-toggle-header h3,
 #file-management-toggle-header h3,
-#settings-toggle-header h3,
-#instructions-toggle-header h3 {
+#settings-toggle-header h3 {
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -2437,8 +2436,7 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 .pace-header-actions,
 .waypoint-header-actions,
 .weather-header-actions,
-.file-header-actions,
-.instructions-header-actions {
+.file-header-actions {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -2468,10 +2466,6 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 }
 
 .file-header-actions {
-  gap: 4px;
-}
-
-.instructions-header-actions {
   gap: 4px;
 }
 
@@ -6318,6 +6312,12 @@ body.modal-open {
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 16px;
+}
+
+/* Instructions modal is text-heavy with two-column rows; give it more room
+   than the default (form-sized) modal box. */
+.instructions-modal-box {
+  max-width: 720px;
 }
 
 .export-options {

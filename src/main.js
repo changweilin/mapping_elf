@@ -13919,6 +13919,19 @@ async function init() {
     });
   });
 
+  // --- Instructions modal (help content lives outside the side panel) ---
+  {
+    const instructionsModal = document.getElementById('instructions-modal');
+    document.getElementById('btn-open-instructions')?.addEventListener('click', () => {
+      document.body.classList.add('modal-open');
+      instructionsModal?.classList.remove('hidden');
+    });
+    document.getElementById('btn-instructions-close')?.addEventListener('click', () => {
+      document.body.classList.remove('modal-open');
+      instructionsModal?.classList.add('hidden');
+    });
+  }
+
   // --- Windy settings ---
   const windyLayerEl = document.getElementById('windy-layer-select');
   if (windyLayerEl) {

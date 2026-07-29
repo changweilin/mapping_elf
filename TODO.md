@@ -63,6 +63,14 @@ Last updated: 2026-07-29
 
 ## 合併紀錄
 
+### 2026-07-29 GUI Reorganization Phase 3 Update
+
+- 狀態變更：GUI 整理 Phase 3 第 1、2 項完成（側欄常駐 header、操作說明抽成 modal）；第 3 項行動版 tab 導航暫緩，需真機視覺 QA 後另開工作包。
+- 影響範圍：側欄頂部新增 sticky header 收納加寬/縮窄鈕（自操作說明 header 移入）、操作說明鈕與主題切換（自頂部工具列移入）；`#instructions-section` 移出側欄改為 `#instructions-modal`，內容與 `.instructions-content` class 原封不動，i18n 語言切換重繪照常作用；「說明」群組分隔帶移至 About。
+- 契約確認：無新增 durable key、無新增翻譯字串（標題與按鈕重用「設置面板」「操作說明」「關閉」既有 key）；modal 沿用 `hidden` + `body.modal-open` 既有模式。
+- 驗證：`npm run test:numeric`、`npm run build` 通過；`map-layer-theme.spec.js` 全數通過（主題鈕新位置行為不變）；`smoke.spec.js` 新增側欄 header 釘位與 modal 開關斷言均通過，整體失敗清單仍與未修改基準一致（sandbox 網路封鎖之既有現象）；`mobile-app-qa.spec.js` 失敗清單亦與基準一致。
+- 仍需追蹤：本機 Windows 重跑完整 GUI suite 綠燈確認；行動版 tab 導航待需求確認。
+
 ### 2026-07-29 GUI Reorganization Phase 2 Update
 
 - 狀態變更：`doc/gui-reorganization-plan.md` 的 Phase 2（區塊內整理）完成；Phase 3 維持未實作、需另行確認。
