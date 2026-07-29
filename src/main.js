@@ -18,6 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
+import { pickShapeWaypoints, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount } from './modules/shapeRoutePlanner.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -4721,7 +4722,9 @@ function setMeasureActive(active) {
 
 mapManager.onMeasureClick = handleMeasureClick;
 btnMeasureTool?.addEventListener('click', () => {
-  setMeasureActive(measurePanel?.classList.contains('hidden'));
+  const opening = measurePanel?.classList.contains('hidden');
+  if (opening) setShapeActive(false); // shares the same corner of the map
+  setMeasureActive(opening);
 });
 document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.measure-mode-btn');
@@ -4732,6 +4735,250 @@ document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) =>
 document.getElementById('btn-measure-clear')?.addEventListener('click', clearMeasureOverlay);
 document.getElementById('btn-measure-close')?.addEventListener('click', () => setMeasureActive(false));
 setMeasureMode('segment');
+
+// =========== Drawing board: sketch a shape → plan a matching running loop ===========
+// The user draws a freehand shape on a small canvas; the stroke is scaled to a
+// target distance, anchored at the current location (GPS, else map centre) and
+// converted into an O繞 waypoint loop by shapeRoutePlanner.js. The normal
+// routing pipeline then snaps it to runnable roads/paths.
+const shapePanel = document.getElementById('shape-panel');
+const shapeCanvas = document.getElementById('shape-canvas');
+const shapeReadoutEl = document.getElementById('shape-readout');
+const shapeDistanceInput = document.getElementById('shape-distance-input');
+const btnShapeTool = document.getElementById('btn-shape-tool');
+const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
+let shapeStroke = [];             // drawn [x, y] canvas points (single stroke, CSS px)
+let shapeDrawing = false;
+let shapePreviewLayer = null;     // dashed target-shape outline on the map
+let shapeSimilarityRing = null;   // ring to score against the next planned route
+let shapeGenerating = false;      // guards double-clicks while awaiting the GPS fix
+
+{
+  const savedKm = Number(localStorage.getItem(LS_SHAPE_DISTANCE_KEY));
+  if (shapeDistanceInput && Number.isFinite(savedKm) && savedKm >= 1 && savedKm <= 50) {
+    shapeDistanceInput.value = String(savedKm);
+  }
+}
+
+function shapeStrokeColor() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent-primary').trim() || '#f59e0b';
+}
+
+// Keep the bitmap in sync with the CSS size (panel width × dpr) so lines stay
+// crisp; stroke points are stored in CSS px and mapped via setTransform.
+function syncShapeCanvasSize() {
+  if (!shapeCanvas) return;
+  const rect = shapeCanvas.getBoundingClientRect();
+  if (rect.width < 1) return;
+  const dpr = window.devicePixelRatio || 1;
+  const px = Math.round(rect.width * dpr);
+  if (shapeCanvas.width !== px) { shapeCanvas.width = px; shapeCanvas.height = px; }
+}
+
+function shapeCanvasCtx() {
+  const rect = shapeCanvas.getBoundingClientRect();
+  const scale = rect.width >= 1 ? shapeCanvas.width / rect.width : 1;
+  const ctx = shapeCanvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  return ctx;
+}
+
+function redrawShapeCanvas() {
+  if (!shapeCanvas) return;
+  const ctx = shapeCanvasCtx();
+  const rect = shapeCanvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  if (shapeStroke.length === 0) return;
+  ctx.strokeStyle = shapeStrokeColor();
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(shapeStroke[0][0], shapeStroke[0][1]);
+  for (let i = 1; i < shapeStroke.length; i++) ctx.lineTo(shapeStroke[i][0], shapeStroke[i][1]);
+  // Show the implicit closing leg once the hand is lifted.
+  if (!shapeDrawing && shapeStroke.length >= 3) ctx.closePath();
+  ctx.stroke();
+  // Start dot = where the run will begin (current location).
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.beginPath();
+  ctx.arc(shapeStroke[0][0], shapeStroke[0][1], 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function appendShapePoint(e) {
+  const rect = shapeCanvas.getBoundingClientRect();
+  const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
+  const y = Math.min(rect.height, Math.max(0, e.clientY - rect.top));
+  const prev = shapeStroke[shapeStroke.length - 1];
+  if (prev && Math.hypot(x - prev[0], y - prev[1]) < 2) return;
+  shapeStroke.push([x, y]);
+  if (shapeStroke.length >= 2) {
+    // Incremental segment draw keeps pointermove O(1).
+    const ctx = shapeCanvasCtx();
+    ctx.strokeStyle = shapeStrokeColor();
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(prev[0], prev[1]);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+}
+
+shapeCanvas?.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  shapeDrawing = true;
+  shapeStroke = [];            // a new stroke replaces the previous shape
+  try { shapeCanvas.setPointerCapture(e.pointerId); } catch (_) { }
+  redrawShapeCanvas();
+  appendShapePoint(e);
+});
+shapeCanvas?.addEventListener('pointermove', (e) => {
+  if (shapeDrawing) appendShapePoint(e);
+});
+['pointerup', 'pointercancel'].forEach((ev) => shapeCanvas?.addEventListener(ev, () => {
+  if (!shapeDrawing) return;
+  shapeDrawing = false;
+  redrawShapeCanvas();
+}));
+
+function ensureShapePreviewLayer() {
+  if (!shapePreviewLayer) shapePreviewLayer = L.layerGroup().addTo(mapManager.map);
+  return shapePreviewLayer;
+}
+
+function clearShapeBoard() {
+  shapeStroke = [];
+  shapeDrawing = false;
+  shapeSimilarityRing = null;
+  shapePreviewLayer?.clearLayers();
+  if (shapeReadoutEl) shapeReadoutEl.innerHTML = '';
+  redrawShapeCanvas();
+}
+
+function setShapeActive(active) {
+  if (!shapePanel) return;
+  shapePanel.classList.toggle('hidden', !active);
+  btnShapeTool?.setAttribute('aria-pressed', String(active));
+  if (active) {
+    setMeasureActive(false);   // shares the same corner of the map
+    syncShapeCanvasSize();
+    redrawShapeCanvas();
+  } else {
+    shapePreviewLayer?.clearLayers();
+  }
+}
+
+function readShapeDistanceKm() {
+  const km = Number(shapeDistanceInput?.value);
+  return Number.isFinite(km) ? km : NaN;
+}
+
+async function generateShapeRoute() {
+  if (shapeGenerating) return;
+  if (isRouteWeatherBusy()) { showRouteWeatherBusyNotice(); return; }
+  if (shapeStroke.length < 8) { showNotification('請先在繪圖板繪製形狀', 'warning'); return; }
+  const km = readShapeDistanceKm();
+  if (!(km >= 1 && km <= 50)) { showNotification('目標距離需在 1 到 50 公里之間', 'warning'); return; }
+  try { localStorage.setItem(LS_SHAPE_DISTANCE_KEY, String(km)); } catch (_) { }
+
+  // Anchor at the GPS fix; the free geolocation path fails often, so fall
+  // back to the map centre instead of blocking the feature.
+  shapeGenerating = true;
+  let anchor;
+  try {
+    showNotification('正在定位...', 'info', 1500);
+    const pos = await platform.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+    anchor = [pos.coords.latitude, pos.coords.longitude];
+  } catch (err) {
+    console.warn('Shape route: geolocation failed, using map centre:', err);
+    const c = mapManager.map.getCenter();
+    anchor = [c.lat, c.lng];
+    showNotification('無法取得目前位置，改以地圖中心規劃', 'info', 2000);
+  } finally {
+    shapeGenerating = false;
+  }
+
+  const targetM = km * 1000;
+  const ring = strokeToLatLngRing(shapeStroke, anchor, targetM);
+  const wps = ring ? pickShapeWaypoints(ring, suggestWaypointCount(targetM)) : [];
+  if (wps.length < 3) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
+
+  // Dashed outline of the target shape stays on the map for comparison with
+  // the road-snapped result (cleared on 清除 / panel close).
+  ensureShapePreviewLayer().clearLayers();
+  L.polyline([...ring, ring[0]], {
+    color: '#a855f7', weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false,
+  }).addTo(shapePreviewLayer);
+
+  // Running loop: foot routing + running pace + O繞 nav mode.
+  applyRouteMode('walking', { syncPaceActivity: false });
+  const routeModeRadio = document.querySelector('input[name="route-mode"][value="walking"]');
+  if (routeModeRadio) routeModeRadio.checked = true;
+  applySpeedActivity('running');
+  roundTripMode = false;
+  oLoopMode = true;
+  bumpRouteVersion();
+  localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
+  localStorage.setItem(LS_OLOOP_KEY, '1');
+  const navRadio = document.getElementById('nav-mode-oloop');
+  if (navRadio) navRadio.checked = true;
+
+  // Leaving imported-track mode: the drawn loop replaces the whole route.
+  importedTrackMode = false;
+  importedIntermediatePoints = [];
+  importedWaypointMeta = [];
+  clearImportedTrackSession();
+  syncTrackModeUI();
+  _wcStates.clear();
+  mapManager.closeWeatherPopup();
+
+  // Bulk-replace waypoints without per-point recalculation (import pattern).
+  const cb = mapManager.onWaypointChange;
+  mapManager.onWaypointChange = () => { };
+  try {
+    mapManager.clearWaypoints();
+    wps.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+  } finally {
+    mapManager.onWaypointChange = cb;
+  }
+  shapeSimilarityRing = ring;
+  onWaypointsChanged(mapManager.waypoints);
+  mapManager.fitToRoute();
+
+  if (shapeReadoutEl) {
+    shapeReadoutEl.innerHTML =
+      `<div class="mr-row"><span class="mr-label">${translatePhrase('航點')}</span><span class="mr-value">${wps.length}</span></div>` +
+      `<div class="mr-row"><span class="mr-label">${translatePhrase('目標距離')}</span><span class="mr-value">${formatDistance(targetM)}</span></div>`;
+  }
+  showNotification(`已依繪製形狀產生 ${wps.length} 個航點`, 'success', 2000);
+  emitTestEvent('shape-route-generated', { waypointCount: wps.length, targetM });
+}
+
+// Called by the route-planning pipeline once a freshly generated shape route
+// has been computed — reports how closely the snapped route follows the shape.
+function reportShapeSimilarity() {
+  if (!shapeSimilarityRing) return;
+  const ring = shapeSimilarityRing;
+  shapeSimilarityRing = null;
+  const coords = currentRouteCoords;
+  if (!Array.isArray(coords) || coords.length < 2) return;
+  const pct = Math.round(shapeSimilarity(coords, ring) * 100);
+  if (shapeReadoutEl && !shapePanel?.classList.contains('hidden')) {
+    shapeReadoutEl.innerHTML +=
+      `<div class="mr-row"><span class="mr-label">${translatePhrase('形狀相似度')}</span><span class="mr-value">${pct}%</span></div>`;
+  }
+  showNotification(`形狀相似度 ${pct}%`, 'info', 2500);
+}
+
+btnShapeTool?.addEventListener('click', () => {
+  setShapeActive(shapePanel?.classList.contains('hidden'));
+});
+document.getElementById('btn-shape-close')?.addEventListener('click', () => setShapeActive(false));
+document.getElementById('btn-shape-clear')?.addEventListener('click', clearShapeBoard);
+document.getElementById('btn-shape-generate')?.addEventListener('click', generateShapeRoute);
 
 function pickRouteFile() {
   return platform.pickFile({
@@ -5809,6 +6056,8 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
         showNotification(altMsg, 'success', 2000);
         // Cache the computed result so a later page return can skip re-planning.
         persistRouteResult();
+        // Drawing-board flow: score how closely the snapped route follows the shape.
+        reportShapeSimilarity();
       }
     } else if (!isRoutePlanSnapshotStale(routePlanSnapshot)) {
       showNotification('找不到合適路徑', 'warning');

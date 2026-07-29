@@ -345,6 +345,17 @@ const PHRASES = {
   '出水口海拔': { en: 'Outlet elevation', ja: '流出口の標高', ko: '유출구 고도', fr: 'Altitude de l’exutoire', de: 'Auslasshöhe', es: 'Altitud del desagüe', it: 'Quota dello sbocco' },
   '集水區可能延伸至分析範圍外': { en: 'Catchment may extend beyond the analyzed area', ja: '集水域は解析範囲外まで広がる可能性があります', ko: '집수 구역이 분석 범위를 넘어설 수 있습니다', fr: 'Le bassin peut s’étendre au-delà de la zone analysée', de: 'Einzugsgebiet reicht evtl. über den analysierten Bereich hinaus', es: 'La cuenca puede extenderse más allá del área analizada', it: 'Il bacino può estendersi oltre l’area analizzata' },
   '集水區為近似值（來自已快取地形）': { en: 'Catchment is approximate (from cached terrain)', ja: '集水域は近似値です（キャッシュ地形から）', ko: '집수 구역은 근사값입니다 (캐시된 지형 기반)', fr: 'Bassin approximatif (terrain en cache)', de: 'Einzugsgebiet ist Näherung (aus zwischengespeichertem Gelände)', es: 'Cuenca aproximada (terreno en caché)', it: 'Bacino approssimativo (terreno in cache)' },
+  '繪圖板': { en: 'Drawing board', ja: 'お絵かきボード', ko: '드로잉 보드', fr: 'Tableau de dessin', de: 'Zeichenbrett', es: 'Pizarra de dibujo', it: 'Lavagna di disegno' },
+  '關閉繪圖板': { en: 'Close drawing board', ja: 'お絵かきボードを閉じる', ko: '드로잉 보드 닫기', fr: 'Fermer le tableau de dessin', de: 'Zeichenbrett schließen', es: 'Cerrar la pizarra', it: 'Chiudi la lavagna' },
+  '在下方畫出想跑的形狀，將在當前位置附近規劃最接近該形狀的 O繞跑步路線': { en: 'Draw the shape you want to run below — a loop running route matching it will be planned near your current location', ja: '走りたい形を下に描くと、現在地付近でその形に最も近い周回ランニングルートを計画します', ko: '아래에 달리고 싶은 모양을 그리면 현재 위치 근처에 그 모양과 가장 가까운 순환 러닝 경로를 계획합니다', fr: 'Dessinez la forme à courir ci-dessous — une boucle de course s’en approchant sera planifiée près de votre position', de: 'Zeichnen Sie unten die gewünschte Lauf-Form — eine passende Runden-Laufroute wird nahe Ihrem Standort geplant', es: 'Dibuja abajo la forma que quieres correr: se planificará cerca de tu ubicación una ruta circular que se le parezca', it: 'Disegna qui sotto la forma da correre: verrà pianificato vicino alla tua posizione un percorso ad anello che la ricalca' },
+  '目標距離': { en: 'Target distance', ja: '目標距離', ko: '목표 거리', fr: 'Distance cible', de: 'Zieldistanz', es: 'Distancia objetivo', it: 'Distanza obiettivo' },
+  '產生路線': { en: 'Generate route', ja: 'ルートを生成', ko: '경로 생성', fr: 'Générer l’itinéraire', de: 'Route erzeugen', es: 'Generar ruta', it: 'Genera percorso' },
+  '請先在繪圖板繪製形狀': { en: 'Draw a shape on the board first', ja: '先にボードに形を描いてください', ko: '먼저 보드에 모양을 그리세요', fr: 'Dessinez d’abord une forme sur le tableau', de: 'Zeichnen Sie zuerst eine Form auf das Brett', es: 'Dibuja primero una forma en la pizarra', it: 'Disegna prima una forma sulla lavagna' },
+  '目標距離需在 1 到 50 公里之間': { en: 'Target distance must be between 1 and 50 km', ja: '目標距離は1〜50kmの範囲で指定してください', ko: '목표 거리는 1~50km 사이여야 합니다', fr: 'La distance cible doit être entre 1 et 50 km', de: 'Die Zieldistanz muss zwischen 1 und 50 km liegen', es: 'La distancia objetivo debe estar entre 1 y 50 km', it: 'La distanza obiettivo deve essere tra 1 e 50 km' },
+  '無法取得目前位置，改以地圖中心規劃': { en: 'Couldn’t get your location — planning from the map centre instead', ja: '現在地を取得できないため、地図の中心から計画します', ko: '현재 위치를 가져올 수 없어 지도 중심으로 계획합니다', fr: 'Position introuvable — planification depuis le centre de la carte', de: 'Standort nicht verfügbar — Planung ab Kartenmitte', es: 'No se pudo obtener tu ubicación: se planifica desde el centro del mapa', it: 'Posizione non disponibile: pianificazione dal centro della mappa' },
+  '無法辨識繪製的形狀，請重畫': { en: 'Couldn’t recognise the drawn shape, please redraw', ja: '描いた形を認識できません。描き直してください', ko: '그린 모양을 인식할 수 없습니다. 다시 그려 주세요', fr: 'Forme dessinée non reconnue, veuillez redessiner', de: 'Gezeichnete Form nicht erkennbar, bitte neu zeichnen', es: 'No se reconoce la forma dibujada, vuelve a dibujarla', it: 'Forma disegnata non riconosciuta, ridisegnala' },
+  '形狀相似度': { en: 'Shape similarity', ja: '形状類似度', ko: '모양 유사도', fr: 'Similarité de forme', de: 'Formähnlichkeit', es: 'Similitud de forma', it: 'Somiglianza della forma' },
+  '用繪圖板畫出形狀，即可在當前位置附近規劃最接近該形狀的 O繞跑步路線': { en: 'Draw a shape on the drawing board to plan a loop running route matching it near your current location', ja: 'お絵かきボードに形を描くと、現在地付近でその形に最も近い周回ランニングルートを計画できます', ko: '드로잉 보드에 모양을 그리면 현재 위치 근처에 그 모양과 가장 가까운 순환 러닝 경로를 계획할 수 있습니다', fr: 'Dessinez une forme sur le tableau pour planifier près de votre position une boucle de course s’en approchant', de: 'Zeichnen Sie eine Form auf das Zeichenbrett, um nahe Ihrem Standort eine passende Runden-Laufroute zu planen', es: 'Dibuja una forma en la pizarra para planificar cerca de tu ubicación una ruta circular de carrera que se le parezca', it: 'Disegna una forma sulla lavagna per pianificare vicino alla tua posizione un percorso di corsa ad anello che la ricalca' },
   '海拔範圍': { en: 'Elevation range', ja: '標高範囲', ko: '고도 범위', fr: 'Plage d’altitude', de: 'Höhenbereich', es: 'Rango de altitud', it: 'Intervallo di quota' },
   '平均坡度': { en: 'Average slope', ja: '平均勾配', ko: '평균 경사', fr: 'Pente moyenne', de: 'Mittlere Neigung', es: 'Pendiente media', it: 'Pendenza media' },
   '主流長度': { en: 'Main channel length', ja: '本流長', ko: '본류 길이', fr: 'Longueur du cours principal', de: 'Hauptgerinnelänge', es: 'Longitud del cauce principal', it: 'Lunghezza dell’asta principale' },
@@ -753,6 +764,7 @@ function renderInstructionsContent() {
         plainLine('依序點選地圖即可建立航點；拖曳航點可微調路線位置'),
         `<li><span class="instr-badge">${t('單程')}</span> ${instructionText('適合 A 到 B；')} <span class="instr-badge">${t('來回')}</span> ${instructionText('會自動折返；')} <span class="instr-badge">${t('O繞')}</span> ${instructionText('會尋找回到起點的替代路線')}</li>`,
         plainLine('若出現多條候選路線，可點選候選卡或地圖上的軌跡切換主路線'),
+        plainLine('用繪圖板畫出形狀，即可在當前位置附近規劃最接近該形狀的 O繞跑步路線'),
       ]),
       instructionGroup('🌦', '天氣資料說明', [
         plainLine('短期預報優先參考 Open-Meteo；需要比對模式時可切換 Windy 模型'),
@@ -1056,6 +1068,10 @@ function translatePattern(text) {
   if (m) return withNum('Imported {n} waypoints', '{n}ウェイポイントをインポートしました', '{n}개 웨이포인트 가져옴', '{n} waypoints importés', '{n} Wegpunkte importiert', '{n} waypoints importados', '{n} waypoint importati', m[1]);
   m = text.match(/^已匯入軌跡（(\d+) 個點(?:，(\d+) 個航點)?）$/);
   if (m) return withNum('Imported track ({n} points)', '軌跡をインポートしました（{n}点）', '트랙 가져옴 ({n}개 지점)', 'Trace importée ({n} points)', 'Track importiert ({n} Punkte)', 'Track importado ({n} puntos)', 'Traccia importata ({n} punti)', m[1]);
+  m = text.match(/^已依繪製形狀產生 (\d+) 個航點$/);
+  if (m) return withNum('Generated {n} waypoints from the drawn shape', '描いた形から{n}個のウェイポイントを生成しました', '그린 모양에서 웨이포인트 {n}개를 생성했습니다', '{n} waypoints générés depuis la forme dessinée', '{n} Wegpunkte aus der gezeichneten Form erzeugt', '{n} waypoints generados desde la forma dibujada', '{n} waypoint generati dalla forma disegnata', m[1]);
+  m = text.match(/^形狀相似度 (\d+)%$/);
+  if (m) return withNum('Shape similarity {n}%', '形状類似度 {n}%', '모양 유사도 {n}%', 'Similarité de forme {n}%', 'Formähnlichkeit {n}%', 'Similitud de forma {n}%', 'Somiglianza della forma {n}%', m[1]);
   return null;
 }
 

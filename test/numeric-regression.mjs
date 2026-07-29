@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   cumulativeDistances,
+  haversineDistance,
   totalDistance,
 } from '../src/modules/utils.js';
 import {
@@ -20,6 +21,14 @@ import {
   estimateMapPackTiles,
   tilesForBoundsZoom,
 } from '../src/modules/tileEstimator.js';
+import {
+  pickShapeWaypoints,
+  resampleClosedStroke,
+  ringPerimeter,
+  shapeSimilarity,
+  strokeToLatLngRing,
+  suggestWaypointCount,
+} from '../src/modules/shapeRoutePlanner.js';
 
 const closeTo = (actual, expected, epsilon = 1e-6) => {
   assert.ok(
@@ -147,5 +156,57 @@ assert.deepEqual(tilesForBoundsZoom(tileBounds, 8), enumeratedTiles.tiles.filter
 const cappedTiles = enumerateMapPackTiles(tileBounds, tileLayerInfo, { maxTiles: 20 });
 assert.ok(cappedTiles.tileCount <= 20);
 assert.ok(cappedTiles.maxZoom < enumeratedTiles.maxZoom);
+
+// --- Shape route planner (drawing board → waypoint loop) ---
+const squareStroke = [];
+for (let i = 0; i <= 10; i++) squareStroke.push([i * 10, 0]);
+for (let i = 1; i <= 10; i++) squareStroke.push([100, i * 10]);
+for (let i = 1; i <= 10; i++) squareStroke.push([100 - i * 10, 100]);
+for (let i = 1; i < 10; i++) squareStroke.push([0, 100 - i * 10]);
+
+const resampled = resampleClosedStroke(squareStroke, 80);
+assert.equal(resampled.length, 80);
+let resampledPerimPx = 0;
+for (let i = 0; i < resampled.length; i++) {
+  const a = resampled[i];
+  const b = resampled[(i + 1) % resampled.length];
+  resampledPerimPx += Math.hypot(b[0] - a[0], b[1] - a[1]);
+}
+closeTo(resampledPerimPx, 400, 1);
+assert.equal(resampleClosedStroke([[0, 0], [1, 1]], 80), null);
+assert.equal(resampleClosedStroke([[5, 5], [5, 5], [5, 5], [5, 5]], 80), null);
+
+const shapeAnchor = [25.034, 121.564];
+const TARGET_M = 5000;
+const geoRing = strokeToLatLngRing(squareStroke, shapeAnchor, TARGET_M, { samples: 96 });
+assert.equal(geoRing.length, 96);
+closeTo(ringPerimeter(geoRing), TARGET_M, TARGET_M * 0.01);
+// Ring starts exactly at the anchor (run starts where the user is).
+closeTo(geoRing[0][0], shapeAnchor[0], 1e-9);
+closeTo(geoRing[0][1], shapeAnchor[1], 1e-9);
+// The whole loop stays near the anchor (within one perimeter length).
+geoRing.forEach((p) => assert.ok(haversineDistance(shapeAnchor, p) < TARGET_M));
+
+const shapeWps = pickShapeWaypoints(geoRing, 8);
+assert.equal(shapeWps.length, 8);
+assert.deepEqual(shapeWps[0], geoRing[0]);
+// Distinct waypoints — O-loop mode closes the ring, no duplicate start.
+const wpKeys = new Set(shapeWps.map((p) => p.join(',')));
+assert.equal(wpKeys.size, 8);
+// Evenly spread: consecutive gaps stay near perimeter/8.
+for (let i = 1; i < shapeWps.length; i++) {
+  const gap = haversineDistance(shapeWps[i - 1], shapeWps[i]);
+  assert.ok(gap > TARGET_M / 8 * 0.4 && gap < TARGET_M / 8 * 1.8, `gap ${i} = ${gap}`);
+}
+
+assert.equal(suggestWaypointCount(2000), 6);
+assert.equal(suggestWaypointCount(5000), 8);
+assert.equal(suggestWaypointCount(20000), 12);
+
+// A route that exactly follows the ring scores ~1; a distant route scores lower.
+closeTo(shapeSimilarity([...geoRing, geoRing[0]], geoRing), 1, 0.05);
+const offsetRoute = geoRing.map(([la, ln]) => [la + 0.02, ln]);
+assert.ok(shapeSimilarity(offsetRoute, geoRing) < 0.5);
+assert.equal(shapeSimilarity([], geoRing), 0);
 
 console.log('Numeric regression ok');

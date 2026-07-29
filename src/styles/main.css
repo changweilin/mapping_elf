@@ -1426,6 +1426,45 @@ body.weather-card-busy .weather-edit-control:disabled {
   }
 }
 
+/* Drawing board (shape → running loop). Shares the measure-panel shell. */
+.shape-panel-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.shape-canvas {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary, transparent);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.shape-distance-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.shape-distance-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.shape-panel-actions {
+  gap: 8px;
+}
+
 /* Hikingbook-style route summary strip — the key numbers stay in view above
    the elevation profile without opening the 路線統計 section. Values are
    mirrored from the side-panel stats (see initRouteSummaryBar in main.js). */

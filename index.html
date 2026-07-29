@@ -168,6 +168,11 @@
         <path d="M21.71 8.29l-6-6a1 1 0 0 0-1.42 0l-12 12a1 1 0 0 0 0 1.42l6 6a1 1 0 0 0 1.42 0l12-12a1 1 0 0 0 0-1.42zM9 19.59 4.41 15l1.3-1.29 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8L15 4.41 19.59 9 9 19.59z" fill="currentColor" />
       </svg>
     </button>
+    <button id="btn-shape-tool" class="map-action-btn" title="繪圖板" aria-label="繪圖板" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="20" height="20">
+        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor" />
+      </svg>
+    </button>
   </div>
 
   <!-- F2: Measurement tools panel -->
@@ -186,6 +191,28 @@
     <div class="measure-readout" id="measure-readout"></div>
     <div class="measure-panel-actions">
       <button type="button" class="btn-secondary measure-clear-btn" id="btn-measure-clear">清除</button>
+    </div>
+  </div>
+
+  <!-- Drawing board: sketch a shape, plan a matching running loop nearby -->
+  <div id="shape-panel" class="measure-panel shape-panel hidden" role="group" aria-label="繪圖板">
+    <div class="measure-panel-head">
+      <span class="shape-panel-title">繪圖板</span>
+      <button type="button" class="measure-close-btn" id="btn-shape-close" title="關閉繪圖板" aria-label="關閉繪圖板">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" /></svg>
+      </button>
+    </div>
+    <p class="measure-hint">在下方畫出想跑的形狀，將在當前位置附近規劃最接近該形狀的 O繞跑步路線</p>
+    <canvas id="shape-canvas" class="shape-canvas" width="216" height="216"></canvas>
+    <div class="shape-distance-row">
+      <label class="mr-label" for="shape-distance-input">目標距離</label>
+      <input type="number" id="shape-distance-input" class="shape-distance-input" min="1" max="50" step="0.5" value="5">
+      <span class="mr-label">km</span>
+    </div>
+    <div class="measure-readout" id="shape-readout"></div>
+    <div class="measure-panel-actions shape-panel-actions">
+      <button type="button" class="btn-secondary measure-clear-btn" id="btn-shape-clear">清除</button>
+      <button type="button" class="btn-primary measure-clear-btn" id="btn-shape-generate">產生路線</button>
     </div>
   </div>
 
@@ -1271,6 +1298,7 @@
                 <li>依序點選地圖即可建立<span class="instr-key">航點</span>；<span class="instr-key">拖曳航點</span>可微調<span class="instr-key">路線</span>位置</li>
                 <li><span class="instr-badge">單程</span> 適合 A 到 B；<span class="instr-badge">來回</span> 會自動折返；<span class="instr-badge">O繞</span> 會尋找回到起點的替代路線</li>
                 <li>若出現多條<span class="instr-key">候選路線</span>，可點選<span class="instr-key">候選卡</span>或地圖上的<span class="instr-key">軌跡</span>切換<span class="instr-key">主路線</span></li>
+                <li>用<span class="instr-key">繪圖板</span>畫出形狀，即可在<span class="instr-key">當前位置</span>附近規劃最接近該形狀的 O繞跑步路線</li>
               </ul>
             </div>
             <div class="instr-group">
