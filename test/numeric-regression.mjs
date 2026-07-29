@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   cumulativeDistances,
+  haversineDistance,
   totalDistance,
 } from '../src/modules/utils.js';
 import {
@@ -20,6 +21,18 @@ import {
   estimateMapPackTiles,
   tilesForBoundsZoom,
 } from '../src/modules/tileEstimator.js';
+import {
+  countShapeCorners,
+  needsDistanceCalibration,
+  nextCalibratedTarget,
+  pickShapeWaypoints,
+  resampleClosedStroke,
+  ringPerimeter,
+  rotationCandidates,
+  shapeSimilarity,
+  strokeToLatLngRing,
+  suggestWaypointCount,
+} from '../src/modules/shapeRoutePlanner.js';
 
 const closeTo = (actual, expected, epsilon = 1e-6) => {
   assert.ok(
@@ -147,5 +160,94 @@ assert.deepEqual(tilesForBoundsZoom(tileBounds, 8), enumeratedTiles.tiles.filter
 const cappedTiles = enumerateMapPackTiles(tileBounds, tileLayerInfo, { maxTiles: 20 });
 assert.ok(cappedTiles.tileCount <= 20);
 assert.ok(cappedTiles.maxZoom < enumeratedTiles.maxZoom);
+
+// --- Shape route planner (drawing board → waypoint loop) ---
+const squareStroke = [];
+for (let i = 0; i <= 10; i++) squareStroke.push([i * 10, 0]);
+for (let i = 1; i <= 10; i++) squareStroke.push([100, i * 10]);
+for (let i = 1; i <= 10; i++) squareStroke.push([100 - i * 10, 100]);
+for (let i = 1; i < 10; i++) squareStroke.push([0, 100 - i * 10]);
+
+const resampled = resampleClosedStroke(squareStroke, 80);
+assert.equal(resampled.length, 80);
+let resampledPerimPx = 0;
+for (let i = 0; i < resampled.length; i++) {
+  const a = resampled[i];
+  const b = resampled[(i + 1) % resampled.length];
+  resampledPerimPx += Math.hypot(b[0] - a[0], b[1] - a[1]);
+}
+closeTo(resampledPerimPx, 400, 1);
+assert.equal(resampleClosedStroke([[0, 0], [1, 1]], 80), null);
+assert.equal(resampleClosedStroke([[5, 5], [5, 5], [5, 5], [5, 5]], 80), null);
+
+const shapeAnchor = [25.034, 121.564];
+const TARGET_M = 5000;
+const geoRing = strokeToLatLngRing(squareStroke, shapeAnchor, TARGET_M, { samples: 96 });
+assert.equal(geoRing.length, 96);
+closeTo(ringPerimeter(geoRing), TARGET_M, TARGET_M * 0.01);
+// Ring starts exactly at the anchor (run starts where the user is).
+closeTo(geoRing[0][0], shapeAnchor[0], 1e-9);
+closeTo(geoRing[0][1], shapeAnchor[1], 1e-9);
+// The whole loop stays near the anchor (within one perimeter length).
+geoRing.forEach((p) => assert.ok(haversineDistance(shapeAnchor, p) < TARGET_M));
+
+const shapeWps = pickShapeWaypoints(geoRing, 8);
+assert.equal(shapeWps.length, 8);
+assert.deepEqual(shapeWps[0], geoRing[0]);
+// Distinct waypoints — O-loop mode closes the ring, no duplicate start.
+const wpKeys = new Set(shapeWps.map((p) => p.join(',')));
+assert.equal(wpKeys.size, 8);
+// Evenly spread: consecutive gaps stay near perimeter/8.
+for (let i = 1; i < shapeWps.length; i++) {
+  const gap = haversineDistance(shapeWps[i - 1], shapeWps[i]);
+  assert.ok(gap > TARGET_M / 8 * 0.4 && gap < TARGET_M / 8 * 1.8, `gap ${i} = ${gap}`);
+}
+
+assert.equal(suggestWaypointCount(2000), 6);
+assert.equal(suggestWaypointCount(5000), 8);
+assert.equal(suggestWaypointCount(20000), 16);
+// Complexity raises the count: corners + extra strokes, capped at 16.
+assert.equal(suggestWaypointCount(2000, { strokeCount: 1, corners: 4 }), 8);
+assert.equal(suggestWaypointCount(2000, { strokeCount: 3, corners: 8 }), 16);
+assert.equal(suggestWaypointCount(2000, { strokeCount: 2, corners: 0 }), 6);
+
+// Corner counting: a square has 4 sharp turns; resampling noise adds none.
+assert.equal(countShapeCorners(squareStroke), 4);
+assert.equal(countShapeCorners([[0, 0], [1, 1]]), 0);
+
+// Rotation candidates: drawn orientation first (wins ties), symmetric within
+// the tolerance; ≥180 samples the full circle.
+assert.deepEqual(rotationCandidates(0), [0]);
+const cand45 = rotationCandidates(45);
+assert.equal(cand45[0], 0);
+assert.equal(cand45.length, 9);
+assert.equal(Math.max(...cand45.map(Math.abs)), 45);
+const candAny = rotationCandidates(360);
+assert.equal(candAny[0], 0);
+assert.equal(candAny.length, 12);
+assert.ok(candAny.includes(180));
+
+// Distance calibration: trigger only outside the 5% band; requested perimeter
+// scales by target/actual, clamped to a sane band around the target.
+assert.equal(needsDistanceCalibration(5600, 5000), true);
+assert.equal(needsDistanceCalibration(5100, 5000), false);
+assert.equal(needsDistanceCalibration(4300, 5000), true);
+assert.equal(needsDistanceCalibration(0, 5000), false);
+closeTo(nextCalibratedTarget(5000, 5750, 5000), 5000 * (5000 / 5750), 1e-6);
+assert.equal(nextCalibratedTarget(5000, 100000, 5000), 2000);   // min 0.4×target
+assert.equal(nextCalibratedTarget(5000, 100, 5000), 12500);     // max 2.5×target
+assert.equal(nextCalibratedTarget(0, 5750, 5000), 0);           // invalid input passthrough
+
+// Rotated ring keeps the perimeter and anchor-start invariants.
+const rotatedRing = strokeToLatLngRing(squareStroke, shapeAnchor, TARGET_M, { rotationDeg: 90 });
+closeTo(ringPerimeter(rotatedRing), TARGET_M, TARGET_M * 0.01);
+closeTo(rotatedRing[0][0], shapeAnchor[0], 1e-9);
+closeTo(rotatedRing[0][1], shapeAnchor[1], 1e-9);
+
+// A route that exactly follows the ring scores ~1; a distant route scores lower.
+closeTo(shapeSimilarity([...geoRing, geoRing[0]], geoRing), 1, 0.05);
+const offsetRoute = geoRing.map(([la, ln]) => [la + 0.02, ln]);
+assert.ok(shapeSimilarity(offsetRoute, geoRing) < 0.5);
+assert.equal(shapeSimilarity([], geoRing), 0);
 
 console.log('Numeric regression ok');

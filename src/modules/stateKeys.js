@@ -55,6 +55,8 @@ const PREFERENCE_STATE_KEYS = [
   'mappingElf_windyLayer',
   'mappingElf_windyModel',
   'mappingElf_theme',
+  'mappingElf_shapeRouteDistanceKm',
+  'mappingElf_shapeRouteAngleTolDeg',
 ];
 
 const LAYOUT_STATE_KEYS = [

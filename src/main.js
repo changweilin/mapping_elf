@@ -8,7 +8,7 @@ import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize, projectMileage } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, totalDistance, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize, projectMileage } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeTripStats, computeFatigueSeries, formatDuration, formatDurationHHMM, defaultSpeed, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, LANGUAGES, setLanguage, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
@@ -18,6 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
+import { countShapeCorners, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, rotationCandidates, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount } from './modules/shapeRoutePlanner.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -4721,7 +4722,9 @@ function setMeasureActive(active) {
 
 mapManager.onMeasureClick = handleMeasureClick;
 btnMeasureTool?.addEventListener('click', () => {
-  setMeasureActive(measurePanel?.classList.contains('hidden'));
+  const opening = measurePanel?.classList.contains('hidden');
+  if (opening) setShapeActive(false); // shares the same corner of the map
+  setMeasureActive(opening);
 });
 document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.measure-mode-btn');
@@ -4732,6 +4735,406 @@ document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) =>
 document.getElementById('btn-measure-clear')?.addEventListener('click', clearMeasureOverlay);
 document.getElementById('btn-measure-close')?.addEventListener('click', () => setMeasureActive(false));
 setMeasureMode('segment');
+
+// =========== Drawing board: sketch a shape → plan a matching running loop ===========
+// The user draws a freehand shape on a small canvas; the stroke is scaled to a
+// target distance, anchored at the current location (GPS, else map centre) and
+// converted into an O繞 waypoint loop by shapeRoutePlanner.js. The normal
+// routing pipeline then snaps it to runnable roads/paths.
+const shapePanel = document.getElementById('shape-panel');
+const shapeCanvas = document.getElementById('shape-canvas');
+const shapeReadoutEl = document.getElementById('shape-readout');
+const shapeDistanceInput = document.getElementById('shape-distance-input');
+const shapeAngleSelect = document.getElementById('shape-angle-select');
+const btnShapeTool = document.getElementById('btn-shape-tool');
+const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
+const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
+const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
+let shapeStrokes = [];            // drawn strokes (筆畫), each an array of [x, y] CSS px
+let shapeDrawing = false;
+let shapePreviewLayer = null;     // dashed target-shape outline on the map
+let shapeRouteRun = null;         // pending run: ring/anchor/scale context for the
+                                  // distance-calibration + similarity pass on completion
+let shapeGenerating = false;      // guards re-entry across the async generate flow
+
+{
+  const savedKm = Number(localStorage.getItem(LS_SHAPE_DISTANCE_KEY));
+  if (shapeDistanceInput && Number.isFinite(savedKm) && savedKm >= 1 && savedKm <= 50) {
+    shapeDistanceInput.value = String(savedKm);
+  }
+  const savedTol = Number(localStorage.getItem(LS_SHAPE_ANGLE_KEY));
+  if (shapeAngleSelect && SHAPE_ANGLE_CHOICES.includes(savedTol)) {
+    shapeAngleSelect.value = String(savedTol);
+  }
+}
+
+function shapeAllPoints() {
+  return shapeStrokes.flat();
+}
+
+function shapeStrokeColor() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent-primary').trim() || '#f59e0b';
+}
+
+// Keep the bitmap in sync with the CSS size (panel width × dpr) so lines stay
+// crisp; stroke points are stored in CSS px and mapped via setTransform.
+function syncShapeCanvasSize() {
+  if (!shapeCanvas) return;
+  const rect = shapeCanvas.getBoundingClientRect();
+  if (rect.width < 1) return;
+  const dpr = window.devicePixelRatio || 1;
+  const px = Math.round(rect.width * dpr);
+  if (shapeCanvas.width !== px) { shapeCanvas.width = px; shapeCanvas.height = px; }
+}
+
+function shapeCanvasCtx() {
+  const rect = shapeCanvas.getBoundingClientRect();
+  const scale = rect.width >= 1 ? shapeCanvas.width / rect.width : 1;
+  const ctx = shapeCanvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  return ctx;
+}
+
+function redrawShapeCanvas() {
+  if (!shapeCanvas) return;
+  const ctx = shapeCanvasCtx();
+  const rect = shapeCanvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  const first = shapeStrokes[0]?.[0];
+  if (!first) return;
+  ctx.strokeStyle = shapeStrokeColor();
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  shapeStrokes.forEach((stroke) => {
+    if (stroke.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(stroke[0][0], stroke[0][1]);
+    for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i][0], stroke[i][1]);
+    ctx.stroke();
+  });
+  // Dashed connectors show how strokes chain together and close the loop
+  // (the generated ring follows draw order, then returns to the start).
+  if (!shapeDrawing && shapeAllPoints().length >= 3) {
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.globalAlpha = 0.55;
+    for (let s = 0; s < shapeStrokes.length; s++) {
+      const from = shapeStrokes[s][shapeStrokes[s].length - 1];
+      const to = s < shapeStrokes.length - 1 ? shapeStrokes[s + 1][0] : first;
+      if (!from || !to || from === to) continue;
+      ctx.beginPath();
+      ctx.moveTo(from[0], from[1]);
+      ctx.lineTo(to[0], to[1]);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // Start dot = where the run will begin (current location).
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.beginPath();
+  ctx.arc(first[0], first[1], 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function appendShapePoint(e) {
+  const stroke = shapeStrokes[shapeStrokes.length - 1];
+  if (!stroke) return;
+  const rect = shapeCanvas.getBoundingClientRect();
+  const x = Math.min(rect.width, Math.max(0, e.clientX - rect.left));
+  const y = Math.min(rect.height, Math.max(0, e.clientY - rect.top));
+  const prev = stroke[stroke.length - 1];
+  if (prev && Math.hypot(x - prev[0], y - prev[1]) < 2) return;
+  stroke.push([x, y]);
+  if (stroke.length >= 2) {
+    // Incremental segment draw keeps pointermove O(1).
+    const ctx = shapeCanvasCtx();
+    ctx.strokeStyle = shapeStrokeColor();
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(prev[0], prev[1]);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+}
+
+shapeCanvas?.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  shapeDrawing = true;
+  shapeStrokes.push([]);       // each pointerdown starts a new 筆畫
+  try { shapeCanvas.setPointerCapture(e.pointerId); } catch (_) { }
+  appendShapePoint(e);
+});
+shapeCanvas?.addEventListener('pointermove', (e) => {
+  if (shapeDrawing) appendShapePoint(e);
+});
+['pointerup', 'pointercancel'].forEach((ev) => shapeCanvas?.addEventListener(ev, () => {
+  if (!shapeDrawing) return;
+  shapeDrawing = false;
+  // Drop accidental taps that never became a line.
+  const last = shapeStrokes[shapeStrokes.length - 1];
+  if (last && last.length < 2) shapeStrokes.pop();
+  redrawShapeCanvas();
+}));
+
+function ensureShapePreviewLayer() {
+  if (!shapePreviewLayer) shapePreviewLayer = L.layerGroup().addTo(mapManager.map);
+  return shapePreviewLayer;
+}
+
+function clearShapeBoard() {
+  shapeStrokes = [];
+  shapeDrawing = false;
+  shapeRouteRun = null;
+  shapePreviewLayer?.clearLayers();
+  if (shapeReadoutEl) shapeReadoutEl.innerHTML = '';
+  redrawShapeCanvas();
+}
+
+function setShapeActive(active) {
+  if (!shapePanel) return;
+  shapePanel.classList.toggle('hidden', !active);
+  btnShapeTool?.setAttribute('aria-pressed', String(active));
+  if (active) {
+    setMeasureActive(false);   // shares the same corner of the map
+    syncShapeCanvasSize();
+    redrawShapeCanvas();
+  } else {
+    shapePreviewLayer?.clearLayers();
+  }
+}
+
+function readShapeDistanceKm() {
+  const km = Number(shapeDistanceInput?.value);
+  return Number.isFinite(km) ? km : NaN;
+}
+
+function readShapeAngleTolDeg() {
+  const deg = Number(shapeAngleSelect?.value);
+  return SHAPE_ANGLE_CHOICES.includes(deg) ? deg : 0;
+}
+
+async function generateShapeRoute() {
+  if (shapeGenerating) return;
+  if (isRouteWeatherBusy()) { showRouteWeatherBusyNotice(); return; }
+  const strokePts = shapeAllPoints();
+  if (strokePts.length < 8) { showNotification('請先在繪圖板繪製形狀', 'warning'); return; }
+  const km = readShapeDistanceKm();
+  if (!(km >= 1 && km <= 50)) { showNotification('目標距離需在 1 到 50 公里之間', 'warning'); return; }
+  const angleTol = readShapeAngleTolDeg();
+  try {
+    localStorage.setItem(LS_SHAPE_DISTANCE_KEY, String(km));
+    localStorage.setItem(LS_SHAPE_ANGLE_KEY, String(angleTol));
+  } catch (_) { }
+
+  shapeGenerating = true;
+  shapeRouteRun = null;          // supersede any pending calibration pass
+  try {
+    // Anchor at the GPS fix; the free geolocation path fails often, so fall
+    // back to the map centre instead of blocking the feature.
+    let anchor;
+    try {
+      showNotification('正在定位...', 'info', 1500);
+      const pos = await platform.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+      anchor = [pos.coords.latitude, pos.coords.longitude];
+    } catch (err) {
+      console.warn('Shape route: geolocation failed, using map centre:', err);
+      const c = mapManager.map.getCenter();
+      anchor = [c.lat, c.lng];
+      showNotification('無法取得目前位置，改以地圖中心規劃', 'info', 2000);
+    }
+
+    const targetM = km * 1000;
+    // Waypoint count scales with the drawing's complexity (筆畫數 + 轉折數).
+    const wpCount = suggestWaypointCount(targetM, {
+      strokeCount: shapeStrokes.length,
+      corners: countShapeCorners(strokePts),
+    });
+
+    // Orientation search inside the allowed angle tolerance: each candidate
+    // rotation is scored by how close its probe waypoints sit to walkable
+    // ways (mean OSRM-nearest snap distance, capped so one unreachable probe
+    // doesn't dominate). Candidate 0 comes first and wins ties, so when the
+    // snap service is unreachable the drawn orientation is kept.
+    let bestDeg = 0;
+    let ring = null;
+    const candidates = rotationCandidates(angleTol);
+    if (candidates.length > 1) {
+      showNotification('正在尋找最符合形狀的方位...', 'info', 2000);
+      let bestScore = Infinity;
+      for (const deg of candidates) {
+        const candRing = strokeToLatLngRing(strokePts, anchor, targetM, { rotationDeg: deg });
+        if (!candRing) continue;
+        const probes = pickShapeWaypoints(candRing, Math.min(6, wpCount));
+        const snaps = await routeEngine.snapToFootNetwork(probes);
+        const score = snaps.reduce((s, x) => s + Math.min(x.distance, 2000), 0) / (snaps.length || 1);
+        if (score < bestScore) { bestScore = score; bestDeg = deg; ring = candRing; }
+      }
+    }
+    if (!ring) ring = strokeToLatLngRing(strokePts, anchor, targetM);
+    const rawWps = ring ? pickShapeWaypoints(ring, wpCount) : [];
+    if (rawWps.length < 3) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
+
+    const wps = await snapShapeWaypoints(rawWps);
+    drawShapePreview(ring);
+
+    // Running loop: foot routing + running pace + O繞 nav mode.
+    applyRouteMode('walking', { syncPaceActivity: false });
+    const routeModeRadio = document.querySelector('input[name="route-mode"][value="walking"]');
+    if (routeModeRadio) routeModeRadio.checked = true;
+    applySpeedActivity('running');
+    roundTripMode = false;
+    oLoopMode = true;
+    bumpRouteVersion();
+    localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
+    localStorage.setItem(LS_OLOOP_KEY, '1');
+    const navRadio = document.getElementById('nav-mode-oloop');
+    if (navRadio) navRadio.checked = true;
+
+    // Leaving imported-track mode: the drawn loop replaces the whole route.
+    importedTrackMode = false;
+    importedIntermediatePoints = [];
+    importedWaypointMeta = [];
+    clearImportedTrackSession();
+    syncTrackModeUI();
+    _wcStates.clear();
+    mapManager.closeWeatherPopup();
+
+    // Run context consumed on route completion: distance calibration first,
+    // then the similarity report (see onShapeRoutePlanned).
+    shapeRouteRun = {
+      ring,
+      strokePts,
+      anchor,
+      rotationDeg: bestDeg,
+      targetM,
+      scaledTargetM: targetM,
+      wpCount,
+      attempt: 0,
+      appliedKey: JSON.stringify(wps),
+    };
+    applyShapeWaypoints(wps);
+
+    if (shapeReadoutEl) {
+      shapeReadoutEl.innerHTML =
+        `<div class="mr-row"><span class="mr-label">${translatePhrase('航點')}</span><span class="mr-value">${wps.length}</span></div>` +
+        `<div class="mr-row"><span class="mr-label">${translatePhrase('目標距離')}</span><span class="mr-value">${formatDistance(targetM)}</span></div>` +
+        (bestDeg !== 0
+          ? `<div class="mr-row"><span class="mr-label">${translatePhrase('方位調整')}</span><span class="mr-value">${Math.round(bestDeg)}°</span></div>`
+          : '');
+    }
+    showNotification(`已依繪製形狀產生 ${wps.length} 個航點`, 'success', 2000);
+    emitTestEvent('shape-route-generated', { waypointCount: wps.length, targetM, rotationDeg: bestDeg });
+  } finally {
+    shapeGenerating = false;
+  }
+}
+
+// Pull every waypoint onto the walkable network so none sits away from a
+// road and every leg is foot-routable. Snapping can collapse neighbours
+// onto the same spot — dedupe within 30 m (loop closure included). Falls
+// back to the raw points when snapping thins the loop below 3 points.
+async function snapShapeWaypoints(rawWps) {
+  const snaps = await routeEngine.snapToFootNetwork(rawWps);
+  const snapped = [];
+  snaps.forEach((s) => {
+    const prev = snapped[snapped.length - 1];
+    if (prev && haversineDistance(prev, s.point) < 30) return;
+    snapped.push(s.point);
+  });
+  if (snapped.length >= 2 && haversineDistance(snapped[0], snapped[snapped.length - 1]) < 30) snapped.pop();
+  return snapped.length >= 3 ? snapped : rawWps;
+}
+
+// Dashed outline of the target shape stays on the map for comparison with
+// the road-snapped result (cleared on 清除 / panel close).
+function drawShapePreview(ring) {
+  ensureShapePreviewLayer().clearLayers();
+  L.polyline([...ring, ring[0]], {
+    color: '#a855f7', weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false,
+  }).addTo(shapePreviewLayer);
+}
+
+// Bulk-replace waypoints without per-point recalculation (import pattern),
+// then trigger one routing pass over the new loop.
+function applyShapeWaypoints(wps) {
+  const cb = mapManager.onWaypointChange;
+  mapManager.onWaypointChange = () => { };
+  try {
+    mapManager.clearWaypoints();
+    wps.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+  } finally {
+    mapManager.onWaypointChange = cb;
+  }
+  onWaypointsChanged(mapManager.waypoints);
+  mapManager.fitToRoute();
+}
+
+// Called by the route-planning pipeline once a shape-generated route has been
+// computed. Checks the actual mileage against the requested target first and
+// re-scales + re-plans (≤2 rounds) when it strays past the tolerance, so the
+// final mileage lands close to the entered distance; then reports similarity.
+function onShapeRoutePlanned() {
+  const run = shapeRouteRun;
+  if (!run) return;
+  // Waypoints changed since we applied them (user edit) — stand down.
+  if (JSON.stringify(mapManager.waypoints) !== run.appliedKey) { shapeRouteRun = null; return; }
+  const coords = currentRouteCoords;
+  if (!Array.isArray(coords) || coords.length < 2) { shapeRouteRun = null; return; }
+  const actualM = totalDistance(coords);
+  if (run.attempt < 2 && needsDistanceCalibration(actualM, run.targetM)) {
+    showNotification('正在依實際里程校準距離...', 'info', 2000);
+    continueShapeCalibration(run, actualM).then((ok) => {
+      if (!ok && shapeRouteRun === run) finishShapeRun(run, actualM);
+    });
+    return;
+  }
+  finishShapeRun(run, actualM);
+}
+
+// One calibration round: request a ring perimeter scaled by target/actual and
+// replace the waypoints, which re-enters the routing pipeline. Returns false
+// when the round can't proceed (caller falls back to reporting as-is).
+async function continueShapeCalibration(run, actualM) {
+  const scaledTargetM = nextCalibratedTarget(run.scaledTargetM, actualM, run.targetM);
+  const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaledTargetM, { rotationDeg: run.rotationDeg });
+  if (!ring) return false;
+  const wps = await snapShapeWaypoints(pickShapeWaypoints(ring, run.wpCount));
+  if (shapeRouteRun !== run) return true;    // superseded meanwhile — abandon quietly
+  if (wps.length < 3) return false;
+  drawShapePreview(ring);
+  shapeRouteRun = { ...run, ring, scaledTargetM, attempt: run.attempt + 1, appliedKey: JSON.stringify(wps) };
+  applyShapeWaypoints(wps);
+  return true;
+}
+
+function finishShapeRun(run, actualM) {
+  shapeRouteRun = null;
+  const pct = Math.round(shapeSimilarity(currentRouteCoords, run.ring) * 100);
+  if (shapeReadoutEl && !shapePanel?.classList.contains('hidden')) {
+    const rows = [
+      ['航點', String(mapManager.waypoints.length)],
+      ['目標距離', formatDistance(run.targetM)],
+      ['實際距離', formatDistance(actualM)],
+    ];
+    if (run.rotationDeg) rows.push(['方位調整', `${Math.round(run.rotationDeg)}°`]);
+    rows.push(['形狀相似度', `${pct}%`]);
+    shapeReadoutEl.innerHTML = rows.map(([label, value]) =>
+      `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
+    ).join('');
+  }
+  showNotification(`形狀相似度 ${pct}%`, 'info', 2500);
+  emitTestEvent('shape-route-finished', { actualM, targetM: run.targetM, similarityPct: pct });
+}
+
+btnShapeTool?.addEventListener('click', () => {
+  setShapeActive(shapePanel?.classList.contains('hidden'));
+});
+document.getElementById('btn-shape-close')?.addEventListener('click', () => setShapeActive(false));
+document.getElementById('btn-shape-clear')?.addEventListener('click', clearShapeBoard);
+document.getElementById('btn-shape-generate')?.addEventListener('click', generateShapeRoute);
 
 function pickRouteFile() {
   return platform.pickFile({
@@ -5603,7 +6006,11 @@ async function applyRestoredRouteResult(restore) {
     renderAlternatives(allAlternatives, selectedAltIndex);
     const ok = await selectAlternative(selectedAltIndex);
     if (!ok) debouncedCalculateRoute(mapManager.waypoints);
-    else showNotification('已沿用先前規劃的路線', 'info', 1500);
+    else {
+      showNotification('已沿用先前規劃的路線', 'info', 1500);
+      // A shape-generated loop can resolve through this cache path too.
+      onShapeRoutePlanned();
+    }
   } catch (err) {
     console.warn('route restore failed, re-planning:', err);
     debouncedCalculateRoute(mapManager.waypoints);
@@ -5809,6 +6216,8 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
         showNotification(altMsg, 'success', 2000);
         // Cache the computed result so a later page return can skip re-planning.
         persistRouteResult();
+        // Drawing-board flow: distance calibration + shape-similarity report.
+        onShapeRoutePlanned();
       }
     } else if (!isRoutePlanSnapshotStale(routePlanSnapshot)) {
       showNotification('找不到合適路徑', 'warning');
