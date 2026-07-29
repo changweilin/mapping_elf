@@ -3216,6 +3216,17 @@ body.route-list-dragging {
   border-color: var(--accent-primary);
 }
 
+/* Route-mode → pace-activity auto-sync feedback: one fading pulse on the
+   activity select so the link between the two selectors stays visible. */
+@keyframes speed-activity-sync-pulse {
+  0% { box-shadow: 0 0 0 3px var(--accent-primary); }
+  100% { box-shadow: 0 0 0 8px transparent; }
+}
+
+.speed-activity-select.activity-sync-flash {
+  animation: speed-activity-sync-pulse 0.9s ease-out;
+}
+
 /* Stat time icon */
 .stat-icon.time-icon {
   background: rgba(99, 102, 241, 0.15);

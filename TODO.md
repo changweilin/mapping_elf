@@ -1,6 +1,6 @@
 # Mapping Elf 專案控管中心
 
-Last updated: 2026-05-25
+Last updated: 2026-07-29
 
 本文件是 Mapping Elf 唯一的進度、優先序、阻塞與驗證控管入口。`doc/` 內的 roadmap、部署、QA、隱私與商店文件保留細節與背景，不再各自作為進度來源。
 
@@ -62,6 +62,14 @@ Last updated: 2026-05-25
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-07-29 GUI Reorganization Phase 2 Update
+
+- 狀態變更：`doc/gui-reorganization-plan.md` 的 Phase 2（區塊內整理）完成；Phase 3 維持未實作、需另行確認。
+- 影響範圍：「天氣設置」長篇說明整塊移入「操作說明」段尾（純 DOM 搬移，置於 `.instructions-content` 之外避免被 i18n 重繪覆寫；文字節點不變，`translateTree` 翻譯照常作用），天氣設置只留 Windy 預設與天氣快取。路線模式切換自動連動配速運動時，`#speed-activity-select` 播放一次淡出脈衝提示已連動（`applyRouteMode` 內僅在活動實際變更時觸發）。「顯示設定合併」評估結論為不合併，理由記錄於規劃文件。
+- 契約確認：無新增 durable key，未動 `.melmap`、favorites、離線包或 GPX/KML 格式；元素 ID 全數不變；未新增需翻譯字串。
+- 驗證：`npm run test:numeric`、`npm run build` 通過。`npm run test:chunks`（rolldown 產物大小超限）與 Playwright `smoke`/`cache-versioning`（外部圖磚/路線/天氣 API 被 sandbox gateway 封鎖）在本輪 Linux 遠端環境失敗；經與未修改基準對照，失敗清單與失敗位置逐項一致，非本次修改引起。smoke 中配速/路線模式連動的功能斷言均通過，僅敗在 console 網路錯誤收集。
+- 仍需追蹤：於本機 Windows 環境重跑 `npm.cmd run test:chunks` 與完整 GUI suite 取得綠燈確認；Phase 3 結構性調整待確認後另開工作包。
 
 ### 2026-05-25 R4 Foundation Update
 

@@ -1868,6 +1868,16 @@ function applySpeedActivity(nextActivity, options = {}) {
   return changed;
 }
 
+// Pulse the pace-activity select when a route-mode change auto-syncs it, so
+// the route-mode ↔ pace-activity link stays visible to the user.
+function flashPaceActivitySync() {
+  const el = document.getElementById('speed-activity-select');
+  if (!el) return;
+  el.classList.remove('activity-sync-flash');
+  void el.offsetWidth; // restart the animation on back-to-back mode switches
+  el.classList.add('activity-sync-flash');
+}
+
 function applyRouteMode(mode, options = {}) {
   const { syncPaceActivity = true } = options;
   const routeMode = ['walking', 'hiking', 'cycling', 'driving'].includes(mode) ? mode : 'hiking';
@@ -1875,7 +1885,8 @@ function applyRouteMode(mode, options = {}) {
   localStorage.setItem(LS_ROUTE_MODE_KEY, routeMode);
   bumpRouteVersion();
   if (syncPaceActivity) {
-    applySpeedActivity(defaultActivityForRouteMode(routeMode));
+    const activityChanged = applySpeedActivity(defaultActivityForRouteMode(routeMode));
+    if (activityChanged) flashPaceActivitySync();
   }
 }
 
