@@ -45,7 +45,15 @@ test('drawing board opens, generates an O繞 waypoint loop and closes', async ({
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(0);
 
   await drawSquare(page);
+  // A second stroke (筆畫) appends to the shape instead of replacing it.
+  const box = await page.locator('#shape-canvas').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 20, box.y + 20, { steps: 6 });
+  await page.mouse.up();
+
   await page.locator('#shape-distance-input').fill('3');
+  await page.locator('#shape-angle-select').selectOption('30');
   await page.locator('#btn-shape-generate').click();
 
   // The generation event fires with the produced waypoint count.
@@ -61,9 +69,11 @@ test('drawing board opens, generates an O繞 waypoint loop and closes', async ({
   // Readout shows the plan summary; the target-shape preview is on the map.
   await expect(page.locator('#shape-readout .mr-row').first()).toBeVisible();
 
-  // Distance choice persists.
+  // Distance and angle-tolerance choices persist.
   const savedKm = await page.evaluate(() => localStorage.getItem('mappingElf_shapeRouteDistanceKm'));
   expect(Number(savedKm)).toBe(3);
+  const savedTol = await page.evaluate(() => localStorage.getItem('mappingElf_shapeRouteAngleTolDeg'));
+  expect(Number(savedTol)).toBe(30);
 
   // 清除 empties the board; closing hides the panel and resets the button.
   await page.locator('#btn-shape-clear').click();

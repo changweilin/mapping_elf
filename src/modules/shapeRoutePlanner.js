@@ -71,6 +71,8 @@ export function ringPerimeter(ring) {
  * perimeter is `targetDistanceM`, placed so the ring passes through `anchor`
  * ([lat, lng], e.g. the user's current location) at index 0 — the run starts
  * exactly where the user is and loops out from there.
+ * `options.rotationDeg` rotates the shape counterclockwise around its centroid
+ * before georeferencing (used by the angle-tolerance orientation search).
  * Returns null when the stroke is unusable.
  */
 export function strokeToLatLngRing(rawPoints, anchor, targetDistanceM, options = {}) {
@@ -83,7 +85,13 @@ export function strokeToLatLngRing(rawPoints, anchor, targetDistanceM, options =
   // Centre on the stroke centroid, flip canvas y to map north.
   const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length;
   const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-  const local = ring.map(([x, y]) => [x - cx, -(y - cy)]);
+  let local = ring.map(([x, y]) => [x - cx, -(y - cy)]);
+
+  const rot = ((Number(options.rotationDeg) || 0) * Math.PI) / 180;
+  if (rot) {
+    const cosR = Math.cos(rot), sinR = Math.sin(rot);
+    local = local.map(([x, y]) => [x * cosR - y * sinR, x * sinR + y * cosR]);
+  }
 
   // Uniform scale so the pixel perimeter (with closing leg) matches the target.
   let perimPx = 0;
@@ -140,12 +148,61 @@ export function pickShapeWaypoints(ring, count) {
 }
 
 /**
- * Waypoint count for a target distance: enough to pin the router to the drawn
- * shape without exceeding what the free routing endpoints handle comfortably.
+ * Waypoint count for a target distance and drawing complexity: enough to pin
+ * the router to the drawn shape without exceeding what the free routing
+ * endpoints handle comfortably. More strokes (筆畫) and more corners raise
+ * the count so intricate shapes keep their detail.
  */
-export function suggestWaypointCount(targetDistanceM) {
+export function suggestWaypointCount(targetDistanceM, options = {}) {
   const km = (targetDistanceM || 0) / 1000;
-  return Math.max(6, Math.min(12, Math.round(km * 1.6)));
+  const strokeCount = Math.max(1, (options.strokeCount | 0) || 1);
+  const corners = Math.max(0, options.corners | 0);
+  const base = Math.round(km * 1.6);
+  const complexity = 4 + corners + (strokeCount - 1) * 2;
+  return Math.max(6, Math.min(16, Math.max(base, complexity)));
+}
+
+/**
+ * Count sharp direction changes (> thresholdDeg) on the resampled closed
+ * stroke — a proxy for how intricate the drawn shape is (square → 4).
+ */
+export function countShapeCorners(rawPoints, options = {}) {
+  const samples = options.samples || 48;
+  const thresholdDeg = options.thresholdDeg || 35;
+  const ring = resampleClosedStroke(rawPoints, samples);
+  if (!ring) return 0;
+  let corners = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[(i - 1 + ring.length) % ring.length];
+    const b = ring[i];
+    const c = ring[(i + 1) % ring.length];
+    const v1x = b[0] - a[0], v1y = b[1] - a[1];
+    const v2x = c[0] - b[0], v2y = c[1] - b[1];
+    const n1 = Math.hypot(v1x, v1y), n2 = Math.hypot(v2x, v2y);
+    if (!n1 || !n2) continue;
+    const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (n1 * n2)));
+    if ((Math.acos(cos) * 180) / Math.PI > thresholdDeg) corners++;
+  }
+  return corners;
+}
+
+/**
+ * Candidate rotations (degrees) to try within ±toleranceDeg, drawn
+ * orientation (0) first so it wins ties. toleranceDeg ≥ 180 means any
+ * orientation — the full circle is sampled every 30°.
+ */
+export function rotationCandidates(toleranceDeg) {
+  const t = Math.max(0, Math.min(360, Number(toleranceDeg) || 0));
+  if (t === 0) return [0];
+  const out = [0];
+  if (t >= 180) {
+    for (let d = 30; d < 180; d += 30) out.push(d, -d);
+    out.push(180);
+    return out;
+  }
+  const step = t / 4;
+  for (let k = 1; k <= 4; k++) out.push(k * step, -k * step);
+  return out;
 }
 
 /**

@@ -5,6 +5,7 @@
 import { samplePoints, totalDistance } from './utils.js';
 
 const OSRM_BASE = 'https://router.project-osrm.org/route/v1';
+const OSRM_NEAREST_BASE = 'https://router.project-osrm.org/nearest/v1';
 const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
 
 const PROFILE_MAP = {
@@ -316,6 +317,34 @@ export class RouteEngine {
     });
 
     return { coords, inlineElevations: null, osrmDistance: 0, osrmDuration: 0 };
+  }
+
+  /**
+   * Snap [lat,lng] points onto the OSRM walkable (foot) network so no
+   * waypoint sits away from a routable way. Coordinate-order conversion to
+   * OSRM's [lng,lat] happens only here (INC-101 boundary). Each point
+   * resolves independently; a failed lookup falls back to the original point
+   * with `distance: Infinity` so callers can tell it was never verified.
+   * Returns [{ point: [lat,lng], distance, snapped }] in input order.
+   */
+  async snapToFootNetwork(points, profile = 'foot') {
+    return Promise.all((points || []).map(async ([lat, lng]) => {
+      try {
+        const resp = await fetch(`${OSRM_NEAREST_BASE}/${profile}/${lng},${lat}?number=1`);
+        if (!resp.ok) throw new Error(`OSRM nearest error: ${resp.status}`);
+        const data = await resp.json();
+        const wp = data.code === 'Ok' && Array.isArray(data.waypoints) ? data.waypoints[0] : null;
+        if (!wp || !Array.isArray(wp.location)) throw new Error('no nearest location');
+        return {
+          point: [wp.location[1], wp.location[0]],
+          distance: Number.isFinite(wp.distance) ? wp.distance : 0,
+          snapped: true,
+        };
+      } catch (err) {
+        console.warn('OSRM nearest snap failed:', err.message);
+        return { point: [lat, lng], distance: Infinity, snapped: false };
+      }
+    }));
   }
 
   /**

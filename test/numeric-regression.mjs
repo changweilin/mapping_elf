@@ -22,9 +22,11 @@ import {
   tilesForBoundsZoom,
 } from '../src/modules/tileEstimator.js';
 import {
+  countShapeCorners,
   pickShapeWaypoints,
   resampleClosedStroke,
   ringPerimeter,
+  rotationCandidates,
   shapeSimilarity,
   strokeToLatLngRing,
   suggestWaypointCount,
@@ -201,7 +203,33 @@ for (let i = 1; i < shapeWps.length; i++) {
 
 assert.equal(suggestWaypointCount(2000), 6);
 assert.equal(suggestWaypointCount(5000), 8);
-assert.equal(suggestWaypointCount(20000), 12);
+assert.equal(suggestWaypointCount(20000), 16);
+// Complexity raises the count: corners + extra strokes, capped at 16.
+assert.equal(suggestWaypointCount(2000, { strokeCount: 1, corners: 4 }), 8);
+assert.equal(suggestWaypointCount(2000, { strokeCount: 3, corners: 8 }), 16);
+assert.equal(suggestWaypointCount(2000, { strokeCount: 2, corners: 0 }), 6);
+
+// Corner counting: a square has 4 sharp turns; resampling noise adds none.
+assert.equal(countShapeCorners(squareStroke), 4);
+assert.equal(countShapeCorners([[0, 0], [1, 1]]), 0);
+
+// Rotation candidates: drawn orientation first (wins ties), symmetric within
+// the tolerance; ≥180 samples the full circle.
+assert.deepEqual(rotationCandidates(0), [0]);
+const cand45 = rotationCandidates(45);
+assert.equal(cand45[0], 0);
+assert.equal(cand45.length, 9);
+assert.equal(Math.max(...cand45.map(Math.abs)), 45);
+const candAny = rotationCandidates(360);
+assert.equal(candAny[0], 0);
+assert.equal(candAny.length, 12);
+assert.ok(candAny.includes(180));
+
+// Rotated ring keeps the perimeter and anchor-start invariants.
+const rotatedRing = strokeToLatLngRing(squareStroke, shapeAnchor, TARGET_M, { rotationDeg: 90 });
+closeTo(ringPerimeter(rotatedRing), TARGET_M, TARGET_M * 0.01);
+closeTo(rotatedRing[0][0], shapeAnchor[0], 1e-9);
+closeTo(rotatedRing[0][1], shapeAnchor[1], 1e-9);
 
 // A route that exactly follows the ring scores ~1; a distant route scores lower.
 closeTo(shapeSimilarity([...geoRing, geoRing[0]], geoRing), 1, 0.05);
