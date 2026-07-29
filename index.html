@@ -736,33 +736,6 @@
       <div class="collapsible-body collapsed" id="waypoint-settings-body">
         <div class="settings-group-label"
           style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">
-          集體操作</div>
-        <div class="pace-checks-row"
-          style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
-          <label class="pace-check-opt">
-            <input type="checkbox" id="collective-marked-pts" checked>
-            <span>全主航點</span>
-          </label>
-          <label class="pace-check-opt">
-            <input type="checkbox" id="collective-intermediate-pts" checked>
-            <span>全副航點</span>
-          </label>
-          <label class="pace-check-opt" title="勾選全航點時將自動包含前兩項">
-            <input type="checkbox" id="collective-all-waypoints">
-            <span>全航點</span>
-          </label>
-        </div>
-        <div class="settings-actions-btn-row" style="display: flex; gap: 8px; margin-bottom: 16px;">
-          <button class="btn-secondary" id="btn-collective-minimize" title="勾選的天氣卡收縮為最小模式"
-            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">縮到最小</button>
-          <button class="btn-secondary" id="btn-collective-toggle-grid" title="勾選的天氣卡切換詳細/精簡"
-            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">切換大/小格</button>
-        </div>
-
-        <div class="settings-divider" style="height: 1px; background: var(--border); margin: 12px 0;"></div>
-
-        <div class="settings-group-label"
-          style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">
           顯示設置</div>
         <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px;">
           <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">顯示天氣圖示</span>
@@ -788,7 +761,7 @@
           </label>
         </div>
 
-        <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
+        <div class="pace-checks-row" style="margin-bottom: 8px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
           <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">副航點資訊</span>
           <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
             <input type="checkbox" id="im-detail-weather">
@@ -800,11 +773,38 @@
           </label>
         </div>
 
-        <div class="pace-checks-row">
+        <div class="pace-checks-row" style="margin-bottom: 12px;">
           <label class="pace-check-opt" title="點擊航點高亮時，地圖自動移動讓該點顯示在中央">
             <input type="checkbox" id="waypoint-centering-enable" checked>
             <span>航點置中</span>
           </label>
+        </div>
+
+        <div class="settings-divider" style="height: 1px; background: var(--border); margin: 12px 0;"></div>
+
+        <div class="settings-group-label"
+          style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">
+          集體操作</div>
+        <div class="pace-checks-row"
+          style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
+          <label class="pace-check-opt">
+            <input type="checkbox" id="collective-marked-pts" checked>
+            <span>全主航點</span>
+          </label>
+          <label class="pace-check-opt">
+            <input type="checkbox" id="collective-intermediate-pts" checked>
+            <span>全副航點</span>
+          </label>
+          <label class="pace-check-opt" title="勾選全航點時將自動包含前兩項">
+            <input type="checkbox" id="collective-all-waypoints">
+            <span>全航點</span>
+          </label>
+        </div>
+        <div class="settings-actions-btn-row" style="display: flex; gap: 8px;">
+          <button class="btn-secondary" id="btn-collective-minimize" title="勾選的天氣卡收縮為最小模式"
+            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">縮到最小</button>
+          <button class="btn-secondary" id="btn-collective-toggle-grid" title="勾選的天氣卡切換詳細/精簡"
+            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">切換大/小格</button>
         </div>
 
       </div>
