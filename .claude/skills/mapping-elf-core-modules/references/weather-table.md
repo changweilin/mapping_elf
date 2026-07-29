@@ -114,18 +114,11 @@ These are mutually exclusive. Radio group: `off / distance / pace`.
 
 ## localStorage Keys
 
-| Key | Value |
-|---|---|
-| `mappingElf_segmentKm` | distance interval km |
-| `mappingElf_speedMode` | `'1'` = pace interval mode on |
-| `mappingElf_speedActivity` | activity key |
-| `mappingElf_paceParams` | JSON object of pace params (flatPaceKmH always in km/h) |
-| `mappingElf_perSegment` | `'1'` = per-segment recalc on |
-| `mappingElf_paceUnit` | `'kmh'` or `'shanhe'` |
-| `mappingElf_waypoints` | serialised waypoints array |
-| `mappingElf_weatherCache` | weather API response cache |
+The authoritative key registry is `src/modules/stateKeys.js` — read it there; do not maintain a copy here (copies go stale). Relevant facts:
 
-The weather settings key pattern for a saved column: `mappingElf_weather_<key>` where key encodes waypoint identity (not index — indices shift when waypoints are added/removed).
+- Saved waypoint columns live under the single `mappingElf_weather` key (`LS_WEATHER_KEY` in main.js), keyed by waypoint identity, not column index (indices shift when waypoints are added/removed).
+- `mappingElf_paceParams` stores `flatPaceKmH` always in km/h (unit conversion is UI-only).
+- Any new persistent key must be registered in the correct category array in `stateKeys.js` (see CLAUDE.md §2.2).
 
 ## Gotchas
 

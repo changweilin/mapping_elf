@@ -1,21 +1,22 @@
 # Mapping Elf Verifier & Runbooks
 
 ## Description
-This skill provides operational runbooks and product verification procedures. Mapping Elf is a PWA that heavily relies on Client-Side logic, meaning unit tests often miss browser-level edge cases (Service Worker caches, IndexedDB state).
+Operational runbooks and product verification procedures. Mapping Elf is a PWA with heavy client-side logic, so pure unit tests miss browser-level edge cases (Service Worker caches, offline tile storage). Verify in a real browser via the project's Playwright drivers (`node test/run-playwright-with-preview.mjs test/<file>.spec.js`).
 
 ## Verification Runbooks
 
-### 1. Verifying PWA / Offline Functionality
-- **Check Cache Name**: Look in `sw.js` for the current cache version. If static assets changed, ensure the cache name was bumped.
-- **Check `offlineManager.js`**: Verify that downloading tiles successfully writes to IndexedDB (`localforage`).
-- **Simulating Offline**: Use the browser dev-tools via a headless driver, or instruct the user explicitly how to test: "Open Chrome DevTools -> Application -> Service Workers -> Check 'Offline' and reload." Ensure no Unhandled Promise Rejections occur.
+### 1. PWA / Offline
+- **Cache versioning**: static-asset changes require checking the cache-name strategy in `public/sw.js` (CLAUDE.md INC-251; gated by `test/cache-versioning.spec.js`).
+- **Tile storage**: offline tiles go through the **Cache API** (`caches.open(OFFLINE_TILE_CACHE_NAME)` in `offlineManager.js`), not IndexedDB. Verify tile downloads land in that cache and deletes clear it.
+- **Simulating offline**: drive DevTools offline mode headlessly, or instruct the user: DevTools → Application → Service Workers → check "Offline" and reload. Watch for unhandled promise rejections.
 
-### 2. Validating Brouter Execution
-- Brouter operates via an API or locally. Verify the coordinates passed to the profile logic are `[lng, lat]` vs `[lat, lng]` (Leaflet vs GeoJSON mismatch is the #1 bug).
+### 2. Routing (BRouter/OSRM)
+- Coordinate order is the #1 bug class: APIs speak `[lng, lat]`, the app and Leaflet speak `[lat, lng]`; conversion happens only at the `routeEngine.js` boundary (CLAUDE.md INC-101).
 
-### 3. GPX Output Validation
-- To verify a GPX export change, verify the XML structure. Ensure interval points contain the `<type>mel:interval</type>` tag correctly. Ensure XML is well-formed.
+### 3. GPX Output
+- Verify the XML is well-formed, user strings are escaped, and interval points carry `<type>mel:interval</type>` (importer relies on it to skip them).
 
 ## Debugging Workflow
-1. If the user reports "Blank Page on Load": Check `console.error` regarding `import` statements and Vite build paths.
-2. If the user reports "Map Not Loading": Check Nominatim / OSM rate limits or offline mode toggle.
+1. "Blank page on load" → console errors around imports and Vite base path (CLAUDE.md INC-278); hand off to `mapping-elf-deploy` if deploy-related.
+2. "Map not loading" → tile-server/Nominatim rate limits, or offline mode toggle left on.
+3. 3D viewer test hangs → see CLAUDE.md INC-310 (loading indicator must appear then disappear; never `waitForSelector('#el.hidden')`).
