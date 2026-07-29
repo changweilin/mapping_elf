@@ -1868,6 +1868,16 @@ function applySpeedActivity(nextActivity, options = {}) {
   return changed;
 }
 
+// Pulse the pace-activity select when a route-mode change auto-syncs it, so
+// the route-mode ↔ pace-activity link stays visible to the user.
+function flashPaceActivitySync() {
+  const el = document.getElementById('speed-activity-select');
+  if (!el) return;
+  el.classList.remove('activity-sync-flash');
+  void el.offsetWidth; // restart the animation on back-to-back mode switches
+  el.classList.add('activity-sync-flash');
+}
+
 function applyRouteMode(mode, options = {}) {
   const { syncPaceActivity = true } = options;
   const routeMode = ['walking', 'hiking', 'cycling', 'driving'].includes(mode) ? mode : 'hiking';
@@ -1875,7 +1885,8 @@ function applyRouteMode(mode, options = {}) {
   localStorage.setItem(LS_ROUTE_MODE_KEY, routeMode);
   bumpRouteVersion();
   if (syncPaceActivity) {
-    applySpeedActivity(defaultActivityForRouteMode(routeMode));
+    const activityChanged = applySpeedActivity(defaultActivityForRouteMode(routeMode));
+    if (activityChanged) flashPaceActivitySync();
   }
 }
 
@@ -13907,6 +13918,41 @@ async function init() {
       }
     });
   });
+
+  // --- Map-side search entry: opens the side panel with the keyword search
+  //     focused, so "find a place → add waypoint" starts from the map itself.
+  //     Results and the add-waypoint flow stay in the side panel unchanged. ---
+  document.getElementById('btn-map-search')?.addEventListener('click', () => {
+    sidePanel.classList.add('open');
+    const searchInput = document.getElementById('search-input');
+    document.getElementById('search-section')?.scrollIntoView({ block: 'nearest' });
+    searchInput?.focus();
+    searchInput?.select();
+  });
+
+  // --- Weather center quick entries: 取得 (update weather) and 查看/調整 (open
+  //     the detailed weather view, where per-column date/time adjustments live) ---
+  {
+    const openWeatherView = () => setBottomPanelView('weather');
+    document.getElementById('btn-weather-quick-view')?.addEventListener('click', openWeatherView);
+    document.getElementById('btn-weather-quick-fetch')?.addEventListener('click', () => {
+      openWeatherView();
+      fetchAllWeatherData({ force: true });
+    });
+  }
+
+  // --- Instructions modal (help content lives outside the side panel) ---
+  {
+    const instructionsModal = document.getElementById('instructions-modal');
+    document.getElementById('btn-open-instructions')?.addEventListener('click', () => {
+      document.body.classList.add('modal-open');
+      instructionsModal?.classList.remove('hidden');
+    });
+    document.getElementById('btn-instructions-close')?.addEventListener('click', () => {
+      document.body.classList.remove('modal-open');
+      instructionsModal?.classList.add('hidden');
+    });
+  }
 
   // --- Windy settings ---
   const windyLayerEl = document.getElementById('windy-layer-select');

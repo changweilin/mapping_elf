@@ -1,6 +1,6 @@
 # Mapping Elf 專案控管中心
 
-Last updated: 2026-05-25
+Last updated: 2026-07-29
 
 本文件是 Mapping Elf 唯一的進度、優先序、阻塞與驗證控管入口。`doc/` 內的 roadmap、部署、QA、隱私與商店文件保留細節與背景，不再各自作為進度來源。
 
@@ -36,9 +36,9 @@ Last updated: 2026-05-25
 | --- | --- | --- | --- | --- |
 | P1 | 完成 | 路線模式與配速活動整合 | 路線模式切換時帶出對應配速活動，並讓不適用的配速/熱量欄位在駕車模式下退場。 | 2026-05-24 完成；步行/山徑/自行車/駕車會同步配速活動，手動配速活動覆寫仍可用，完整 GUI suite 維持綠燈。 |
 | P2 | 完成 | 保存與分享整併 | 將 GPX/KML 匯入匯出、`.melmap`、離線圖磚與我的最愛收斂成「我的最愛 / 匯出」流程。 | 2026-05-25 完成第二階段微調；單一入口可加到最愛、匯入、匯出、管理離線包，且路線規劃 header 不再重複放保存/分享入口；既有 `.melmap` 與 favorites 契約維持相容。 |
-| P3 | 待辦 | 天氣中心整併 | 將天氣表、天氣卡、Windy 連結與天氣快取收斂成「取得、調整、查看、比對」的任務流。 | 更新天氣、調整時間、Windy 比對與快取設定入口清楚；不改變 weather column persistence 邊界。 |
-| P4 | 待辦 | 航點顯示與批次操作整併 | 將中繼點生成、天氣圖示顯示、天氣卡批次收合與航點置中拆成更清楚的顯示/航點設定。 | 航點/中繼點與地圖顯示設定分組明確；現有集體操作與 weather card 行為維持。 |
-| P5 | 待辦 | 搜尋工具輕量化 | 將搜尋從側欄完整面板調整為更靠近地圖操作的工具入口，側欄保留結果與加入航點流程。 | 關鍵字與座標搜尋仍可用；新增航點流程更短；手機與桌面 layout 不遮擋核心控制。 |
+| P3 | 完成 | 天氣中心整併 | 將天氣表、天氣卡、Windy 連結與天氣快取收斂成「取得、調整、查看、比對」的任務流。 | 2026-07-29 完成；天氣設置區塊頂部新增「更新天氣／詳細天氣」任務流快速入口（取得＋跳到詳細天氣表的調整介面），與 Windy 比對選單（header）、天氣快取設定同區收斂；weather column persistence 邊界未動。待本機完整 GUI suite 綠燈複核。 |
+| P4 | 完成 | 航點顯示與批次操作整併 | 將中繼點生成、天氣圖示顯示、天氣卡批次收合與航點置中拆成更清楚的顯示/航點設定。 | 2026-07-29 完成；航點設置 body 重排為「顯示設置」（天氣圖示、主/副航點資訊、航點置中）在前、「集體操作」（連動對象＋批次收合）在後，副航點生成維持 header；純 DOM 重排，所有 ID 與接線不變。待本機 GUI suite 綠燈複核。 |
+| P5 | 完成 | 搜尋工具輕量化 | 將搜尋從側欄完整面板調整為更靠近地圖操作的工具入口，側欄保留結果與加入航點流程。 | 2026-07-29 完成；地圖浮動鈕列頂端新增搜尋入口（開側欄＋聚焦關鍵字搜尋框），關鍵字/座標搜尋與側欄結果、加航點流程不變；桌面與手機截圖確認不遮擋核心控制。待本機 GUI suite 綠燈複核。 |
 
 ### 發布門檻主線
 
@@ -62,6 +62,46 @@ Last updated: 2026-05-25
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-07-29 P5 Update
+
+- 狀態變更：`P5 搜尋工具輕量化` 完成（待本機 GUI suite 綠燈複核）；產品體驗整併主線 P1-P5 全數清出執行看板。
+- 影響範圍：地圖浮動鈕列（`.map-action-btns`）頂端新增 `#btn-map-search`：點擊開啟側欄、捲到關鍵字搜索區並聚焦/全選 `#search-input`。搜尋輸入、結果清單、加入航點流程完全不變；按鈕沿用 `.map-action-btn` 既有樣式與位置慣例。
+- 契約確認：無 durable key、無資料格式變更；title/aria-label 重用「關鍵字搜索」既有 i18n key，零新增翻譯字串。
+- 驗證：`npm run build` 通過；`smoke.spec.js` 新增「點地圖搜尋鈕 → 側欄 open → `#search-input` focused」斷言通過；整體失敗清單仍與未修改基準一致（sandbox 網路封鎖既有現象）。本輪以 Playwright 截圖（Linux sandbox 可行）目視確認桌面與手機（390×844）皆不遮擋核心控制、聚焦流程正常。
+- 仍需追蹤：本機 Windows 完整 GUI suite 綠燈複核。
+
+### 2026-07-29 P4 Update
+
+- 狀態變更：`P4 航點顯示與批次操作整併` 完成（待本機 GUI suite 綠燈複核）；`P5` 留在產品體驗整併主線。
+- 影響範圍：「航點設置」body 純 DOM 重排：「顯示設置」群組（顯示天氣圖示、主/副航點資訊、原本無標籤的「航點置中」併入）移到最前，「集體操作」群組（連動對象勾選＋縮到最小/切換大小格）移到後段；副航點生成（關/距離/配速）維持 header 快速控制。所有元素 ID、事件接線、字串不變。
+- 契約確認：無 durable key、資料格式或 weather card 行為變更；純視覺分組調整。
+- 驗證：`npm run build` 通過；`smoke.spec.js` 與 `weather-regression.spec.js` 失敗清單與未修改基準逐項一致（sandbox 網路封鎖既有現象），無新增失敗。
+- 仍需追蹤：本機 Windows 完整 GUI suite 綠燈與視覺確認；`P5 搜尋工具輕量化`。
+
+### 2026-07-29 P3 Update
+
+- 狀態變更：`P3 天氣中心整併` 完成（待本機 GUI suite 綠燈複核）；`P4-P5` 留在產品體驗整併主線。
+- 影響範圍：「天氣設置」body 頂部新增 `.weather-quick-actions` 任務流入口：「更新天氣」（切到詳細天氣視圖並 `fetchAllWeatherData({ force: true })`，沿用既有 `isWeatherFetching` 重入護欄）與「詳細天氣」（`setBottomPanelView('weather')`，通往表內既有的日期/時間 ± 調整）。取得、調整、查看、比對（Windy header 選單）、快取設定自此在同一區塊收斂。另補 `.side-panel` 的 `scroll-padding-top`，避免捲動目標被 sticky 側欄 header 蓋住。
+- 契約確認：weather column persistence 邊界未動；無新增 durable key；按鈕文字重用「更新天氣」「詳細天氣」既有 i18n key，零新增翻譯字串。
+- 驗證：`npm run test:numeric`、`npm run build` 通過；`smoke.spec.js` 新增「展開天氣設置 → 點詳細天氣 → 底部面板切到 `bp-mode-weather`」斷言通過（依 A2 慣例用 `clickStable` 點 h3 避開 header actions 的 stopPropagation 區）；整體失敗清單仍與未修改基準一致（sandbox 網路封鎖既有現象）。
+- 仍需追蹤：本機 Windows 完整 GUI suite 綠燈與視覺確認；`P4 航點顯示與批次操作整併`、`P5 搜尋工具輕量化`。
+
+### 2026-07-29 GUI Reorganization Phase 3 Update
+
+- 狀態變更：GUI 整理 Phase 3 第 1、2 項完成（側欄常駐 header、操作說明抽成 modal）；第 3 項行動版 tab 導航暫緩，需真機視覺 QA 後另開工作包。
+- 影響範圍：側欄頂部新增 sticky header 收納加寬/縮窄鈕（自操作說明 header 移入）、操作說明鈕與主題切換（自頂部工具列移入）；`#instructions-section` 移出側欄改為 `#instructions-modal`，內容與 `.instructions-content` class 原封不動，i18n 語言切換重繪照常作用；「說明」群組分隔帶移至 About。
+- 契約確認：無新增 durable key、無新增翻譯字串（標題與按鈕重用「設置面板」「操作說明」「關閉」既有 key）；modal 沿用 `hidden` + `body.modal-open` 既有模式。
+- 驗證：`npm run test:numeric`、`npm run build` 通過；`map-layer-theme.spec.js` 全數通過（主題鈕新位置行為不變）；`smoke.spec.js` 新增側欄 header 釘位與 modal 開關斷言均通過，整體失敗清單仍與未修改基準一致（sandbox 網路封鎖之既有現象）；`mobile-app-qa.spec.js` 失敗清單亦與基準一致。
+- 仍需追蹤：本機 Windows 重跑完整 GUI suite 綠燈確認；行動版 tab 導航待需求確認。
+
+### 2026-07-29 GUI Reorganization Phase 2 Update
+
+- 狀態變更：`doc/gui-reorganization-plan.md` 的 Phase 2（區塊內整理）完成；Phase 3 維持未實作、需另行確認。
+- 影響範圍：「天氣設置」長篇說明整塊移入「操作說明」段尾（純 DOM 搬移，置於 `.instructions-content` 之外避免被 i18n 重繪覆寫；文字節點不變，`translateTree` 翻譯照常作用），天氣設置只留 Windy 預設與天氣快取。路線模式切換自動連動配速運動時，`#speed-activity-select` 播放一次淡出脈衝提示已連動（`applyRouteMode` 內僅在活動實際變更時觸發）。「顯示設定合併」評估結論為不合併，理由記錄於規劃文件。
+- 契約確認：無新增 durable key，未動 `.melmap`、favorites、離線包或 GPX/KML 格式；元素 ID 全數不變；未新增需翻譯字串。
+- 驗證：`npm run test:numeric`、`npm run build` 通過。`npm run test:chunks`（rolldown 產物大小超限）與 Playwright `smoke`/`cache-versioning`（外部圖磚/路線/天氣 API 被 sandbox gateway 封鎖）在本輪 Linux 遠端環境失敗；經與未修改基準對照，失敗清單與失敗位置逐項一致，非本次修改引起。smoke 中配速/路線模式連動的功能斷言均通過，僅敗在 console 網路錯誤收集。
+- 仍需追蹤：於本機 Windows 環境重跑 `npm.cmd run test:chunks` 與完整 GUI suite 取得綠燈確認；Phase 3 結構性調整待確認後另開工作包。
 
 ### 2026-05-25 R4 Foundation Update
 

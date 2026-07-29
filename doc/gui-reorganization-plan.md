@@ -42,21 +42,26 @@
    - **說明**：操作說明 → About
 3. **視覺分組線**：新增 `.panel-group-start`（6px 分隔帶），讓四個群組在視覺上成塊，不新增任何文字（零 i18n 成本）。
 
-## 3. 後續階段建議（未實作，需另行確認）
+## 3. 後續階段
 
-### Phase 2 — 區塊內整理
-- 「天氣設置」的長篇說明文字移入「操作說明」，讓天氣設置只留 Windy 選項與快取設定。
-- 「航點設置」的「顯示天氣圖示／詳細資訊」勾選與「天氣設置」視覺上相鄰後，評估是否合併為單一「顯示設定」區塊（需搬 DOM 與更新對應測試）。
-- 路線模式與配速運動選單視覺並置，強化「已連動」的心智模型。
+### Phase 2 — 區塊內整理（已實作/已決議）
 
-### Phase 3 — 結構性調整（風險較高）
-- 側欄加常駐 header 收納寬度鈕與主題切換（需改 `smoke.spec.js` 的釘位）。
-- 操作說明抽成 modal 或首次導覽，縮短側欄長度。
-- 行動版將四群組改為 tab 導航。
+1. ✅ **天氣設置說明移入操作說明**：`.settings-desc` 整塊從 `#settings-body` 搬到 `#instructions-body` 段尾（置於 `.instructions-content` 之外，避免被 `renderInstructionsContent()` 覆寫），加上重用既有 i18n key「天氣設置」的小標。字串文字節點原封不動，`translateTree` 逐節點翻譯照常作用，零新增翻譯成本。天氣設置區塊現在只剩 Windy 預設選單（header）與天氣快取設定。
+2. ✅ **顯示設定合併評估 → 決議不合併**，理由：
+   - 航點設置的「顯示設置」勾選含詳細集水區資訊與航點置中，並非天氣專屬；天氣設置的主體（Windy 預設、快取門檻）是資料取得設定而非顯示設定，合併後語意反而混雜。
+   - 兩個 section header 各自掛著功能性快速控制（副航點 interval 模式 vs Windy 圖層/模式選單），合併為單一區塊無法保留兩組 header 控制。
+   - Phase 1 已把兩區相鄰放入「顯示設定」視覺群組（`.panel-group-start` 分隔帶），視覺分組目標已達成；再搬 DOM 需同步改多個測試釘位，成本高於效益（最小手術原則）。
+3. ✅ **路線模式 ↔ 配速運動連動回饋**：使用者切換路線模式且配速運動實際被自動連動改變時，`#speed-activity-select` 播放一次淡出脈衝（`flashPaceActivitySync()` + `.activity-sync-flash` CSS 動畫），讓「已連動」看得見。完整把配速運動選單搬進路線規劃區塊經評估不做：該選單的顯示/隱藏跟隨配速面板（interval 模式 off 時整列隱藏），搬離會脫離此語意並拆散「重置配速」按鈕的分組。
+
+### Phase 3 — 結構性調整（第 1、2 項已實作）
+
+1. ✅ **側欄常駐 header**：`#side-panel` 頂部新增 sticky header（`#side-panel-header`），標題重用既有 i18n key「設置面板」，actions 收納加寬/縮窄鈕（自操作說明 header 移入，行動版沿用 `.panel-width-btn` 隱藏規則）、操作說明鈕與主題切換（自頂部工具列移入）。`smoke.spec.js` 釘位已同步；`map-layer-theme.spec.js` 全數通過確認主題切換行為不變。
+2. ✅ **操作說明抽成 modal**：`#instructions-section` 自側欄移除，內容（含 Phase 2 移入的天氣設置說明）原封搬進 `#instructions-modal`，由側欄 header 的「?」鈕開啟。`.instructions-content` class 不變，`renderInstructionsContent()` 語言切換重繪照常作用；modal 沿用既有 `hidden` + `body.modal-open` 模式與「僅按鈕關閉」慣例；`.instructions-modal-box` 放寬至 720px 容納雙欄說明。「說明」群組分隔帶移到 About 區塊。
+3. ⏸ **行動版四群組 tab 導航 — 暫緩**：屬行動版導航重設計，需要真機/多斷點視覺 QA 才能安全落地；且操作說明抽出後側欄長度已大幅縮短，tab 化的急迫性降低。留待確認需求後另開工作包。
 
 ## 4. 守則對照
 
 - 元素 ID 全數不變 → 既有測試（`smoke`、`route-favorite-and-panel-toggle`、`ui-restructure` 等）之 selector 不受影響。
-- 不動 main.js 函式結構（INC-207）；僅刪除已無 DOM 對應的座標列事件接線。
-- 移除的使用者可見字串已同步自 `i18n.js` 清除，未新增任何需要翻譯的字串。
+- 不動 main.js 函式結構（INC-207）；Phase 1 僅刪除已無 DOM 對應的座標列事件接線，Phase 2 僅在 `applyRouteMode` 內加一個回饋 helper 呼叫，不搬移既有函式。
+- 移除的使用者可見字串已同步自 `i18n.js` 清除，未新增任何需要翻譯的字串（Phase 2 小標重用既有 key「天氣設置」）。
 - 未動 `public/sw.js` precache 資產（INC-251 不適用）、未動 z-index 疊層（INC-325 不適用）。

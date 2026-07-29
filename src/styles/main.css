@@ -2329,6 +2329,9 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   border-left: 1px solid var(--border);
   overflow-y: auto;
   overflow-x: hidden;
+  /* Keep scrolled-to targets (focus jumps, scrollIntoView) clear of the
+     sticky .side-panel-header that overlays the top of the scroll area. */
+  scroll-padding-top: 52px;
   transform: translateX(100%);
   transition: transform var(--transition-smooth), bottom 0.3s ease;
   box-shadow: var(--shadow-lg);
@@ -2336,6 +2339,38 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 
 .side-panel.open {
   transform: translateX(0);
+}
+
+/* Persistent panel header: sticks to the top of the scrolling side panel so
+   the width controls and theme toggle stay reachable at any scroll depth.
+   Needs its own opaque-ish background because section content scrolls under it. */
+.side-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.side-panel-header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .side-panel-width-btn {
@@ -2391,8 +2426,7 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 #pace-toggle-header h3,
 #waypoint-settings-toggle-header h3,
 #file-management-toggle-header h3,
-#settings-toggle-header h3,
-#instructions-toggle-header h3 {
+#settings-toggle-header h3 {
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -2405,8 +2439,7 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 .pace-header-actions,
 .waypoint-header-actions,
 .weather-header-actions,
-.file-header-actions,
-.instructions-header-actions {
+.file-header-actions {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -2436,10 +2469,6 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
 }
 
 .file-header-actions {
-  gap: 4px;
-}
-
-.instructions-header-actions {
   gap: 4px;
 }
 
@@ -3216,6 +3245,17 @@ body.route-list-dragging {
   border-color: var(--accent-primary);
 }
 
+/* Route-mode → pace-activity auto-sync feedback: one fading pulse on the
+   activity select so the link between the two selectors stays visible. */
+@keyframes speed-activity-sync-pulse {
+  0% { box-shadow: 0 0 0 3px var(--accent-primary); }
+  100% { box-shadow: 0 0 0 8px transparent; }
+}
+
+.speed-activity-select.activity-sync-flash {
+  animation: speed-activity-sync-pulse 0.9s ease-out;
+}
+
 /* Stat time icon */
 .stat-icon.time-icon {
   background: rgba(99, 102, 241, 0.15);
@@ -3652,6 +3692,24 @@ body.route-list-dragging {
 
 .settings-row select:focus {
   border-color: var(--accent-primary);
+}
+
+/* Weather center quick entries: update weather / open the detailed table */
+.weather-quick-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.weather-quick-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 6px;
+  font-size: 12px;
 }
 
 .weather-cache-settings {
@@ -6275,6 +6333,12 @@ body.modal-open {
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 16px;
+}
+
+/* Instructions modal is text-heavy with two-column rows; give it more room
+   than the default (form-sized) modal box. */
+.instructions-modal-box {
+  max-width: 720px;
 }
 
 .export-options {

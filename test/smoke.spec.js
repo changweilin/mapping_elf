@@ -67,9 +67,19 @@ test('app shell loads without console errors', async ({ page }) => {
   await expect(page.locator('#route-toggle-header #btn-favorite-add')).toHaveCount(0);
   await expect(page.locator('#route-toggle-header #btn-export-gpx')).toHaveCount(0);
   await expect(page.locator('#file-management-toggle-header #btn-panel-narrow')).toHaveCount(0);
-  await expect(page.locator('#instructions-toggle-header #btn-panel-narrow')).toBeVisible();
-  await expect(page.locator('#instructions-toggle-header .panel-width-btn').first()).toHaveAttribute('id', 'btn-panel-widen');
-  await expect(page.locator('#instructions-toggle-header .panel-width-btn').last()).toHaveAttribute('id', 'btn-panel-narrow');
+  await expect(page.locator('#instructions-section')).toHaveCount(0);
+  await expect(page.locator('#side-panel-header #btn-panel-narrow')).toBeVisible();
+  await expect(page.locator('#side-panel-header .panel-width-btn').first()).toHaveAttribute('id', 'btn-panel-widen');
+  await expect(page.locator('#side-panel-header .panel-width-btn').last()).toHaveAttribute('id', 'btn-panel-narrow');
+  await expect(page.locator('#side-panel-header #btn-toggle-theme')).toBeVisible();
+
+  // Instructions now live in a modal opened from the panel header.
+  await expect(page.locator('#instructions-modal')).toHaveClass(/hidden/);
+  await page.locator('#btn-open-instructions').click();
+  await expect(page.locator('#instructions-modal')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#instructions-modal .instructions-content .instr-group').first()).toBeVisible();
+  await page.locator('#btn-instructions-close').click();
+  await expect(page.locator('#instructions-modal')).toHaveClass(/hidden/);
   await expect(page.locator('#file-management-toggle-header .h3-label')).toHaveText(/我的最愛|Favorites/);
   await expect(page.locator('#file-management-toggle-header #btn-favorite-add')).toBeVisible();
   await expect(page.locator('#file-management-toggle-header #btn-import-gpx')).toBeVisible();
@@ -89,6 +99,20 @@ test('app shell loads without console errors', async ({ page }) => {
     window.dispatchEvent(new Event('online'));
   });
   await expect(page.locator('.offline-status span:last-child')).toContainText(/Online|線上/);
+
+  // Weather-center quick entries live in the weather settings section and the
+  // view shortcut switches the bottom panel to the detailed weather table.
+  await clickStable(page, '#settings-toggle-header h3');
+  await expect(page.locator('#settings-body')).not.toHaveClass(/collapsed/);
+  await expect(page.locator('#btn-weather-quick-fetch')).toBeVisible();
+  await clickStable(page, '#btn-weather-quick-view');
+  await expect(page.locator('#bottom-panel')).toHaveClass(/bp-mode-weather/);
+
+  // Map-side search entry opens the panel and focuses the keyword search.
+  await clickStable(page, '#btn-map-search');
+  await expect(page.locator('#side-panel')).toHaveClass(/open/);
+  await expect(page.locator('#search-input')).toBeFocused();
+
   expect(consoleErrors).toEqual([]);
 });
 
