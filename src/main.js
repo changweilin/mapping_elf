@@ -18,7 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
-import { countShapeCorners, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, rotationCandidates, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount } from './modules/shapeRoutePlanner.js';
+import { countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -4746,9 +4746,11 @@ const shapeCanvas = document.getElementById('shape-canvas');
 const shapeReadoutEl = document.getElementById('shape-readout');
 const shapeDistanceInput = document.getElementById('shape-distance-input');
 const shapeAngleSelect = document.getElementById('shape-angle-select');
+const shapeTrimSpursInput = document.getElementById('shape-trim-spurs');
 const btnShapeTool = document.getElementById('btn-shape-tool');
 const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
 const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
+const LS_SHAPE_TRIM_KEY = 'mappingElf_shapeRouteTrimSpurs';
 const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
 let shapeStrokes = [];            // drawn strokes (筆畫), each an array of [x, y] CSS px
 let shapeDrawing = false;
@@ -4765,6 +4767,9 @@ let shapeGenerating = false;      // guards re-entry across the async generate f
   const savedTol = Number(localStorage.getItem(LS_SHAPE_ANGLE_KEY));
   if (shapeAngleSelect && SHAPE_ANGLE_CHOICES.includes(savedTol)) {
     shapeAngleSelect.value = String(savedTol);
+  }
+  if (shapeTrimSpursInput && localStorage.getItem(LS_SHAPE_TRIM_KEY) === '0') {
+    shapeTrimSpursInput.checked = false;
   }
 }
 
@@ -4924,9 +4929,11 @@ async function generateShapeRoute() {
   const km = readShapeDistanceKm();
   if (!(km >= 1 && km <= 50)) { showNotification('目標距離需在 1 到 50 公里之間', 'warning'); return; }
   const angleTol = readShapeAngleTolDeg();
+  const trimSpurs = shapeTrimSpursInput ? shapeTrimSpursInput.checked : true;
   try {
     localStorage.setItem(LS_SHAPE_DISTANCE_KEY, String(km));
     localStorage.setItem(LS_SHAPE_ANGLE_KEY, String(angleTol));
+    localStorage.setItem(LS_SHAPE_TRIM_KEY, trimSpurs ? '1' : '0');
   } catch (_) { }
 
   shapeGenerating = true;
@@ -4974,10 +4981,12 @@ async function generateShapeRoute() {
       }
     }
     if (!ring) ring = strokeToLatLngRing(strokePts, anchor, targetM);
-    const rawWps = ring ? pickShapeWaypoints(ring, wpCount) : [];
-    if (rawWps.length < 3) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
-
-    const wps = await snapShapeWaypoints(rawWps);
+    if (!ring) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
+    // Curvature features (star tips, cusps, finger notches) get waypoints
+    // first — a shortest-path router chords across any sharp tip without one.
+    const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, wpCount));
+    const wps = snapped.wps;
+    if (wps.length < 3) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
     drawShapePreview(ring);
 
     // Running loop: foot routing + running pace + O繞 nav mode.
@@ -5002,8 +5011,9 @@ async function generateShapeRoute() {
     _wcStates.clear();
     mapManager.closeWeatherPopup();
 
-    // Run context consumed on route completion: distance calibration first,
-    // then the similarity report (see onShapeRoutePlanned).
+    // Run context consumed on route completion: distance calibration, then
+    // deviation-driven shape refinement, then a damped re-calibration — each
+    // stage bounded and verified (see onShapeRoutePlanned).
     shapeRouteRun = {
       ring,
       strokePts,
@@ -5012,8 +5022,17 @@ async function generateShapeRoute() {
       targetM,
       scaledTargetM: targetM,
       wpCount,
+      ts: snapped.ts,
+      trimSpurs,
       attempt: 0,
-      appliedKey: JSON.stringify(wps),
+      refineAttempt: 0,
+      postCalibAttempt: 0,
+      spurAttempt: 0,
+      spurTrimmedM: 0,
+      pendingCheck: null,
+      finalize: false,
+      busy: false,
+      appliedKey: routeStateSignature(wps),
     };
     applyShapeWaypoints(wps);
 
@@ -5034,18 +5053,22 @@ async function generateShapeRoute() {
 
 // Pull every waypoint onto the walkable network so none sits away from a
 // road and every leg is foot-routable. Snapping can collapse neighbours
-// onto the same spot — dedupe within 30 m (loop closure included). Falls
-// back to the raw points when snapping thins the loop below 3 points.
-async function snapShapeWaypoints(rawWps) {
-  const snaps = await routeEngine.snapToFootNetwork(rawWps);
-  const snapped = [];
-  snaps.forEach((s) => {
-    const prev = snapped[snapped.length - 1];
-    if (prev && haversineDistance(prev, s.point) < 30) return;
-    snapped.push(s.point);
+// onto the same spot — dedupe within 30 m (loop closure included), keeping
+// each surviving waypoint paired with its arc fraction so refinement and
+// ring re-scaling stay aligned. Falls back to the raw points when snapping
+// thins the loop below 3 points.
+async function snapShapeWaypoints(ring, ts) {
+  const raw = waypointsFromTs(ring, ts);
+  const snaps = await routeEngine.snapToFootNetwork(raw);
+  const kept = [];
+  snaps.forEach((s, i) => {
+    const prev = kept[kept.length - 1];
+    if (prev && haversineDistance(prev.wp, s.point) < 30) return;
+    kept.push({ t: ts[i], wp: s.point });
   });
-  if (snapped.length >= 2 && haversineDistance(snapped[0], snapped[snapped.length - 1]) < 30) snapped.pop();
-  return snapped.length >= 3 ? snapped : rawWps;
+  if (kept.length >= 2 && haversineDistance(kept[0].wp, kept[kept.length - 1].wp) < 30) kept.pop();
+  if (kept.length < 3) return { ts: [...ts], wps: raw };
+  return { ts: kept.map((k) => k.t), wps: kept.map((k) => k.wp) };
 }
 
 // Dashed outline of the target shape stays on the map for comparison with
@@ -5073,25 +5096,168 @@ function applyShapeWaypoints(wps) {
 }
 
 // Called by the route-planning pipeline once a shape-generated route has been
-// computed. Checks the actual mileage against the requested target first and
-// re-scales + re-plans (≤2 rounds) when it strays past the tolerance, so the
-// final mileage lands close to the entered distance; then reports similarity.
+// computed. Staged, each stage bounded and re-entered via the next route
+// completion: ① mileage calibration (≤2 full-step rounds, waypoints
+// re-selected), ② deviation-driven refinement (≤3 rounds, insertions kept
+// only when the shape measurably improves), ③ damped re-calibration keeping
+// the refined waypoints (≤2 rounds, reverted when it worsens the mileage);
+// then the similarity report.
 function onShapeRoutePlanned() {
   const run = shapeRouteRun;
   if (!run) return;
-  // Waypoints changed since we applied them (user edit) — stand down.
-  if (JSON.stringify(mapManager.waypoints) !== run.appliedKey) { shapeRouteRun = null; return; }
+  // A continuation is still snapping/applying — this completion is a stray
+  // (e.g. a deferred setting flushed a same-waypoint re-plan); ignore it.
+  if (run.busy) return;
+  // Waypoints / route mode / nav flags changed since we applied them (user
+  // edit or deferred busy-setting) — the user took over, stand down.
+  if (routeStateSignature(mapManager.waypoints) !== run.appliedKey) { shapeRouteRun = null; return; }
   const coords = currentRouteCoords;
   if (!Array.isArray(coords) || coords.length < 2) { shapeRouteRun = null; return; }
   const actualM = totalDistance(coords);
-  if (run.attempt < 2 && needsDistanceCalibration(actualM, run.targetM)) {
+
+  if (run.finalize) { finishShapeRun(run, actualM); return; }
+
+  // A guarded step (refinement / spur trim / post-calibration) just
+  // re-routed: keep it only when it actually helped, else restore the
+  // previous waypoint set. Without this, a network coarser than the drawn
+  // feature makes refinement buy mileage with no shape gain, and full-step
+  // re-scaling oscillates.
+  if (run.pendingCheck) {
+    const check = run.pendingCheck;
+    run.pendingCheck = null;
+    let ok;
+    if (check.kind === 'refine') {
+      const dev = ringRouteDeviation(run.ring, coords);
+      ok = dev.maxM <= check.devMaxM * 0.9 || dev.meanM <= check.devMeanM * 0.85;
+    } else if (check.kind === 'spur') {
+      const remainM = totalSpurLengthM(detectRouteSpurs(coords));
+      ok = remainM < check.spurTotalM;
+      // Record the MEASURED shrink, not the planned one — a pass that removes
+      // one whisker while another persists must not claim both.
+      if (ok) run.spurTrimmedM = (check.spurTrimmedPrev || 0) + (check.spurTotalM - remainM);
+    } else {
+      ok = Math.abs(actualM - run.targetM) <= Math.abs(check.actualM - run.targetM);
+    }
+    if (!ok) { restoreShapeState(run, check); return; }
+  }
+
+  // Initial calibration only before refinement starts — its waypoint
+  // re-selection would discard refinement insertions.
+  if (run.refineAttempt === 0 && run.attempt < 2 && needsDistanceCalibration(actualM, run.targetM)) {
     showNotification('正在依實際里程校準距離...', 'info', 2000);
+    run.busy = true;
     continueShapeCalibration(run, actualM).then((ok) => {
+      run.busy = false;
+      // Round couldn't proceed — skip to the later stages on the current route.
+      if (!ok && shapeRouteRun === run) { run.attempt = 2; onShapeRoutePlanned(); }
+    });
+    return;
+  }
+
+  if (run.refineAttempt < 3) {
+    const minDevM = shapeOffShapeM(run);
+    const nextTs = planRefinementTs(run.ring, run.ts, coords, mapManager.waypoints, { minDevM, maxInsert: 4, maxTotal: 30 });
+    if (nextTs) {
+      showNotification('正在優化路線形狀...', 'info', 2000);
+      run.busy = true;
+      continueShapeRefinement(run, ringRouteDeviation(run.ring, coords), nextTs, actualM).then((ok) => {
+        run.busy = false;
+        if (!ok && shapeRouteRun === run) { run.refineAttempt = 3; onShapeRoutePlanned(); }
+      });
+      return;
+    }
+    run.refineAttempt = 3;   // converged — stop probing
+  }
+
+  // Spur trim (opt-in toggle): the drawn figure should ENCLOSE area, so
+  // every waypoint sitting on a zero-area out-and-back whisker — even one
+  // tracing a sharp tip — is pulled back to the whisker's junction (the tip
+  // rounds off). Junction points already lie on the routed track, so this
+  // stage needs no snapping (synchronous). Alternates with the mileage
+  // stage below across completions; each pass must strictly shrink the
+  // whisker total or it is reverted.
+  if (run.trimSpurs && run.spurAttempt < 3) {
+    const spursNow = detectRouteSpurs(coords);
+    const plan = spursNow.length
+      ? planSpurRetraction(coords, mapManager.waypoints, run.ts, run.ring)
+      : null;
+    // No retractable whisker right now — fall through without consuming a
+    // pass; the mileage stage below may re-create one to fix next time.
+    if (plan) {
+      run.spurAttempt += 1;
+      showNotification('正在修剪來回路段...', 'info', 2000);
+      run.pendingCheck = {
+        kind: 'spur',
+        spurTotalM: totalSpurLengthM(spursNow),
+        spurTrimmedPrev: run.spurTrimmedM,
+        actualM,
+        ring: run.ring,
+        ts: run.ts,
+        scaledTargetM: run.scaledTargetM,
+        wps: mapManager.waypoints.map((w) => [...w]),
+      };
+      run.ts = plan.ts;
+      run.appliedKey = routeStateSignature(plan.wps);
+      applyShapeWaypoints(plan.wps);
+      return;
+    }
+  }
+
+  if (run.postCalibAttempt < 4 && needsDistanceCalibration(actualM, run.targetM, 0.08)) {
+    showNotification('正在依實際里程校準距離...', 'info', 2000);
+    run.busy = true;
+    continueShapePostCalibration(run, actualM).then((ok) => {
+      run.busy = false;
       if (!ok && shapeRouteRun === run) finishShapeRun(run, actualM);
     });
     return;
   }
+
   finishShapeRun(run, actualM);
+}
+
+// Per-run deviation threshold for refinement targeting.
+function shapeOffShapeM(run) {
+  return Math.max(45, Math.min(120, run.targetM * 0.01));
+}
+
+// Undo a guarded step that made things worse: re-apply the stored previous
+// waypoints (one more routing pass). After a refinement or spur-trim revert
+// the later stages may still run; after a calibration revert nothing
+// further helps.
+function restoreShapeState(run, prev) {
+  run.ring = prev.ring;
+  run.ts = prev.ts;
+  run.scaledTargetM = prev.scaledTargetM;
+  if (prev.kind === 'refine') run.refineAttempt = 3;
+  else if (prev.kind === 'spur') {
+    // The same inputs would replay the identical failed plan — end the stage.
+    run.spurAttempt = 3;
+    run.spurTrimmedM = prev.spurTrimmedPrev || 0;
+  } else run.finalize = true;
+  run.appliedKey = routeStateSignature(prev.wps);
+  drawShapePreview(run.ring);
+  applyShapeWaypoints(prev.wps);
+}
+
+// A route-planning failure for the shape run's own waypoints leaves no
+// completion to drive the staged machine — kill the run so it cannot resume
+// on an unrelated same-waypoint re-plan minutes later.
+function abandonShapeRunOnPlanFailure(waypoints) {
+  if (shapeRouteRun && routeStateSignature(waypoints) === shapeRouteRun.appliedKey) {
+    shapeRouteRun = null;
+  }
+}
+
+// True when the user changed waypoints or route settings while a shape-run
+// continuation was awaiting its road snap — the run must not apply over them.
+function shapeRunSuperseded(run) {
+  if (shapeRouteRun !== run) return true;
+  if (routeStateSignature(mapManager.waypoints) !== run.appliedKey) {
+    shapeRouteRun = null;   // user took over — stand down for good
+    return true;
+  }
+  return false;
 }
 
 // One calibration round: request a ring perimeter scaled by target/actual and
@@ -5101,18 +5267,87 @@ async function continueShapeCalibration(run, actualM) {
   const scaledTargetM = nextCalibratedTarget(run.scaledTargetM, actualM, run.targetM);
   const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaledTargetM, { rotationDeg: run.rotationDeg });
   if (!ring) return false;
-  const wps = await snapShapeWaypoints(pickShapeWaypoints(ring, run.wpCount));
-  if (shapeRouteRun !== run) return true;    // superseded meanwhile — abandon quietly
-  if (wps.length < 3) return false;
+  const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, run.wpCount));
+  if (shapeRunSuperseded(run)) return true;   // abandon quietly
+  if (snapped.wps.length < 3) return false;
   drawShapePreview(ring);
-  shapeRouteRun = { ...run, ring, scaledTargetM, attempt: run.attempt + 1, appliedKey: JSON.stringify(wps) };
-  applyShapeWaypoints(wps);
+  run.ring = ring;
+  run.ts = snapped.ts;
+  run.scaledTargetM = scaledTargetM;
+  run.attempt += 1;
+  run.appliedKey = routeStateSignature(snapped.wps);
+  applyShapeWaypoints(snapped.wps);
+  return true;
+}
+
+// One refinement round: extra waypoints where the routed line strays from
+// the drawn arc. The result is verified on the next completion (pendingCheck)
+// and reverted if the added waypoints didn't move the route toward the shape.
+async function continueShapeRefinement(run, dev, nextTs, actualM) {
+  const snapped = await snapShapeWaypoints(run.ring, nextTs);
+  if (shapeRunSuperseded(run)) return true;
+  // Snap-dedupe ate every insertion — nothing new to route.
+  if (snapped.wps.length < 3 || snapped.wps.length <= mapManager.waypoints.length) return false;
+  run.pendingCheck = {
+    kind: 'refine',
+    devMaxM: dev.maxM,
+    devMeanM: dev.meanM,
+    actualM,
+    ring: run.ring,
+    ts: run.ts,
+    scaledTargetM: run.scaledTargetM,
+    wps: mapManager.waypoints.map((w) => [...w]),
+  };
+  run.refineAttempt += 1;
+  run.ts = snapped.ts;
+  run.appliedKey = routeStateSignature(snapped.wps);
+  applyShapeWaypoints(snapped.wps);
+  return true;
+}
+
+// Post-refinement mileage correction: re-scale the ring but keep the refined
+// arc fractions. Damped step — mileage is not linear in perimeter once
+// snap-dedupe starts dropping waypoints on a shrinking ring, and a full step
+// oscillates. Verified on the next completion like refinement.
+async function continueShapePostCalibration(run, actualM) {
+  const scaled = Math.max(run.targetM * 0.4, Math.min(run.targetM * 2.5,
+    run.scaledTargetM * Math.sqrt(run.targetM / actualM)));
+  const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaled, { rotationDeg: run.rotationDeg });
+  if (!ring) return false;
+  const snapped = await snapShapeWaypoints(ring, run.ts);
+  if (shapeRunSuperseded(run)) return true;
+  if (snapped.wps.length < 3) return false;
+  run.pendingCheck = {
+    kind: 'postCalib',
+    actualM,
+    ring: run.ring,
+    ts: run.ts,
+    scaledTargetM: run.scaledTargetM,
+    wps: mapManager.waypoints.map((w) => [...w]),
+  };
+  run.postCalibAttempt += 1;
+  run.ring = ring;
+  run.ts = snapped.ts;
+  run.scaledTargetM = scaled;
+  run.appliedKey = routeStateSignature(snapped.wps);
+  drawShapePreview(ring);
+  applyShapeWaypoints(snapped.wps);
   return true;
 }
 
 function finishShapeRun(run, actualM) {
   shapeRouteRun = null;
-  const pct = Math.round(shapeSimilarity(currentRouteCoords, run.ring) * 100);
+  // With trimming on, residual whiskers (ones no waypoint retraction could
+  // remove) are excluded from the SHAPE verdict — the runner still runs
+  // them, so 實際距離 stays the physical mileage.
+  const residualSpurs = run.trimSpurs ? detectRouteSpurs(currentRouteCoords) : [];
+  const metricCoords = residualSpurs.length
+    ? trimRouteSpurs(currentRouteCoords, residualSpurs)
+    : currentRouteCoords;
+  const pct = Math.round(shapeSimilarity(metricCoords, run.ring) * 100);
+  // Worst drawn-point-to-route distance — the mean-based similarity barely
+  // reacts to a cut-off star tip, this number does.
+  const maxDevM = Math.round(ringRouteDeviation(run.ring, metricCoords).maxM);
   if (shapeReadoutEl && !shapePanel?.classList.contains('hidden')) {
     const rows = [
       ['航點', String(mapManager.waypoints.length)],
@@ -5121,12 +5356,23 @@ function finishShapeRun(run, actualM) {
     ];
     if (run.rotationDeg) rows.push(['方位調整', `${Math.round(run.rotationDeg)}°`]);
     rows.push(['形狀相似度', `${pct}%`]);
+    if (Number.isFinite(maxDevM)) rows.push(['最大偏差', formatDistance(maxDevM)]);
+    // Whisker length is one-way; the runner saved the out AND the back.
+    if (run.spurTrimmedM > 0) rows.push(['來回修剪', formatDistance(run.spurTrimmedM * 2)]);
     shapeReadoutEl.innerHTML = rows.map(([label, value]) =>
       `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
     ).join('');
   }
   showNotification(`形狀相似度 ${pct}%`, 'info', 2500);
-  emitTestEvent('shape-route-finished', { actualM, targetM: run.targetM, similarityPct: pct });
+  emitTestEvent('shape-route-finished', {
+    actualM,
+    targetM: run.targetM,
+    similarityPct: pct,
+    maxDevM,
+    waypointCount: mapManager.waypoints.length,
+    trimSpurs: !!run.trimSpurs,
+    spurTrimmedM: run.spurTrimmedM || 0,
+  });
 }
 
 btnShapeTool?.addEventListener('click', () => {
@@ -6221,12 +6467,14 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
       }
     } else if (!isRoutePlanSnapshotStale(routePlanSnapshot)) {
       showNotification('找不到合適路徑', 'warning');
+      abandonShapeRunOnPlanFailure(waypoints);
     }
   } catch (err) {
     const message = getRoutePlanningErrorMessage(err);
     if (!isRoutePlanSnapshotStale(routePlanSnapshot) && message) {
       console.error('Route processing error:', err);
       showNotification(message, 'error');
+      abandonShapeRunOnPlanFailure(waypoints);
     } else {
       pendingUpdate = true;
     }
