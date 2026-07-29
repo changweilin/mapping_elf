@@ -47,7 +47,7 @@ Last updated: 2026-07-29
 | R1 | 阻塞 | Native device validation | Android native bridge QA、iOS simulator/device validation | Android 完成 `doc/native-app-qa.md`；iOS 在 Mac/Xcode 驗證 safe area、檔案匯入匯出、外部連結與 TestFlight readiness。 |
 | R2 | 阻塞 | Android signing 與 internal testing artifact | upload keystore、release AAB rebuild、Google Play internal testing upload | 2026-05-20 重建 `android/app/build/outputs/bundle/release/app-release.aab` 成功但未簽章；需提供 ignored `android/keystore.properties` 與 upload key 後重建，才能上傳 internal testing。 |
 | R3 | 待辦 | 商店與合規收斂 | privacy URL、native screenshots、Google Play Data safety、Apple App Privacy、provider terms、dev-tool audit | 2026-05-20 已複查 audit 與 provider terms；bundled public raster providers 已禁用 tile export。仍需 live store forms、native screenshots、dev-tool findings 決策。 |
-| R4 | 進行中 | 原生離線底圖渲染 | Mapsforge `.map`、MBTiles renderer、圖層切換、授權標示 | 2026-05-25 已完成 Android app-private 匯入、來源 registry 與 raster MBTiles native tile bridge；下一步接 Mapsforge 魯地圖 renderer、主題/POI 支援與實機驗證。 |
+| R4 | 進行中 | 原生離線底圖渲染 | Mapsforge `.map`、MBTiles renderer、圖層切換、授權標示 | 2026-05-25 已完成 Android app-private 匯入、來源 registry、raster MBTiles native tile bridge 與 Mapsforge `.map` 原生渲染（見合併紀錄）；剩餘主題/POI 強化與實機視覺/效能 QA（併入 R1 裝置阻塞）。 |
 
 ## 已完成基線
 
@@ -62,6 +62,15 @@ Last updated: 2026-07-29
 - Android debug APK、debug AAB、release AAB 曾於 2026-05-19 本機 build 成功；native bridge QA 仍因沒有裝置/emulator 阻塞。
 
 ## 合併紀錄
+
+### 2026-07-29 A2 殘留項收尾（roadmap Priority 4：Restore Real Playwright Clicks）
+
+- 狀態變更：A2 留下的「`#btn-clear-route` 與 `#btn-export-gpx` 匯入後落在 viewport 外，測試保留 DOM click fallback」追蹤項完成收尾；`doc/refactor-roadmap.md` Priority 4 的 smoke 部分完成。
+- 根因：不是版面溢出——側欄預設關閉（off-canvas，x≈1598 > viewport 1280），smoke 測試未先開側欄就用 `evaluate(el.click())` 點擊面板外按鈕，DOM click 掩蓋了這件事。GUI 重組後側欄打開時兩顆按鈕都在 viewport 內（x≈1212–1218）且通過 Playwright trial click actionability 檢查。
+- 影響範圍：`test/smoke.spec.js` 新增 `openSidePanel` helper（真實點擊 `#btn-toggle-panel`，含已開啟 guard）；「imports sample KML」測試在清除路線前先開側欄並改用 `clickActionable` 點 `#btn-clear-route`（匯入會關側欄，重開是真實使用者流程；真實 click 的 auto-wait 也涵蓋天氣載入期間的 busy disabled 窗口）；「opens export modal」測試先開側欄再開路線庫，`#btn-export-gpx` 改用 `clickActionable`。其他 spec（mobile/import-export/perf）之 `clickStable` 維持不動（不同 viewport 與流程，另案評估）。
+- 驗證：`npm run test:numeric`、`npm run build` 通過。沙盒以鏡射流程 spec（ASCII 檔名副本 fixture）連跑 3 輪全數通過，確認開側欄後真實點擊 → 清除路線 / 匯出 modal 全流程可行；修改後 smoke 失敗清單與未修改基準逐項一致（7 敗 1 過，敗因均為既有沙盒環境限制）。
+- 環境發現（沙盒限定，非 app bug）：(1) 預裝 Chromium 1194 搭配專案 Playwright 1.59 時，`setInputFiles` 對含中文檔名的 fixture 會靜默失敗（input.files 為空、無任何錯誤），ASCII 檔名正常——這是沙盒中所有匯入類測試失敗的真正根因，Windows 本機不受影響；(2) 沙盒網路封鎖下天氣載入的 busy 鎖約 55 秒後正常解除，busy 護欄不會因 fetch 失敗卡死。
+- 仍需追蹤：本機 Windows 完整 GUI suite 綠燈複核（含本輪兩處真實點擊改動）。
 
 ### 2026-07-29 P5 Update
 
