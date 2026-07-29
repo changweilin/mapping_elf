@@ -37,6 +37,15 @@ async function clickStable(page, selector) {
   await locator.evaluate((el) => el.click());
 }
 
+async function openSidePanel(page) {
+  const panel = page.locator('#side-panel');
+  const className = await panel.getAttribute('class');
+  if (!className?.includes('open')) {
+    await page.locator('#btn-toggle-panel').click();
+  }
+  await expect(panel).toHaveClass(/open/);
+}
+
 async function openRouteLibrary(page) {
   const body = page.locator('#file-management-body');
   await expect(body).toBeAttached();
@@ -215,7 +224,10 @@ test('imports sample KML and keeps route UI functional', async ({ page }) => {
   await expect(page.locator('.bp-weather-scroll')).toBeHidden();
 
   await clickActionable(page, '#btn-fit-route');
-  await clickStable(page, '#btn-clear-route');
+  // Import closes the side panel; reopen it like a user would so the clear
+  // button is genuinely actionable instead of DOM-clicked off-canvas.
+  await openSidePanel(page);
+  await clickActionable(page, '#btn-clear-route');
   await expect(page.locator('#chart-empty')).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
@@ -226,8 +238,9 @@ test('opens export modal and reveals map-pack options', async ({ page }) => {
   await importFixture(page, sampleKml);
   await expectImportedRoute(page);
 
+  await openSidePanel(page);
   await openRouteLibrary(page);
-  await clickStable(page, '#btn-export-gpx');
+  await clickActionable(page, '#btn-export-gpx');
   await expect(page.locator('#export-modal')).toBeVisible();
   await expect(page.locator('#export-modal .modal-title')).toHaveText(/匯出|Export/);
   await expect(page.locator('input[name="export-fmt"][value="gpx"]')).toBeChecked();
