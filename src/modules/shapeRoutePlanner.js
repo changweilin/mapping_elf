@@ -187,6 +187,30 @@ export function countShapeCorners(rawPoints, options = {}) {
 }
 
 /**
+ * True when the planned route's actual mileage strays from the requested
+ * target by more than `tolerance` (fraction, default 5%) and a calibration
+ * re-plan is worthwhile.
+ */
+export function needsDistanceCalibration(actualM, targetM, tolerance = 0.05) {
+  if (!(actualM > 0) || !(targetM > 0)) return false;
+  return Math.abs(actualM - targetM) / targetM > tolerance;
+}
+
+/**
+ * Next ring perimeter to request so the routed mileage lands on target:
+ * scale the current request by target/actual (route length is ~linear in
+ * ring perimeter), clamped to a sane band around the target so a degenerate
+ * measurement can't run away.
+ */
+export function nextCalibratedTarget(currentScaledM, actualM, targetM, options = {}) {
+  if (!(currentScaledM > 0) || !(actualM > 0) || !(targetM > 0)) return currentScaledM;
+  const minRatio = options.minRatio || 0.4;
+  const maxRatio = options.maxRatio || 2.5;
+  const next = currentScaledM * (targetM / actualM);
+  return Math.min(targetM * maxRatio, Math.max(targetM * minRatio, next));
+}
+
+/**
  * Candidate rotations (degrees) to try within ±toleranceDeg, drawn
  * orientation (0) first so it wins ties. toleranceDeg ≥ 180 means any
  * orientation — the full circle is sampled every 30°.

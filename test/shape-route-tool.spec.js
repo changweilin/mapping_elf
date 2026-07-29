@@ -62,9 +62,10 @@ test('drawing board opens, generates an O繞 waypoint loop and closes', async ({
   )).toBeGreaterThanOrEqual(3);
 
   // Nav mode switched to O繞, waypoints landed in the side panel list.
+  // Poll: a distance-calibration round briefly clears + re-adds the list.
   await expect(page.locator('#nav-mode-oloop')).toBeChecked();
-  const count = await page.locator('#waypoint-list .waypoint-item').count();
-  expect(count).toBeGreaterThanOrEqual(3);
+  await expect.poll(async () => page.locator('#waypoint-list .waypoint-item').count())
+    .toBeGreaterThanOrEqual(3);
 
   // Readout shows the plan summary; the target-shape preview is on the map.
   await expect(page.locator('#shape-readout .mr-row').first()).toBeVisible();

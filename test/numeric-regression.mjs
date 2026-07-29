@@ -23,6 +23,8 @@ import {
 } from '../src/modules/tileEstimator.js';
 import {
   countShapeCorners,
+  needsDistanceCalibration,
+  nextCalibratedTarget,
   pickShapeWaypoints,
   resampleClosedStroke,
   ringPerimeter,
@@ -224,6 +226,17 @@ const candAny = rotationCandidates(360);
 assert.equal(candAny[0], 0);
 assert.equal(candAny.length, 12);
 assert.ok(candAny.includes(180));
+
+// Distance calibration: trigger only outside the 5% band; requested perimeter
+// scales by target/actual, clamped to a sane band around the target.
+assert.equal(needsDistanceCalibration(5600, 5000), true);
+assert.equal(needsDistanceCalibration(5100, 5000), false);
+assert.equal(needsDistanceCalibration(4300, 5000), true);
+assert.equal(needsDistanceCalibration(0, 5000), false);
+closeTo(nextCalibratedTarget(5000, 5750, 5000), 5000 * (5000 / 5750), 1e-6);
+assert.equal(nextCalibratedTarget(5000, 100000, 5000), 2000);   // min 0.4×target
+assert.equal(nextCalibratedTarget(5000, 100, 5000), 12500);     // max 2.5×target
+assert.equal(nextCalibratedTarget(0, 5750, 5000), 0);           // invalid input passthrough
 
 // Rotated ring keeps the perimeter and anchor-start invariants.
 const rotatedRing = strokeToLatLngRing(squareStroke, shapeAnchor, TARGET_M, { rotationDeg: 90 });

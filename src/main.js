@@ -8,7 +8,7 @@ import { MapManager } from './modules/mapManager.js';
 import { RouteEngine } from './modules/routeEngine.js';
 import { WeatherService } from './modules/weatherService.js';
 import { OfflineManager } from './modules/offlineManager.js';
-import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize, projectMileage } from './modules/utils.js';
+import { formatDistance, formatElevation, formatCoords, copyToClipboard, showNotification as rawShowNotification, debounce, haversineDistance, cumulativeDistances, totalDistance, interpolateRouteColor, interpolateReturnColor, interpolateRouteColorRgb, interpolateReturnColorRgb, tspOptimize, projectMileage } from './modules/utils.js';
 import { ACTIVITY_PROFILES, DEFAULT_PACE_PARAMS, computeCumulativeTimes, computeTripStats, computeFatigueSeries, formatDuration, formatDurationHHMM, defaultSpeed, computeCalibrationFromTracks, summarizeImportedTrackForCalibration } from './modules/paceEngine.js';
 import { applyTranslations, getLanguage, initI18n, LANGUAGES, setLanguage, translatePhrase, translateWeatherText, tWmo } from './modules/i18n.js';
 import { RESET_STATE_KEYS } from './modules/stateKeys.js';
@@ -18,7 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
-import { countShapeCorners, pickShapeWaypoints, rotationCandidates, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount } from './modules/shapeRoutePlanner.js';
+import { countShapeCorners, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, rotationCandidates, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount } from './modules/shapeRoutePlanner.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -4753,7 +4753,8 @@ const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
 let shapeStrokes = [];            // drawn strokes (筆畫), each an array of [x, y] CSS px
 let shapeDrawing = false;
 let shapePreviewLayer = null;     // dashed target-shape outline on the map
-let shapeSimilarityRing = null;   // ring to score against the next planned route
+let shapeRouteRun = null;         // pending run: ring/anchor/scale context for the
+                                  // distance-calibration + similarity pass on completion
 let shapeGenerating = false;      // guards re-entry across the async generate flow
 
 {
@@ -4886,7 +4887,7 @@ function ensureShapePreviewLayer() {
 function clearShapeBoard() {
   shapeStrokes = [];
   shapeDrawing = false;
-  shapeSimilarityRing = null;
+  shapeRouteRun = null;
   shapePreviewLayer?.clearLayers();
   if (shapeReadoutEl) shapeReadoutEl.innerHTML = '';
   redrawShapeCanvas();
@@ -4929,6 +4930,7 @@ async function generateShapeRoute() {
   } catch (_) { }
 
   shapeGenerating = true;
+  shapeRouteRun = null;          // supersede any pending calibration pass
   try {
     // Anchor at the GPS fix; the free geolocation path fails often, so fall
     // back to the map centre instead of blocking the feature.
@@ -4975,25 +4977,8 @@ async function generateShapeRoute() {
     const rawWps = ring ? pickShapeWaypoints(ring, wpCount) : [];
     if (rawWps.length < 3) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
 
-    // Pull every waypoint onto the walkable network so none sits away from a
-    // road and every leg is foot-routable. Snapping can collapse neighbours
-    // onto the same spot — dedupe within 30 m (loop closure included).
-    const snaps = await routeEngine.snapToFootNetwork(rawWps);
-    const snapped = [];
-    snaps.forEach((s) => {
-      const prev = snapped[snapped.length - 1];
-      if (prev && haversineDistance(prev, s.point) < 30) return;
-      snapped.push(s.point);
-    });
-    if (snapped.length >= 2 && haversineDistance(snapped[0], snapped[snapped.length - 1]) < 30) snapped.pop();
-    const wps = snapped.length >= 3 ? snapped : rawWps;
-
-    // Dashed outline of the target shape stays on the map for comparison with
-    // the road-snapped result (cleared on 清除 / panel close).
-    ensureShapePreviewLayer().clearLayers();
-    L.polyline([...ring, ring[0]], {
-      color: '#a855f7', weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false,
-    }).addTo(shapePreviewLayer);
+    const wps = await snapShapeWaypoints(rawWps);
+    drawShapePreview(ring);
 
     // Running loop: foot routing + running pace + O繞 nav mode.
     applyRouteMode('walking', { syncPaceActivity: false });
@@ -5017,18 +5002,20 @@ async function generateShapeRoute() {
     _wcStates.clear();
     mapManager.closeWeatherPopup();
 
-    // Bulk-replace waypoints without per-point recalculation (import pattern).
-    const cb = mapManager.onWaypointChange;
-    mapManager.onWaypointChange = () => { };
-    try {
-      mapManager.clearWaypoints();
-      wps.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
-    } finally {
-      mapManager.onWaypointChange = cb;
-    }
-    shapeSimilarityRing = ring;
-    onWaypointsChanged(mapManager.waypoints);
-    mapManager.fitToRoute();
+    // Run context consumed on route completion: distance calibration first,
+    // then the similarity report (see onShapeRoutePlanned).
+    shapeRouteRun = {
+      ring,
+      strokePts,
+      anchor,
+      rotationDeg: bestDeg,
+      targetM,
+      scaledTargetM: targetM,
+      wpCount,
+      attempt: 0,
+      appliedKey: JSON.stringify(wps),
+    };
+    applyShapeWaypoints(wps);
 
     if (shapeReadoutEl) {
       shapeReadoutEl.innerHTML =
@@ -5045,20 +5032,101 @@ async function generateShapeRoute() {
   }
 }
 
-// Called by the route-planning pipeline once a freshly generated shape route
-// has been computed — reports how closely the snapped route follows the shape.
-function reportShapeSimilarity() {
-  if (!shapeSimilarityRing) return;
-  const ring = shapeSimilarityRing;
-  shapeSimilarityRing = null;
+// Pull every waypoint onto the walkable network so none sits away from a
+// road and every leg is foot-routable. Snapping can collapse neighbours
+// onto the same spot — dedupe within 30 m (loop closure included). Falls
+// back to the raw points when snapping thins the loop below 3 points.
+async function snapShapeWaypoints(rawWps) {
+  const snaps = await routeEngine.snapToFootNetwork(rawWps);
+  const snapped = [];
+  snaps.forEach((s) => {
+    const prev = snapped[snapped.length - 1];
+    if (prev && haversineDistance(prev, s.point) < 30) return;
+    snapped.push(s.point);
+  });
+  if (snapped.length >= 2 && haversineDistance(snapped[0], snapped[snapped.length - 1]) < 30) snapped.pop();
+  return snapped.length >= 3 ? snapped : rawWps;
+}
+
+// Dashed outline of the target shape stays on the map for comparison with
+// the road-snapped result (cleared on 清除 / panel close).
+function drawShapePreview(ring) {
+  ensureShapePreviewLayer().clearLayers();
+  L.polyline([...ring, ring[0]], {
+    color: '#a855f7', weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false,
+  }).addTo(shapePreviewLayer);
+}
+
+// Bulk-replace waypoints without per-point recalculation (import pattern),
+// then trigger one routing pass over the new loop.
+function applyShapeWaypoints(wps) {
+  const cb = mapManager.onWaypointChange;
+  mapManager.onWaypointChange = () => { };
+  try {
+    mapManager.clearWaypoints();
+    wps.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+  } finally {
+    mapManager.onWaypointChange = cb;
+  }
+  onWaypointsChanged(mapManager.waypoints);
+  mapManager.fitToRoute();
+}
+
+// Called by the route-planning pipeline once a shape-generated route has been
+// computed. Checks the actual mileage against the requested target first and
+// re-scales + re-plans (≤2 rounds) when it strays past the tolerance, so the
+// final mileage lands close to the entered distance; then reports similarity.
+function onShapeRoutePlanned() {
+  const run = shapeRouteRun;
+  if (!run) return;
+  // Waypoints changed since we applied them (user edit) — stand down.
+  if (JSON.stringify(mapManager.waypoints) !== run.appliedKey) { shapeRouteRun = null; return; }
   const coords = currentRouteCoords;
-  if (!Array.isArray(coords) || coords.length < 2) return;
-  const pct = Math.round(shapeSimilarity(coords, ring) * 100);
+  if (!Array.isArray(coords) || coords.length < 2) { shapeRouteRun = null; return; }
+  const actualM = totalDistance(coords);
+  if (run.attempt < 2 && needsDistanceCalibration(actualM, run.targetM)) {
+    showNotification('正在依實際里程校準距離...', 'info', 2000);
+    continueShapeCalibration(run, actualM).then((ok) => {
+      if (!ok && shapeRouteRun === run) finishShapeRun(run, actualM);
+    });
+    return;
+  }
+  finishShapeRun(run, actualM);
+}
+
+// One calibration round: request a ring perimeter scaled by target/actual and
+// replace the waypoints, which re-enters the routing pipeline. Returns false
+// when the round can't proceed (caller falls back to reporting as-is).
+async function continueShapeCalibration(run, actualM) {
+  const scaledTargetM = nextCalibratedTarget(run.scaledTargetM, actualM, run.targetM);
+  const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaledTargetM, { rotationDeg: run.rotationDeg });
+  if (!ring) return false;
+  const wps = await snapShapeWaypoints(pickShapeWaypoints(ring, run.wpCount));
+  if (shapeRouteRun !== run) return true;    // superseded meanwhile — abandon quietly
+  if (wps.length < 3) return false;
+  drawShapePreview(ring);
+  shapeRouteRun = { ...run, ring, scaledTargetM, attempt: run.attempt + 1, appliedKey: JSON.stringify(wps) };
+  applyShapeWaypoints(wps);
+  return true;
+}
+
+function finishShapeRun(run, actualM) {
+  shapeRouteRun = null;
+  const pct = Math.round(shapeSimilarity(currentRouteCoords, run.ring) * 100);
   if (shapeReadoutEl && !shapePanel?.classList.contains('hidden')) {
-    shapeReadoutEl.innerHTML +=
-      `<div class="mr-row"><span class="mr-label">${translatePhrase('形狀相似度')}</span><span class="mr-value">${pct}%</span></div>`;
+    const rows = [
+      ['航點', String(mapManager.waypoints.length)],
+      ['目標距離', formatDistance(run.targetM)],
+      ['實際距離', formatDistance(actualM)],
+    ];
+    if (run.rotationDeg) rows.push(['方位調整', `${Math.round(run.rotationDeg)}°`]);
+    rows.push(['形狀相似度', `${pct}%`]);
+    shapeReadoutEl.innerHTML = rows.map(([label, value]) =>
+      `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
+    ).join('');
   }
   showNotification(`形狀相似度 ${pct}%`, 'info', 2500);
+  emitTestEvent('shape-route-finished', { actualM, targetM: run.targetM, similarityPct: pct });
 }
 
 btnShapeTool?.addEventListener('click', () => {
@@ -5938,7 +6006,11 @@ async function applyRestoredRouteResult(restore) {
     renderAlternatives(allAlternatives, selectedAltIndex);
     const ok = await selectAlternative(selectedAltIndex);
     if (!ok) debouncedCalculateRoute(mapManager.waypoints);
-    else showNotification('已沿用先前規劃的路線', 'info', 1500);
+    else {
+      showNotification('已沿用先前規劃的路線', 'info', 1500);
+      // A shape-generated loop can resolve through this cache path too.
+      onShapeRoutePlanned();
+    }
   } catch (err) {
     console.warn('route restore failed, re-planning:', err);
     debouncedCalculateRoute(mapManager.waypoints);
@@ -6144,8 +6216,8 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
         showNotification(altMsg, 'success', 2000);
         // Cache the computed result so a later page return can skip re-planning.
         persistRouteResult();
-        // Drawing-board flow: score how closely the snapped route follows the shape.
-        reportShapeSimilarity();
+        // Drawing-board flow: distance calibration + shape-similarity report.
+        onShapeRoutePlanned();
       }
     } else if (!isRoutePlanSnapshotStale(routePlanSnapshot)) {
       showNotification('找不到合適路徑', 'warning');
