@@ -82,8 +82,6 @@ const PHRASES = {
   '輸入地名、座標...': { en: 'Enter place name or coordinates...', ja: '地名または座標を入力...', ko: '장소명 또는 좌표 입력...', fr: 'Saisir un lieu ou des coordonnées...', de: 'Ort oder Koordinaten eingeben...', es: 'Introduce lugar o coordenadas...', it: 'Inserisci luogo o coordinate...' },
   '搜尋': { en: 'Search', ja: '検索', ko: '검색', fr: 'Rechercher', de: 'Suchen', es: 'Buscar', it: 'Cerca' },
   '在 Google Maps 搜尋關鍵字': { en: 'Search keyword in Google Maps', ja: 'Google Mapsで検索', ko: 'Google Maps에서 검색', fr: 'Rechercher dans Google Maps', de: 'In Google Maps suchen', es: 'Buscar en Google Maps', it: 'Cerca in Google Maps' },
-  '緯度, 經度 (e.g. 25.034, 121.564)': { en: 'Latitude, longitude (e.g. 25.034, 121.564)', ja: '緯度, 経度 (e.g. 25.034, 121.564)', ko: '위도, 경도 (e.g. 25.034, 121.564)', fr: 'Latitude, longitude (e.g. 25.034, 121.564)', de: 'Breite, Länge (e.g. 25.034, 121.564)', es: 'Latitud, longitud (e.g. 25.034, 121.564)', it: 'Latitudine, longitudine (e.g. 25.034, 121.564)' },
-  '定位至座標': { en: 'Go to coordinates', ja: '座標へ移動', ko: '좌표로 이동', fr: 'Aller aux coordonnées', de: 'Zu Koordinaten springen', es: 'Ir a coordenadas', it: 'Vai alle coordinate' },
   '復原 (Ctrl+Z)': { en: 'Undo (Ctrl+Z)', ja: '元に戻す (Ctrl+Z)', ko: '실행 취소 (Ctrl+Z)', fr: 'Annuler (Ctrl+Z)', de: 'Rückgängig (Ctrl+Z)', es: 'Deshacer (Ctrl+Z)', it: 'Annulla (Ctrl+Z)' },
   '取消復原 (Ctrl+Shift+Z)': { en: 'Redo (Ctrl+Shift+Z)', ja: 'やり直す (Ctrl+Shift+Z)', ko: '다시 실행 (Ctrl+Shift+Z)', fr: 'Rétablir (Ctrl+Shift+Z)', de: 'Wiederholen (Ctrl+Shift+Z)', es: 'Rehacer (Ctrl+Shift+Z)', it: 'Ripeti (Ctrl+Shift+Z)' },
   '復原': { en: 'undo', ja: '元に戻す', ko: '실행 취소', fr: 'annuler', de: 'rückgängig', es: 'deshacer', it: 'annulla' },
@@ -518,7 +516,6 @@ const PHRASES = {
   '路徑計算失敗': { en: 'Route calculation failed', ja: 'ルート計算に失敗しました', ko: '루트 계산 실패', fr: 'Échec du calcul d’itinéraire', de: 'Routenberechnung fehlgeschlagen', es: 'Error al calcular la ruta', it: 'Calcolo percorso non riuscito' },
   '天氣資訊已更新': { en: 'Weather updated', ja: '天気情報を更新しました', ko: '날씨 정보 업데이트됨', fr: 'Météo mise à jour', de: 'Wetter aktualisiert', es: 'Tiempo actualizado', it: 'Meteo aggiornato' },
   '已加入航點': { en: 'Waypoint added', ja: 'ウェイポイントを追加しました', ko: '웨이포인트 추가됨', fr: 'Waypoint ajouté', de: 'Wegpunkt hinzugefügt', es: 'Waypoint añadido', it: 'Waypoint aggiunto' },
-  '座標格式錯誤,請輸入「緯度, 經度」': { en: 'Invalid coordinates. Enter “latitude, longitude”.', ja: '座標形式が正しくありません。「緯度, 経度」を入力してください。', ko: '좌표 형식이 잘못되었습니다. “위도, 경도”를 입력하세요.', fr: 'Coordonnées invalides. Saisissez « latitude, longitude ».', de: 'Ungültige Koordinaten. „Breite, Länge“ eingeben.', es: 'Coordenadas no válidas. Introduce “latitud, longitud”.', it: 'Coordinate non valide. Inserisci “latitudine, longitudine”.' },
   '語言': { en: 'Language', ja: '言語', ko: '언어', fr: 'Langue', de: 'Sprache', es: 'Idioma', it: 'Lingua' },
 };
 

@@ -287,15 +287,6 @@
               </svg>
               <span>在 Google Maps 搜尋關鍵字</span>
             </a>
-            <div class="search-coord-row">
-              <input type="text" id="search-coord-input" class="search-input"
-                placeholder="緯度, 經度 (e.g. 25.034, 121.564)" autocomplete="off" />
-              <button class="icon-btn" id="btn-coord-go" title="定位至座標">
-                <svg viewBox="0 0 24 24" width="16" height="16">
-                  <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" fill="currentColor" />
-                </svg>
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -541,251 +532,6 @@
       </div>
     </section>
 
-    <!-- Waypoint Settings -->
-    <section class="panel-section collapsible" id="waypoint-settings-panel">
-      <div class="section-header collapsible-header collapsed" id="waypoint-settings-toggle-header">
-        <h3>
-          <svg viewBox="0 0 24 24" width="18" height="18">
-            <path
-              d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z"
-              fill="currentColor" />
-          </svg>
-          <span class="h3-label">航點設置</span>
-        </h3>
-        <div class="section-actions waypoint-header-actions" onclick="event.stopPropagation()" title="副航點設置">
-          <div class="interval-mode-controls">
-            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
-              關</label>
-            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-distance"
-                value="distance"> 距離</label>
-            <input type="number" id="segment-interval-input" class="segment-interval-input" min="1" max="100" value="5"
-              disabled>
-            <span class="segment-interval-unit">km</span>
-            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-pace" value="pace"
-                checked>
-              配速</label>
-          </div>
-        </div>
-        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
-          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
-        </svg>
-      </div>
-      <div class="collapsible-body collapsed" id="waypoint-settings-body">
-        <div class="settings-group-label"
-          style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">
-          集體操作</div>
-        <div class="pace-checks-row"
-          style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
-          <label class="pace-check-opt">
-            <input type="checkbox" id="collective-marked-pts" checked>
-            <span>全主航點</span>
-          </label>
-          <label class="pace-check-opt">
-            <input type="checkbox" id="collective-intermediate-pts" checked>
-            <span>全副航點</span>
-          </label>
-          <label class="pace-check-opt" title="勾選全航點時將自動包含前兩項">
-            <input type="checkbox" id="collective-all-waypoints">
-            <span>全航點</span>
-          </label>
-        </div>
-        <div class="settings-actions-btn-row" style="display: flex; gap: 8px; margin-bottom: 16px;">
-          <button class="btn-secondary" id="btn-collective-minimize" title="勾選的天氣卡收縮為最小模式"
-            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">縮到最小</button>
-          <button class="btn-secondary" id="btn-collective-toggle-grid" title="勾選的天氣卡切換詳細/精簡"
-            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">切換大/小格</button>
-        </div>
-
-        <div class="settings-divider" style="height: 1px; background: var(--border); margin: 12px 0;"></div>
-
-        <div class="settings-group-label"
-          style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">
-          顯示設置</div>
-        <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px;">
-          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">顯示天氣圖示</span>
-          <label class="pace-check-opt" title="在地圖上顯示主航點的天氣圖示">
-            <input type="checkbox" id="show-waypoint-weather-icon" checked>
-            <span>主航點</span>
-          </label>
-          <label class="pace-check-opt" title="在地圖上顯示副航點的天氣圖示">
-            <input type="checkbox" id="show-intermediate-weather-icon" checked>
-            <span>副航點</span>
-          </label>
-        </div>
-
-        <div class="pace-checks-row" style="margin-bottom: 8px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
-          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">主航點資訊</span>
-          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
-            <input type="checkbox" id="wp-detail-weather" checked>
-            <span>詳細天氣資訊</span>
-          </label>
-          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
-            <input type="checkbox" id="wp-detail-catchment" checked>
-            <span>詳細集水區資訊</span>
-          </label>
-        </div>
-
-        <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
-          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">副航點資訊</span>
-          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
-            <input type="checkbox" id="im-detail-weather">
-            <span>詳細天氣資訊</span>
-          </label>
-          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
-            <input type="checkbox" id="im-detail-catchment">
-            <span>詳細集水區資訊</span>
-          </label>
-        </div>
-
-        <div class="pace-checks-row">
-          <label class="pace-check-opt" title="點擊航點高亮時，地圖自動移動讓該點顯示在中央">
-            <input type="checkbox" id="waypoint-centering-enable" checked>
-            <span>航點置中</span>
-          </label>
-        </div>
-
-      </div>
-    </section>
-
-    <!-- Route Library -->
-    <section class="panel-section collapsible" id="file-management-section">
-      <div class="section-header collapsible-header collapsed" id="file-management-toggle-header">
-        <h3>
-          <svg viewBox="0 0 24 24" width="18" height="18">
-            <path
-              d="M10 4l2 2h8c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2L2.01 6c0-1.1.89-2 1.99-2h6z"
-              fill="currentColor" />
-          </svg>
-          <span class="h3-label">我的最愛</span>
-        </h3>
-        <div class="section-actions file-header-actions" onclick="event.stopPropagation()">
-          <button class="icon-btn file-header-btn route-library-header-btn" id="btn-favorite-add" title="加到最愛" aria-label="加到最愛">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24z" fill="currentColor" />
-            </svg>
-          </button>
-          <button class="icon-btn file-header-btn route-library-header-btn" id="btn-import-gpx" title="匯入 GPX / KML / .melmap" aria-label="匯入路線">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
-            </svg>
-          </button>
-          <button class="icon-btn file-header-btn route-library-header-btn accent" id="btn-export-gpx" title="匯出" aria-label="匯出">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
-            </svg>
-          </button>
-        </div>
-        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
-          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
-        </svg>
-      </div>
-      <div class="collapsible-body collapsed" id="file-management-body">
-        <div class="route-library-current">
-          <div class="route-library-current-main">
-            <div class="route-library-current-name" id="route-library-current-name">目前路線</div>
-            <div class="route-library-current-meta" id="route-library-current-meta">尚未建立路線</div>
-          </div>
-          <span class="route-library-state" id="route-library-current-state">空白</span>
-        </div>
-        <div class="route-library-tabs" role="tablist" aria-label="我的最愛分類">
-          <button type="button" class="route-library-tab active" data-route-library-tab="saved">已保存</button>
-          <button type="button" class="route-library-tab" data-route-library-tab="offline">離線包</button>
-          <button type="button" class="route-library-tab" data-route-library-tab="import">匯入選項</button>
-        </div>
-
-        <div class="route-library-tab-panel active" id="route-library-tab-saved">
-          <div class="favorites-list route-library-list" id="route-library-list"></div>
-        </div>
-
-        <div class="route-library-tab-panel" id="route-library-tab-offline">
-          <div class="offline-pack-panel">
-            <div class="offline-controls">
-              <div class="offline-status">
-                <span class="status-dot online"></span>
-                <span>線上模式</span>
-              </div>
-              <div class="cache-info" id="cache-info"><span>快取瓦片：0 個</span></div>
-            </div>
-            <div class="offline-pack-list" id="offline-pack-list" aria-live="polite">
-              <div class="offline-pack-empty">尚無離線圖磚包</div>
-            </div>
-            <div class="settings-actions-btn-row offline-pack-actions">
-              <button class="btn-secondary file-action-btn" id="btn-clear-offline-cache" title="清除全部離線圖磚">
-                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                  <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor" />
-                </svg>
-                <span>清除全部圖磚</span>
-              </button>
-            </div>
-          </div>
-          <div class="offline-map-source-panel">
-            <div class="offline-panel-heading">
-              <div class="offline-panel-title">App 離線底圖來源</div>
-              <div class="offline-panel-note">魯地圖 .map / MBTiles</div>
-            </div>
-            <div class="offline-map-download" id="offline-map-download-links">
-              <div class="offline-map-download-heading">
-                <div class="offline-panel-title">取得離線底圖</div>
-                <div class="offline-panel-note">下載 .map 圖資後,用下方「匯入底圖」載入</div>
-              </div>
-              <div class="offline-map-download-btn-row">
-                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="rudymap" title="下載魯地圖離線圖資（台灣）">
-                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
-                  </svg>
-                  <span class="offline-map-download-name">魯地圖</span>
-                  <span class="offline-map-download-region">台灣</span>
-                </button>
-                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="openandromaps" title="下載 OpenAndroMaps 離線圖資（世界地圖）">
-                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
-                  </svg>
-                  <span class="offline-map-download-name">OpenAndroMaps</span>
-                  <span class="offline-map-download-region">世界</span>
-                </button>
-              </div>
-            </div>
-            <div class="offline-pack-list" id="offline-map-source-list" aria-live="polite">
-              <div class="offline-pack-empty">Web 版不支援魯地圖離線底圖匯入</div>
-            </div>
-            <div class="settings-actions-btn-row offline-pack-actions">
-              <button class="btn-secondary file-action-btn" id="btn-import-offline-map-source" title="匯入離線底圖來源">
-                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
-                </svg>
-                <span>匯入底圖</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="route-library-tab-panel" id="route-library-tab-import">
-          <div class="pace-checks-row file-import-options">
-            <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
-              <input type="checkbox" id="import-auto-sort-enable">
-              <span>匯入自動排序</span>
-            </label>
-            <label class="pace-check-opt" title="匯入時,為沒有名稱的航點自動命名">
-              <input type="checkbox" id="import-auto-name-enable">
-              <span>匯入自動命名</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="settings-actions-btn-row file-management-actions file-management-footer">
-          <button class="btn-secondary file-action-btn" id="btn-reset-defaults" title="全部回到預設">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path
-                d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 13c0-4.42-3.58-8-8-8zm-7 8c0 1.01.25 1.97.7 2.8l-1.46 1.46A7.93 7.93 0 0 1 4 13c0-4.42 3.58-8 8-8v3l5-5-5-5v3c-3.31 0-6 2.69-6 6z"
-                fill="currentColor" />
-            </svg>
-            <span>回到預設</span>
-          </button>
-        </div>
-      </div>
-    </section>
-
-
     <!-- Stats Section -->
     <section class="panel-section collapsible" id="stats-section">
       <div class="section-header collapsible-header collapsed" id="stats-toggle-header">
@@ -936,6 +682,112 @@
       </div>
     </section>
 
+    <!-- Waypoint Settings -->
+    <section class="panel-section collapsible panel-group-start" id="waypoint-settings-panel">
+      <div class="section-header collapsible-header collapsed" id="waypoint-settings-toggle-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path
+              d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z"
+              fill="currentColor" />
+          </svg>
+          <span class="h3-label">航點設置</span>
+        </h3>
+        <div class="section-actions waypoint-header-actions" onclick="event.stopPropagation()" title="副航點設置">
+          <div class="interval-mode-controls">
+            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
+              關</label>
+            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-distance"
+                value="distance"> 距離</label>
+            <input type="number" id="segment-interval-input" class="segment-interval-input" min="1" max="100" value="5"
+              disabled>
+            <span class="segment-interval-unit">km</span>
+            <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-pace" value="pace"
+                checked>
+              配速</label>
+          </div>
+        </div>
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
+        </svg>
+      </div>
+      <div class="collapsible-body collapsed" id="waypoint-settings-body">
+        <div class="settings-group-label"
+          style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">
+          集體操作</div>
+        <div class="pace-checks-row"
+          style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px; justify-content: flex-start;">
+          <label class="pace-check-opt">
+            <input type="checkbox" id="collective-marked-pts" checked>
+            <span>全主航點</span>
+          </label>
+          <label class="pace-check-opt">
+            <input type="checkbox" id="collective-intermediate-pts" checked>
+            <span>全副航點</span>
+          </label>
+          <label class="pace-check-opt" title="勾選全航點時將自動包含前兩項">
+            <input type="checkbox" id="collective-all-waypoints">
+            <span>全航點</span>
+          </label>
+        </div>
+        <div class="settings-actions-btn-row" style="display: flex; gap: 8px; margin-bottom: 16px;">
+          <button class="btn-secondary" id="btn-collective-minimize" title="勾選的天氣卡收縮為最小模式"
+            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">縮到最小</button>
+          <button class="btn-secondary" id="btn-collective-toggle-grid" title="勾選的天氣卡切換詳細/精簡"
+            style="flex: 1; padding: 6px; font-size: 12px; height: 32px;">切換大/小格</button>
+        </div>
+
+        <div class="settings-divider" style="height: 1px; background: var(--border); margin: 12px 0;"></div>
+
+        <div class="settings-group-label"
+          style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">
+          顯示設置</div>
+        <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px;">
+          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">顯示天氣圖示</span>
+          <label class="pace-check-opt" title="在地圖上顯示主航點的天氣圖示">
+            <input type="checkbox" id="show-waypoint-weather-icon" checked>
+            <span>主航點</span>
+          </label>
+          <label class="pace-check-opt" title="在地圖上顯示副航點的天氣圖示">
+            <input type="checkbox" id="show-intermediate-weather-icon" checked>
+            <span>副航點</span>
+          </label>
+        </div>
+
+        <div class="pace-checks-row" style="margin-bottom: 8px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
+          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">主航點資訊</span>
+          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
+            <input type="checkbox" id="wp-detail-weather" checked>
+            <span>詳細天氣資訊</span>
+          </label>
+          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
+            <input type="checkbox" id="wp-detail-catchment" checked>
+            <span>詳細集水區資訊</span>
+          </label>
+        </div>
+
+        <div class="pace-checks-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 4px 12px; align-items: center;">
+          <span style="font-size: 12px; color: var(--text-secondary); margin-right: 4px;">副航點資訊</span>
+          <label class="pace-check-opt" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
+            <input type="checkbox" id="im-detail-weather">
+            <span>詳細天氣資訊</span>
+          </label>
+          <label class="pace-check-opt" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
+            <input type="checkbox" id="im-detail-catchment">
+            <span>詳細集水區資訊</span>
+          </label>
+        </div>
+
+        <div class="pace-checks-row">
+          <label class="pace-check-opt" title="點擊航點高亮時，地圖自動移動讓該點顯示在中央">
+            <input type="checkbox" id="waypoint-centering-enable" checked>
+            <span>航點置中</span>
+          </label>
+        </div>
+
+      </div>
+    </section>
+
     <!-- Settings Section -->
     <section class="panel-section collapsible" id="settings-section">
       <div class="section-header collapsible-header collapsed" id="settings-toggle-header">
@@ -1025,8 +877,146 @@
       </div>
     </section>
 
+    <!-- Route Library -->
+    <section class="panel-section collapsible panel-group-start" id="file-management-section">
+      <div class="section-header collapsible-header collapsed" id="file-management-toggle-header">
+        <h3>
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path
+              d="M10 4l2 2h8c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2L2.01 6c0-1.1.89-2 1.99-2h6z"
+              fill="currentColor" />
+          </svg>
+          <span class="h3-label">我的最愛</span>
+        </h3>
+        <div class="section-actions file-header-actions" onclick="event.stopPropagation()">
+          <button class="icon-btn file-header-btn route-library-header-btn" id="btn-favorite-add" title="加到最愛" aria-label="加到最愛">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24z" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn file-header-btn route-library-header-btn" id="btn-import-gpx" title="匯入 GPX / KML / .melmap" aria-label="匯入路線">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="icon-btn file-header-btn route-library-header-btn accent" id="btn-export-gpx" title="匯出" aria-label="匯出">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+        <svg class="chevron-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" fill="currentColor" />
+        </svg>
+      </div>
+      <div class="collapsible-body collapsed" id="file-management-body">
+        <div class="route-library-current">
+          <div class="route-library-current-main">
+            <div class="route-library-current-name" id="route-library-current-name">目前路線</div>
+            <div class="route-library-current-meta" id="route-library-current-meta">尚未建立路線</div>
+          </div>
+          <span class="route-library-state" id="route-library-current-state">空白</span>
+        </div>
+        <div class="route-library-tabs" role="tablist" aria-label="我的最愛分類">
+          <button type="button" class="route-library-tab active" data-route-library-tab="saved">已保存</button>
+          <button type="button" class="route-library-tab" data-route-library-tab="offline">離線包</button>
+          <button type="button" class="route-library-tab" data-route-library-tab="import">匯入選項</button>
+        </div>
+
+        <div class="route-library-tab-panel active" id="route-library-tab-saved">
+          <div class="favorites-list route-library-list" id="route-library-list"></div>
+        </div>
+
+        <div class="route-library-tab-panel" id="route-library-tab-offline">
+          <div class="offline-pack-panel">
+            <div class="offline-controls">
+              <div class="offline-status">
+                <span class="status-dot online"></span>
+                <span>線上模式</span>
+              </div>
+              <div class="cache-info" id="cache-info"><span>快取瓦片：0 個</span></div>
+            </div>
+            <div class="offline-pack-list" id="offline-pack-list" aria-live="polite">
+              <div class="offline-pack-empty">尚無離線圖磚包</div>
+            </div>
+            <div class="settings-actions-btn-row offline-pack-actions">
+              <button class="btn-secondary file-action-btn" id="btn-clear-offline-cache" title="清除全部離線圖磚">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5l-1-1h-5l-1 1H5v2h14V4h-3.5z" fill="currentColor" />
+                </svg>
+                <span>清除全部圖磚</span>
+              </button>
+            </div>
+          </div>
+          <div class="offline-map-source-panel">
+            <div class="offline-panel-heading">
+              <div class="offline-panel-title">App 離線底圖來源</div>
+              <div class="offline-panel-note">魯地圖 .map / MBTiles</div>
+            </div>
+            <div class="offline-map-download" id="offline-map-download-links">
+              <div class="offline-map-download-heading">
+                <div class="offline-panel-title">取得離線底圖</div>
+                <div class="offline-panel-note">下載 .map 圖資後,用下方「匯入底圖」載入</div>
+              </div>
+              <div class="offline-map-download-btn-row">
+                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="rudymap" title="下載魯地圖離線圖資（台灣）">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                  </svg>
+                  <span class="offline-map-download-name">魯地圖</span>
+                  <span class="offline-map-download-region">台灣</span>
+                </button>
+                <button type="button" class="btn-secondary offline-map-download-btn" data-offline-map-download="openandromaps" title="下載 OpenAndroMaps 離線圖資（世界地圖）">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                  </svg>
+                  <span class="offline-map-download-name">OpenAndroMaps</span>
+                  <span class="offline-map-download-region">世界</span>
+                </button>
+              </div>
+            </div>
+            <div class="offline-pack-list" id="offline-map-source-list" aria-live="polite">
+              <div class="offline-pack-empty">Web 版不支援魯地圖離線底圖匯入</div>
+            </div>
+            <div class="settings-actions-btn-row offline-pack-actions">
+              <button class="btn-secondary file-action-btn" id="btn-import-offline-map-source" title="匯入離線底圖來源">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                </svg>
+                <span>匯入底圖</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="route-library-tab-panel" id="route-library-tab-import">
+          <div class="pace-checks-row file-import-options">
+            <label class="pace-check-opt" title="匯入僅含座標的檔案時,自動以 TSP 重新排序航點">
+              <input type="checkbox" id="import-auto-sort-enable">
+              <span>匯入自動排序</span>
+            </label>
+            <label class="pace-check-opt" title="匯入時,為沒有名稱的航點自動命名">
+              <input type="checkbox" id="import-auto-name-enable">
+              <span>匯入自動命名</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-actions-btn-row file-management-actions file-management-footer">
+          <button class="btn-secondary file-action-btn" id="btn-reset-defaults" title="全部回到預設">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path
+                d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 13c0-4.42-3.58-8-8-8zm-7 8c0 1.01.25 1.97.7 2.8l-1.46 1.46A7.93 7.93 0 0 1 4 13c0-4.42 3.58-8 8-8v3l5-5-5-5v3c-3.31 0-6 2.69-6 6z"
+                fill="currentColor" />
+            </svg>
+            <span>回到預設</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
     <!-- Instructions Section -->
-    <section class="panel-section collapsible" id="instructions-section">
+    <section class="panel-section collapsible panel-group-start" id="instructions-section">
       <div class="section-header collapsible-header collapsed" id="instructions-toggle-header">
         <h3>
           <svg viewBox="0 0 24 24" width="18" height="18">

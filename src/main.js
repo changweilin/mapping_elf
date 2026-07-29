@@ -14354,24 +14354,6 @@ function initKeywordSearch() {
     input.addEventListener('input', updateGmapsHref);
     mapManager.map.on('moveend zoomend', updateGmapsHref);
   }
-
-  const coordInput = document.getElementById('search-coord-input');
-  const coordBtn = document.getElementById('btn-coord-go');
-  if (coordInput && coordBtn) {
-    const goToCoord = () => {
-      const coords = parseLatLngInput(coordInput.value.trim());
-      if (!coords) {
-        showNotification('座標格式錯誤,請輸入「緯度, 經度」', 'warning');
-        return;
-      }
-      const [lat, lng] = coords;
-      mapManager.map.setView([lat, lng], Math.max(mapManager.map.getZoom(), 14));
-    };
-    coordBtn.addEventListener('click', goToCoord);
-    coordInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); goToCoord(); }
-    });
-  }
 }
 
 function resetToDefaults() {
