@@ -32,6 +32,8 @@ Do not use this skill for pure CSS/RWD styling; hand off that work to `mapping-e
 - Leaflet receives `[lat,lng]`, while GeoJSON and routing APIs may use `[lng,lat]`.
 - Touch handlers must clean up listeners on cancel/end and avoid leaving drag state stuck.
 - New persisted UI state needs a named `LS_*_KEY` constant and load/save symmetry.
+- A map overlay driven by a panel/table read-out needs `syncCatchmentBasins()`-style reconcile on EVERY entry point, the all-cached fast path included — filling the table and showing 已更新 while the map stays blank reads as a broken feature. Basin overlays have two independent owners (per-card 集水區 view, and the 集水區 bottom panel's columns).
+- Such a reconcile must not itself fetch for bulk (panel/table) rows: the batch loader is already walking the same rows and caching as it goes, so reading again fires every row's DEM at once and rate-limits the endpoint. Draw bulk rows from cache only and let each row's own compute draw it.
 
 ## Handoff Format
 

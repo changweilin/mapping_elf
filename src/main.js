@@ -4199,6 +4199,10 @@ function setBottomPanelView(view, persist = true) {
   // Opening the catchment view renders the table, then lazily backfills any
   // waypoint whose 集水區 read-out isn't cached yet (progress-bar managed).
   if (mode === 'catchment' && bottomPanelReady) { renderCatchmentPanel(); autoFetchCatchment({ notify: true }); }
+  // Basins follow the active view: draw them for the 集水區 columns on the way in
+  // (autoFetchCatchment is a no-op when everything is already cached, so it can't
+  // be relied on for this), and clear the panel-driven ones on the way out.
+  if (bottomPanelReady) syncCatchmentBasins();
   if (persist) { try { localStorage.setItem(LS_BP_VIEW_KEY, mode); } catch (_) { } }
 }
 document.getElementById('bp-view-toggle')?.addEventListener('click', (e) => {
@@ -11402,8 +11406,16 @@ function renderWeatherPanel() {
   // weatherPoints is now initialised; the bottom-panel side-effects are safe.
   // Keep the detailed-catchment table in step with the rebuilt columns (cache-only
   // repaint — new columns show cached values or '…', backfilled by 取得集水區).
+  const wasBottomPanelReady = bottomPanelReady;
   bottomPanelReady = true;
-  if (getBottomPanelView() === 'catchment') renderCatchmentPanel();
+  if (getBottomPanelView() === 'catchment') {
+    renderCatchmentPanel();
+    // On the FIRST render the syncCatchmentBasins() above ran while
+    // bottomPanelReady was still false, so the panel's columns were skipped;
+    // redo it now that they count. Later renders already reconciled correctly,
+    // and repeating it there would restart every in-flight delineation.
+    if (!wasBottomPanelReady) syncCatchmentBasins();
+  }
 }
 
 /**
@@ -12393,6 +12405,7 @@ async function fetchAllCatchmentData(options = {}) {
   if (!allTargets.some((t) => t.needsFetch)) {
     allTargets.forEach(({ colIdx }) =>
       fillCatchmentTableColumn(colIdx, getSavedCatchmentCells(getSemanticKey(weatherPoints[colIdx]))));
+    syncCatchmentBasins();   // readouts were cached, the basins may not be drawn yet
     showNotification('集水區資訊已更新', 'success', 1500);
     return;
   }
@@ -12438,7 +12451,7 @@ async function fetchAllCatchmentData(options = {}) {
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
     fillCatchmentTableColumn(colIdx, readout);
     const ok = readout?.status === 'ok';
-    if (ok && isCatchmentView(colIdx) && !_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx);
+    if (ok && catchmentBasinWanted(colIdx) && !_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx);
     // Keep an open card that's showing this point's catchment view in sync.
     if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
     return ok ? 'ok' : 'fail';
@@ -12973,20 +12986,54 @@ function clearAllCardCatchments() {
   });
 }
 
+// The columns the 集水區 bottom panel is showing, or null when that panel isn't
+// the active view. Built once per reconcile so the wanted-set stays O(n).
+function catchmentPanelColumnSet() {
+  if (!bottomPanelReady || getBottomPanelView() !== 'catchment') return null;
+  return new Set(getCatchmentColumnIndices());
+}
+
+// Does this column want a basin drawn on the map? TWO independent reasons:
+//   1. its card is in 集水區 view — a per-point choice, kept even when the card is
+//      compact/minimized/closed, and independent of the bottom panel;
+//   2. the 集水區 table is the active bottom-panel view and this is one of its
+//      columns — opening that panel and pressing 取得集水區 IS a request to see the
+//      catchments, and the region on the map is the main thing the reading is
+//      about. Gating on (1) alone filled the table, reported 集水區資訊已更新, and
+//      left the map blank.
+// 詳細集水區資訊 off for the point's kind vetoes both (range neither drawn nor read).
+function catchmentBasinWanted(colIdx, panelCols = catchmentPanelColumnSet()) {
+  const pt = weatherPoints[colIdx];
+  if (!pt || !catchmentDetailEnabledFor(pt)) return false;
+  return isCatchmentView(colIdx) || !!panelCols?.has(colIdx);
+}
+
 // Single source of truth for waypoint/intermediate basin overlays: draw one for
-// every point currently in catchment view (regardless of whether its card is
-// full, compact, minimized, or closed — the view choice is what matters), and
-// clear overlays that are no longer wanted (toggled back to weather, point
-// removed, or a stale colIdx after a rebuild). Cache-first + token-guarded, so a
-// no-op reconcile is cheap and never flickers an already-correct basin.
+// every point that wants one (see catchmentBasinWanted) and clear overlays that
+// are no longer wanted (toggled back to weather, panel switched away from 集水區,
+// point removed, or a stale colIdx after a rebuild). Cache-first + token-guarded,
+// so a no-op reconcile is cheap and never flickers an already-correct basin.
+//
+// A CARD's 集水區 view may start a DEM read (the user toggled that one point). A
+// PANEL column may not: it is one of possibly dozens, and fetchAllCatchmentData is
+// already walking the same columns one at a time, drawing each basin from the
+// geometry its readout just cached. Reading here too would fire every column's DEM
+// at once alongside that loop — duplicate requests, a busy pill per column, and a
+// burst the elevation endpoint rate-limits. So an uncached panel column is skipped
+// and picked up moments later by its own compute.
 function syncCatchmentBasins() {
+  const panelCols = catchmentPanelColumnSet();
   const wanted = new Set();
-  // 詳細集水區資訊 off → no basin overlay for that point (range is neither drawn nor read).
-  weatherPoints.forEach((pt, colIdx) => { if (isCatchmentView(colIdx) && catchmentDetailEnabledFor(pt)) wanted.add(colIdx); });
+  weatherPoints.forEach((_pt, colIdx) => { if (catchmentBasinWanted(colIdx, panelCols)) wanted.add(colIdx); });
   Array.from(_cardCatchmentLayers.keys()).forEach((key) => {
     if (key !== 'cursor' && !wanted.has(key)) clearCardCatchment(key);
   });
-  wanted.forEach((colIdx) => { if (!_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx); });
+  wanted.forEach((colIdx) => {
+    if (_cardCatchmentLayers.has(colIdx)) return;
+    const pt = weatherPoints[colIdx];
+    if (!isCatchmentView(colIdx) && !getCatchmentCacheHit(pt.lat, pt.lng)) return;   // panel column, not cached yet
+    drawCatchmentPolygonForCard(colIdx);
+  });
 }
 
 // Display-only progress pill (lockScope 'none' — no editing lock) shown while a
