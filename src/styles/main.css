@@ -1226,7 +1226,21 @@ body.weather-card-busy .weather-edit-control:disabled {
 .measure-panel {
   position: fixed;
   left: 56px;
-  bottom: calc(var(--bottom-panel-height) + 10px);
+  /* Rides above #bottom-panel while there is room, but stops following the
+     分割線 once the panel would be squeezed under ~240px — past that it overlays
+     the bottom panel instead (z:620 beats #bottom-panel's z:200) rather than
+     being shoved off the top of the screen, taking its close X with it. */
+  --mp-bottom: clamp(
+    10px,
+    calc(var(--bottom-panel-height) + 10px),
+    calc(100dvh - var(--toolbar-height) - 240px)
+  );
+  bottom: var(--mp-bottom);
+  /* Paired with --mp-bottom so the top edge lands at toolbar + 20px whatever the
+     bottom offset resolves to — the panel can never grow under the toolbar. */
+  max-height: calc(100dvh - var(--toolbar-height) - 20px - var(--mp-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 620;
   width: 240px;
   padding: 12px;
@@ -1242,10 +1256,28 @@ body.weather-card-busy .weather-edit-control:disabled {
   gap: 10px;
 }
 
+/* Overflow has to become scroll, not squash: as flex items the rows would
+   shrink first, and the 繪圖板 canvas (aspect-ratio:1, bitmap sized from its CSS
+   width in syncShapeCanvasSize) would end up non-square and mis-map strokes. */
+.measure-panel > * {
+  flex: 0 0 auto;
+}
+
 .measure-panel-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Pinned to the top of the scrolling panel so the close X stays tappable at
+     any scroll depth (short viewports clamp .measure-panel's max-height). The
+     negative margins let it span the full scrollport; --bg-secondary is the same
+     tint as --bg-glass, so the pinned strip reads as part of the panel. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -12px -12px 0;
+  padding: 12px 12px 2px;
+  background: var(--bg-secondary);
+  border-radius: 11px 11px 0 0;
 }
 
 .measure-mode-toggle {
@@ -1437,6 +1469,11 @@ body.weather-card-busy .weather-edit-control:disabled {
 @media (max-width: 768px) {
   .measure-panel {
     width: min(240px, calc(100vw - 68px));
+    /* Phones: pin to the viewport bottom and let the panel overlay #bottom-panel
+       outright. Screen height is scarce here, so following the 分割線 costs the
+       tall 繪圖板 (canvas + inputs + actions) the room it needs and pushes the
+       close X off the top edge. max-height above keeps it clear of the toolbar. */
+    --mp-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -8340,7 +8377,11 @@ html.light-theme .panel-bottom-logo {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 40;
+  /* Above the floating 2D/3D pill (z:940). The pill is position:fixed at
+     toolbar+10px — i.e. exactly the band this dropdown opens into — and it is a
+     sibling inside .terrain-viewer-toolbar's stacking context, so at z:40 it
+     punched through the menu and swallowed taps on the STL / 3MF rows. */
+  z-index: 950;
   display: flex;
   flex-direction: column;
   gap: 2px;
