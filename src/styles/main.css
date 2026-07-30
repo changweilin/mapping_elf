@@ -42,6 +42,9 @@
   --panel-width: 380px;
   --toolbar-height: 56px;
   --bottom-panel-height: 190px;
+  /* Width the route summary bar keeps clear for the overlaid #bp-view-toggle
+     (3 × 30px icon buttons + border + its 10px right offset + breathing room). */
+  --bp-view-toggle-reserve: 108px;
 
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
@@ -1247,22 +1250,33 @@ body.weather-card-busy .weather-edit-control:disabled {
 
 .measure-mode-toggle {
   display: inline-flex;
-  flex: 1;
+  flex: 0 0 auto;
+  margin-right: auto;
   border: 1px solid var(--border);
   border-radius: 999px;
   overflow: hidden;
 }
 
+/* Icon-only modes (labels in title / aria-label); the hint line below the
+   toggle names the active mode, so the panel head stays compact. */
 .measure-mode-btn {
-  flex: 1;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
-  padding: 5px 8px;
+  padding: 4px 0;
   cursor: pointer;
-  white-space: nowrap;
   transition: background 0.15s, color 0.15s;
+}
+
+.measure-mode-btn svg {
+  display: block;
+  pointer-events: none;
 }
 
 .measure-mode-btn.active {
@@ -1473,7 +1487,9 @@ body.weather-card-busy .weather-edit-control:disabled {
   justify-content: center;
   align-items: center;
   gap: 28px;
-  padding: 2px 12px 7px;
+  /* Right padding reserves the footprint of #bp-view-toggle, which is absolutely
+     positioned over this same row — without it the chips scroll under the pill. */
+  padding: 2px var(--bp-view-toggle-reserve) 7px 12px;
   overflow-x: auto;
 }
 
@@ -1481,7 +1497,9 @@ body.weather-card-busy .weather-edit-control:disabled {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  min-width: 0;
+  /* Never shrink: the labels are nowrap, so shrinking made them overlap each
+     other instead of letting the strip scroll (narrow phones). */
+  flex: 0 0 auto;
 }
 
 .rsb-label {
@@ -1502,7 +1520,10 @@ body.weather-card-busy .weather-edit-control:disabled {
 @media (max-width: 640px) {
   .route-summary-bar {
     gap: 14px;
-    padding: 1px 8px 5px;
+    padding: 1px var(--bp-view-toggle-reserve) 5px 8px;
+    /* Phones: the four chips can exceed the strip. Left-align so 距離 / 預估時間
+       stay put and the rest scrolls (centred overflow would clip them). */
+    justify-content: flex-start;
   }
 
   .rsb-value {
@@ -2361,7 +2382,10 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   right: 0;
   bottom: var(--bottom-panel-height);
   width: var(--panel-width);
-  z-index: 500;
+  /* Above the floating 2D/3D pill (z:940) — the pill is fixed under the toolbar
+     and used to punch through this panel (full-width on phones), covering its
+     content and swallowing taps. Stays below .toolbar (z:1000). */
+  z-index: 950;
   background: var(--bg-glass);
   backdrop-filter: blur(24px) saturate(1.5);
   -webkit-backdrop-filter: blur(24px) saturate(1.5);
@@ -4699,7 +4723,7 @@ body.route-list-dragging {
     bottom: 0;
   }
 
-  /* 側邊欄展開時覆蓋浮動按鈕（side-panel z-index: 500） */
+  /* 側邊欄展開時覆蓋浮動按鈕（side-panel z-index: 950） */
   .map-action-btns {
     z-index: 490;
   }
@@ -5229,16 +5253,26 @@ body.is-resizing {
   backdrop-filter: blur(8px);
 }
 
+/* Icon-only: keeps the pill ~90px wide so it stops covering the summary bar's
+   距離 / 預估時間 chips underneath (labels live in title / aria-label). */
 .bp-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 11px;
   line-height: 1;
-  padding: 4px 10px;
+  padding: 0;
   cursor: pointer;
-  white-space: nowrap;
   transition: background 0.15s, color 0.15s;
+}
+
+.bp-view-btn svg {
+  display: block;
+  pointer-events: none;
 }
 
 .bp-view-btn.active {
