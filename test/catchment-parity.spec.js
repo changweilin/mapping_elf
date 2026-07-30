@@ -6,8 +6,10 @@ import { expect, test } from '@playwright/test';
 const ANCHOR = [23.5, 121.0];
 
 // Cone DEM that drains to map centre. While `failRightDem` is set, the RIGHT
-// waypoint's grid (mean longitude past the midpoint) returns FLAT terrain, which
-// yields a non-'ok' delineation → that column reads "—" (fast, no network retry).
+// waypoint's grid (mean longitude past the midpoint) comes back with NO usable
+// samples, which yields a non-'ok' delineation → that column reads "—" (fast, no
+// network retry). Note this can't be faked with flat terrain any more: 平地 is a
+// settled answer that shows 平地 and is deliberately never retried.
 const failRightDem = { v: false };
 function coneElevation(page) {
   return page.route(/v1\/elevation/, (route) => {
@@ -15,9 +17,9 @@ function coneElevation(page) {
     const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
     const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
     const meanLng = lngs.reduce((a, b) => a + b, 0) / lngs.length;
-    const flat = failRightDem.v && meanLng > 121.6;
+    const dead = failRightDem.v && meanLng > 121.6;
     const elevation = lats.map((la, i) => {
-      if (flat) return 500;
+      if (dead) return null;
       const dy = (la - ANCHOR[0]) * 111320;
       const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
       return 100 + 0.1 * Math.hypot(dx, dy);
