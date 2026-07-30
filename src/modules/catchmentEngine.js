@@ -1,6 +1,7 @@
 // Catchment (集水區) delineation from a single pour-point click.
 //
-// Pipeline: sample a DEM grid around the click (Open-Meteo elevation) →
+// Pipeline: coarse flat probe (one request; a flat answer ends the run here) →
+// sample the rest of the DEM grid around the click (Open-Meteo elevation) →
 // priority-flood + ε sink fill → D8 flow directions → flow accumulation →
 // snap the outlet to the local valley → reverse-BFS the upslope area (area and
 // geomorphometry) → D∞ proportional-flow contribution field → iso-contour into
@@ -41,6 +42,51 @@ const FLAT_FRAC = 0.85;       // …and this share of the window must be near-fl
 const FILL_EPS = 0.001;       // ε to guarantee drainage across filled depressions
 const SQRT2 = Math.SQRT2;
 const MID = (GRID_N - 1) / 2;
+
+// --- Flat probe -------------------------------------------------------------
+// A flat plain has no catchment to draw, so paying for the whole DEM before
+// finding that out is wasted time: 6 elevation requests and the full flow
+// analysis, all to end at `status:'flat'`. The FIRST request is therefore a
+// 97-point probe — one chunk — and a confidently flat answer returns from it.
+//
+// The probe must not ALIAS: sampling the window on a 200 m lattice smooths real
+// 100 m-scale corrugation into a plain (measured: a ±3 m, 380 m-wavelength
+// surface the full guard rejects at 0.74 near-flat reads as 1.00 coarse). So the
+// probe samples at NATIVE resolution instead, over a smaller area:
+//   • a 9×9 stride-1 core, with slope evaluated on its inner 7×7 so every
+//     evaluated cell still has all 8 neighbours — the exact measurement
+//     isLargeFlat makes, just over ±3 cells instead of ±7;
+//   • a sparse 16-point frame on the ±7 ring, so relief is still bounded across
+//     the FULL window and a flat terrace ringed by hills cannot pass.
+//
+// Thresholds stay stricter than the full guard's (relief 6 m vs 8 m, near-flat
+// 0.95 vs 0.85) because the probe sees a subset. Anything it is not sure about
+// falls through to the full DEM and the unchanged isLargeFlat check, so the
+// probe can only make the obvious cases fast — never invent a 平地.
+//
+// Its samples are real grid cells and are kept, so the fall-through path
+// requests only the remaining 432 points: 6 requests total, as before.
+const PROBE_CORE_R = 4;        // 9×9 native-resolution core
+const PROBE_EVAL_R = 3;        // …slope evaluated on the inner 7×7 of it
+const PROBE_FRAME_OFF = [-7, -4, 0, 4, 7];   // ±7 ring samples (pairs touching ±7)
+const PROBE_RELIEF_M = 6;      // vs FLAT_RELIEF_M = 8 on the full grid
+const PROBE_FLAT_FRAC = 0.95;  // vs FLAT_FRAC = 0.85
+
+const PROBE_P = PROBE_CORE_R * 2 + 1;
+const PROBE_CORE_CELLS = [];   // full-grid indices, row-major → a PROBE_P² grid
+for (let dr = -PROBE_CORE_R; dr <= PROBE_CORE_R; dr++) {
+  for (let dc = -PROBE_CORE_R; dc <= PROBE_CORE_R; dc++) PROBE_CORE_CELLS.push((MID + dr) * GRID_N + (MID + dc));
+}
+const PROBE_FRAME_CELLS = [];
+for (const dr of PROBE_FRAME_OFF) {
+  for (const dc of PROBE_FRAME_OFF) {
+    if (Math.max(Math.abs(dr), Math.abs(dc)) === FLAT_WINDOW_R) PROBE_FRAME_CELLS.push((MID + dr) * GRID_N + (MID + dc));
+  }
+}
+const PROBE_CELLS = [...PROBE_CORE_CELLS, ...PROBE_FRAME_CELLS];   // core first
+const PROBE_SET = new Set(PROBE_CELLS);
+const REST_CELLS = [];         // everything the probe skipped
+for (let i = 0; i < GRID_N * GRID_N; i++) if (!PROBE_SET.has(i)) REST_CELLS.push(i);
 
 // 8-neighbour offsets with planar distance in cells (1 cardinal, √2 diagonal).
 const NB = [
@@ -102,7 +148,8 @@ class MinHeap {
  *   `offlineDem` is a cached 3D-terrain grid whose bbox contains the click; it is
  *   used offline-first, or as a fallback when the elevation API fails.
  * @returns {Promise<Object>} `{ status }` where status is one of
- *   'ok' | 'flat' | 'empty' | 'error' | 'aborted'. On 'ok': `outer` (ring of
+ *   'ok' | 'flat' | 'empty' | 'error' | 'aborted'. On 'flat': `relief` (m across
+ *   the window that settled it) and `source`. On 'ok': `outer` (ring of
  *   [lat,lng]), `holes` (rings), `outlet` [lat,lng], `outletEle`, `areaM2`,
  *   `cellCount`, `touchesBorder`, `source` ('api' | 'cached'), and the
  *   geomorphometry `minEle`, `maxEle`, `reliefM`, `meanSlopeDeg`, `maxSlopeDeg`,
@@ -128,8 +175,25 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
     source = 'cached';
   }
   if (finiteFrac(raw) < MIN_FINITE_FRAC) {
+    // 2a. One cheap request first — flat here means we never ask for the rest.
+    let probe = null;
     try {
-      raw = await fetchElevations(lats, lngs, signal);
+      probe = await fetchElevations(pick(lats, PROBE_CELLS), pick(lngs, PROBE_CELLS), signal);
+    } catch (err) {
+      if (err?.name === 'AbortError') return { status: 'aborted' };
+      console.warn('Catchment flat probe failed:', err.message);
+    }
+    if (finiteFrac(probe) >= MIN_FINITE_FRAC) {
+      const verdict = probeFlat(probe);
+      if (verdict.flat) return { status: 'flat', relief: verdict.relief, source: 'api' };
+    }
+    // 2b. Not flat (or the probe was unusable) — fetch what the probe skipped and
+    //     merge; the probe's samples are grid cells, so nothing is re-requested.
+    try {
+      const rest = await fetchElevations(pick(lats, REST_CELLS), pick(lngs, REST_CELLS), signal);
+      raw = new Array(GRID_N * GRID_N).fill(null);
+      PROBE_CELLS.forEach((g, k) => { raw[g] = probe ? probe[k] : null; });
+      REST_CELLS.forEach((g, k) => { raw[g] = rest[k]; });
       source = 'api';
     } catch (err) {
       if (err?.name === 'AbortError') return { status: 'aborted' };
@@ -415,6 +479,47 @@ function steepestSlope(raw, N, idx, inGrid, r, c) {
     if (slope > best) best = slope;
   }
   return best;
+}
+
+/** Values of `arr` at the given indices, in index order. */
+function pick(arr, indices) {
+  return indices.map((i) => arr[i]);
+}
+
+/** Relief (max − min) over the finite values of an array. */
+function finiteRelief(arr) {
+  let lo = Infinity, hi = -Infinity;
+  for (const v of arr) {
+    if (!Number.isFinite(v)) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return hi - lo;
+}
+
+/**
+ * The flat guard asked of the probe: the same two questions as isLargeFlat — is
+ * the window level, and is nearly all of it gently sloped — but relief comes
+ * from the core plus the ±7 frame (the full window's extent) while slope comes
+ * from the inner 7×7 of the core at native spacing (no aliasing, full
+ * neighbourhoods). Returns the relief so the caller can report it.
+ */
+function probeFlat(probe) {
+  const relief = finiteRelief(probe);
+  if (!(relief <= PROBE_RELIEF_M)) return { flat: false, relief };
+
+  const core = fillHoles(probe.slice(0, PROBE_CORE_CELLS.length), PROBE_P);
+  const pIdx = (r, c) => r * PROBE_P + c;
+  const pIn = (r, c) => r >= 0 && r < PROBE_P && c >= 0 && c < PROBE_P;
+  const flatTan = Math.tan(FLAT_SLOPE_DEG * Math.PI / 180);
+  let total = 0, flat = 0;
+  for (let dr = -PROBE_EVAL_R; dr <= PROBE_EVAL_R; dr++) {
+    for (let dc = -PROBE_EVAL_R; dc <= PROBE_EVAL_R; dc++) {
+      total++;
+      if (steepestSlope(core, PROBE_P, pIdx, pIn, PROBE_CORE_R + dr, PROBE_CORE_R + dc) < flatTan) flat++;
+    }
+  }
+  return { flat: flat / total >= PROBE_FLAT_FRAC, relief };
 }
 
 function windowRelief(raw, N, idx) {

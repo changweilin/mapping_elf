@@ -4427,7 +4427,7 @@ async function getCatchmentFor(lat, lng, { signal } = {}) {
     signal,
     offlineDem: findCachedDemAt(lat, lng),
   });
-  if (result?.status === 'ok') setCatchmentCacheData(lat, lng, result);
+  setCatchmentCacheData(lat, lng, result);   // 'ok' geometry, or a settled 平地
   return result;
 }
 
@@ -4453,10 +4453,16 @@ async function runCatchment(lat, lng) {
   catchmentAbort = null;
 
   if (result.status === 'aborted') return;
+  // 平地: label the clicked point rather than clearing the tool. Nothing is
+  // drawn — there is no divide to draw — but the readout says why.
   if (result.status === 'flat') {
     layer.clearLayers();
-    if (measureReadoutEl) measureReadoutEl.innerHTML = '';
-    showNotification('此處為大面積平地，無法判定集水方向', 'info');
+    measureDot([lat, lng], '平').addTo(layer);
+    renderMeasureReadout([
+      ['地形', CATCHMENT_FLAT_LABEL],
+      ['說明', CATCHMENT_FLAT_NOTE],
+    ]);
+    showNotification(CATCHMENT_FLAT_NOTE, 'info');
     return;
   }
   if (result.status === 'error') {
@@ -4518,6 +4524,22 @@ const CATCHMENT_HYDRO_LABELS = ['土壤含水量', '前期降雨', '預估逕流
 // Terrain-row labels (order MUST match the terrain[] array saved by saveCatchmentCells:
 // area, outlet, then computeGeometryRows → 海拔範圍/平均坡度/主流長度).
 const CATCHMENT_TERRAIN_LABELS = ['集水區面積', '出水口海拔', '海拔範圍', '平均坡度', '主流長度'];
+
+// 平地 is an ANSWER, not a failure: the terrain is too level for water to pick a
+// direction, so there is no basin to measure. It is marked in the 集水區面積 row
+// (the headline number) and saved like any other readout, so the column reads
+// 平地 instead of a row of "—" and is never re-fetched hoping for something else.
+const CATCHMENT_FLAT_LABEL = '平地';
+const CATCHMENT_FLAT_NOTE = '此處為大面積平地，無法判定集水方向';
+function buildFlatCatchmentReadout() {
+  return {
+    status: 'flat',
+    terrain: CATCHMENT_TERRAIN_LABELS.map((_, i) => (i === 0 ? CATCHMENT_FLAT_LABEL : '—')),
+    hydro: CATCHMENT_HYDRO_LABELS.map(() => '—'),
+  };
+}
+// A saved readout that says all it is ever going to say (basin measured, or 平地).
+const isSettledCatchmentReadout = (saved) => saved?.status === 'ok' || saved?.status === 'flat';
 
 // Info-card item explanations (Chinese label → Chinese description). The description
 // sentences are registered in i18n PHRASES, so the hover tooltip translates them at
@@ -9878,6 +9900,16 @@ let cachedCatchmentData = (() => {
   catch { return {}; }
 })();
 
+// A delineation worth remembering: a drawable basin, or a settled 平地 verdict.
+// Caching 'flat' matters as much as caching 'ok' — without it every re-render of
+// a plains route pays the DEM probe again to be told 平地 a second time. It has
+// no geometry, so it is stored (and restored) as the bare verdict.
+function isCacheableCatchment(result) {
+  if (!result) return false;
+  if (result.status === 'flat') return true;
+  return result.status === 'ok' && Array.isArray(result.outer) && result.outer.length > 0;
+}
+
 function normalizeCatchmentCacheStore(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const now = Date.now();
@@ -9888,7 +9920,7 @@ function normalizeCatchmentCacheStore(raw) {
     const lng = finiteOrNull(value?.lng);
     if (lat == null || lng == null) return;
     if (Number(value?.schema) !== CATCHMENT_CACHE_SCHEMA_VERSION) return;   // stale geometry
-    if (!result || result.status !== 'ok' || !Array.isArray(result.outer) || !result.outer.length) return;
+    if (!isCacheableCatchment(result)) return;
     out[key] = {
       schema: CATCHMENT_CACHE_SCHEMA_VERSION,
       lat, lng,
@@ -9913,7 +9945,7 @@ function pruneCatchmentCache({ persist = false } = {}) {
   let changed = false;
   Object.entries(cachedCatchmentData || {}).forEach(([key, entry]) => {
     const updatedAt = finiteOrNull(entry?.updatedAt);
-    if (!updatedAt || updatedAt < cutoff || entry?.result?.status !== 'ok') {
+    if (!updatedAt || updatedAt < cutoff || !isCacheableCatchment(entry?.result)) {
       delete cachedCatchmentData[key];
       changed = true;
     }
@@ -9930,7 +9962,7 @@ function getCatchmentCacheHit(lat, lng) {
 }
 
 function setCatchmentCacheData(lat, lng, result) {
-  if (!weatherCacheEnabled || result?.status !== 'ok') return;
+  if (!weatherCacheEnabled || !isCacheableCatchment(result)) return;
   cachedCatchmentData[catchmentCoordKey(lat, lng)] = {
     schema: CATCHMENT_CACHE_SCHEMA_VERSION,
     lat: Number(lat),
@@ -12175,7 +12207,7 @@ function computeCatchmentColumnLayout() {
 // Saved-cell value (HTML, may carry a risk chip) for a catchment row/column, or '…'.
 function catchmentTableCellHtml(pt, row) {
   const saved = getSavedCatchmentCells(getSemanticKey(pt));
-  if (saved?.status === 'ok') {
+  if (isSettledCatchmentReadout(saved)) {
     const arr = row.section === 'terrain' ? saved.terrain : saved.hydro;
     if (Array.isArray(arr) && arr[row.i] != null) return arr[row.i];
   }
@@ -12297,7 +12329,7 @@ function catchmentCellsMatchSchedule(saved, dateStr, hour) {
 // with weather's hasCompletedWeatherLoad gating.
 function catchmentColumnNeedsFetch(pt, colIdx) {
   const saved = getSavedCatchmentCells(getSemanticKey(pt));
-  if (saved?.status !== 'ok') return true;
+  if (!isSettledCatchmentReadout(saved)) return true;
   const schedule = getWeatherPointSchedule(pt, colIdx);
   return !catchmentCellsMatchSchedule(saved, schedule?.date || null, schedule?.hour ?? null);
 }
@@ -12337,6 +12369,18 @@ async function computeCatchmentReadout(pt, colIdx, signal) {
   const hour = schedule?.hour ?? 8;
 
   const result = await getCatchmentFor(pt.lat, pt.lng, { signal });
+  // 平地: a settled answer with no basin — save it so the column shows 平地 and
+  // the auto-fetch stops asking. No hydrology read either; there is no catchment
+  // for it to describe.
+  if (result?.status === 'flat') {
+    const flat = buildFlatCatchmentReadout();
+    saveCatchmentCells(getSemanticKey(pt), {
+      ...flat,
+      dateStr: dateStr || null,
+      hour: Number.isFinite(Number(hour)) ? Number(hour) : null,
+    });
+    return flat;
+  }
   if (!result || result.status !== 'ok' || !result.outer?.length) return { status: result?.status || 'error' };
 
   const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
@@ -12371,9 +12415,9 @@ function setCatchmentColumnCells(colIdx, valueFor) {
 }
 
 function fillCatchmentTableColumn(colIdx, readout) {
-  const ok = readout?.status === 'ok';
+  const settled = isSettledCatchmentReadout(readout);
   setCatchmentColumnCells(colIdx, (row) => {
-    const arr = ok ? (row.section === 'terrain' ? readout.terrain : readout.hydro) : null;
+    const arr = settled ? (row.section === 'terrain' ? readout.terrain : readout.hydro) : null;
     return (arr && arr[row.i] != null) ? arr[row.i] : '—';
   });
 }
@@ -12450,11 +12494,13 @@ async function fetchAllCatchmentData(options = {}) {
     }
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
     fillCatchmentTableColumn(colIdx, readout);
-    const ok = readout?.status === 'ok';
-    if (ok && catchmentBasinWanted(colIdx) && !_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx);
+    // 平地 counts as answered, not failed: there is nothing to draw and nothing a
+    // retry would change, so it must not join the retry sweep or the 部分失敗 tally.
+    const settled = isSettledCatchmentReadout(readout);
+    if (readout?.status === 'ok' && catchmentBasinWanted(colIdx) && !_cardCatchmentLayers.has(colIdx)) drawCatchmentPolygonForCard(colIdx);
     // Keep an open card that's showing this point's catchment view in sync.
     if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
-    return ok ? 'ok' : 'fail';
+    return settled ? 'ok' : 'fail';
   };
 
   // Apply ONE already-cached column instantly (parity with weather's cache path):
@@ -12465,7 +12511,7 @@ async function fetchAllCatchmentData(options = {}) {
     const saved = getSavedCatchmentCells(getSemanticKey(pt));
     fillCatchmentTableColumn(colIdx, saved);
     if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
-    return saved?.status === 'ok';
+    return isSettledCatchmentReadout(saved);
   };
 
   const failedTargets = [];
@@ -13189,7 +13235,7 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
   // Prefill terrain + hydrology from the remembered readout so nothing shows "…"
   // while the live compute runs — and the info survives if a fetch fails / offline.
   const saved = getSavedCatchmentCells(semKey);
-  const hasSaved = saved?.status === 'ok';
+  const hasSaved = isSettledCatchmentReadout(saved);
   if (hasSaved) {
     if (Array.isArray(saved.terrain)) fill('terrain', saved.terrain);
     if (Array.isArray(saved.hydro)) fill('hydro', saved.hydro);
@@ -13209,12 +13255,25 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
   }
   if (stale()) return;
 
+  // 平地: mark it in place and keep the weather rows the card already shows —
+  // it's an answer about the terrain, not a failed read, so the card stays whole
+  // and the readout is remembered like any other.
+  if (result?.status === 'flat') {
+    const flat = buildFlatCatchmentReadout();
+    fill('terrain', flat.terrain);
+    fill('hydro', flat.hydro);
+    const note = container.querySelector('.ct-disclaimer');
+    if (note) note.textContent = CATCHMENT_FLAT_NOTE;
+    saveCatchmentCells(semKey, { ...flat, dateStr: dateStr || null, hour: Number.isFinite(Number(hour)) ? Number(hour) : null });
+    if (_cardPanelAbort.get(key) === abort) _cardPanelAbort.delete(key);
+    return;
+  }
+
   if (!result || result.status !== 'ok' || !result.outer?.length) {
     // Live delineation failed — keep the remembered readout on screen if we have
     // one; only show the reason when there is nothing to fall back to.
     if (hasSaved) return;
-    const msg = result?.status === 'flat' ? '此處為大面積平地，無法判定集水方向'
-      : result?.status === 'empty' ? '此處集水範圍過小'
+    const msg = result?.status === 'empty' ? '此處集水範圍過小'
       : '海拔資料取得失敗，請稍後再試';
     container.innerHTML = `<div class="ct-nodata wc-catch-msg">${msg}</div>`;
     return;
