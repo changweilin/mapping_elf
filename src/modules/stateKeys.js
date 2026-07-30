@@ -60,6 +60,14 @@ const PREFERENCE_STATE_KEYS = [
   'mappingElf_shapeRouteTrimSpurs',
 ];
 
+// Map-tool workspace state (量測工具 / 繪圖板): panel open state, mode, clicked
+// points and the drawn shape. Persisted so a reload lands back on what the user
+// was doing, and carried in .melmap like the other workspace keys.
+const TOOL_STATE_KEYS = [
+  'mappingElf_measureTool',
+  'mappingElf_shapeBoard',
+];
+
 const LAYOUT_STATE_KEYS = [
   'mappingElf_panelWidth',
   'mappingElf_panelHeight',
@@ -82,6 +90,7 @@ export const MELMAP_STATE_KEYS = unique([
   ...WEATHER_STATE_KEYS,
   ...PACE_STATE_KEYS,
   ...PREFERENCE_STATE_KEYS,
+  ...TOOL_STATE_KEYS,
   ...LAYOUT_STATE_KEYS,
 ]);
 
@@ -104,6 +113,7 @@ export const STATE_KEY_GROUPS = Object.freeze({
   weather: WEATHER_STATE_KEYS,
   pace: PACE_STATE_KEYS,
   preference: PREFERENCE_STATE_KEYS,
+  tool: TOOL_STATE_KEYS,
   layout: LAYOUT_STATE_KEYS,
   session: SESSION_STATE_KEYS,
   userCollection: USER_COLLECTION_KEYS,

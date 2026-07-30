@@ -978,6 +978,10 @@ function setCurrentRouteData(coords = [], elevations = []) {
   currentRouteCoords = coords;
   currentElevations = elevations;
   bumpRouteVersion();
+  // A restored 軌跡量測 needs the track. Every caller fills the elevation profile
+  // synchronously right after this call, so defer one macrotask to replay against
+  // the aligned profile (asc/desc included) instead of the raw coords.
+  if (pendingMeasureReplay && coords.length >= 2) setTimeout(replayPendingMeasure, 0);
 }
 
 function getWaypointSnapshotKey(waypoints = []) {
@@ -4250,6 +4254,11 @@ let catchmentEnvToken = 0;         // guards a stale env result (geometry or tim
 let catchmentLast = null;          // { lat, lng, result } — geometry kept for re-eval on time change
 let catchmentDate = '';            // chosen date YYYY-MM-DD, seeded from the weather anchor
 let catchmentHour = null;          // chosen hour 0-23, kept for the session
+const LS_MEASURE_TOOL_KEY = 'mappingElf_measureTool';
+// Saves are inert until the boot restore has read localStorage — the module-level
+// setMeasureMode('segment') below would otherwise wipe the saved state first.
+let toolStateRestored = false;
+let pendingMeasureReplay = null;   // saved segment points waiting for a route to land
 
 function measureTrack() {
   const pts = (elevationProfile?.points && elevationProfile.points.length >= 2)
@@ -4268,6 +4277,7 @@ function clearMeasureOverlay() {
   measurePoints = [];
   measureLayer?.clearLayers();
   if (measureReadoutEl) measureReadoutEl.innerHTML = '';
+  saveMeasureToolState();
 }
 
 function measureDot(latlng, label) {
@@ -4438,6 +4448,7 @@ async function runCatchment(lat, lng) {
 
   const layer = ensureMeasureLayer();
   layer.clearLayers();
+  measurePoints = [[lat, lng]];            // the clicked outlet, for the saved state
   measureDot([lat, lng], '▼').addTo(layer);
   renderMeasureReadout([['提示', '計算集水區中…']]);
 
@@ -4463,6 +4474,7 @@ async function runCatchment(lat, lng) {
       ['說明', CATCHMENT_FLAT_NOTE],
     ]);
     showNotification(CATCHMENT_FLAT_NOTE, 'info');
+    saveMeasureToolState();
     return;
   }
   if (result.status === 'error') {
@@ -4489,6 +4501,7 @@ async function runCatchment(lat, lng) {
   seedCatchmentDateTime();
   renderCatchmentBase(result);
   loadCatchmentEnv();
+  saveMeasureToolState();
   if (result.source === 'cached') showNotification('集水區為近似值（來自已快取地形）', 'info');
   else if (result.touchesBorder) showNotification('集水區可能延伸至分析範圍外', 'info');
 }
@@ -4644,6 +4657,7 @@ function renderCatchmentBase(result) {
     if (dv) catchmentDate = dv;
     if (Number.isFinite(hv)) catchmentHour = hv;
     loadCatchmentEnv();
+    saveMeasureToolState();
   };
   document.getElementById('ct-date')?.addEventListener('change', onChange);
   document.getElementById('ct-hour')?.addEventListener('change', onChange);
@@ -4722,6 +4736,7 @@ function handleMeasureClick(lat, lng) {
     measurePoints.push([lat, lng]);
     computeAreaMeasure();
   }
+  saveMeasureToolState();
 }
 
 const MEASURE_HINTS = {
@@ -4736,6 +4751,7 @@ function setMeasureMode(mode) {
     b.classList.toggle('active', b.dataset.measureMode === measureMode));
   if (measureHintEl) measureHintEl.textContent = MEASURE_HINTS[measureMode];
   clearMeasureOverlay();
+  saveMeasureToolState();
 }
 
 function setMeasureActive(active) {
@@ -4744,6 +4760,80 @@ function setMeasureActive(active) {
   measurePanel.classList.toggle('hidden', !active);
   btnMeasureTool?.setAttribute('aria-pressed', String(active));
   if (!active) clearMeasureOverlay();
+  saveMeasureToolState();
+}
+
+// --- 量測工具 暫存: panel state + clicked points survive a reload -------------
+// Only what the user put in is stored (mode, clicks, chosen catchment time); the
+// readout is recomputed on restore from the route / the 集水區 暫存.
+function saveMeasureToolState() {
+  if (!toolStateRestored) return;
+  try {
+    const open = !!measurePanel && !measurePanel.classList.contains('hidden');
+    const points = measurePoints
+      .filter((p) => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1]))
+      .map((p) => [Number(p[0].toFixed(6)), Number(p[1].toFixed(6))]);
+    if (!open && !points.length) {
+      localStorage.removeItem(LS_MEASURE_TOOL_KEY);
+      return;
+    }
+    localStorage.setItem(LS_MEASURE_TOOL_KEY, JSON.stringify({
+      open,
+      mode: measureMode,
+      points,
+      ctDate: catchmentDate || '',
+      ctHour: catchmentHour,
+    }));
+  } catch (_) { }
+}
+
+function restoreMeasureToolState() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LS_MEASURE_TOOL_KEY) || 'null'); }
+  catch (_) { saved = null; }
+  if (!saved) return;
+
+  if (MEASURE_HINTS[saved.mode]) setMeasureMode(saved.mode);
+  if (typeof saved.ctDate === 'string' && saved.ctDate) catchmentDate = saved.ctDate;
+  if (Number.isFinite(saved.ctHour)) catchmentHour = saved.ctHour;
+  // A closed panel has no overlay (setMeasureActive(false) clears it), so the
+  // points are only worth replaying when the tool was left open.
+  if (!saved.open) return;
+  setMeasureActive(true);
+
+  const points = (Array.isArray(saved.points) ? saved.points : [])
+    .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+    .map((p) => [p[0], p[1]]);
+  if (!points.length) return;
+
+  if (measureMode === 'catchment') {
+    // Cache-first only: replaying a click that would re-fetch DEM tiles on every
+    // page load is not worth it — the user can click again to compute it.
+    const [lat, lng] = points[points.length - 1];
+    if (getCatchmentCacheHit(lat, lng)) runCatchment(lat, lng);
+    return;
+  }
+  if (measureMode === 'area') {
+    measurePoints = points;
+    computeAreaMeasure();
+    return;
+  }
+  if (points.length < 2) return;             // half-finished pair — not worth restoring
+  if (measureTrack()) {
+    measurePoints = points;
+    computeSegmentMeasure();
+  } else {
+    pendingMeasureReplay = points;           // the restored route is still loading
+  }
+}
+
+// Called from setCurrentRouteData once a restored route finally lands.
+function replayPendingMeasure() {
+  const points = pendingMeasureReplay;
+  pendingMeasureReplay = null;
+  if (!points || measureMode !== 'segment' || !measureTrack()) return;
+  measurePoints = points;
+  computeSegmentMeasure();
 }
 
 mapManager.onMeasureClick = handleMeasureClick;
@@ -4777,8 +4867,10 @@ const btnShapeTool = document.getElementById('btn-shape-tool');
 const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
 const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
 const LS_SHAPE_TRIM_KEY = 'mappingElf_shapeRouteTrimSpurs';
+const LS_SHAPE_BOARD_KEY = 'mappingElf_shapeBoard';
 const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
 let shapeStrokes = [];            // drawn strokes (筆畫), each an array of [x, y] CSS px
+let shapeStrokesPending = null;   // restored strokes in 0-1 units, awaiting a laid-out canvas
 let shapeDrawing = false;
 let shapePreviewLayer = null;     // dashed target-shape outline on the map
 let shapeRouteRun = null;         // pending run: ring/anchor/scale context for the
@@ -4798,6 +4890,19 @@ let shapeGenerating = false;      // guards re-entry across the async generate f
     shapeTrimSpursInput.checked = false;
   }
 }
+
+// Persist the three planner settings as soon as they are changed, not only when
+// 產生路線 is pressed — a tweak the user never generated with still survives.
+function saveShapeSettings() {
+  try {
+    const km = readShapeDistanceKm();
+    if (km >= 1 && km <= 50) localStorage.setItem(LS_SHAPE_DISTANCE_KEY, String(km));
+    localStorage.setItem(LS_SHAPE_ANGLE_KEY, String(readShapeAngleTolDeg()));
+    localStorage.setItem(LS_SHAPE_TRIM_KEY, (shapeTrimSpursInput ? shapeTrimSpursInput.checked : true) ? '1' : '0');
+  } catch (_) { }
+}
+[shapeDistanceInput, shapeAngleSelect, shapeTrimSpursInput].forEach((el) =>
+  el?.addEventListener('change', saveShapeSettings));
 
 function shapeAllPoints() {
   return shapeStrokes.flat();
@@ -4908,7 +5013,77 @@ shapeCanvas?.addEventListener('pointermove', (e) => {
   const last = shapeStrokes[shapeStrokes.length - 1];
   if (last && last.length < 2) shapeStrokes.pop();
   redrawShapeCanvas();
+  saveShapeBoardState();
 }));
+
+// --- 繪圖板 暫存: the sketch itself survives a reload ------------------------
+// Strokes are stored in 0-1 canvas units so the drawing comes back unchanged on a
+// panel of a different width (phone ↔ desktop, rotation).
+function shapeCanvasCssWidth() {
+  const w = shapeCanvas?.getBoundingClientRect().width || 0;
+  return w >= 1 ? w : 0;
+}
+
+function normalizedShapeStrokes() {
+  const w = shapeCanvasCssWidth();
+  if (!w) return shapeStrokesPending || [];   // panel never laid out — keep what we restored
+  return shapeStrokes.map((stroke) => stroke.map(([x, y]) => [
+    Number((x / w).toFixed(4)),
+    Number((y / w).toFixed(4)),
+  ]));
+}
+
+// Restored strokes stay in 0-1 units until the canvas has a real width, i.e.
+// until the panel is actually shown.
+function hydrateShapeStrokes() {
+  if (!shapeStrokesPending) return;
+  const w = shapeCanvasCssWidth();
+  if (!w) return;
+  shapeStrokes = shapeStrokesPending.map((stroke) => stroke.map(([x, y]) => [x * w, y * w]));
+  shapeStrokesPending = null;
+}
+
+function saveShapeBoardState() {
+  if (!toolStateRestored) return;
+  try {
+    const open = !!shapePanel && !shapePanel.classList.contains('hidden');
+    const strokes = normalizedShapeStrokes();
+    if (!open && !strokes.length) {
+      localStorage.removeItem(LS_SHAPE_BOARD_KEY);
+      return;
+    }
+    localStorage.setItem(LS_SHAPE_BOARD_KEY, JSON.stringify({ open, strokes }));
+  } catch (_) { }
+}
+
+function restoreShapeBoardState() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LS_SHAPE_BOARD_KEY) || 'null'); }
+  catch (_) { saved = null; }
+  if (!saved) return;
+
+  const strokes = (Array.isArray(saved.strokes) ? saved.strokes : [])
+    .map((stroke) => (Array.isArray(stroke) ? stroke.filter((p) =>
+      Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1])) : []))
+    .filter((stroke) => stroke.length >= 2);
+  shapeStrokesPending = strokes.length ? strokes : null;
+  if (saved.open) setShapeActive(true);
+}
+
+// Boot restore for both map tools, then arm the save path. Measure goes first:
+// opening the 繪圖板 closes the 量測工具 (shared corner), and the normalising
+// saves at the end write that resolution back.
+function restoreMapToolsState() {
+  try {
+    restoreMeasureToolState();
+    restoreShapeBoardState();
+  } catch (err) {
+    console.warn('Map tool state restore failed:', err);
+  }
+  toolStateRestored = true;
+  saveMeasureToolState();
+  saveShapeBoardState();
+}
 
 function ensureShapePreviewLayer() {
   if (!shapePreviewLayer) shapePreviewLayer = L.layerGroup().addTo(mapManager.map);
@@ -4917,11 +5092,13 @@ function ensureShapePreviewLayer() {
 
 function clearShapeBoard() {
   shapeStrokes = [];
+  shapeStrokesPending = null;
   shapeDrawing = false;
   shapeRouteRun = null;
   shapePreviewLayer?.clearLayers();
   if (shapeReadoutEl) shapeReadoutEl.innerHTML = '';
   redrawShapeCanvas();
+  saveShapeBoardState();
 }
 
 function setShapeActive(active) {
@@ -4931,10 +5108,12 @@ function setShapeActive(active) {
   if (active) {
     setMeasureActive(false);   // shares the same corner of the map
     syncShapeCanvasSize();
+    hydrateShapeStrokes();
     redrawShapeCanvas();
   } else {
     shapePreviewLayer?.clearLayers();
   }
+  saveShapeBoardState();
 }
 
 function readShapeDistanceKm() {
@@ -14751,6 +14930,10 @@ async function init() {
   initWeatherCacheSettingsControls();
 
   updateFlatPlaceholder();
+
+  // Map tools (量測工具 / 繪圖板) — restore before the route so a saved 軌跡量測
+  // can replay as soon as the restored route lands (see setCurrentRouteData).
+  restoreMapToolsState();
 
   // Replay a pending .melmap GPX that was stashed just before a state-restore
   // reload. Parse + applyImportedResult will also call saveImportedTrackSession,
