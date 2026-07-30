@@ -9864,7 +9864,10 @@ function getWeatherCacheData(pt, dateStr, hour) {
 // .melmap via mappingElf_catchmentCache (see stateKeys.js). The hydrology/weather
 // overlay stays time-dependent and is fetched fresh, not stored here.
 const LS_CATCHMENT_CACHE_KEY = 'mappingElf_catchmentCache';
-const CATCHMENT_CACHE_SCHEMA_VERSION = 1;
+// 2: rings are the D∞ 50 %-contribution iso-contour, not the traced raster
+// staircase. Bump whenever the geometry changes, or a route redrawn from cache
+// mixes basins from two different delineations.
+const CATCHMENT_CACHE_SCHEMA_VERSION = 2;
 
 let cachedCatchmentData = (() => {
   try { return normalizeCatchmentCacheStore(JSON.parse(localStorage.getItem(LS_CATCHMENT_CACHE_KEY) || '{}')); }
@@ -9880,6 +9883,7 @@ function normalizeCatchmentCacheStore(raw) {
     const lat = finiteOrNull(value?.lat);
     const lng = finiteOrNull(value?.lng);
     if (lat == null || lng == null) return;
+    if (Number(value?.schema) !== CATCHMENT_CACHE_SCHEMA_VERSION) return;   // stale geometry
     if (!result || result.status !== 'ok' || !Array.isArray(result.outer) || !result.outer.length) return;
     out[key] = {
       schema: CATCHMENT_CACHE_SCHEMA_VERSION,

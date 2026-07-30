@@ -2,8 +2,19 @@
 //
 // Pipeline: sample a DEM grid around the click (Open-Meteo elevation) →
 // priority-flood + ε sink fill → D8 flow directions → flow accumulation →
-// snap the outlet to the local valley → reverse-BFS the upslope area →
-// trace the raster boundary into lat/lng rings.
+// snap the outlet to the local valley → reverse-BFS the upslope area (area and
+// geomorphometry) → D∞ proportional-flow contribution field → iso-contour into
+// lat/lng rings (the drawn divide).
+//
+// The boundary is NOT the traced raster staircase. D8 quantises flow to 8
+// directions, so its catchment is a binary mask whose divide can only run along
+// cell edges; smoothing that only rounds an artefact. Instead the divide is a
+// level-set of a CONTINUOUS field (each cell's fraction of flow that reaches the
+// outlet, from Tarboton D∞), which is defined between cell centres and is
+// therefore located to sub-cell precision wherever the terrain — not the grid —
+// parts the flow; the level itself is fitted so the ring encloses the area the
+// D8 cell count reports. Cost is one extra O(N²) sweep over the sort we already
+// do plus ~10 marching-squares passes, and zero extra network requests.
 //
 // The DEM source is Copernicus GLO-90 (~90 m native), so a 100 m grid neither
 // over- nor under-samples it. Everything here is [lat, lng] like the rest of
@@ -36,6 +47,16 @@ const NB = [
   [-1, 0, 1], [1, 0, 1], [0, -1, 1], [0, 1, 1],
   [-1, -1, SQRT2], [-1, 1, SQRT2], [1, -1, SQRT2], [1, 1, SQRT2],
 ];
+
+// The 8 D∞ triangular facets (Tarboton 1997): [cardinal dr,dc, diagonal dr,dc].
+// Each facet spans the centre cell, one cardinal neighbour and the diagonal
+// neighbour adjacent to it; flow is split between those two by the facet's
+// steepest-descent aspect angle.
+const FACETS = [
+  [0, 1, -1, 1], [-1, 0, -1, 1], [-1, 0, -1, -1], [0, -1, -1, -1],
+  [0, -1, 1, -1], [1, 0, 1, -1], [1, 0, 1, 1], [0, 1, 1, 1],
+];
+const QUARTER_PI = Math.PI / 4;
 
 /** Minimal binary min-heap keyed by elevation, FIFO tie-break for a stable fill. */
 class MinHeap {
@@ -204,7 +225,9 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
   for (let head = 0; head < queue.length; head++) {
     const c = queue[head];
     const cr = (c / N) | 0, cc = c % N;
-    if (cr === 0 || cr === N - 1 || cc === 0 || cc === N - 1) touchesBorder = true;
+    // Row/col 0 and N-1 have no flow target (the D8 loop skips them), so the set
+    // can never reach them — the effective window edge is one cell in.
+    if (cr <= 1 || cr >= N - 2 || cc <= 1 || cc >= N - 2) touchesBorder = true;
     for (const [dr, dc, dcell] of NB) {
       const nr = cr + dr, nc = cc + dc;
       if (!inGrid(nr, nc)) continue;
@@ -237,10 +260,13 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
   const maxSlopeDeg = Math.atan(maxSlope) * 180 / Math.PI;
   const reliefM = maxEle - minEle;
 
-  // --- 8. Trace the raster boundary into lat/lng rings -----------------------
-  const cornerLat = (cr) => latOf(0) + dLat / 2 - cr * dLat;
-  const cornerLng = (cc) => lngOf(0) - dLng / 2 + cc * dLng;
-  const { outer, holes } = traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng, dem);
+  // --- 8. Continuous divide: D∞ contribution field → iso-contour -------------
+  // Only the DRAWN divide comes from the continuous field; areaM2/cellCount and
+  // the geomorphometry above stay on the D8 set, so every hydrology number is
+  // bit-for-bit what it was — and the contour level is matched to that same cell
+  // count, so the ring can't disagree with the area readout either.
+  const mu = dinfContribution(z, N, idx, inGrid, order, outlet);
+  const { outer, holes } = contourRings(mu, cellCount, N, idx, inGrid, latOf, lngOf);
 
   return {
     status: 'ok',
@@ -419,147 +445,299 @@ function isLargeFlat(raw, N, idx, inGrid) {
 }
 
 /**
- * March the boundary of the catchment raster into rings, CCW with the interior
- * on the left, so shoelace sign separates the outer ring (positive) from holes.
+ * D∞ (Tarboton 1997) proportional flow → `mu[i]` = the fraction of cell i's flow
+ * that reaches the outlet. Each cell sends its flow to at most TWO adjacent
+ * neighbours, split by the aspect angle of its steepest triangular facet, so
+ * membership stops being 0/1: a cell that parts its flow 60/40 across a ridge
+ * scores 0.6, and the 0.5 level-set lands exactly on the topographic divide.
+ *
+ * On the ε-filled DEM every flow edge is strictly downhill, so the flow graph is
+ * a DAG ordered by elevation and the whole field solves in ONE ascending sweep
+ * over the sort computed for the accumulation step — O(N²), no extra sort, no
+ * iteration to convergence. (Where a facet is clamped to a pure cardinal or pure
+ * diagonal the other neighbour carries weight 0, so it may safely be a cell that
+ * has not been visited yet.)
+ *
+ * `mu ≥ 0.5` is automatically connected to the outlet: mu[i] is a convex
+ * combination of its two downslope values, so at least one downslope neighbour
+ * is ≥ mu[i] — every in-region cell has a non-decreasing chain to the outlet.
+ * No island filtering is needed, and the outlet itself is always ≥ 0.5, so the
+ * contour is never empty.
  */
-function traceBoundary(inSet, N, idx, inGrid, cornerLat, cornerLng, dem) {
-  const inCatch = (r, c) => inGrid(r, c) && inSet[idx(r, c)];
-  const node = (cr, cc) => cr * (N + 1) + cc;
-  const outAdj = new Map();          // directed corner-graph, interior on the left
-  const addEdge = (a, b) => {
-    if (!outAdj.has(a)) outAdj.set(a, []);
-    outAdj.get(a).push(b);
+function dinfContribution(z, N, idx, inGrid, order, outlet) {
+  const mu = new Float64Array(N * N);
+  mu[outlet] = 1;                                   // absorbing
+  for (let k = order.length - 1; k >= 0; k--) {     // `order` is descending → ascend
+    const i = order[k];
+    if (i === outlet) continue;
+    const r = (i / N) | 0, c = i % N;
+    let bestS = 0, bestAng = 0, cardinal = -1, diagonal = -1;
+    for (const [cr, cc, dr, dc] of FACETS) {
+      const r1 = r + cr, c1 = c + cc, r2 = r + dr, c2 = c + dc;
+      if (!inGrid(r1, c1) || !inGrid(r2, c2)) continue;   // window edge → no facet
+      const i1 = idx(r1, c1), i2 = idx(r2, c2);
+      const s1 = (z[i] - z[i1]) / SPACING_M;              // down the cardinal edge
+      const s2 = (z[i1] - z[i2]) / SPACING_M;             // across, to the diagonal
+      let ang = Math.atan2(s2, s1), s;
+      if (ang <= 0) { ang = 0; s = s1; }                                    // all cardinal
+      else if (ang >= QUARTER_PI) { ang = QUARTER_PI; s = (z[i] - z[i2]) / (SQRT2 * SPACING_M); }
+      else s = Math.hypot(s1, s2);                                          // split
+      if (s > bestS) { bestS = s; bestAng = ang; cardinal = i1; diagonal = i2; }
+    }
+    if (cardinal < 0) continue;                     // no downslope facet → stays 0
+    const w = (QUARTER_PI - bestAng) / QUARTER_PI;  // share to the cardinal
+    mu[i] = w * mu[cardinal] + (1 - w) * mu[diagonal];
+  }
+  return mu;
+}
+
+const RING_MIN_CELLS = 0.15;       // drop degenerate slivers (one cell ≈ 0.5)
+const SIMPLIFY_TOL_CELLS = 0.12;   // Douglas–Peucker tolerance (~12 m)
+
+/**
+ * Choose the contour level so the ring encloses the same area the readout
+ * reports: the continuous field decides the SHAPE, the D8 cell count decides the
+ * SIZE. They have to agree — areaM2 comes from that cell count, so a ring drawn
+ * at any other level would contradict the number printed beside it.
+ *
+ * Why not simply contour at 0.5 ("most of this cell's flow reaches the outlet"):
+ * that only behaves where flow converges. Where it disperses, mu decays
+ * multiplicatively upslope — every split multiplies by less than one — so hardly
+ * any cell holds a majority and the basin collapses to a blob around the outlet:
+ * measured at 3–35 % of the D8 area on rough synthetic terrain, against ~110 %
+ * in a tight valley. The right level depends on how dispersive the terrain is.
+ *
+ * Level sets of mu are nested, so the enclosed area falls monotonically as the
+ * level rises — bisection finds it. Bisecting over the SORTED mu values rather
+ * than over [0,1] keeps the search well-conditioned when mu spans decades, and
+ * bounds it at ~10 passes; each pass is one marching-squares sweep of 576
+ * squares, which is noise next to the DEM fetch. Candidate levels sit midway
+ * between two consecutive values so no crossing gets dragged onto a cell centre.
+ *
+ * Area is compared on the traced polygon, not the cell count: the level shifts
+ * every crossing along its edge, so a region holding exactly N cells can enclose
+ * ~0.8 N of area (measured) once the crossings pull inward.
+ */
+function fitLevelRings(mu, targetCells, N, idx, inGrid) {
+  const vals = [];
+  for (let i = 0; i < mu.length; i++) if (mu[i] > 0) vals.push(mu[i]);
+  if (!vals.length) return [];
+  vals.sort((a, b) => b - a);
+  const levelAt = (k) => (vals[k - 1] + (k < vals.length ? vals[k] : 0)) / 2;
+
+  let lo = 1, hi = vals.length, best = null, bestErr = Infinity;
+  while (lo <= hi) {
+    const k = (lo + hi) >> 1;
+    const rings = traceLevel(mu, levelAt(k), N, idx, inGrid);
+    const area = ringsArea(rings);
+    if (rings.length && Math.abs(area - targetCells) < bestErr) {
+      bestErr = Math.abs(area - targetCells);
+      best = rings;
+    }
+    if (area < targetCells) lo = k + 1; else hi = k - 1;
+  }
+  return best || traceLevel(mu, levelAt(1), N, idx, inGrid);
+}
+
+/** Net enclosed area of a ring set in cells² (holes wind the other way). */
+function ringsArea(rings) {
+  let a = 0;
+  for (const ring of rings) a += shoelace(ring);
+  return Math.abs(a);
+}
+
+// Marching-squares segments per corner mask (NW=8, NE=4, SE=2, SW=1), oriented
+// with the ≥level side on the LEFT. Edge ids: 0=top 1=right 2=bottom 3=left.
+// Grid rows run north→south, so "left" in (col, −row) space is CCW in (lng, lat)
+// — the positive sign the outer ring is keyed on downstream. Masks 5 and 10
+// are ambiguous saddles and are resolved from the square's centre value.
+const MS_TABLE = [
+  [], [[2, 3]], [[1, 2]], [[1, 3]], [[0, 1]], null, [[0, 2]], [[0, 3]],
+  [[3, 0]], [[2, 0]], null, [[1, 0]], [[3, 1]], [[2, 1]], [[3, 2]], [],
+];
+const MS_SADDLE_5 = [[[0, 1], [2, 3]], [[0, 3], [2, 1]]];   // [centre<level, centre≥level]
+const MS_SADDLE_10 = [[[3, 0], [1, 2]], [[1, 0], [3, 2]]];
+
+/**
+ * One marching-squares sweep of the `mu = level` iso-line → closed rings in
+ * fractional (row, col) cell space.
+ *
+ * The lattice is the cell CENTRES, padded with zeros so every ring closes inside
+ * the window, and each crossing is placed by linear interpolation of mu along
+ * its edge. That interpolation is the whole point: because D∞ genuinely splits
+ * flow near a divide, mu is not binary there, so the crossing lands where the
+ * terrain parts the flow instead of on a cell edge. The staircase is gone at its
+ * source rather than filtered out afterwards, and no separate ridge-crest
+ * correction is needed (an earlier per-vertex nudge toward the higher neighbour
+ * is now redundant — on synthetic terrain it only injected per-edge jitter,
+ * tripling the ring's total turning).
+ *
+ * Cell space keeps simplification and smoothing in one isotropic metric, and
+ * lets the level search compare areas in cells without touching geography.
+ */
+function traceLevel(mu, level, N, idx, inGrid) {
+  const W2 = N + 2;                                   // lattice padded by one cell
+  const val = (r, c) => (inGrid(r, c) ? mu[idx(r, c)] : 0);
+  const idH = (r, c) => ((r + 1) * W2 + (c + 1)) * 2;
+  const idV = (r, c) => ((r + 1) * W2 + (c + 1)) * 2 + 1;
+
+  const pos = new Map();     // edge id → [rowF, colF]
+  const link = new Map();    // directed: from edge id → to edge id
+
+  // Where the level crosses this edge, clamped off the cell centres so the ring
+  // stays simple even if the field is locally degenerate.
+  const crossT = (vA, vB) => {
+    const t = (level - vA) / (vB - vA);
+    if (!Number.isFinite(t)) return 0.5;
+    return Math.min(0.98, Math.max(0.02, t));
   };
-  for (let r = 0; r < N; r++) {
-    for (let c = 0; c < N; c++) {
-      if (!inSet[idx(r, c)]) continue;
-      if (!inCatch(r - 1, c)) addEdge(node(r, c + 1), node(r, c));          // N: NE→NW
-      if (!inCatch(r + 1, c)) addEdge(node(r + 1, c), node(r + 1, c + 1));  // S: SW→SE
-      if (!inCatch(r, c - 1)) addEdge(node(r, c), node(r + 1, c));          // W: NW→SW
-      if (!inCatch(r, c + 1)) addEdge(node(r + 1, c + 1), node(r, c + 1));  // E: SE→NE
+  const putH = (r, c) => {
+    const id = idH(r, c);
+    if (!pos.has(id)) pos.set(id, [r, c + crossT(val(r, c), val(r, c + 1))]);
+    return id;
+  };
+  const putV = (r, c) => {
+    const id = idV(r, c);
+    if (!pos.has(id)) pos.set(id, [r + crossT(val(r, c), val(r + 1, c)), c]);
+    return id;
+  };
+
+  for (let r = -1; r < N; r++) {
+    for (let c = -1; c < N; c++) {
+      const nw = val(r, c), ne = val(r, c + 1), se = val(r + 1, c + 1), sw = val(r + 1, c);
+      const mask = (nw >= level ? 8 : 0) | (ne >= level ? 4 : 0)
+        | (se >= level ? 2 : 0) | (sw >= level ? 1 : 0);
+      let segs = MS_TABLE[mask];
+      if (segs === null) {                            // saddle → follow the centre
+        const centreIn = (nw + ne + se + sw) / 4 >= level ? 1 : 0;
+        segs = mask === 5 ? MS_SADDLE_5[centreIn] : MS_SADDLE_10[centreIn];
+      }
+      if (!segs.length) continue;
+      // 0=top 1=right 2=bottom 3=left, as lattice edges of this square.
+      const edge = [() => putH(r, c), () => putV(r, c + 1), () => putH(r + 1, c), () => putV(r, c)];
+      for (const [from, to] of segs) link.set(edge[from](), edge[to]());
     }
   }
 
   const rings = [];
-  for (const [start, outs] of outAdj) {
-    while (outs.length) {
-      const ring = [];
-      let cur = start;
-      for (;;) {
-        const nexts = outAdj.get(cur);
-        if (!nexts || !nexts.length) break;   // defensive: shouldn't happen
-        const nxt = nexts.pop();
-        ring.push(cur);
-        cur = nxt;
-        if (cur === start) break;
-      }
-      if (ring.length >= 3) rings.push(ring);
+  const seen = new Set();
+  for (const start of link.keys()) {
+    if (seen.has(start)) continue;
+    const ring = [];
+    let cur = start;
+    while (!seen.has(cur)) {
+      seen.add(cur);
+      ring.push(pos.get(cur));
+      const nxt = link.get(cur);
+      if (nxt === undefined) break;                   // defensive: open contour
+      cur = nxt;
     }
+    if (ring.length >= 3 && Math.abs(shoelace(ring)) >= RING_MIN_CELLS) rings.push(ring);
   }
-
-  const toLatLng = (ring) => chaikinSmooth(
-    simplifyRing(ridgeAdjust(ring, N, idx, inGrid, dem, cornerLat, cornerLng)),
-    BOUNDARY_SMOOTH_ITERS,
-  );
-
-  let outer = null, outerArea = -Infinity;
-  const holes = [];
-  for (const ring of rings) {
-    const pts = toLatLng(ring);
-    const a = signedArea(pts);
-    if (a >= 0) {                       // CCW → outer candidate
-      if (a > outerArea) {
-        if (outer) holes.push(outer);   // demote a smaller earlier candidate
-        outer = pts;
-        outerArea = a;
-      } else holes.push(pts);
-    } else holes.push(pts);             // CW → hole
-  }
-  return { outer: outer || [], holes };
-}
-
-const RIDGE_MAX_SHIFT = 0.4;   // hard cap on the divide nudge, in cells (<½ ⇒ topology-safe)
-const RIDGE_RELIEF_M = 30;     // cross-edge Δelev giving a half-strength shift
-
-/** Saturating shift magnitude (cells) from the relief across a boundary edge. */
-function ridgeShift(zA, zB) {
-  const dz = Math.abs(zA - zB);
-  return RIDGE_MAX_SHIFT * dz / (dz + RIDGE_RELIEF_M);
+  return rings;
 }
 
 /**
- * Sub-cell divide refinement (geographic, not cosmetic). Each boundary segment
- * lies on the edge between an in-cell and an out-cell, drawn on the arbitrary
- * cell-edge midline. The real watershed divide follows the ridge crest, so nudge
- * every vertex off that midline toward the HIGHER of the two cells straddling
- * its incident edges, by a bounded amount that grows with the cross-edge relief
- * (flat saddle → stay put; sharp ridge → shift most). A vertex is shared by two
- * segments; its displacement is the mean of the two segment normals, so the ring
- * stays connected. The cap (<½ cell) keeps the polygon simple and its winding
- * sign intact — outer/hole classification downstream is unaffected. Elevations
- * are the real, hole-filled DEM (pre-sink-fill); reported area stays cell-based.
- *
- * @param {number[]} ring corner-node ids (cyclic, unit steps), interior on the left
- * @returns {Array<[number,number]>} displaced [lat,lng] vertices
+ * Fit the level to the reported area, then simplify, smooth and project the
+ * rings to [lat,lng]. Douglas–Peucker before Chaikin means the smoothing pass
+ * runs on the shape's real corners (and the ring ends up with far fewer
+ * vertices than the old staircase did, which matters when a route draws dozens
+ * of basins at once).
  */
-function ridgeAdjust(ring, N, idx, inGrid, dem, cornerLat, cornerLng) {
-  const W = N + 1;
-  const n = ring.length;
-  const crOf = (id) => (id / W) | 0;
-  const ccOf = (id) => id % W;
-  const cell = (r, c) => (inGrid(r, c) ? dem[idx(r, c)] : null);
+function contourRings(mu, targetCells, N, idx, inGrid, latOf, lngOf) {
+  const rings = fitLevelRings(mu, targetCells, N, idx, inGrid);
+  if (!rings.length) return { outer: [], holes: [] };
 
-  // Per-segment normal displacement in (dcr, dcc) corner-space, toward the higher
-  // straddling cell. +cr is south (cornerLat decreases), +cc is east.
-  const seg = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const a = ring[i], b = ring[(i + 1) % n];
-    const cr = crOf(a), cc = ccOf(a), br = crOf(b), bc = ccOf(b);
-    let dcr = 0, dcc = 0;
-    if (cr === br) {                                   // horizontal edge → N/S cells
-      const col = Math.min(cc, bc);
-      const zN = cell(cr - 1, col), zS = cell(cr, col);
-      if (zN != null && zS != null) dcr = ridgeShift(zN, zS) * (zS > zN ? 1 : -1);
-    } else {                                           // vertical edge → W/E cells
-      const row = Math.min(cr, br);
-      const zW = cell(row, cc - 1), zE = cell(row, cc);
-      if (zW != null && zE != null) dcc = ridgeShift(zW, zE) * (zE > zW ? 1 : -1);
-    }
-    seg[i] = [dcr, dcc];
-  }
+  const pts = rings.map((ring) => chaikinSmooth(simplifyRing(ring, SIMPLIFY_TOL_CELLS), BOUNDARY_SMOOTH_ITERS)
+    .map(([rF, cF]) => [latOf(rF), lngOf(cF)]));
 
-  const out = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const p = seg[(i - 1 + n) % n], q = seg[i];        // the two incident segments
-    const cr = crOf(ring[i]), cc = ccOf(ring[i]);
-    out[i] = [cornerLat(cr + (p[0] + q[0]) / 2), cornerLng(cc + (p[1] + q[1]) / 2)];
-  }
-  return out;
+  // Largest ring is the catchment, the rest are holes; normalise its winding to
+  // the positive (CCW) sign the caller keys the outer/hole split on. Only rings
+  // wound the OTHER way are holes: mu ≥ level is connected to the outlet, so a
+  // second same-wound ring can only come from a saddle the centre-value rule
+  // split apart — and the caller renders every extra ring as a hole, so passing
+  // one on would bite a chunk out of the basin.
+  const areas = pts.map(signedArea);
+  let oi = 0;
+  for (let i = 1; i < areas.length; i++) if (Math.abs(areas[i]) > Math.abs(areas[oi])) oi = i;
+  const flip = areas[oi] < 0;
+  const fix = (p) => (flip ? p.slice().reverse() : p);
+  const holes = pts.filter((_, i) => i !== oi && (areas[i] < 0) !== flip).map(fix);
+  return { outer: fix(pts[oi]), holes };
 }
 
-/** Drop collinear vertices along the axis-aligned raster boundary. */
-function simplifyRing(pts) {
-  const out = [];
-  const n = pts.length;
-  for (let i = 0; i < n; i++) {
-    const a = pts[(i - 1 + n) % n], b = pts[i], c = pts[(i + 1) % n];
-    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    if (Math.abs(cross) > 1e-12) out.push(b);
+/** Shoelace area in whatever units the ring is expressed in (sign = winding). */
+function shoelace(ring) {
+  let a = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const j = (i + 1) % ring.length;
+    a += ring[i][0] * ring[j][1] - ring[j][0] * ring[i][1];
   }
+  return a / 2;
+}
+
+/**
+ * Douglas–Peucker on a CLOSED ring, tolerance in cells. The contour already
+ * follows the terrain, so this only drops vertices that say nothing (long runs
+ * along a straight divide, sub-tolerance wobble in the mu field) — it keeps
+ * every real corner, unlike a fixed-stride resample. Split at the vertex
+ * farthest from pts[0] so the two anchors are genuine extremes of the ring;
+ * simplifying a closed loop against a single anchor can otherwise collapse it.
+ */
+function simplifyRing(pts, tol) {
+  const n = pts.length;
+  if (n < 6) return pts;
+  let far = 0, fd = -1;
+  for (let i = 1; i < n; i++) {
+    const d = (pts[i][0] - pts[0][0]) ** 2 + (pts[i][1] - pts[0][1]) ** 2;
+    if (d > fd) { fd = d; far = i; }
+  }
+  const head = dpSimplify(pts.slice(0, far + 1), tol);
+  const tail = dpSimplify(pts.slice(far).concat([pts[0]]), tol);
+  const out = head.slice(0, -1).concat(tail.slice(0, -1));
   return out.length >= 3 ? out : pts;
 }
 
-const BOUNDARY_SMOOTH_ITERS = 2;   // Chaikin passes that round the raster staircase
+/** Douglas–Peucker on an open polyline; both endpoints are always kept. */
+function dpSimplify(pts, tol) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const tol2 = tol * tol;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [lo, hi] = stack.pop();
+    if (hi - lo < 2) continue;
+    const [ay, ax] = pts[lo], [by, bx] = pts[hi];
+    const dy = by - ay, dx = bx - ax;
+    const len2 = dy * dy + dx * dx;
+    let worst = -1, wi = -1;
+    for (let i = lo + 1; i < hi; i++) {
+      const [py, px] = pts[i];
+      // Perpendicular distance², degenerating to point distance² on a null span.
+      const cross = (py - ay) * dx - (px - ax) * dy;
+      const d2 = len2 > 0 ? (cross * cross) / len2 : (py - ay) ** 2 + (px - ax) ** 2;
+      if (d2 > worst) { worst = d2; wi = i; }
+    }
+    if (worst > tol2) {
+      keep[wi] = 1;
+      stack.push([lo, wi], [wi, hi]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+const BOUNDARY_SMOOTH_ITERS = 2;   // Chaikin passes that round the remaining corners
 
 /**
  * Chaikin corner-cutting on a CLOSED ring (first vertex not repeated), run AFTER
- * collinear removal so only the true 90° raster corners get rounded rather than
- * every sample along a straight edge. Each pass replaces every edge with its ¼
- * and ¾ points, converging on a smooth, continuous boundary that stays within
- * half a cell of the staircase. Winding (shoelace sign) and simplicity are
- * preserved, so the outer/hole classification and every downstream point-in-ring
- * test are unaffected; the reported area comes from the cell count, not this
- * ring, so smoothing never shifts the hydrology numbers.
+ * simplification so only the shape's real corners get rounded rather than every
+ * vertex along a straight run. This is the finishing pass, not the mechanism:
+ * the contour it receives is already a continuous, sub-cell divide, so Chaikin
+ * only takes the residual angularity off it. Each pass replaces every edge with
+ * its ¼ and ¾ points; winding (shoelace sign) and simplicity are preserved, so
+ * the outer/hole classification and every downstream point-in-ring test are
+ * unaffected, and the reported area comes from the cell count, not this ring.
  */
 function chaikinSmooth(ring, iters) {
   let pts = ring;
