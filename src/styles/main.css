@@ -463,6 +463,10 @@ html.light-theme .progress-card {
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
 }
 
+.progress-spinner {
+  position: relative;
+}
+
 .progress-spinner svg {
   display: block;
 }
@@ -476,6 +480,36 @@ html.light-theme .progress-card {
   stroke-dasharray: 90 150;
   transform-origin: center;
   animation: progressSpin 0.9s linear infinite;
+}
+
+/* Cancel (X) button centred in the spinner circle — shown only while the
+   pausable load behind this progress card is paused (see .is-paused below). */
+.progress-spinner-cancel {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 68, 102, 0.16);
+  color: #ff8a9c;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s, color 0.15s;
+}
+
+.progress-spinner-cancel:hover {
+  background: rgba(255, 68, 102, 0.32);
+  color: #ffb0bd;
+}
+
+.progress-spinner-cancel.hidden {
+  display: none;
 }
 
 @keyframes progressSpin {
@@ -629,14 +663,18 @@ body.app-initial-loading .app-busy-overlay {
   display: none;
 }
 
-/* Paused look: halt the spinner/bar/breathe animations and amber the toggle. */
+/* Paused look: halt the spinner/bar/breathe animations and amber the toggle.
+   Shared by the route/weather busy pill and the 3D terrain build card — both
+   progress cards support the same 停止/繼續 + X-cancel-when-paused UI. */
 .app-busy-overlay.is-paused .loading-content,
 .app-busy-overlay.is-paused .progress-spinner-arc,
-.app-busy-overlay.is-paused .loading-bar-fill::after {
+.app-busy-overlay.is-paused .loading-bar-fill::after,
+.tv-loading-overlay.is-paused .progress-spinner-arc {
   animation-play-state: paused;
 }
 
-.app-busy-overlay.is-paused .progress-toggle-btn {
+.app-busy-overlay.is-paused .progress-toggle-btn,
+.tv-loading-overlay.is-paused .progress-toggle-btn {
   border-color: #f59e0b;
   background: rgba(245, 158, 11, 0.16);
   color: #fbbf24;
@@ -8576,6 +8614,9 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
   background: rgba(255, 68, 102, 0.22);
   color: #ff8a9c;
 }
+.tv-loading-toggle {
+  margin-top: 4px;
+}
 
 /* Non-blocking phase (background 圖資/map-features download): the SAME loading
    overlay + bar continues counting up (see handleTerrainLoadState/state.blocking
@@ -8600,7 +8641,8 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
 }
 .tv-loading-overlay.tv-loading-bg .tv-loading-spinner,
 .tv-loading-overlay.tv-loading-bg .tv-loading-title,
-.tv-loading-overlay.tv-loading-bg .tv-loading-abort {
+.tv-loading-overlay.tv-loading-bg .tv-loading-abort,
+.tv-loading-overlay.tv-loading-bg .tv-loading-toggle {
   display: none;
 }
 .tv-loading-overlay.tv-loading-bg .tv-loading-detail {

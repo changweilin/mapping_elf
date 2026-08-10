@@ -396,6 +396,7 @@ const PHRASES = {
   '停止': { en: 'Stop', ja: '停止', ko: '중지', fr: 'Arrêter', de: 'Stopp', es: 'Detener', it: 'Ferma' },
   '繼續': { en: 'Resume', ja: '再開', ko: '계속', fr: 'Reprendre', de: 'Fortsetzen', es: 'Reanudar', it: 'Riprendi' },
   '已暫停': { en: 'Paused', ja: '一時停止', ko: '일시정지', fr: 'En pause', de: 'Pausiert', es: 'En pausa', it: 'In pausa' },
+  '已取消載入': { en: 'Loading cancelled', ja: '読み込みをキャンセルしました', ko: '로딩이 취소되었습니다', fr: 'Chargement annulé', de: 'Laden abgebrochen', es: 'Carga cancelada', it: 'Caricamento annullato' },
   '該時段的天氣狀況與代表圖示': { en: 'Weather condition and icon for this time slot', ja: 'この時間帯の天気状況と代表アイコン', ko: '해당 시간대의 날씨 상태와 대표 아이콘', fr: 'Conditions météo et icône pour ce créneau', de: 'Wetterlage und Symbol für diesen Zeitraum', es: 'Estado del tiempo e icono de este intervalo', it: 'Condizioni meteo e icona per questa fascia oraria' },
   '該時段的預估氣溫（攝氏）': { en: 'Estimated air temperature for this time slot (°C)', ja: 'この時間帯の予想気温（摂氏）', ko: '해당 시간대의 예상 기온(섭씨)', fr: 'Température prévue pour ce créneau (°C)', de: 'Erwartete Lufttemperatur für diesen Zeitraum (°C)', es: 'Temperatura estimada de este intervalo (°C)', it: 'Temperatura prevista per questa fascia (°C)' },
   '該時段每小時累積降雨量（毫米）': { en: 'Hourly rainfall accumulation for this time slot (mm)', ja: 'この時間帯の1時間あたりの降水量（ミリ）', ko: '해당 시간대의 시간당 누적 강수량(mm)', fr: 'Cumul de pluie horaire pour ce créneau (mm)', de: 'Stündliche Regenmenge für diesen Zeitraum (mm)', es: 'Lluvia acumulada por hora en este intervalo (mm)', it: 'Pioggia oraria accumulata in questa fascia (mm)' },
