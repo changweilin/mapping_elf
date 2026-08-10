@@ -425,6 +425,16 @@ function anyLoadPaused() {
 function hasPausableLoad() {
   return pausableLoadRuns.size > 0;
 }
+// Register a run AND repaint. Every caller creates its busy task first, and
+// beginRouteWeatherBusyTask paints the overlay on the spot — before the run
+// exists — so the 停止/繼續 toggle would come up hidden. Batch loads hid the bug by
+// repainting on their first per-item busyTask.set(); a load whose first item
+// hangs (or that has no progress ticks at all, like the per-card 集水區 compute)
+// left the user with a progress bar they could neither pause nor cancel.
+function registerPausableLoad(run) {
+  pausableLoadRuns.add(run);
+  updateRouteWeatherBusyOverlay();
+}
 function waitIfLoadPaused(run) {
   if (!run || !run.paused) return Promise.resolve();
   return new Promise((resolve) => { run._resume = resolve; });
@@ -455,17 +465,38 @@ function toggleLoadPause() {
 }
 // Wake a parked loop so a cancel (route replan) can unwind it cleanly.
 function unparkLoadRun(run) {
-  if (run && run._resume) { const cb = run._resume; run._resume = null; cb?.(); }
+  if (!run) return;
+  // Clearing `paused` matters: a woken-but-still-paused run keeps the overlay in
+  // its 已暫停 state and re-parks at the loop's next waitIfLoadPaused().
+  run.paused = false;
+  if (run._resume) { const cb = run._resume; run._resume = null; cb?.(); }
 }
 // X-cancel button (spinner centre, paused-only): stop whichever pausable load is
 // running for good, instead of just resuming it later. Each cancel*ForRouteReplan
 // helper already no-ops when its own load isn't the active one.
+// Each run is torn down HERE (cancel flag → abort → unpark → drop → end its busy
+// task) rather than trusting its loop to notice. A load whose owner has no cancel
+// hook — the per-card 集水區 compute — would otherwise stay parked on 停止 forever:
+// its busy task never leaves routeWeatherBusyTasks, so the progress bar stays
+// pinned open and every later 更新天氣 / 取得集水區 runs underneath a bar that never
+// closes. end() and the pausableLoadRuns delete are both idempotent, so a loop
+// that does unwind on its own still runs its finally harmlessly.
 function cancelActivePausableLoads() {
-  const hadRun = pausableLoadRuns.size > 0;
+  const runs = Array.from(pausableLoadRuns);
+  if (!runs.length) return;
   cancelWeatherFetchForRouteReplan();
   cancelCatchmentFetchForRouteReplan();
   cancelTerrain3DCatchments();
-  if (hadRun) showNotification('已取消載入', 'info', 1500);
+  cancelCardCatchmentComputes();
+  runs.forEach((run) => {
+    run.cancelled = true;
+    run.controller?.abort();
+    unparkLoadRun(run);
+    pausableLoadRuns.delete(run);
+    run.busyTask?.end();
+  });
+  updateRouteWeatherBusyOverlay();
+  showNotification('已取消載入', 'info', 1500);
 }
 
 function installRouteWeatherBusyGuard() {
@@ -923,8 +954,68 @@ let wpDetailWeather = localStorage.getItem(LS_WP_DETAIL_WEATHER_KEY) !== '0';   
 let wpDetailCatchment = localStorage.getItem(LS_WP_DETAIL_CATCHMENT_KEY) !== '0'; // default true
 let imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';    // default false
 let imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1'; // default false
+// 集水區 master switch. The feature reaches four separate surfaces (量測工具
+// mode, 底部面板 view, 3D layer, info-card 天氣/集水區 toggle) plus the per-point
+// 詳細集水區 flags; this one flag gates them all so turning it off leaves no
+// live entry point and schedules no DEM work.
+const LS_CATCHMENT_ENABLED_KEY = 'mappingElf_catchmentEnabled';
+let catchmentEnabled = localStorage.getItem(LS_CATCHMENT_ENABLED_KEY) !== '0';   // default true
 const weatherDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailWeather : imDetailWeather);
-const catchmentDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailCatchment : imDetailCatchment);
+const catchmentDetailEnabledFor = (pt) =>
+  catchmentEnabled && (pt?.isWaypoint ? wpDetailCatchment : imDetailCatchment);
+
+// Lock (never hide) every 集水區 entry point, so the feature stays discoverable
+// and the switch's effect is visible right where the user is already looking.
+function syncCatchmentEnabledUI() {
+  const on = catchmentEnabled;
+  const enableEl = document.getElementById('catchment-enable');
+  if (enableEl) enableEl.checked = on;
+  [
+    document.getElementById('wp-detail-catchment'),
+    document.getElementById('im-detail-catchment'),
+    document.getElementById('btn-catchment-quick-fetch'),
+    document.getElementById('btn-catchment-quick-view'),
+    document.querySelector('#measure-mode-toggle .measure-mode-btn[data-measure-mode="catchment"]'),
+    document.querySelector('#bp-view-toggle .bp-view-btn[data-bp-view="catchment"]'),
+    document.getElementById('btn-catchment-clear'),
+  ].forEach((el) => { if (el) el.disabled = !on; });
+  document.querySelectorAll('.catchment-gated').forEach((el) => el.classList.toggle('is-locked', !on));
+  document.getElementById('catchment-settings-group')?.classList.toggle('feature-off', !on);
+  // The 3D 集水區 button also depends on the route having 主航點, so its disabled
+  // state is owned by the terrain availability pass (which reads this flag too).
+  updateTerrainToggleAvailability();
+}
+
+// Flip the master switch. Turning it off must not leave live catchment state
+// behind: step off whichever catchment surface is showing, drop the 3D overlay,
+// and let the readers below (which all consult catchmentEnabled) clear the rest.
+function applyCatchmentEnabled(on, { persist = true } = {}) {
+  catchmentEnabled = !!on;
+  if (persist) {
+    try { localStorage.setItem(LS_CATCHMENT_ENABLED_KEY, catchmentEnabled ? '1' : '0'); } catch (_) { }
+  }
+  syncCatchmentEnabledUI();
+  if (!catchmentEnabled) {
+    if (measureMode === 'catchment') {
+      setMeasureMode('segment');
+      if (mapManager.measureMode) mapManager.measureMode = measureMode;
+    }
+    if (getBottomPanelView() === 'catchment') setBottomPanelView('elev');
+    if (terrainDisplaySettings?.catchment3d) {
+      terrainDisplaySettings.catchment3d = false;
+      saveTerrainDisplaySettings();
+      tvToggleCatchment?.classList.remove('active');
+      cancelTerrain3DCatchments();
+      terrainViewer?.setCatchmentVisible(false);
+    }
+    cursorCatchmentView = false;
+    clearCardCatchment('cursor');
+  }
+  if (bottomPanelReady) {
+    refreshOpenWeatherCards();
+    syncCatchmentBasins();
+  }
+}
 
 let paceParams = (() => {
   try { return { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') }; }
@@ -1350,6 +1441,7 @@ function applySettingsFromStorage() {
   wpDetailCatchment = localStorage.getItem(LS_WP_DETAIL_CATCHMENT_KEY) !== '0';
   imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';
   imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1';
+  catchmentEnabled = localStorage.getItem(LS_CATCHMENT_ENABLED_KEY) !== '0';
   try {
     paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
   } catch {
@@ -1423,6 +1515,7 @@ function applySettingsFromStorage() {
   if (imDetailWeatherEl) imDetailWeatherEl.checked = imDetailWeather;
   const imDetailCatchmentEl = document.getElementById('im-detail-catchment');
   if (imDetailCatchmentEl) imDetailCatchmentEl.checked = imDetailCatchment;
+  applyCatchmentEnabled(catchmentEnabled, { persist: false });
   syncWeatherCacheSettingsUI();
 
   // Refresh UI
@@ -2021,6 +2114,20 @@ function initWaypointSettings() {
   bindDetailToggle('wp-detail-catchment', LS_WP_DETAIL_CATCHMENT_KEY, wpDetailCatchment, (v) => { wpDetailCatchment = v; });
   bindDetailToggle('im-detail-weather', LS_IM_DETAIL_WEATHER_KEY, imDetailWeather, (v) => { imDetailWeather = v; });
   bindDetailToggle('im-detail-catchment', LS_IM_DETAIL_CATCHMENT_KEY, imDetailCatchment, (v) => { imDetailCatchment = v; });
+
+  // 集水區 master switch. Same busy-defer contract as the detail toggles above.
+  const catchmentEnableEl = document.getElementById('catchment-enable');
+  if (catchmentEnableEl) {
+    catchmentEnableEl.checked = catchmentEnabled;
+    catchmentEnableEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('catchment-enable', () => catchmentEnableEl.dispatchEvent(new Event('change')));
+        return;
+      }
+      applyCatchmentEnabled(catchmentEnableEl.checked);
+    });
+  }
+  applyCatchmentEnabled(catchmentEnabled, { persist: false });
 
   const importAutoSortEl = document.getElementById('import-auto-sort-enable');
   if (importAutoSortEl) {
@@ -3731,13 +3838,15 @@ function updateTerrainToggleAvailability() {
       : '此區域沒有可顯示的地圖圖資';
   }
 
-  // 集水區 needs 主航點 to delineate around.
+  // 集水區 needs 主航點 to delineate around — and the master switch to be on.
   const hasWaypoints = (terrainViewer.getWaypointCoords?.()?.length ?? 0) > 0;
   if (tvToggleCatchment) {
-    tvToggleCatchment.disabled = !hasWaypoints;
-    tvToggleCatchment.title = hasWaypoints
-      ? '集水區（開啟時自動計算各主航點的集水範圍並貼合地形顯示）'
-      : '此路線沒有可計算集水區的主航點';
+    tvToggleCatchment.disabled = !hasWaypoints || !catchmentEnabled;
+    tvToggleCatchment.title = !catchmentEnabled
+      ? '集水區功能已關閉（可在側欄「天氣設置」開啟）'
+      : hasWaypoints
+        ? '集水區（開啟時自動計算各主航點的集水範圍並貼合地形顯示）'
+        : '此路線沒有可計算集水區的主航點';
   }
 
   // 3D-print export is available once a terrain solid exists.
@@ -3834,7 +3943,7 @@ function cancelTerrain3DCatchments() {
 }
 
 async function loadTerrain3DCatchments() {
-  if (!terrainViewer) return;
+  if (!terrainViewer || !catchmentEnabled) return;
   const wps = terrainViewer.getWaypointCoords?.() || [];
   if (!wps.length) { showNotification('此路線沒有可計算集水區的主航點', 'warning', 1800); return; }
 
@@ -3853,7 +3962,7 @@ async function loadTerrain3DCatchments() {
   });
   const run = { id: `terrain3dcatch_${token}`, cancelled: false, paused: false, lockScope: 'edit', _resume: null, busyTask };
   terrain3dCatchmentRun = run;
-  pausableLoadRuns.add(run);
+  registerPausableLoad(run);
 
   try {
     for (let i = 0; i < wps.length; i++) {
@@ -4237,7 +4346,9 @@ function getBottomPanelView() {
   return 'elev';
 }
 function setBottomPanelView(view, persist = true) {
-  const mode = BP_VIEWS.includes(view) ? view : 'elev';
+  const requested = BP_VIEWS.includes(view) ? view : 'elev';
+  // 集水區 view is locked while the master switch is off (incl. a restored 暫存).
+  const mode = (requested === 'catchment' && !catchmentEnabled) ? 'elev' : requested;
   bottomPanelEl?.classList.toggle('bp-mode-weather', mode === 'weather');
   bottomPanelEl?.classList.toggle('bp-mode-catchment', mode === 'catchment');
   bottomPanelEl?.classList.toggle('bp-mode-elev', mode === 'elev');
@@ -4794,7 +4905,9 @@ const MEASURE_HINTS = {
 };
 
 function setMeasureMode(mode) {
-  measureMode = MEASURE_HINTS[mode] ? mode : 'segment';
+  const requested = MEASURE_HINTS[mode] ? mode : 'segment';
+  // 集水區 mode is locked while the master switch is off (incl. a restored 暫存).
+  measureMode = (requested === 'catchment' && !catchmentEnabled) ? 'segment' : requested;
   document.querySelectorAll('#measure-mode-toggle .measure-mode-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.measureMode === measureMode));
   if (measureHintEl) measureHintEl.textContent = MEASURE_HINTS[measureMode];
@@ -10166,13 +10279,15 @@ function persistCatchmentCache() {
   try { localStorage.setItem(LS_CATCHMENT_CACHE_KEY, JSON.stringify(cachedCatchmentData)); } catch (_) { }
 }
 
+// A catchment delineation is DEM-derived: time-independent, and identical every
+// time it is recomputed for the same point. So — unlike the weather cache — it has
+// NO age cutoff and is NOT tied to 啟用天氣快取: once computed it is kept until the
+// user clears it (clearCatchmentStoredData / 回到預設). This pass only drops entries
+// that are malformed or carry a superseded geometry schema.
 function pruneCatchmentCache({ persist = false } = {}) {
-  const maxAgeMs = Math.max(0.1, Number(weatherCacheMaxAgeDays) || WEATHER_CACHE_MAX_AGE_DEFAULT_DAYS) * 86400000;
-  const cutoff = Date.now() - maxAgeMs;
   let changed = false;
   Object.entries(cachedCatchmentData || {}).forEach(([key, entry]) => {
-    const updatedAt = finiteOrNull(entry?.updatedAt);
-    if (!updatedAt || updatedAt < cutoff || !isCacheableCatchment(entry?.result)) {
+    if (!isCacheableCatchment(entry?.result) || Number(entry?.schema) !== CATCHMENT_CACHE_SCHEMA_VERSION) {
       delete cachedCatchmentData[key];
       changed = true;
     }
@@ -10182,14 +10297,25 @@ function pruneCatchmentCache({ persist = false } = {}) {
 }
 
 function getCatchmentCacheHit(lat, lng) {
-  if (!weatherCacheEnabled) return null;
   pruneCatchmentCache({ persist: true });
   const entry = cachedCatchmentData[catchmentCoordKey(lat, lng)];
   return entry?.result || null;
 }
 
+// The one place the retained catchment data goes away: both the DEM geometry cache
+// and the per-point read-outs, plus whatever is drawn from them.
+function clearCatchmentStoredData() {
+  cachedCatchmentData = {};
+  savedCatchmentCells = {};
+  try { localStorage.removeItem(LS_CATCHMENT_CACHE_KEY); } catch (_) { }
+  try { localStorage.removeItem(LS_CATCHMENT_CELLS_KEY); } catch (_) { }
+  clearAllCardCatchments();
+  renderCatchmentPanel();
+  refreshOpenWeatherCards();
+}
+
 function setCatchmentCacheData(lat, lng, result) {
-  if (!weatherCacheEnabled || !isCacheableCatchment(result)) return;
+  if (!isCacheableCatchment(result)) return;
   cachedCatchmentData[catchmentCoordKey(lat, lng)] = {
     schema: CATCHMENT_CACHE_SCHEMA_VERSION,
     lat: Number(lat),
@@ -12047,11 +12173,36 @@ function cancelWeatherFetchForRouteReplan() {
 // legs) before 副航點 (intermediate points), so a long weather/集水區 load fills the
 // important named points first and the many intermediates afterwards. Geographic
 // order is preserved within each group.
-function orderMainWaypointsFirst(items, ptOf) {
-  const main = [];
-  const sub = [];
-  for (const it of items) (ptOf(it)?.isWaypoint ? main : sub).push(it);
-  return main.concat(sub);
+// Load priority for the progress-bar batch loads (weather + 集水區):
+//   沒有數據 → 數據不完整 → 已有數據, and 主航點 before 副航點 inside each tier.
+// Data need is the PRIMARY key: a column the user is staring at a blank for gets
+// filled before one that already reads correctly, and the complete ones cost
+// nothing to reach anyway (disk/cache hit, no request). The sort is stable, so
+// geographic order survives inside a (tier, kind) bucket.
+// `tierOf` is optional — omit it (the retry sweeps, where every item is a known
+// failure and therefore equally empty) and the order collapses to 主航點-first.
+const DATA_TIER_NONE = 0;       // 沒有數據
+const DATA_TIER_PARTIAL = 1;    // 數據不完整
+const DATA_TIER_COMPLETE = 2;   // 已有數據
+function orderByLoadPriority(items, ptOf, tierOf = null) {
+  return items
+    .map((it, idx) => ({
+      it,
+      idx,
+      tier: tierOf ? tierOf(it) : DATA_TIER_NONE,
+      kind: ptOf(it)?.isWaypoint ? 0 : 1,
+    }))
+    .sort((a, b) => (a.tier - b.tier) || (a.kind - b.kind) || (a.idx - b.idx))
+    .map((entry) => entry.it);
+}
+
+// Read from what is actually stored, deliberately independent of `force`: even a
+// forced refresh should fill the empty columns before redoing the complete ones.
+function weatherDataTier(pt, colIdx, dateStr, hour) {
+  const stored = getSavedWeatherCells(pt);
+  if (hasCompletedWeatherLoad(stored, dateStr, hour) || hasWeatherTableDetailInfo(colIdx)) return DATA_TIER_COMPLETE;
+  const partial = !!stored && WEATHER_ROWS.some((row) => hasSavedWeatherCellField(stored, row.key));
+  return partial ? DATA_TIER_PARTIAL : DATA_TIER_NONE;
 }
 
 function autoFetchWeather(options = {}) {
@@ -12171,7 +12322,7 @@ async function fetchAllWeatherData(options = {}) {
     lockScope: 'edit',
   });
   fetchRun.busyTask = busyTask;
-  pausableLoadRuns.add(fetchRun);
+  registerPausableLoad(fetchRun);
   const markWeatherProgress = () => {
     busyTask.set({
       detail: isInitialWeatherLoad
@@ -12249,7 +12400,8 @@ async function fetchAllWeatherData(options = {}) {
 
   // 主航點 first, 副航點 after (requirement: load the important named points before
   // the many intermediates). Failures are collected for a single retry sweep.
-  const orderedTargets = orderMainWaypointsFirst(targetStates, (s) => s.pt);
+  const orderedTargets = orderByLoadPriority(targetStates, (s) => s.pt,
+    (s) => weatherDataTier(s.pt, s.i, s.dateStr, s.hour));
   const failedStates = [];
   let remainingFailures = 0;
 
@@ -12335,7 +12487,7 @@ async function fetchAllWeatherData(options = {}) {
     // the failures once (主航點 first). Whatever still fails is surfaced honestly.
     let stillFailed = failedStates;
     if (!isWeatherFetchRunCancelled(fetchRun) && stillFailed.length) {
-      const retryList = orderMainWaypointsFirst(stillFailed, (s) => s.pt);
+      const retryList = orderByLoadPriority(stillFailed, (s) => s.pt);
       stillFailed = [];
       const retryTotal = retryList.length;
       let retryDone = 0;
@@ -12561,6 +12713,18 @@ function catchmentColumnNeedsFetch(pt, colIdx) {
   return !catchmentCellsMatchSchedule(saved, schedule?.date || null, schedule?.hour ?? null);
 }
 
+// Load-priority tier of a 集水區 column: nothing stored → an unsettled/partial
+// readout → a settled readout for the schedule the column currently shows.
+function catchmentDataTier(pt, colIdx) {
+  const saved = getSavedCatchmentCells(getSemanticKey(pt));
+  if (!saved) return DATA_TIER_NONE;
+  if (!isSettledCatchmentReadout(saved)) return DATA_TIER_PARTIAL;
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  return catchmentCellsMatchSchedule(saved, schedule?.date || null, schedule?.hour ?? null)
+    ? DATA_TIER_COMPLETE
+    : DATA_TIER_PARTIAL;
+}
+
 // Auto-load 集水區 for any visible column still missing it — the catchment
 // counterpart to autoFetchWeather, so a freshly-planned route backfills new
 // waypoints without a manual 取得集水區. Only runs while the catchment view is
@@ -12568,6 +12732,7 @@ function catchmentColumnNeedsFetch(pt, colIdx) {
 // just switched in, hints why) then retries once that work settles.
 function autoFetchCatchment({ notify = false } = {}) {
   if (catchmentAutoFetchTimeout) { clearTimeout(catchmentAutoFetchTimeout); catchmentAutoFetchTimeout = 0; }
+  if (!catchmentEnabled) return;
   if (!bottomPanelReady || getBottomPanelView() !== 'catchment') return;
   if (isCatchmentFetching) return;
 
@@ -12653,6 +12818,7 @@ function fillCatchmentTableColumn(colIdx, readout) {
 // `force` re-fetches all columns; otherwise only the uncached ones.
 async function fetchAllCatchmentData(options = {}) {
   const { force = false, onlyColIndex = null } = options;
+  if (!catchmentEnabled) return;
   if (isCatchmentFetching) return;
   if (!Array.isArray(weatherPoints) || weatherPoints.length === 0) {
     showNotification('請先建立路線', 'warning');
@@ -12669,7 +12835,11 @@ async function fetchAllCatchmentData(options = {}) {
     .filter((colIdx) => onlyColIndex === null || colIdx === onlyColIndex)   // single-column retry
     .map((colIdx) => ({ colIdx, pt: weatherPoints[colIdx] }))
     .filter(({ pt }) => pt)
-    .map((t) => ({ ...t, needsFetch: force || catchmentColumnNeedsFetch(t.pt, t.colIdx) }));
+    .map((t) => ({
+      ...t,
+      needsFetch: force || catchmentColumnNeedsFetch(t.pt, t.colIdx),
+      tier: catchmentDataTier(t.pt, t.colIdx),   // captured before this pass rewrites the readouts
+    }));
 
   // Nothing needs a fetch → apply saved readouts synchronously, no progress bar
   // (mirrors weather's !needsNetworkFetch fast path).
@@ -12681,9 +12851,10 @@ async function fetchAllCatchmentData(options = {}) {
     return;
   }
 
-  // 主航點 first, 副航點 (intermediates) after — the important named points get their
-  // 集水區 read-out before the many intermediates on a long, DEM-heavy load.
-  const orderedTargets = orderMainWaypointsFirst(allTargets, (t) => t.pt);
+  // Empty columns first, then partial, then already-complete; 主航點 before 副航點
+  // inside each tier. On a long, DEM-heavy load that puts the blank cells the user
+  // is watching ahead of the many intermediates and the already-answered columns.
+  const orderedTargets = orderByLoadPriority(allTargets, (t) => t.pt, (t) => t.tier);
 
   const controller = new AbortController();
   const run = { id: ++catchmentFetchRunSeq, controller, signal: controller.signal, cancelled: false, paused: false, lockScope: 'edit', _resume: null };
@@ -12699,7 +12870,7 @@ async function fetchAllCatchmentData(options = {}) {
     lockScope: 'edit',
   });
   run.busyTask = busyTask;
-  pausableLoadRuns.add(run);
+  registerPausableLoad(run);
   const fetchBtn = document.querySelector('[data-action="fetch-catchment"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
@@ -12773,7 +12944,7 @@ async function fetchAllCatchmentData(options = {}) {
     // re-attempt failures once (主航點 first) now the rate-limit window has recovered.
     let stillFailed = failedTargets;
     if (!isCatchmentFetchRunCancelled(run) && stillFailed.length) {
-      const retryList = orderMainWaypointsFirst(stillFailed, (t) => t.pt);
+      const retryList = orderByLoadPriority(stillFailed, (t) => t.pt);
       stillFailed = [];
       const retryTotal = retryList.length;
       let retryDone = 0;
@@ -13217,6 +13388,9 @@ function catchmentViewKeyFor(colIdx) {
   return pt ? getSemanticKey(pt) : `idx:${colIdx}`;
 }
 function isCatchmentView(colIdx) {
+  // Master switch off → every card reads as weather view, but the remembered
+  // choice is kept so re-enabling restores the cards the user had flipped.
+  if (!catchmentEnabled) return false;
   return _wcCatchmentViewMemory.get(catchmentViewKeyFor(colIdx)) === true;
 }
 function setCatchmentViewMemory(colIdx, on) {
@@ -13332,7 +13506,7 @@ function beginCardCatchmentBusy() {
       id: `cardcatch_${++_cardCatchmentBusyRunSeq}`, cancelled: false, paused: false,
       lockScope: 'edit', _resume: null, busyTask: _cardCatchmentBusyTask,
     };
-    pausableLoadRuns.add(_cardCatchmentBusyRun);
+    registerPausableLoad(_cardCatchmentBusyRun);
   }
   let ended = false;
   return () => {
@@ -13345,6 +13519,22 @@ function beginCardCatchmentBusy() {
       _cardCatchmentBusyTask = null;
     }
   };
+}
+
+// Cancel hook for the per-card 集水區 computes (basin draw + panel fill), used by
+// the X-cancel. Bumping each key's token makes a compute parked on 停止 bail at its
+// post-park staleness check instead of waking straight into the DEM read the user
+// just cancelled; aborting the controllers stops the ones already in flight.
+// Drawn basins are left alone — only pending work is dropped.
+function cancelCardCatchmentComputes() {
+  [[_cardCatchmentToken, _cardCatchmentAbort], [_cardPanelToken, _cardPanelAbort]].forEach(([tokens, aborts]) => {
+    Array.from(tokens.keys()).forEach((key) => tokens.set(key, (tokens.get(key) || 0) + 1));
+    aborts.forEach((controller) => controller?.abort());
+  });
+  if (_cardCatchmentBusyRun) { pausableLoadRuns.delete(_cardCatchmentBusyRun); _cardCatchmentBusyRun = null; }
+  _cardCatchmentBusyCount = 0;
+  _cardCatchmentBusyTask?.end();
+  _cardCatchmentBusyTask = null;
 }
 
 // Delineate (cache-first) and draw ONLY the basin overlay for a card key — no
@@ -13381,9 +13571,12 @@ function drawCatchmentPolygonForCard(colIdx) {
 }
 
 function buildWeatherCardViewToggleHtml(showCatchment) {
+  // Locked rather than removed when the master switch is off: the card keeps its
+  // familiar shape and the user can see why the 集水區 side is unavailable.
+  const lock = catchmentEnabled ? '' : ' disabled title="集水區功能已關閉"';
   return `<div class="wc-view-toggle" role="tablist">
     <button class="wc-view-btn${showCatchment ? '' : ' active'}" type="button" data-wc-view="weather" role="tab" aria-selected="${!showCatchment}">天氣</button>
-    <button class="wc-view-btn${showCatchment ? ' active' : ''}" type="button" data-wc-view="catchment" role="tab" aria-selected="${showCatchment}">集水區</button>
+    <button class="wc-view-btn${showCatchment ? ' active' : ''}" type="button" data-wc-view="catchment" role="tab" aria-selected="${showCatchment}"${lock}>集水區</button>
   </div>`;
 }
 
@@ -14932,6 +15125,25 @@ async function init() {
     document.getElementById('btn-weather-quick-fetch')?.addEventListener('click', () => {
       openWeatherView();
       fetchAllWeatherData({ force: true });
+    });
+  }
+
+  // --- 集水區 quick entries: same pair as weather, gated by the master switch ---
+  {
+    const openCatchmentView = () => setBottomPanelView('catchment');
+    document.getElementById('btn-catchment-quick-view')?.addEventListener('click', () => {
+      if (!catchmentEnabled) return;
+      openCatchmentView();
+    });
+    document.getElementById('btn-catchment-quick-fetch')?.addEventListener('click', () => {
+      if (!catchmentEnabled) return;
+      openCatchmentView();
+      fetchAllCatchmentData({ force: true });
+    });
+    document.getElementById('btn-catchment-clear')?.addEventListener('click', () => {
+      if (!catchmentEnabled) return;
+      clearCatchmentStoredData();
+      showNotification('已清除集水區資料', 'success', 1600);
     });
   }
 

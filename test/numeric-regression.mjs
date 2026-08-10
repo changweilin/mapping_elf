@@ -150,8 +150,9 @@ assert.ok(!MELMAP_STATE_KEYS.includes('mappingElf_importedTrack'));
 assert.ok(!MELMAP_STATE_KEYS.includes('mappingElf_favorites'));
 assert.deepEqual(
   Object.keys(STATE_KEY_GROUPS).sort(),
-  ['layout', 'pace', 'preference', 'route', 'routeSession', 'session', 'userCollection', 'weather'].sort(),
+  ['layout', 'pace', 'preference', 'route', 'routeSession', 'session', 'tool', 'userCollection', 'weather'].sort(),
 );
+assert.ok(MELMAP_STATE_KEYS.includes('mappingElf_catchmentEnabled'), '集水區 master switch should export with .melmap state');
 
 const tileBounds = {
   getWest: () => 121.4,

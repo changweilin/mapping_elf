@@ -59,9 +59,48 @@
 2. ✅ **操作說明抽成 modal**：`#instructions-section` 自側欄移除，內容（含 Phase 2 移入的天氣設置說明）原封搬進 `#instructions-modal`，由側欄 header 的「?」鈕開啟。`.instructions-content` class 不變，`renderInstructionsContent()` 語言切換重繪照常作用；modal 沿用既有 `hidden` + `body.modal-open` 模式與「僅按鈕關閉」慣例；`.instructions-modal-box` 放寬至 720px 容納雙欄說明。「說明」群組分隔帶移到 About 區塊。
 3. ⏸ **行動版四群組 tab 導航 — 暫緩**：屬行動版導航重設計，需要真機/多斷點視覺 QA 才能安全落地；且操作說明抽出後側欄長度已大幅縮短，tab 化的急迫性降低。留待確認需求後另開工作包。
 
+### Phase 4 — 群組命名、顯示設置矩陣化、集水區總開關（本次 PR）
+
+1. ✅ **群組帶改為具名**：`.panel-group-start`（無字 6px 分隔帶）換成 `.panel-group-label`（規劃與分析 / 顯示與資料 / 檔案 / 關於）。分隔線仍在（label 自帶 `border-top: 6px`），但使用者現在看得到每一塊在整個流程裡的角色。緊接 sticky header 的第一條由 `.side-panel-header + .panel-group-label` 去掉上緣，避免雙線。
+2. ✅ **航點設置「顯示設置」矩陣化**：原本三列各自重複「主航點 / 副航點」兩個標籤（6 個 `.pace-check-opt`、大量 inline style），改成 3×2 的 `.wp-display-matrix`（列＝設定、欄＝航點種類）。**所有 checkbox id 不變**，main.js 接線完全沒動；inline style 一併收進 CSS class（`.waypoint-centering-row`／`.collective-target-row`／`.collective-actions-row`）。移除後不再使用的字串「主航點資訊」「副航點資訊」已自 `i18n.js` 清除。
+3. ✅ **集水區總開關 `#catchment-enable`**：放在**天氣設置區塊內**（`#settings-body` 末段的 `#catchment-settings-group`），一個 `.section-switch` 總開關 + 「取得集水區 / 詳細集水區」快捷鍵 + 說明。放這裡是因為每一筆集水區讀數本質上就是「天氣讀數 + 地形/水文」，不值得為它多開一個側欄區塊。
+   - 新 key `mappingElf_catchmentEnabled`（預設開）已登錄 `stateKeys.js` 的 `PREFERENCE_STATE_KEYS`，隨 .melmap 匯出。
+   - 關閉時**鎖定而非隱藏**這五個入口：量測工具 `[data-measure-mode="catchment"]`、下方面板 `[data-bp-view="catchment"]`、3D `#tv-toggle-catchment`、資訊卡的「集水區」分頁、航點設置的「詳細集水區資訊」列（`.catchment-gated.is-locked`）。
+   - 單一收斂點：`catchmentDetailEnabledFor` 與 `isCatchmentView` 直接讀 `catchmentEnabled`，因此 basin 疊圖、卡片內容一併停用；`autoFetchCatchment` / `fetchAllCatchmentData` / `loadTerrain3DCatchments` 各自 early-return，關閉後不會發出任何 DEM 請求。
+   - `setMeasureMode` / `setBottomPanelView` 也擋 catchment，所以**重新載入時還原的暫存**不會把使用者送回已鎖定的畫面；`applyCatchmentEnabled(false)` 會即時把使用者移出正在看的集水區畫面並清掉 3D 疊圖。
+   - 卡片的 `_wcCatchmentViewMemory` 保留不清，重新開啟即回到原本翻到集水區的那些卡。
+   - 測試：`test/catchment-master-toggle.spec.js`（6 例，含 reload 持久化與「鎖定的按鈕真的是死的」）。
+4. 🩹 順手修掉 `test/numeric-regression.mjs` 的過期斷言：`STATE_KEY_GROUPS` 在前一個 commit（a7f025f）加了 `tool` 群組但斷言沒同步，`test:numeric` 在乾淨樹上就是紅的。
+
+### Phase 4b — 取消載入後進度條卡死（同一 PR 的 bug fix）
+
+症狀：取消載入後進度圈圈不消失，之後按「更新天氣 / 取得集水區」也清不掉。三個獨立成因：
+
+1. **註冊順序**（根因，四個載入全中）：每個可暫停載入都先 `beginRouteWeatherBusyTask()`（內部立刻重繪 overlay）**才** `pausableLoadRuns.add(run)`，所以重繪當下 `hasPausableLoad()` 還是 false → 停止/繼續鈕是 `hidden`。批次載入靠每個項目的 `busyTask.set()` 再次重繪而僥倖看不出來；**沒有進度 tick 的 per-card 集水區計算則整段期間都藏著鈕**——使用者根本按不到停止，更按不到取消。已改為統一走 `registerPausableLoad(run)`（add + 重繪），四個呼叫點同步換掉。
+2. **取消沒有涵蓋所有 run**：`cancelActivePausableLoads()` 只呼叫 weather / catchment / terrain3D 三個 `cancel*ForRouteReplan`。per-card 集水區計算沒有取消掛勾，X 一按只顯示「已取消載入」，run 仍停在 `waitIfLoadPaused` 或掛在 DEM fetch 上 → busy task 永遠留在 `routeWeatherBusyTasks`，進度條就此釘死，之後每一次載入都在一條關不掉的進度條底下跑完。改為在此處逐一拆除每個註冊過的 run（cancel flag → abort → unpark → 移出 set → `busyTask.end()`），並新增 `cancelCardCatchmentComputes()` 把各 key 的 token 進位 + abort（只停待辦工作，已畫出的集水區範圍保留）。`end()` 與 delete 都是冪等，會自行收尾的迴圈照跑 `finally` 不受影響。
+3. **`unparkLoadRun` 沒清 `paused`**：被喚醒但仍標記 paused 的 run 會讓 overlay 停在「已暫停」外觀，並在迴圈下一個 `waitIfLoadPaused` 再度停車。四個呼叫點全是取消路徑，清掉是安全的。
+
+測試：`test/load-cancel-recovery.spec.js`（3 例）。故意讓 `/v1/elevation` 永不回應以製造「取消必須真的 abort 某個東西」的狀態；已確認**移除 main.js 修正後三例全紅**。
+
+### Phase 4c — 載入優先順序與集水區資料保存
+
+1. ✅ **批次載入優先順序**：`orderMainWaypointsFirst` 換成 `orderByLoadPriority(items, ptOf, tierOf)`，排序鍵依序為
+   **資料層級（沒有數據 0 → 數據不完整 1 → 已有數據 2）→ 主航點(0)/副航點(1) → 原本的穩定順序**。
+   資料需求是**主鍵**：使用者正在盯著空白的欄位先補，已經有值的欄位反正是磁碟/快取命中、幾乎不花時間，排後面沒差。
+   - 天氣：`weatherDataTier(pt, colIdx, dateStr, hour)`，**刻意不看 `force`**——即使是強制重整，也先跑空白欄位。
+   - 集水區：`catchmentDataTier(pt, colIdx)`，在該批次改寫讀數之前先算好存進 target。
+   - 兩邊的 retry sweep 不傳 `tierOf`（重試清單裡每一項都是已知失敗＝同樣空），順序退化成原本的主航點優先。
+2. ✅ **集水區地形資料永久保存**：集水區輪廓是 DEM 推出來的，與時間無關、重算必定同值，因此：
+   - `pruneCatchmentCache()` **移除年齡門檻**（原本沿用 `weatherCacheMaxAgeDays`，預設 1 天就被清掉並重新下載），現在只丟掉格式壞掉或 schema 過期的項目。
+   - `getCatchmentCacheHit()` / `setCatchmentCacheData()` **不再受 `weatherCacheEnabled` 影響**——集水區幾何不是天氣，關掉天氣快取不該讓它每次重算。
+   - 新增 `clearCatchmentStoredData()` 與側欄「清除集水區資料」按鈕（`#btn-catchment-clear`）：這是資料唯一會消失的地方（另加既有的「回到預設」）。
+   - 卡片／表格裡屬於天氣與水文的欄位仍照 schedule 重新取得——「與時間無關」只涵蓋地形那一段。
+3. 測試：`test/load-priority-and-retention.spec.js`（3 例：資料層級主鍵、跨 reload 不因天氣年齡被清且不重新下載、關閉天氣快取仍保存＋清除按鈕確實清空）。主/副次鍵維持由 `data-load-edit-lock.spec.js:101` 釘住。
+
 ## 4. 守則對照
 
 - 元素 ID 全數不變 → 既有測試（`smoke`、`route-favorite-and-panel-toggle`、`ui-restructure` 等）之 selector 不受影響。
-- 不動 main.js 函式結構（INC-207）；Phase 1 僅刪除已無 DOM 對應的座標列事件接線，Phase 2 僅在 `applyRouteMode` 內加一個回饋 helper 呼叫，不搬移既有函式。
-- 移除的使用者可見字串已同步自 `i18n.js` 清除，未新增任何需要翻譯的字串（Phase 2 小標重用既有 key「天氣設置」）。
+- 不動 main.js 函式結構（INC-207）；Phase 1 僅刪除已無 DOM 對應的座標列事件接線，Phase 2 僅在 `applyRouteMode` 內加一個回饋 helper 呼叫，Phase 4 新增 `syncCatchmentEnabledUI` / `applyCatchmentEnabled` 兩個函式並在既有讀取點加 early-return，皆未搬移既有函式。
+- 移除的使用者可見字串已同步自 `i18n.js` 清除（Phase 4 移除「主航點資訊」「副航點資訊」）；Phase 4 新增的字串已補齊 8 語系。
 - 未動 `public/sw.js` precache 資產（INC-251 不適用）、未動 z-index 疊層（INC-325 不適用）。
+- 新 localStorage key 一律登錄 `stateKeys.js`（Phase 4：`mappingElf_catchmentEnabled` → `PREFERENCE_STATE_KEYS`）。
