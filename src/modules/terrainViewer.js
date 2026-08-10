@@ -184,6 +184,11 @@ export class TerrainViewer {
     this._aborted = false;
     this._loading = false;
 
+    // --- Pause/resume of the elevation-grid download (see pause()/resume()) ---
+    this._paused = false;
+    this._resumeCb = null;
+    this._lastLoadState = null;   // most recent *real* onLoad state, excluding pause/resume echoes
+
     // --- Route timing / metrics (set in loadRouteData) ---
     this._distances = null;       // cumulative metres, aligned to routePoints
     this._times = null;           // cumulative elapsed hours, aligned to routePoints
@@ -372,6 +377,7 @@ export class TerrainViewer {
     if (this._abortController) {
       try { this._abortController.abort(); } catch { /* noop */ }
     }
+    this._wakePaused();   // unpark a paused elevation download so it can unwind
   }
 
   // state.blocking === false marks a non-blocking phase (e.g. the background 圖資
@@ -379,7 +385,39 @@ export class TerrainViewer {
   // though the same progress channel keeps counting up toward 100.
   _emitLoad(state) {
     this._loading = !!state.active && state.blocking !== false;
+    if (!state.paused) this._lastLoadState = state;   // don't let a pause/resume echo overwrite the real snapshot
     if (this._onLoad) this._onLoad(state);
+  }
+
+  isPaused() {
+    return this._paused;
+  }
+
+  // Pauses the elevation-grid download between batches (see _fetchElevationGrid).
+  // No-op once the (fast, synchronous) mesh-build phase has started — there's no
+  // await point left for a pause to take effect on.
+  pause() {
+    if (!this._loading || this._paused || this._aborted || !this._lastLoadState) return;
+    this._paused = true;
+    this._emitLoad({ ...this._lastLoadState, active: true, paused: true, detail: '已暫停' });
+  }
+
+  resume() {
+    if (!this._paused) return;
+    if (this._lastLoadState) this._emitLoad({ ...this._lastLoadState, active: true, paused: false });
+    this._wakePaused();
+  }
+
+  _wakePaused() {
+    this._paused = false;
+    const cb = this._resumeCb;
+    this._resumeCb = null;
+    cb?.();
+  }
+
+  _waitIfPaused() {
+    if (!this._paused) return Promise.resolve();
+    return new Promise((resolve) => { this._resumeCb = resolve; });
   }
 
   getTerrainInfo() {
@@ -1975,6 +2013,9 @@ export class TerrainViewer {
 
       batchIdx++;
       onProgress?.(batchIdx / batchCount);
+
+      await this._waitIfPaused();       // park here while pause() is active
+      if (this._aborted) return null;
     }
 
     const grid = [];

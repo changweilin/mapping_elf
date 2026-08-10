@@ -330,6 +330,7 @@ function updateRouteWeatherBusyOverlay() {
   // Label + spinner flip with the paused state.
   const toggleBtn = document.getElementById('route-weather-busy-toggle');
   const pausedBadge = document.getElementById('route-weather-busy-paused');
+  const cancelBtn = document.getElementById('route-weather-busy-cancel');
   const pausable = busy && hasPausableLoad();
   const paused = pausable && anyLoadPaused();
   if (overlay) overlay.classList.toggle('is-paused', paused);
@@ -341,6 +342,9 @@ function updateRouteWeatherBusyOverlay() {
     }
   }
   if (pausedBadge) pausedBadge.classList.toggle('hidden', !paused);
+  // X-cancel appears in the spinner's centre only while paused — cancelling
+  // outright is otherwise one accidental click away from a long weather/集水區 load.
+  if (cancelBtn) cancelBtn.classList.toggle('hidden', !paused);
 
   syncBusyDisabledControls(ROUTE_WEATHER_BUSY_DISABLE_SELECTOR, routeLocked, 'route-edit-control');
   syncBusyDisabledControls(WEATHER_CARD_BUSY_DISABLE_SELECTOR, weatherCardLocked, 'weather-edit-control');
@@ -453,6 +457,16 @@ function toggleLoadPause() {
 function unparkLoadRun(run) {
   if (run && run._resume) { const cb = run._resume; run._resume = null; cb?.(); }
 }
+// X-cancel button (spinner centre, paused-only): stop whichever pausable load is
+// running for good, instead of just resuming it later. Each cancel*ForRouteReplan
+// helper already no-ops when its own load isn't the active one.
+function cancelActivePausableLoads() {
+  const hadRun = pausableLoadRuns.size > 0;
+  cancelWeatherFetchForRouteReplan();
+  cancelCatchmentFetchForRouteReplan();
+  cancelTerrain3DCatchments();
+  if (hadRun) showNotification('已取消載入', 'info', 1500);
+}
 
 function installRouteWeatherBusyGuard() {
   const toggleBtn = document.getElementById('route-weather-busy-toggle');
@@ -461,6 +475,14 @@ function installRouteWeatherBusyGuard() {
       e.preventDefault();
       e.stopPropagation();
       toggleLoadPause();
+    });
+  }
+  const cancelBtn = document.getElementById('route-weather-busy-cancel');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelActivePausableLoads();
     });
   }
   const blockPointerEvent = (e) => {
@@ -2296,6 +2318,8 @@ const tvLoadingDetail = document.getElementById('tv-loading-detail');
 const tvLoadingFill = document.getElementById('tv-loading-fill');
 const tvLoadingPercent = document.getElementById('tv-loading-percent');
 const tvLoadingAbort = document.getElementById('tv-loading-abort');
+const tvLoadingToggle = document.getElementById('tv-loading-toggle');
+const tvLoadingCancel = document.getElementById('tv-loading-cancel');
 const tvWpCard = document.getElementById('tv-wp-card');
 const tvWpCardBody = document.getElementById('tv-wp-card-body');
 let tvWpCardLeaveTimer = null;
@@ -2542,6 +2566,8 @@ function handleTerrainLoadState(state) {
     setTerrainBusy(blocking);
     tvLoading?.classList.remove('hidden');
     tvLoading?.classList.toggle('tv-loading-bg', !blocking);
+    const paused = !!state.paused;
+    tvLoading?.classList.toggle('is-paused', paused);
     const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
     if (tvLoadingFill) tvLoadingFill.style.width = `${pct}%`;
     if (tvLoadingPercent) tvLoadingPercent.textContent = `${pct}%`;
@@ -2549,12 +2575,21 @@ function handleTerrainLoadState(state) {
     if (state.detail && tvLoadingDetail) tvLoadingDetail.textContent = state.detail;
     const bar = tvLoading?.querySelector('.loading-bar');
     if (bar) bar.setAttribute('aria-valuenow', String(pct));
+    // 停止/繼續 only applies to the blocking elevation-download phase (see
+    // TerrainViewer.pause) — the X-cancel mirrors the busy-overlay pattern,
+    // shown in the spinner centre only while paused.
+    if (tvLoadingToggle) {
+      tvLoadingToggle.classList.toggle('hidden', !blocking);
+      tvLoadingToggle.textContent = translatePhrase(paused ? '繼續' : '停止');
+      tvLoadingToggle.setAttribute('aria-pressed', String(paused));
+    }
+    if (tvLoadingCancel) tvLoadingCancel.classList.toggle('hidden', !paused);
     return;
   }
   // Finished, aborted, or errored.
   setTerrainBusy(false);
   tvLoading?.classList.add('hidden');
-  tvLoading?.classList.remove('tv-loading-bg');
+  tvLoading?.classList.remove('tv-loading-bg', 'is-paused');
   terrainLastLoadOk = !state.aborted && !state.error;
   if (state.aborted) {
     // A failed/aborted *refresh* keeps the existing model on screen; only the
@@ -4137,6 +4172,19 @@ function showWaypointCard(detail) {
 tvMarkerDetailClose?.addEventListener('click', hideTerrainMarkerDetail);
 
 tvLoadingAbort?.addEventListener('click', () => {
+  if (terrainViewer?.isLoading()) {
+    terrainViewer.abort();
+  } else {
+    closeTerrainViewer();
+  }
+});
+
+tvLoadingToggle?.addEventListener('click', () => {
+  if (!terrainViewer) return;
+  if (terrainViewer.isPaused()) terrainViewer.resume(); else terrainViewer.pause();
+});
+
+tvLoadingCancel?.addEventListener('click', () => {
   if (terrainViewer?.isLoading()) {
     terrainViewer.abort();
   } else {
