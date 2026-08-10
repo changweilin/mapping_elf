@@ -31,6 +31,7 @@
 - `[2026-04-15 #INC-278]` **Vite base 雙模式**：web=`/mapping_elf/`、app=`./`。GitHub Pages 空白頁 90% 是寫死絕對路徑。
 - `[2026-05-30 #INC-310]` **3D 地形時序**：天氣點徽章等 per-point 載入完成才出現；Playwright 要等 loading「先出現、後消失」；`waitForSelector('#el.hidden')` 會永久卡住 — 改 poll classList 或 `state:'attached'`。寫新測試前先讀 `test/terrain-3d.spec.js` 既有 mock。
 - `[2026-06-12 #INC-325]` **z-index 疊層**：3D viewer `canvas-wrap` 需 `z-index:1` 把 loading overlay 壓在 toolbar 下拉之下。動 overlay/dropdown 樣式必同時驗證兩者疊層。
+- `[2026-08-10 #INC-338]` **可暫停載入的註冊與取消**：新增可暫停載入一律走 `registerPausableLoad(run)`（`beginRouteWeatherBusyTask` 會在 run 存在前就重繪 overlay，直接 `pausableLoadRuns.add` 會讓停止/取消鈕整段藏著）；同時要有取消掛勾並在 `cancelActivePausableLoads()` 涵蓋，否則 busy task 永遠留在 `routeWeatherBusyTasks`，進度條關不掉。
 
 ## 4. 核心指令與工作流
 

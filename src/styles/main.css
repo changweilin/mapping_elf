@@ -2526,11 +2526,24 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   border-bottom: none;
 }
 
-/* Task-flow group separators: a slightly taller band between the side panel's
-   functional groups (plan/analyze → display settings → files → help) so the
-   section list reads as grouped clusters instead of one flat stack. */
-.panel-group-start {
+/* Task-flow group bands between the side panel's functional groups
+   (plan/analyze → display & data → files → about). The band is named so the
+   section list reads as labelled clusters instead of one flat stack. */
+.panel-group-label {
+  padding: 7px 16px 6px;
   border-top: 6px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* The first band sits directly under the sticky header — no extra top band. */
+.side-panel-header + .panel-group-label {
+  border-top: none;
 }
 
 .section-header {
@@ -3019,6 +3032,66 @@ body.route-list-dragging {
   letter-spacing: 0.08em;
   margin-bottom: 8px;
   margin-top: 4px;
+}
+
+/* 顯示設置 matrix: one row per setting, one column per waypoint kind. Replaces
+   three stacked rows that each repeated the 主航點/副航點 labels. */
+.wp-display-matrix {
+  display: grid;
+  grid-template-columns: 1fr 64px 64px;
+  align-items: center;
+  gap: 6px 4px;
+  margin-bottom: 12px;
+}
+
+.wpm-col-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.wpm-row-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding-right: 4px;
+}
+
+.wpm-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.wpm-cell input[type="checkbox"] {
+  accent-color: var(--accent-primary);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.wpm-cell:has(input:checked) {
+  border-color: var(--accent-primary);
+  background: rgba(110, 231, 183, 0.08);
+}
+
+.waypoint-centering-row,
+.collective-target-row {
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.collective-actions-row .btn-secondary {
+  flex: 1;
+  height: 32px;
+  padding: 6px;
+  font-size: 12px;
 }
 
 .settings-actions-btn-row {
@@ -3848,6 +3921,99 @@ body.route-list-dragging {
   height: 32px;
   padding: 6px;
   font-size: 12px;
+}
+
+/* Master switch for a whole feature subgroup (集水區, inside 天氣設置). Sized like
+   the other compact panel controls. */
+.section-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.section-switch input[type="checkbox"] {
+  accent-color: var(--accent-primary);
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.section-switch:has(input:checked) {
+  border-color: var(--accent-primary);
+  background: rgba(110, 231, 183, 0.08);
+  color: var(--text-primary);
+}
+
+.catchment-settings-group {
+  padding: 0 14px 4px;
+}
+
+.catchment-enable-switch {
+  display: flex;
+  width: 100%;
+  height: 32px;
+  margin-bottom: 8px;
+}
+
+.catchment-quick-actions {
+  margin-bottom: 8px;
+}
+
+.catchment-clear-row {
+  margin-bottom: 8px;
+}
+
+.catchment-clear-row .btn-secondary {
+  flex: 1;
+  gap: 6px;
+  height: 32px;
+  padding: 6px;
+  font-size: 12px;
+}
+
+.catchment-feature-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* Controls the 集水區 master switch gates. Locked, not hidden, so the feature
+   stays discoverable and the switch's effect is visible where the user looks. */
+.catchment-gated.is-locked {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+#catchment-settings-group.feature-off .catchment-quick-actions,
+#catchment-settings-group.feature-off .catchment-clear-row {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.measure-mode-btn:disabled,
+.bp-view-btn:disabled,
+.wc-view-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.measure-mode-btn:disabled:hover,
+.bp-view-btn:disabled:hover,
+.wc-view-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 .weather-cache-settings {
