@@ -95,12 +95,22 @@ async function buildClickedRoute3d(page, fractions) {
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   const box = await page.locator('#map').boundingBox();
   const busy = page.locator('#route-weather-busy-overlay');
+  const items = page.locator('#waypoint-list .waypoint-item');
   for (const [i, [x, y]] of fractions.entries()) {
-    // A map click that lands mid-cycle is swallowed by the busy guard, and each
-    // added waypoint runs its own route+weather cycle — settle before clicking.
-    await busy.waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
-    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
-    await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
+    // A map click that lands mid-cycle is swallowed by the busy guard, and one
+    // added waypoint drives TWO route+weather cycles — so "overlay hidden" can
+    // also be the gap between them, where a click is still dropped. Retry rather
+    // than widen the wait; it costs nothing whenever the first click lands.
+    for (let attempt = 0; ; attempt++) {
+      await busy.waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
+      await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+      try {
+        await expect(items).toHaveCount(i + 1, { timeout: 5000 });
+        break;
+      } catch (err) {
+        if (attempt >= 2) throw err;
+      }
+    }
   }
   await page.locator('#route-weather-busy-overlay').waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
   await open3d(page);
