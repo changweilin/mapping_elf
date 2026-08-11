@@ -13772,19 +13772,30 @@ function buildCatchmentSkeletonHtml(weatherOnly = false, hydroOn = true) {
   const TERRAIN = [['集水區面積', 0], ['出水口海拔', 0], ['海拔範圍', 1], ['平均坡度', 1], ['主流長度', 0]];
   const WEATHER = CATCHMENT_CARD_WEATHER_KEYS.map(([, label]) => [label, 0]);
   const HYDRO = [['土壤含水量', 0], ['前期降雨', 1], ['預估逕流量', 0], ['河川流量', 1], ['溪水暴漲風險', 0], ['土石流風險', 0]];
-  const grid = (section, rows) =>
+  // `paired` = the grid is one of the two side-by-side columns, so it is ONE
+  // column wide and the full-width span would spill into a phantom second one.
+  const grid = (section, rows, paired = false) =>
     `<div class="wc-info-grid wc-catch-grid" data-catch="${section}">` +
     rows.map(([label, wide]) =>
-      `<div class="wc-info-item${wide ? ' is-wide' : ''}"${wide ? ' style="grid-column: span 2;"' : ''}${wcTipAttr(label)}>`
+      `<div class="wc-info-item${wide ? ' is-wide' : ''}"${wide && !paired ? ' style="grid-column: span 2;"' : ''}${wcTipAttr(label)}>`
       + `<span class="wc-info-label">${label}</span>`
       + `<span class="wc-info-value wc-catch-val">…</span></div>`).join('') +
     `</div>`;
+  const column = (title, section, rows) =>
+    `<div class="wc-catch-col"><div class="wc-catch-col-title">${title}</div>${grid(section, rows, true)}</div>`;
   // Weather sits at the TOP. When 詳細集水區資訊 is off, only the weather group shows
   // (地形/水文 are neither rendered nor computed); with 水文資訊 off it is 天氣＋地形,
   // and the 水文 group is likewise never rendered nor read.
   if (weatherOnly) return grid('weather', WEATHER);
+  // 水文資訊 off → 集水區域 is the only block, so it keeps the normal full-width
+  // 2-column grid (nothing to sit beside) and the 水文 disclaimer has nothing to
+  // disclaim.
   if (!hydroOn) return grid('weather', WEATHER) + grid('terrain', TERRAIN);
-  return grid('weather', WEATHER) + grid('terrain', TERRAIN) + grid('hydro', HYDRO)
+  // Both on: 集水區域 and 水文 are the two halves of one reading, so they sit side
+  // by side (titled, since adjacency alone no longer says which rows belong to
+  // which).
+  return grid('weather', WEATHER)
+    + `<div class="wc-catch-pair">${column('集水區域', 'terrain', TERRAIN)}${column('水文', 'hydro', HYDRO)}</div>`
     + `<div class="ct-disclaimer">水文指標為粗略估算，僅供參考</div>`;
 }
 

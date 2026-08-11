@@ -157,8 +157,24 @@ test('weather card: catchment toggle draws basin + set-to-now buttons work', asy
   // + weather 4 [humidity/wind/precip×2] + hydrology 6), so the card does not
   // balloon when async data lands.
   await expect(card.locator('.wc-catchment [data-catch] .wc-info-item')).toHaveCount(15);
-  // 溪水暴漲風險 / 土石流風險 sit side by side (half-width), so only 前期降雨 + 河川流量 span full width.
+  // 前期降雨 + 河川流量 carry the long values and stay marked .is-wide.
   await expect(card.locator('[data-catch="hydro"] .wc-info-item.is-wide')).toHaveCount(2);
+
+  // 集水區域 (terrain) and 水文 (hydrology) sit LEFT-RIGHT: same top edge, no overlap.
+  const cols = card.locator('.wc-catchment .wc-catch-col');
+  await expect(cols).toHaveCount(2);
+  await expect(cols.nth(0)).toContainText('集水區域');
+  await expect(cols.nth(1)).toContainText('水文');
+  // Measure BOTH in one evaluate: the popup is still panning, so two separate
+  // boundingBox() round-trips sample different animation frames.
+  const geom = await card.locator('.wc-catchment').evaluate((el) => {
+    const [l, r] = el.querySelectorAll('.wc-catch-col');
+    const a = l.getBoundingClientRect();
+    const b = r.getBoundingClientRect();
+    return { lx: a.x, lw: a.width, ly: a.y, rx: b.x, ry: b.y };
+  });
+  expect(geom.rx).toBeGreaterThanOrEqual(geom.lx + geom.lw);
+  expect(Math.abs(geom.ry - geom.ly)).toBeLessThanOrEqual(1);
   const skelH = await card.locator('.wc-catchment').evaluate((el) => el.getBoundingClientRect().height);
   await expect(card.locator('[data-catch="hydro"] .wc-catch-val').first()).not.toHaveText('…', { timeout: 20000 });
   const fullH = await card.locator('.wc-catchment').evaluate((el) => el.getBoundingClientRect().height);
@@ -177,6 +193,27 @@ test('weather card: catchment toggle draws basin + set-to-now buttons work', asy
   // Catchment cache persisted for reuse.
   const cacheLen = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('mappingElf_catchmentCache') || '{}')).length);
   expect(cacheLen).toBeGreaterThan(0);
+});
+
+// The side-by-side pair only makes sense with BOTH halves. With 水文資訊 off the
+// card must fall back to a single full-width 集水區域 block rather than a lonely
+// half-width column beside empty space.
+test('水文資訊 off: the card shows 集水區域 alone, not the side-by-side pair', async ({ page }) => {
+  await setupRoute(page, { collective: false });
+
+  const cardId = await openFirstCardFull(page);
+  const card = page.locator(`#${cardId}`);
+  await clickCardControl(card.locator('.wc-view-btn[data-wc-view="catchment"]'));
+  await expect(card.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
+  await expect(card.locator('.wc-catchment .wc-catch-col')).toHaveCount(2);
+
+  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#catchment-enable-info').uncheck();
+
+  await expect(card.locator('.wc-catchment .wc-catch-pair')).toHaveCount(0);
+  await expect(card.locator('.wc-catchment [data-catch="hydro"]')).toHaveCount(0);
+  await expect(card.locator('.wc-catchment [data-catch="terrain"]')).toHaveCount(1);
+  await expect(card.locator('.wc-catchment')).toContainText('集水區面積');
 });
 
 test('catchment basin persists through compact / minimize / reopen', async ({ page }) => {

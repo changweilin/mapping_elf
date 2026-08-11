@@ -387,6 +387,7 @@ const PHRASES = {
   '主流長度': { en: 'Main channel length', ja: '本流長', ko: '본류 길이', fr: 'Longueur du cours principal', de: 'Hauptgerinnelänge', es: 'Longitud del cauce principal', it: 'Lunghezza dell’asta principale' },
   '地形': { en: 'Terrain', ja: '地形', ko: '지형', fr: 'Relief', de: 'Gelände', es: 'Terreno', it: 'Terreno' },
   '水文': { en: 'Hydrology', ja: '水文', ko: '수문', fr: 'Hydrologie', de: 'Hydrologie', es: 'Hidrología', it: 'Idrologia' },
+  '集水區域': { en: 'Catchment area', ja: '集水区域', ko: '집수 구역', fr: 'Zone de bassin', de: 'Einzugsbereich', es: 'Área de cuenca', it: 'Area del bacino' },
   '土壤含水量': { en: 'Soil moisture', ja: '土壌水分', ko: '토양 수분', fr: 'Humidité du sol', de: 'Bodenfeuchte', es: 'Humedad del suelo', it: 'Umidità del suolo' },
   '前期降雨': { en: 'Antecedent rainfall', ja: '先行降雨', ko: '선행 강우', fr: 'Pluie antérieure', de: 'Vorregen', es: 'Lluvia antecedente', it: 'Pioggia antecedente' },
   '預估逕流量': { en: 'Estimated runoff', ja: '推定流出量', ko: '예상 유출량', fr: 'Ruissellement estimé', de: 'Geschätzter Abfluss', es: 'Escorrentía estimada', it: 'Deflusso stimato' },

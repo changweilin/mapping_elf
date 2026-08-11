@@ -7670,6 +7670,52 @@ html.light-theme .wc-time-select {
   margin-top: 6px;
 }
 
+/* 集水區域 / 水文 side by side. The full card is only ~280px wide, so inside the
+   pair each item stacks label over value instead of the usual label-left /
+   value-right row — a 120px column cannot hold both on one line. */
+.wc-catch-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 6px 10px;
+  margin-top: 8px;
+}
+
+.wc-catch-col {
+  min-width: 0;
+}
+
+.wc-catch-col-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.wc-catch-pair .wc-catch-grid {
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin-top: 2px;
+}
+
+.wc-catch-pair .wc-info-item,
+.wc-catch-pair .wc-info-item.is-wide {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  padding: 3px 0;
+  min-width: 0;
+}
+
+/* Stacked, so the value reads under its own label instead of being flushed to a
+   right edge two columns away. */
+.wc-catch-pair .wc-info-value {
+  align-self: stretch;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
 .wc-catchment .ct-disclaimer {
   margin-top: 8px;
 }
