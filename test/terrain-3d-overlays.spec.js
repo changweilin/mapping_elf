@@ -94,7 +94,11 @@ async function buildClickedRoute3d(page, fractions) {
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   const box = await page.locator('#map').boundingBox();
+  const busy = page.locator('#route-weather-busy-overlay');
   for (const [i, [x, y]] of fractions.entries()) {
+    // A map click that lands mid-cycle is swallowed by the busy guard, and each
+    // added waypoint runs its own route+weather cycle — settle before clicking.
+    await busy.waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
     await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
     await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
   }
@@ -152,6 +156,14 @@ test('Relive playback pauses at an intermediate waypoint and does not throw', as
   await buildClickedRoute3d(page, [[0.35, 0.4], [0.5, 0.5], [0.65, 0.6]]);
 
   await expect(page.locator('#tv-wp-card')).toHaveClass(/hidden/);
+  // Play at 4x. Playback advances by real elapsed time (capped at 0.1 s/frame),
+  // so on a slow runner walking to the middle waypoint at 1x ran past 25 s and
+  // flaked. 4x cannot skip a stop — _animate() snaps the playhead back to the
+  // stop's u whenever a frame steps over it.
+  await page.locator('#tp-speed-toggle').click();
+  await page.locator('.tp-speed-opt[data-speed="4"]').click();
+  await expect(page.locator('#tp-speed-value')).toHaveText('4x');
+
   await page.locator('#tp-play').click();
   // Reaching the middle waypoint triggers the Relive pause → the close-up card.
   await expect(page.locator('#tv-wp-card')).not.toHaveClass(/hidden/, { timeout: 25_000 });

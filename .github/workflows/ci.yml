@@ -57,11 +57,15 @@ jobs:
 
   # Playwright suite, sharded. Each shard previews the artifact from `build`,
   # so the bundle under test is byte-identical across shards (and to deploy).
+  # Shards split per test (playwright.config.js `fullyParallel`), so the heavy
+  # terrain-3d tests spread evenly instead of piling into one ~30 min job. The
+  # timeout is a guardrail, not a budget: if a shard ever approaches it again,
+  # rebalance or trim the suite rather than raising this number.
   e2e:
     name: e2e ${{ matrix.shard }}/4
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
