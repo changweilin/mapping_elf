@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fbmElevation, flood } from './helpers/apiMocks.mjs';
 
 // 集水區 loads in TWO ordered passes: every column's 集水區域 (the DEM delineation —
 // map range + 地形 rows, time-independent) first, then every column's 水文資訊 (the
@@ -8,26 +9,6 @@ import { expect, test } from '@playwright/test';
 // fBm terrain (not a cone) so the basins are what real ridges/valleys give; the
 // forecast/flood stubs feed the hydrology rows and count the 資訊-half requests.
 const ANCHOR = [23.5, 121.0];
-
-function fbmElevation(page, stats) {
-  return page.route(/v1\/elevation/, (route) => {
-    stats.demCalls++;
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      let e = 1200 + dy * 0.03 - dx * 0.02;
-      for (let k = 0; k < 5; k++) {
-        const a = 300 / 2 ** k, w = 2 ** k / 900;
-        e += a * Math.sin(dx * w + k) * Math.cos(dy * w * 1.3 + k * 2);
-      }
-      return e;
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
 
 function forecast(page) {
   return page.route(/v1\/forecast/, (route) => {
@@ -45,20 +26,6 @@ function forecast(page) {
     const hourly = { time: times };
     for (const v of hourlyVars) hourly[v] = times.map(() => val(v));
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation: 1500, hourly, daily: { time: days } }) });
-  });
-}
-
-// The flood endpoint is 資訊-only: it is read by computeCatchmentInfo and by nothing
-// in the 區域 half, so its call count is a clean probe for "did the hydrology run".
-function flood(page, stats) {
-  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
-    stats.floodCalls++;
-    const start = new URL(route.request().url()).searchParams.get('start_date');
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ daily: { time: [start], river_discharge: [5], river_discharge_mean: [4] } }),
-    });
   });
 }
 
@@ -106,8 +73,8 @@ async function setupCatchmentPanel(page, stats) {
     route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
   });
   await forecast(page);
-  await flood(page, stats);
-  await fbmElevation(page, stats);
+  await flood(page, { stats });
+  await fbmElevation(page, { stats });
   await page.goto('/');
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 

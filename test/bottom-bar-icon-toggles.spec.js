@@ -35,6 +35,36 @@ test('bottom-panel view switch is icon-only and clears the summary chips', async
   }
 });
 
+// Was route-favorite-and-panel-toggle.spec.js "F5": the panel switches panes
+// instead of stacking them, the old collapse button is gone, and a restored
+// weather view must not come back as a chips-only sliver (the height fallback
+// measures the summary bar + chart row).
+test('bottom-panel view switch exchanges panes and survives a reload', async ({ page }) => {
+  await boot(page);
+  await expect(page.locator('#btn-toggle-elevation')).toHaveCount(0);
+
+  const toggle = page.locator('#bp-view-toggle');
+  const chart = page.locator('#elevation-chart-container');
+  const weather = page.locator('.bp-weather-scroll');
+
+  await expect(chart).toBeVisible();
+  await expect(weather).toBeHidden();
+
+  await toggle.locator('[data-bp-view="weather"]').click();
+  await expect(weather).toBeVisible();
+  await expect(chart).toBeHidden();
+
+  await toggle.locator('[data-bp-view="elev"]').click();
+  await expect(chart).toBeVisible();
+  await expect(weather).toBeHidden();
+
+  await toggle.locator('[data-bp-view="weather"]').click();
+  await page.reload();
+  await expect(page.locator('.bp-weather-scroll')).toBeVisible();
+  await expect(page.locator('#elevation-chart-container')).toBeHidden();
+  expect(await page.locator('#bottom-panel').evaluate((el) => el.offsetHeight)).toBeGreaterThan(120);
+});
+
 test('icon switches keep localized accessible labels', async ({ page }) => {
   await boot(page);
   await page.locator('#btn-measure-tool').click();

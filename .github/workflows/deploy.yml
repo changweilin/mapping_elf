@@ -28,8 +28,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      # Pre-deploy gates. Cheap, and each one guards a shipped-breakage incident:
+      # numeric regressions, native/config drift, the app-mode base (INC-278),
+      # and the chunk split wired into vite.config.js.
+      - name: Node gates
+        run: npm run test:unit
+
+      - name: Build app bundle (base=./, must not break with the web build)
+        run: npm run build:app
+
+      - name: Build web bundle (base=/mapping_elf/)
+        run: npm run build:web
+
+      - name: Chunk split + size budget
+        run: npm run test:chunks
 
       - uses: actions/upload-pages-artifact@v3
         with:

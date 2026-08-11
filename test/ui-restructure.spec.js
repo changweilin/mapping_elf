@@ -40,6 +40,12 @@ test('unified pill, summary strip, follow cam', async ({ page }) => {
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
+  // --- Route toolbar: the old inline 3D button gave way to add-to-favorite,
+  //     3D access moving to the pill (was route-favorite-and-panel-toggle "F1") ---
+  await expect(page.locator('#btn-open-3d-viewer')).toHaveCount(0);
+  await expect(page.locator('#btn-favorite-quick')).toHaveCount(1);
+  await expect(page.locator('#btn-view-3d')).toHaveCount(1);
+
   // --- 2D pill: fixed, visible, 3D disabled with explainer title ---
   const pill2d = page.locator('#view-mode-toggle');
   await expect(pill2d).toBeVisible();

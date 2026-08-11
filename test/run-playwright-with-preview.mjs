@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +46,34 @@ function runChild(commandArgs, options = {}) {
     });
   });
 }
+
+// `vite preview` serves the PRE-BUILT dist/ — it never rebuilds. Silently
+// testing the previous build has cost real debugging time, so say so loudly.
+function warnIfDistIsStale() {
+  const distEntry = path.join(repoRoot, 'dist', 'index.html');
+  if (!fs.existsSync(distEntry)) {
+    console.warn('\n[preview] dist/ is missing — run `npm run build:web` first.\n');
+    return;
+  }
+  const builtAt = fs.statSync(distEntry).mtimeMs;
+  let newestSource = 0;
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else newestSource = Math.max(newestSource, fs.statSync(full).mtimeMs);
+    }
+  };
+  walk(path.join(repoRoot, 'src'));
+  newestSource = Math.max(newestSource, fs.statSync(path.join(repoRoot, 'index.html')).mtimeMs);
+  if (newestSource > builtAt) {
+    const ageMin = Math.round((newestSource - builtAt) / 60_000);
+    console.warn(`\n[preview] dist/ is ${ageMin} min older than src/ — you are testing a STALE bundle.`);
+    console.warn('[preview] run `npm run build:web` first (test-only edits need no rebuild).\n');
+  }
+}
+
+warnIfDistIsStale();
 
 const preview = spawn(process.execPath, [viteBin, 'preview', '--host', '127.0.0.1'], {
   cwd: repoRoot,

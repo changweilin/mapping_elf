@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { coneElevation, osrm } from './helpers/apiMocks.mjs';
 
 // Covers two follow-ups:
 //  (#3) A data load fetches 主航點 (waypoints) BEFORE 副航點 (intermediate points).
@@ -11,19 +12,7 @@ import { expect, test } from '@playwright/test';
 // weather 'edit' phase (data-load-edit), reached via a delayed forecast stub.
 const ANCHOR = [23.5, 121.0];
 
-function coneElevation(page) {
-  return page.route(/v1\/elevation/, (route) => {
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      return 100 + 0.1 * Math.hypot(dx, dy);
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
+
 
 // Records per-point forecast requests (lat,lng) into `sink`, and can delay each
 // response so a load stays observably in-flight.
@@ -48,13 +37,7 @@ function forecast(page, { delayMs = 0, sink = null } = {}) {
   });
 }
 
-function osrm(page) {
-  return page.route('**/route/v1/**', (route) => {
-    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
-    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
-    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
-  });
-}
+
 
 function baseInit(page, extra = {}) {
   return page.addInitScript((extra) => {

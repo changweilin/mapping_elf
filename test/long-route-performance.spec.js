@@ -2,14 +2,21 @@ import { expect, test } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Budgets are calibrated on a dev machine. Shared CI runners are several times
+// slower and noisier, so the whole set scales by PERF_BUDGET_SCALE instead of
+// being disabled there — a failure then means a real order-of-magnitude
+// regression, not a busy runner.
+const BUDGET_SCALE = Number(process.env.PERF_BUDGET_SCALE) || 1;
+const budget = (ms) => ms * BUDGET_SCALE;
+
 const LONG_TRACK_POINTS = 901;
-const LONG_IMPORT_LIMIT_MS = 15_000;
+const LONG_IMPORT_LIMIT_MS = budget(15_000);
 const DENSE_TRACK_POINTS = 720;
 const DENSE_WAYPOINT_COUNT = 24;
 const DENSE_INTERVAL_COUNT = 48;
-const DENSE_IMPORT_LIMIT_MS = 15_000;
-const SAMPLE_KML_BASELINE_LIMIT_MS = 10_000;
-const EXPORT_MODAL_OPEN_LIMIT_MS = 2_000;
+const DENSE_IMPORT_LIMIT_MS = budget(15_000);
+const SAMPLE_KML_BASELINE_LIMIT_MS = budget(10_000);
+const EXPORT_MODAL_OPEN_LIMIT_MS = budget(2_000);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -205,7 +212,7 @@ async function attachPerfTiming(testInfo, name, timings) {
   });
 }
 
-test('imports sample KML and opens export modal within the app baseline budget', async ({ page }, testInfo) => {
+test('@perf imports sample KML and opens export modal within the app baseline budget', async ({ page }, testInfo) => {
   await openLongRouteApp(page);
 
   const startedAt = Date.now();
@@ -242,7 +249,7 @@ test('imports sample KML and opens export modal within the app baseline budget',
   expect(exportModalOpenMs).toBeLessThan(EXPORT_MODAL_OPEN_LIMIT_MS);
 });
 
-test('imports a long recorded track within the app baseline budget', async ({ page }) => {
+test('@perf imports a long recorded track within the app baseline budget', async ({ page }) => {
   await openLongRouteApp(page);
 
   const startedAt = Date.now();
@@ -264,7 +271,7 @@ test('imports a long recorded track within the app baseline budget', async ({ pa
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(11);
 });
 
-test('imports a dense waypoint and interval-heavy track within the app baseline budget', async ({ page }) => {
+test('@perf imports a dense waypoint and interval-heavy track within the app baseline budget', async ({ page }) => {
   await openLongRouteApp(page);
 
   const startedAt = Date.now();

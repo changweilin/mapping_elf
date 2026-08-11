@@ -121,8 +121,11 @@ npm run android:bundle:release # 產生 release AAB（需先設定簽章）· re
 ### 測試 · Testing
 
 ```bash
+npm run test:ci        # CI 跑的完整組合 · the full gate CI runs
+npm run test:unit      # 純 Node 閘門：數值/天氣點/原生設定 · pure-Node gates (fastest)
 npm run test:numeric   # 距離/爬升/配速數值回歸（純 Node,最快）· numeric regression (pure Node)
-npm run test:smoke     # Playwright GUI 冒煙測試（自動起 preview server）· Playwright smoke suite
+npm run test:smoke     # Playwright GUI 全套,不含 @perf · Playwright suite (excludes @perf)
+npm run test:perf      # 匯入/渲染效能預算 · import/render performance budgets
 npm run test:mobile    # 行動端 App QA 流程 · mobile app QA flow
 npm run test:chunks    # 建置分包檢查 · bundle-split check
 npm run test:native-config # Capacitor 設定驗證 · native config check

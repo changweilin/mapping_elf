@@ -1,24 +1,10 @@
 import { expect, test } from '@playwright/test';
+import { coneElevation, flood, osrm } from './helpers/apiMocks.mjs';
 
 // Follow-ups: (1) transient 429s must not leave waypoints stuck as an unfetched
 // "?" placeholder badge — getWeatherAtPoint retries; (2) a card's 集水區 compute
 // must surface a progress pill instead of running silently.
 const ANCHOR = [23.5, 121.0];
-
-function coneElevation(page, { delayMs = 0 } = {}) {
-  return page.route(/v1\/elevation/, async (route) => {
-    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      return 100 + 0.1 * Math.hypot(dx, dy);
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
 
 function forecast(page, { failFirst = 0 } = {}) {
   let seen = 0;
@@ -42,19 +28,9 @@ function forecast(page, { failFirst = 0 } = {}) {
   });
 }
 
-function flood(page) {
-  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ daily: { time: ['2026-07-18'], river_discharge: [5], river_discharge_mean: [4] } }) });
-  });
-}
 
-function osrm(page) {
-  return page.route('**/route/v1/**', (route) => {
-    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
-    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
-    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
-  });
-}
+
+
 
 // Minimal, deterministic route settings: no 副航點 (segmentKm 0), so the weather
 // load is just the two waypoints and finishes fast.
