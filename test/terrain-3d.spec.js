@@ -368,8 +368,9 @@ test('3D terrain: the 更新 redraw genuinely re-downloads and re-runs the build
   await openWithRoute(page, { weather: true });
 
   // The 3D build and the 更新 redraw are both gated on weather finishing loading,
-  // so wait for its busy overlay to settle before each.
-  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 20_000 });
+  // so wait for its busy overlay to settle before each. The sample KML's weather
+  // load has overrun 20 s on a CI runner, so the wait matches the work.
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 60_000 });
 
   await open3dForCurrentRoute(page);
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
@@ -378,7 +379,7 @@ test('3D terrain: the 更新 redraw genuinely re-downloads and re-runs the build
   const firstRunFeatures = features.count;
   expect(firstRunRequests).toBeGreaterThan(0);
   expect(firstRunFeatures).toBeGreaterThan(0);
-  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 60_000 });
 
   // Unlike reopening (which reuses the cache), 更新 forces a fresh build: it
   // re-downloads the elevation grid + 圖資 and re-runs the progress bar from the
