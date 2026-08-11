@@ -3452,7 +3452,14 @@ export class TerrainViewer {
     if (hw && tags.area !== 'yes') {
       if (/^(motorway|trunk|primary|secondary|tertiary)(_link)?$/.test(hw)) return { group: 'line', kind: 'road', cls: 'major' };
       if (/^(residential|unclassified|service|living_street|road|pedestrian)$/.test(hw)) return { group: 'line', kind: 'road', cls: 'minor' };
-      if (/^(footway|path|track|cycleway|steps|bridleway)$/.test(hw)) return { group: 'line', kind: 'road', cls: 'trail' };
+      if (/^(footway|path|track|cycleway|steps|bridleway)$/.test(hw)) {
+        // A track/path tagged with 2+ lanes is a real paved rural road, not a
+        // dirt trail — render it as such even where it crosses green/bare
+        // terrain, instead of blending into the ground as a thin dirt line.
+        const lanes = parseFloat(tags.lanes);
+        if (Number.isFinite(lanes) && lanes >= 2) return { group: 'line', kind: 'road', cls: 'minor' };
+        return { group: 'line', kind: 'road', cls: 'trail' };
+      }
       return { group: 'line', kind: 'road', cls: 'minor' };
     }
 
