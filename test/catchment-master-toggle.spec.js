@@ -25,6 +25,24 @@ test('catchment switch defaults on and every catchment control is usable', async
   }
 });
 
+test('集水區域 and 水文資訊 sit side by side on one row', async ({ page }) => {
+  await openApp(page);
+  const boxes = async () => ({
+    block: await page.locator('#catchment-enable-block').locator('xpath=ancestor::label').boundingBox(),
+    info: await page.locator('#catchment-enable-info').locator('xpath=ancestor::label').boundingBox(),
+  });
+  // The 天氣設置 body animates open — measure only once the row has settled.
+  await expect.poll(async () => {
+    const { block, info } = await boxes();
+    return Math.round(block.y) === Math.round(info.y);
+  }).toBe(true);
+
+  const { block, info } = await boxes();
+  expect(block.x + block.width).toBeLessThanOrEqual(info.x + 1);  // 區域 left, 水文 right
+  // Both halves share the row evenly rather than one shrinking to its text.
+  expect(Math.abs(block.width - info.width)).toBeLessThan(2);
+});
+
 test('switching off locks every catchment entry point, switching back on restores them', async ({ page }) => {
   await openApp(page);
   await page.locator('#catchment-enable-block').uncheck();

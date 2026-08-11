@@ -3960,11 +3960,19 @@ body.route-list-dragging {
   padding: 0 14px 4px;
 }
 
+/* 集水區域 + 水文資訊 sit side by side: one master and its dependent half. */
+.catchment-enable-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
 .catchment-enable-switch {
   display: flex;
+  justify-content: center;
   width: 100%;
   height: 32px;
-  margin-bottom: 8px;
 }
 
 .catchment-quick-actions {
@@ -3989,9 +3997,12 @@ body.route-list-dragging {
   color: var(--text-muted);
 }
 
-/* Controls the 集水區 master switch gates. Locked, not hidden, so the feature
-   stays discoverable and the switch's effect is visible where the user looks. */
-.catchment-gated.is-locked {
+/* Controls the 集水區 / 副航點 master switch gates. Locked, not hidden, so the
+   feature stays discoverable and the switch's effect is visible where the user
+   looks. Two separate lock classes because a control can sit under both masters
+   (副航點 的詳細集水區) and neither gate may clear the other's lock. */
+.catchment-gated.is-locked,
+.intermediate-gated.is-im-locked {
   opacity: 0.4;
   pointer-events: none;
 }

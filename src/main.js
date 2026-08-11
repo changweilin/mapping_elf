@@ -895,7 +895,13 @@ let segmentIntervalKm = parseInt(localStorage.getItem(LS_SEGMENT_KEY) || '0') ||
 let roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
 let oLoopMode = localStorage.getItem(LS_OLOOP_KEY) === '1';
 if (roundTripMode && oLoopMode) { oLoopMode = false; localStorage.setItem(LS_OLOOP_KEY, '0'); }
-let speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) !== '0'; // default Pace ON (1 or null)
+// 副航點 (interval) master mode. 手機版預設關閉：小螢幕塞不下整排副航點圖示與天氣
+// 卡，而且每個副航點都各自要拉一次天氣。桌機維持配速模式開啟。
+const readSpeedIntervalMode = () => {
+  const raw = localStorage.getItem(LS_SPEED_MODE_KEY);
+  return raw !== null ? raw !== '0' : window.innerWidth > 768;
+};
+let speedIntervalMode = readSpeedIntervalMode();
 let speedActivity = normalizeSpeedActivity(
   localStorage.getItem(LS_SPEED_ACTIVITY_KEY)
   || defaultActivityForRouteMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking')
@@ -987,7 +993,6 @@ function syncCatchmentEnabledUI() {
   [
     infoEl,                                    // 水文指標算不出來，沒有區域可描述
     document.getElementById('wp-detail-catchment'),
-    document.getElementById('im-detail-catchment'),
     document.getElementById('btn-catchment-quick-fetch'),
     document.getElementById('btn-catchment-quick-view'),
     document.querySelector('#measure-mode-toggle .measure-mode-btn[data-measure-mode="catchment"]'),
@@ -996,9 +1001,33 @@ function syncCatchmentEnabledUI() {
   ].forEach((el) => { if (el) el.disabled = !on; });
   document.querySelectorAll('.catchment-gated').forEach((el) => el.classList.toggle('is-locked', !on));
   document.getElementById('catchment-settings-group')?.classList.toggle('feature-off', !on);
+  // 副航點的詳細集水區 sits under both masters, so it has a single owner below.
+  syncIntermediateEnabledUI();
   // The 3D 集水區 button also depends on the route having 主航點, so its disabled
   // state is owned by the terrain availability pass (which reads this flag too).
   updateTerrainToggleAvailability();
+}
+
+// 副航點設置 master: the interval mode itself. 關 means no 副航點 is ever generated,
+// so every 副航點-only control is locked (not hidden) — same treatment as the 集水區
+// master, so the switch's effect is visible right where the user is looking.
+const intermediateEnabled = () => speedIntervalMode || segmentIntervalKm > 0;
+
+function syncIntermediateEnabledUI() {
+  const on = intermediateEnabled();
+  [
+    document.getElementById('show-intermediate-weather-icon'),
+    document.getElementById('im-detail-weather'),
+  ].forEach((el) => { if (el) el.disabled = !on; });
+  // Controls with a second owner: whichever gate is off wins, and this function is
+  // the single writer for both so the two gates cannot clobber each other.
+  const imCatchmentEl = document.getElementById('im-detail-catchment');
+  if (imCatchmentEl) imCatchmentEl.disabled = !on || !catchmentEnabled;
+  const collectiveImEl = document.getElementById('collective-intermediate-pts');
+  if (collectiveImEl) {
+    collectiveImEl.disabled = !on || !!document.getElementById('collective-all-waypoints')?.checked;
+  }
+  document.querySelectorAll('.intermediate-gated').forEach((el) => el.classList.toggle('is-im-locked', !on));
 }
 
 // Flip the master switch. Turning it off must not leave live catchment state
@@ -1425,7 +1454,7 @@ function applySettingsFromStorage() {
   roundTripMode = localStorage.getItem(LS_ROUNDTRIP_KEY) === '1';
   oLoopMode = localStorage.getItem(LS_OLOOP_KEY) === '1';
   if (roundTripMode && oLoopMode) { oLoopMode = false; localStorage.setItem(LS_OLOOP_KEY, '0'); }
-  speedIntervalMode = localStorage.getItem(LS_SPEED_MODE_KEY) !== '0';
+  speedIntervalMode = readSpeedIntervalMode();
   speedActivity = normalizeSpeedActivity(
     localStorage.getItem(LS_SPEED_ACTIVITY_KEY)
     || defaultActivityForRouteMode(localStorage.getItem(LS_ROUTE_MODE_KEY) || 'hiking')
@@ -2057,7 +2086,7 @@ function initWaypointSettings() {
   const syncCollectiveLock = () => {
     const isAll = collectiveAllEl?.checked;
     if (collectiveMarkedEl) collectiveMarkedEl.disabled = !!isAll;
-    if (collectiveIntermediateEl) collectiveIntermediateEl.disabled = !!isAll;
+    syncIntermediateEnabledUI();   // 全副航點 also locks when the 副航點 master is 關
   };
 
   collectiveMarkedEl?.addEventListener('change', () => {
@@ -15060,6 +15089,7 @@ async function init() {
     if (pacePanel) pacePanel.style.display = anyActive ? '' : 'none';
     if (statTimeCard) statTimeCard.style.display = anyActive ? '' : 'none';
     syncPaceActivityApplicabilityUi();
+    syncIntermediateEnabledUI();
 
     const applyIntervalMode = () => {
       if (isRouteWeatherBusy()) {
@@ -15089,6 +15119,7 @@ async function init() {
       if (pacePanel) pacePanel.style.display = active ? '' : 'none';
       if (statTimeCard) statTimeCard.style.display = active ? '' : 'none';
       syncPaceActivityApplicabilityUi();
+      syncIntermediateEnabledUI();
 
       updateFlatPlaceholder();
 

@@ -812,8 +812,10 @@
               d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z"
               fill="currentColor" />
           </svg>
-          <span class="h3-label">航點設置</span>
+          <span class="h3-label">副航點設置</span>
         </h3>
+        <!-- 關/距離/配速 is the 副航點 master switch: 關 means no 副航點 is generated
+             at all, so every 副航點-only control below locks (never hides). -->
         <div class="section-actions waypoint-header-actions" onclick="event.stopPropagation()" title="副航點設置">
           <div class="interval-mode-controls">
             <label class="imode-opt"><input type="radio" name="interval-mode" id="interval-mode-off" value="off">
@@ -841,13 +843,13 @@
         <div class="wp-display-matrix">
           <span></span>
           <span class="wpm-col-head">主航點</span>
-          <span class="wpm-col-head">副航點</span>
+          <span class="wpm-col-head intermediate-gated">副航點</span>
 
           <span class="wpm-row-label">顯示天氣圖示</span>
           <label class="wpm-cell" title="在地圖上顯示主航點的天氣圖示">
             <input type="checkbox" id="show-waypoint-weather-icon" checked>
           </label>
-          <label class="wpm-cell" title="在地圖上顯示副航點的天氣圖示">
+          <label class="wpm-cell intermediate-gated" title="在地圖上顯示副航點的天氣圖示">
             <input type="checkbox" id="show-intermediate-weather-icon" checked>
           </label>
 
@@ -855,7 +857,7 @@
           <label class="wpm-cell" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
             <input type="checkbox" id="wp-detail-weather" checked>
           </label>
-          <label class="wpm-cell" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
+          <label class="wpm-cell intermediate-gated" title="未勾選時,資訊卡只顯示切換鍵上方資訊與雨量/降雨機率/濕度/風速">
             <input type="checkbox" id="im-detail-weather">
           </label>
 
@@ -863,7 +865,7 @@
           <label class="wpm-cell catchment-gated" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
             <input type="checkbox" id="wp-detail-catchment" checked>
           </label>
-          <label class="wpm-cell catchment-gated" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
+          <label class="wpm-cell catchment-gated intermediate-gated" title="未勾選時,資訊卡集水區只顯示雨量/降雨機率/濕度/風速,不計算地形/水文">
             <input type="checkbox" id="im-detail-catchment">
           </label>
         </div>
@@ -883,7 +885,7 @@
             <input type="checkbox" id="collective-marked-pts" checked>
             <span>全主航點</span>
           </label>
-          <label class="pace-check-opt">
+          <label class="pace-check-opt intermediate-gated">
             <input type="checkbox" id="collective-intermediate-pts" checked>
             <span>全副航點</span>
           </label>
@@ -993,14 +995,18 @@
              read-out is a weather read-out plus terrain/hydrology. -->
         <div class="catchment-settings-group" id="catchment-settings-group">
           <div class="settings-group-label">集水區</div>
-          <label class="section-switch catchment-enable-switch" title="集水範圍與地形數值。關閉後，量測工具、下方面板、3D 圖層與資訊卡的集水區功能都會鎖定">
-            <input type="checkbox" id="catchment-enable-block" checked>
-            <span>集水區域</span>
-          </label>
-          <label class="section-switch catchment-enable-switch" title="土壤含水量、逕流量與溪水暴漲/土石流風險等水文指標，依各欄日期時間計算。需要集水區域">
-            <input type="checkbox" id="catchment-enable-info" checked>
-            <span>水文資訊</span>
-          </label>
+          <!-- Side by side: 水文 is the second half of the same load, and the pair
+               reads as one master + its dependent rather than two stacked sections. -->
+          <div class="catchment-enable-row">
+            <label class="section-switch catchment-enable-switch" title="集水範圍與地形數值。關閉後，量測工具、下方面板、3D 圖層與資訊卡的集水區功能都會鎖定">
+              <input type="checkbox" id="catchment-enable-block" checked>
+              <span>集水區域</span>
+            </label>
+            <label class="section-switch catchment-enable-switch" title="土壤含水量、逕流量與溪水暴漲/土石流風險等水文指標，依各欄日期時間計算。需要集水區域">
+              <input type="checkbox" id="catchment-enable-info" checked>
+              <span>水文資訊</span>
+            </label>
+          </div>
           <div class="weather-quick-actions catchment-quick-actions">
             <button class="btn-secondary weather-quick-btn" id="btn-catchment-quick-fetch" title="取得集水區">
               <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -1452,7 +1458,7 @@
               <li><span class="instr-label">重疊層級切換</span>：重疊<span class="instr-key">軌跡</span>可<span class="instr-key">雙擊</span>軌跡輪換上下層；重疊<span class="instr-key">航點</span>可雙擊航點切換顯示層級，已選取時再點一次也會輪換；長按或右鍵航點只會拖曳微調</li>
               <li><span class="instr-label">天氣卡操作</span>：大格可點天氣圖示或<span class="instr-key">下滑關閉</span>、點空白處<span class="instr-key">縮小</span>，且只操作目前卡片；小格可點資訊<span class="instr-key">展開</span>、點圖示<span class="instr-key">關閉</span>，會依<span class="instr-key">集體設定</span>連動；再次開啟會記住大格或小格
               </li>
-              <li><span class="instr-label">批次天氣卡</span>：在「<span class="instr-key">航點設置</span>」勾選連動對象後，<span class="instr-key">收合</span>、<span class="instr-key">展開</span>或<span class="instr-key">關閉</span>會套用到整組<span class="instr-key">天氣卡</span>
+              <li><span class="instr-label">批次天氣卡</span>：在「<span class="instr-key">副航點設置</span>」勾選連動對象後，<span class="instr-key">收合</span>、<span class="instr-key">展開</span>或<span class="instr-key">關閉</span>會套用到整組<span class="instr-key">天氣卡</span>
               </li>
               <li><span class="instr-label">拖曳刪除與取消</span>：地圖航點、側欄與表格項目<span class="instr-key">拖曳</span>時會出現<span class="instr-key">取消</span>與<span class="instr-key">移除區</span>；拖到移除區刪除，拖到<span class="instr-key">取消區</span>取消本次拖曳；最愛項目拖出框外刪除，放回框內取消</li>
             </ul>
