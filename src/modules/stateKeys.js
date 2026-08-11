@@ -53,6 +53,7 @@ const PREFERENCE_STATE_KEYS = [
   'mappingElf_imDetailWeather',
   'mappingElf_imDetailCatchment',
   'mappingElf_catchmentEnabled',
+  'mappingElf_catchmentInfoEnabled',
   'mappingElf_windyLayer',
   'mappingElf_windyModel',
   'mappingElf_theme',
