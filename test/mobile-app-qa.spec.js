@@ -379,6 +379,7 @@ test.describe('mobile app QA', () => {
     ]);
     await closeSidePanel(page);
 
+    const anchorBefore = await topWaypointCenter(page, 1);
     const before = await topWaypointCenter(page, 2);
     const storedBefore = await storedWaypoints(page);
     const releasePoint = { x: before.x - 70, y: before.y + 28 };
@@ -389,8 +390,19 @@ test.describe('mobile app QA', () => {
     const storedAfter = await storedWaypoints(page);
     expect(coordinateDistance(storedAfter[1], storedBefore[1])).toBeGreaterThan(0.0001);
     expect(coordinateDistance(storedAfter[0], storedBefore[0])).toBeLessThan(0.000001);
+
+    // Waypoint 1 does not move geographically (asserted just above), so any shift
+    // in ITS screen position is the CAMERA: closing the side panel and the
+    // post-drop re-plan both invalidate the map size and re-centre it. On a
+    // 667x375 landscape viewport that moved everything ~64px up on CI while the
+    // dropped pin was geographically exact. Compare the dragged marker with the
+    // release point in the same frame of reference, or this silently asserts
+    // "the camera held still" instead of "the pin landed where it was dropped".
+    const anchorAfter = await topWaypointCenter(page, 1);
+    const camera = { x: anchorAfter.x - anchorBefore.x, y: anchorAfter.y - anchorBefore.y };
     const after = await topWaypointCenter(page, 2);
-    expect(Math.hypot(after.x - releasePoint.x, after.y - releasePoint.y)).toBeLessThan(45);
+    const expected = { x: releasePoint.x + camera.x, y: releasePoint.y + camera.y };
+    expect(Math.hypot(after.x - expected.x, after.y - expected.y)).toBeLessThan(45);
     expect(consoleErrors).toEqual([]);
   });
 

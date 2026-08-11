@@ -69,6 +69,25 @@ async function settleIdle(page) {
   await overlayHidden(page);
 }
 
+// …and a click that still lands inside a busy cycle is silently REFUSED by
+// mapManager (`isFrozen && !allowAppendWhileFrozen`) — no error, the waypoint
+// count just never moves. On slower CI hardware the gaps shift, so treat the
+// click as retryable rather than trusting one idle check.
+async function addWaypoint(page, fx, fy, expectedCount) {
+  const items = page.locator('#waypoint-list .waypoint-item');
+  for (let attempt = 1; ; attempt++) {
+    await settleIdle(page);
+    await clickMap(page, fx, fy);
+    try {
+      await expect(items).toHaveCount(expectedCount, { timeout: 5_000 });
+      break;
+    } catch (err) {
+      if (attempt >= 3) throw err;
+    }
+  }
+  await settleIdle(page);
+}
+
 const catchmentCacheSize = (page) => page.evaluate(() =>
   Object.keys(JSON.parse(localStorage.getItem('mappingElf_catchmentCache') || '{}')).length);
 
@@ -89,20 +108,21 @@ test('a data-less waypoint is loaded before waypoints that already have data', a
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
   for (const [i, fx] of [0.3, 0.5, 0.7].entries()) {
-    await clickMap(page, fx, 0.4);
-    await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
-    await overlayHidden(page);
+    await addWaypoint(page, fx, 0.4, i + 1);
   }
-  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first()).toBeVisible();
+  // ALL three must be loaded before the endpoint goes down. Waiting on just the
+  // first badge is not enough: on a slow runner the other two can still be in
+  // flight, get aborted with it, and the "exactly one data-less waypoint"
+  // precondition below then reads 3 instead of 1.
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded'))
+    .toHaveCount(3, { timeout: 60_000 });
 
   // Add a fourth waypoint while the forecast endpoint is down, so it ends up with
   // no data while the three before it stay complete. Position alone would still
   // load it LAST; only the data tier can promote it.
   await page.unroute(/v1\/forecast/);
   await page.route(/v1\/forecast/, (route) => route.abort());
-  await clickMap(page, 0.5, 0.62);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(4);
-  await settleIdle(page);
+  await addWaypoint(page, 0.5, 0.62, 4);
   // Precondition: exactly one waypoint ended up with no weather. The "?" badge is
   // the unfetched state, so this proves the endpoint stayed down long enough.
   // Generous timeout: the badge re-renders a few times while the map settles.
@@ -137,11 +157,8 @@ test('catchment terrain data survives a weather-cache age wipe and is not re-dow
   await page.goto('/');
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
-  await clickMap(page, 0.35, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
-  await clickMap(page, 0.6, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
-  await overlayHidden(page);
+  await addWaypoint(page, 0.35, 0.4, 1);
+  await addWaypoint(page, 0.6, 0.4, 2);
   await page.locator('#bp-view-toggle [data-bp-view="catchment"]').click();
   await overlayHidden(page);
   await expect.poll(() => catchmentCacheSize(page), { timeout: 40000 }).toBeGreaterThan(0);
@@ -178,11 +195,8 @@ test('catchment data is kept with the weather cache off, and 清除集水區資�
   await page.goto('/');
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
-  await clickMap(page, 0.35, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
-  await clickMap(page, 0.6, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
-  await overlayHidden(page);
+  await addWaypoint(page, 0.35, 0.4, 1);
+  await addWaypoint(page, 0.6, 0.4, 2);
   await page.locator('#bp-view-toggle [data-bp-view="catchment"]').click();
   await overlayHidden(page);
   // Retention is independent of 啟用天氣快取 — catchment geometry is not weather.
