@@ -73,11 +73,17 @@ async function waitUntil(fn, timeoutMs = 20000) {
 }
 
 // Two waypoints, waiting for the resulting load to settle so the route is stable.
+// An edit produces TWO busy cycles (route re-plan, then the data load) with a ~1s
+// gap, so one overlayHidden() can return inside the gap; the NEXT click then lands
+// while the map is frozen and is silently refused. Wait across the gap — the tests
+// that deliberately click mid-load do their own thing and must not use this.
 async function twoStableWaypoints(page) {
   await clickMap(page, 0.35, 0.4);
   await expect(wpCount(page)).toHaveCount(1);
   await clickMap(page, 0.6, 0.4);
   await expect(wpCount(page)).toHaveCount(2);
+  await overlayHidden(page);
+  await page.waitForTimeout(1800);
   await overlayHidden(page);
 }
 

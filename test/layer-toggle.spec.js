@@ -439,8 +439,15 @@ function coordinateDistance(a, b) {
 
 async function startLongPressWaypointDrag(page, point) {
   // Waypoint editing (drag) is locked while a load holds the edit lock, so wait it
-  // out first — mirrors addWaypointsAtFractions' map-click guard.
-  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 15000 });
+  // out first — mirrors addWaypointsAtFractions' map-click guard. One toBeHidden()
+  // is not an idle signal though: an edit produces TWO busy cycles (route re-plan,
+  // then the data load) with a ~1s gap, so a single check can return inside the
+  // gap, the drag then starts just as the second cycle freezes the map, and the
+  // mouseup is ignored — the marker stays .is-dragging forever. Wait across the gap.
+  const overlay = page.locator('#route-weather-busy-overlay');
+  await expect(overlay).toBeHidden({ timeout: 15000 });
+  await page.waitForTimeout(1800);
+  await expect(overlay).toBeHidden({ timeout: 15000 });
   await page.mouse.move(point.x, point.y);
   await page.mouse.down();
   await page.waitForTimeout(LONG_PRESS_MS);
@@ -1261,7 +1268,14 @@ test.describe('mobile weather cards', () => {
       document.documentElement.style.setProperty('--bottom-panel-height', '760px');
     });
 
-    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().tap();
+    // The panel was just inflated to 760px, which on a phone viewport can cover
+    // the marker — a real tap then (correctly) refuses to fire into an
+    // intercepted element and the test times out on CI. What is under test is
+    // the CARD's height, so dispatch the click the Leaflet marker handler
+    // listens for. The card layer is chosen by a viewport media query
+    // (isMobileLayerMode), not by the event type, so this still opens the
+    // mobile full card.
+    await page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first().dispatchEvent('click');
     const card = page.locator('#mobile-weather-card-layer .weather-card.full').first();
     await expect(page.locator('#mobile-weather-card-layer .weather-card.full')).toHaveCount(1);
     await expect(card).toBeVisible();
