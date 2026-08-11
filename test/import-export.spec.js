@@ -213,6 +213,10 @@ async function downloadExport(page, testInfo, fmt, configure = async () => {}) {
 }
 
 test('round-trips GPX, KML, and route-only .melmap exports', async ({ page }, testInfo) => {
+  // This test ends on `consoleErrors` being empty, so the basemap has to be
+  // stubbed: live tile servers hand out real 404s for tiles they do not have, and
+  // the helper only filters the offline-mode flavour ("404 (Offline)").
+  await mockMapTiles(page);
   const consoleErrors = await openApp(page);
 
   await importFixture(page, sampleKml);
@@ -514,6 +518,7 @@ test('melmap state restore uses allow-list and preserves user collections/sessio
 
 test('reset defaults clears app state but keeps favorites', async ({ page }) => {
   const originalFavorites = [{ id: 'fav-reset', name: '重置後保留', savedAt: '2026-05-18T00:00:00.000Z' }];
+  await mockMapTiles(page);   // asserts an empty console — see the round-trip test
   const consoleErrors = collectUnexpectedConsoleErrors(page);
   await page.addInitScript((favorites) => {
     if (sessionStorage.getItem('__mappingElfResetSeeded') === '1') return;
