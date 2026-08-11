@@ -131,8 +131,12 @@ async function mockRouting(page) {
 async function addWaypointsAtFractions(page, points) {
   const box = await page.locator('#map').boundingBox();
   expect(box).not.toBeNull();
+  const busy = page.locator('#route-weather-busy-overlay');
   for (let i = 0; i < points.length; i++) {
     const [x, y] = points[i];
+    // A map click that lands mid-cycle is swallowed by the busy guard, and each
+    // added waypoint runs its own route+weather cycle — settle before clicking.
+    await busy.waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
     await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
     await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
   }
@@ -330,7 +334,9 @@ test('3D terrain: the route caches its elevation grid + 圖資 so reopening skip
   const firstRunElevation = elevation.count;
   const firstRunFeatures = features.count;
 
-  await page.locator('#tv-close-btn').click();
+  // Leaving the viewer goes through the unified 2D/3D pill (there is no separate
+  // close button); #tv-view-2d is wired straight to closeTerrainViewer().
+  await page.locator('#tv-view-2d').click();
   await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/);
   // saveTerrainFeaturesEntry's Cache-API write is fire-and-forget (not awaited
   // by the caller) — give it a beat to flush before reopening.
@@ -492,6 +498,9 @@ test('3D terrain: a favourite still builds via its per-favourite 3D button', asy
 });
 
 test('3D terrain: reopens itself after a page reload (browser/app resume restore)', async ({ page }) => {
+  // Two full terrain builds plus two reloads — this legitimately needs more than
+  // the per-test budget, so give it headroom rather than letting it flake at 100%.
+  test.slow();
   await mockElevation(page, { delayMs: 30 });
   await mockFeatures(page);
   await openWithRoute(page, { weather: true });
@@ -512,10 +521,13 @@ test('3D terrain: reopens itself after a page reload (browser/app resume restore
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
 
-  // Closing the viewer clears the restore marker so a later reload stays on home.
-  await page.locator('#tv-close-btn').click();
+  // Leaving via the 2D pill clears the restore marker so a later reload stays home.
+  await page.locator('#tv-view-2d').click();
   await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/);
-  await page.reload();
+  // Leaving the viewer restores the planning route, so its weather/tile requests
+  // are still in flight here; waiting for the full `load` event would wait them
+  // out. The two assertions below are the real readiness gate.
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   await page.waitForTimeout(2000);
@@ -552,10 +564,16 @@ test('3D terrain: switching routes in the player keeps a working model + hidden 
 
   // Save the current route as a favourite so the player playlist has an entry.
   await page.locator('#btn-favorite-add').click();
+  // Saving kicks its own busy cycle; opening 3D mid-cycle is refused, and then
+  // #tv-loading is still hidden from its initial state — the gate below would
+  // pass against a build that never started (INC-310).
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator('#btn-view-3d')).toBeEnabled();
 
   await open3dForCurrentRoute(page);
+  await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/);
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
-  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1, { timeout: 20_000 });
 
   // Open the playlist and switch to the saved favourite.
   await page.locator('#tp-playlist-btn').click();
@@ -641,8 +659,9 @@ test('3D terrain: removed toggles are gone and 集水區 toggle drives the basin
   await expect
     .poll(async () => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_terrain3dDisplay') || '{}').catchment3d))
     .toBe(true);
-  // The delineation eventually settles (its busy overlay clears).
-  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 30_000 });
+  // The delineation eventually settles (its busy overlay clears). DEM work on a
+  // CI runner has overrun 30 s, so the wait matches the work, not a dev box.
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 60_000 });
 
   // Turning it off hides the overlay and clears the persisted flag.
   await catchmentBtn.click();
