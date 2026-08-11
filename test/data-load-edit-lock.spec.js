@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { coneElevation, osrm } from './helpers/apiMocks.mjs';
 
 // Covers two follow-ups:
 //  (#3) A data load fetches 主航點 (waypoints) BEFORE 副航點 (intermediate points).
@@ -11,19 +12,7 @@ import { expect, test } from '@playwright/test';
 // weather 'edit' phase (data-load-edit), reached via a delayed forecast stub.
 const ANCHOR = [23.5, 121.0];
 
-function coneElevation(page) {
-  return page.route(/v1\/elevation/, (route) => {
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      return 100 + 0.1 * Math.hypot(dx, dy);
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
+
 
 // Records per-point forecast requests (lat,lng) into `sink`, and can delay each
 // response so a load stays observably in-flight.
@@ -48,13 +37,7 @@ function forecast(page, { delayMs = 0, sink = null } = {}) {
   });
 }
 
-function osrm(page) {
-  return page.route('**/route/v1/**', (route) => {
-    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
-    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
-    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
-  });
-}
+
 
 function baseInit(page, extra = {}) {
   return page.addInitScript((extra) => {
@@ -90,11 +73,17 @@ async function waitUntil(fn, timeoutMs = 20000) {
 }
 
 // Two waypoints, waiting for the resulting load to settle so the route is stable.
+// An edit produces TWO busy cycles (route re-plan, then the data load) with a ~1s
+// gap, so one overlayHidden() can return inside the gap; the NEXT click then lands
+// while the map is frozen and is silently refused. Wait across the gap — the tests
+// that deliberately click mid-load do their own thing and must not use this.
 async function twoStableWaypoints(page) {
   await clickMap(page, 0.35, 0.4);
   await expect(wpCount(page)).toHaveCount(1);
   await clickMap(page, 0.6, 0.4);
   await expect(wpCount(page)).toHaveCount(2);
+  await overlayHidden(page);
+  await page.waitForTimeout(1800);
   await overlayHidden(page);
 }
 

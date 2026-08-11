@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { coneElevation, flood } from './helpers/apiMocks.mjs';
 
 // Intermediate (副航點/中繼點) weather cards must draw the catchment basin on the
 // map just like waypoint cards, and it must survive a weather-panel rebuild
@@ -6,19 +7,7 @@ import { expect, test } from '@playwright/test';
 // syncCatchmentBasins(), independent of card re-render.
 const ANCHOR = [23.5, 121.0];
 
-function coneElevation(page) {
-  return page.route(/v1\/elevation/, (route) => {
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      return 100 + 0.1 * Math.hypot(dx, dy);
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
+
 function forecast(page) {
   return page.route(/v1\/forecast/, (route) => {
     const url = new URL(route.request().url());
@@ -34,16 +23,7 @@ function forecast(page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation: 1500, hourly, daily: { time: days } }) });
   });
 }
-function flood(page) {
-  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
-    const url = new URL(route.request().url());
-    const start = url.searchParams.get('start_date');
-    const end = url.searchParams.get('end_date') || start;
-    const days = [];
-    for (let d = new Date(`${start}T00:00:00`); d <= new Date(`${end}T00:00:00`); d.setDate(d.getDate() + 1)) days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ daily: { time: days, river_discharge: days.map(() => 5), river_discharge_mean: days.map(() => 4) } }) });
-  });
-}
+
 
 test('intermediate (副航點) card: catchment draws a basin that survives a rebuild', async ({ page }) => {
   await page.addInitScript(() => {

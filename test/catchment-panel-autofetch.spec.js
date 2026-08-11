@@ -1,23 +1,10 @@
 import { expect, test } from '@playwright/test';
+import { coneElevation, flood, osrm } from './helpers/apiMocks.mjs';
 
 // Issue 1: planning a new route must backfill the new waypoint's 集水區 info the
 // same way weather auto-loads — no manual 取得集水區. A cone DEM (drains to map
 // centre) lets every point delineate a basin; forecast/flood stubs feed hydrology.
 const ANCHOR = [23.5, 121.0];
-
-function coneElevation(page) {
-  return page.route(/v1\/elevation/, (route) => {
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      return 100 + 0.1 * Math.hypot(dx, dy);
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
 
 function forecast(page) {
   return page.route(/v1\/forecast/, (route) => {
@@ -49,19 +36,6 @@ function forecast(page) {
     for (const v of hourlyVars) hourly[v] = times.map(() => val(v));
     const daily = { time: days };
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation: 1500, hourly, daily }) });
-  });
-}
-
-function flood(page) {
-  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
-    const url = new URL(route.request().url());
-    const start = url.searchParams.get('start_date');
-    const end = url.searchParams.get('end_date') || start;
-    const days = [];
-    for (let d = new Date(`${start}T00:00:00`); d <= new Date(`${end}T00:00:00`); d.setDate(d.getDate() + 1)) {
-      days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
-    }
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ daily: { time: days, river_discharge: days.map((_, i) => 5 + i * 4), river_discharge_mean: days.map(() => 4) } }) });
   });
 }
 

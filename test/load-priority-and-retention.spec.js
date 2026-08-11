@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { coneElevation, flood, osrm } from './helpers/apiMocks.mjs';
 
 // Two rules for the batch loads:
 //   1. Load order = 沒有數據 → 數據不完整 → 已有數據, 主航點 before 副航點 inside each tier.
@@ -10,22 +11,6 @@ import { expect, test } from '@playwright/test';
 test.describe.configure({ retries: 2 });
 
 const ANCHOR = [23.5, 121.0];
-
-// Records every elevation request so a re-download can be proven absent.
-function coneElevation(page, stats = { calls: 0 }) {
-  return page.route(/v1\/elevation/, (route) => {
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    stats.calls++;
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      return 100 + 0.1 * Math.hypot(dx, dy);
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
 
 function forecast(page, sink = null) {
   return page.route(/v1\/forecast/, (route) => {
@@ -44,19 +29,6 @@ function forecast(page, sink = null) {
     const hourly = { time: times };
     for (const v of hourlyVars) hourly[v] = times.map(() => val(v));
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation: 1500, hourly, daily: { time: days } }) });
-  });
-}
-
-function flood(page) {
-  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
-    const url = new URL(route.request().url());
-    const start = url.searchParams.get('start_date');
-    const end = url.searchParams.get('end_date') || start;
-    const days = [];
-    for (let d = new Date(`${start}T00:00:00`); d <= new Date(`${end}T00:00:00`); d.setDate(d.getDate() + 1)) {
-      days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
-    }
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ daily: { time: days, river_discharge: days.map(() => 5), river_discharge_mean: days.map(() => 4) } }) });
   });
 }
 
@@ -80,14 +52,6 @@ function baseInit(page, extra = {}) {
   }, extra);
 }
 
-function osrm(page) {
-  return page.route('**/route/v1/**', (route) => {
-    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
-    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
-    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
-  });
-}
-
 const clickMap = async (page, fx, fy) => {
   const box = await page.locator('#map').boundingBox();
   await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
@@ -103,6 +67,25 @@ async function settleIdle(page) {
   await overlayHidden(page);
   await page.waitForTimeout(1800);
   await overlayHidden(page);
+}
+
+// …and a click that still lands inside a busy cycle is silently REFUSED by
+// mapManager (`isFrozen && !allowAppendWhileFrozen`) — no error, the waypoint
+// count just never moves. On slower CI hardware the gaps shift, so treat the
+// click as retryable rather than trusting one idle check.
+async function addWaypoint(page, fx, fy, expectedCount) {
+  const items = page.locator('#waypoint-list .waypoint-item');
+  for (let attempt = 1; ; attempt++) {
+    await settleIdle(page);
+    await clickMap(page, fx, fy);
+    try {
+      await expect(items).toHaveCount(expectedCount, { timeout: 5_000 });
+      break;
+    } catch (err) {
+      if (attempt >= 3) throw err;
+    }
+  }
+  await settleIdle(page);
 }
 
 const catchmentCacheSize = (page) => page.evaluate(() =>
@@ -125,20 +108,21 @@ test('a data-less waypoint is loaded before waypoints that already have data', a
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
   for (const [i, fx] of [0.3, 0.5, 0.7].entries()) {
-    await clickMap(page, fx, 0.4);
-    await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
-    await overlayHidden(page);
+    await addWaypoint(page, fx, 0.4, i + 1);
   }
-  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first()).toBeVisible();
+  // ALL three must be loaded before the endpoint goes down. Waiting on just the
+  // first badge is not enough: on a slow runner the other two can still be in
+  // flight, get aborted with it, and the "exactly one data-less waypoint"
+  // precondition below then reads 3 instead of 1.
+  await expect(page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded'))
+    .toHaveCount(3, { timeout: 60_000 });
 
   // Add a fourth waypoint while the forecast endpoint is down, so it ends up with
   // no data while the three before it stay complete. Position alone would still
   // load it LAST; only the data tier can promote it.
   await page.unroute(/v1\/forecast/);
   await page.route(/v1\/forecast/, (route) => route.abort());
-  await clickMap(page, 0.5, 0.62);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(4);
-  await settleIdle(page);
+  await addWaypoint(page, 0.5, 0.62, 4);
   // Precondition: exactly one waypoint ended up with no weather. The "?" badge is
   // the unfetched state, so this proves the endpoint stayed down long enough.
   // Generous timeout: the badge re-renders a few times while the map settles.
@@ -169,15 +153,12 @@ test('catchment terrain data survives a weather-cache age wipe and is not re-dow
   await osrm(page);
   await forecast(page);
   await flood(page);
-  await coneElevation(page, stats);
+  await coneElevation(page, { stats });
   await page.goto('/');
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
-  await clickMap(page, 0.35, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
-  await clickMap(page, 0.6, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
-  await overlayHidden(page);
+  await addWaypoint(page, 0.35, 0.4, 1);
+  await addWaypoint(page, 0.6, 0.4, 2);
   await page.locator('#bp-view-toggle [data-bp-view="catchment"]').click();
   await overlayHidden(page);
   await expect.poll(() => catchmentCacheSize(page), { timeout: 40000 }).toBeGreaterThan(0);
@@ -214,11 +195,8 @@ test('catchment data is kept with the weather cache off, and 清除集水區資�
   await page.goto('/');
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
-  await clickMap(page, 0.35, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(1);
-  await clickMap(page, 0.6, 0.4);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
-  await overlayHidden(page);
+  await addWaypoint(page, 0.35, 0.4, 1);
+  await addWaypoint(page, 0.6, 0.4, 2);
   await page.locator('#bp-view-toggle [data-bp-view="catchment"]').click();
   await overlayHidden(page);
   // Retention is independent of 啟用天氣快取 — catchment geometry is not weather.

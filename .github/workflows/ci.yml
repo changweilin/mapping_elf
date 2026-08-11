@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # Pure-node gates. Seconds, no browser — these must stay the fastest signal.
+  unit:
+    name: unit (numeric / weather points / native config)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+
+  # Both Vite modes are built on every change: web (base=/mapping_elf/) and app
+  # (base=./). A base regression only shows up in one of them (INC-278).
+  build:
+    name: build (web + app + chunk budget)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Build app bundle (Capacitor base)
+        run: npm run build:app
+      - name: Build web bundle (Pages base)
+        run: npm run build:web
+      - name: Chunk split + size budget
+        run: npm run test:chunks
+      # dist/ is the web build; the e2e shards preview it instead of rebuilding.
+      # (the sw precache-version guard, INC-251, runs in e2e via cache-versioning.spec.js)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-web
+          path: dist
+          retention-days: 3
+
+  # Playwright suite, sharded. Each shard previews the artifact from `build`,
+  # so the bundle under test is byte-identical across shards (and to deploy).
+  e2e:
+    name: e2e ${{ matrix.shard }}/4
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-web
+          path: dist
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run shard
+        run: npx playwright test --shard=${{ matrix.shard }}/4 --grep-invert "@perf"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ matrix.shard }}
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+
+  # Import/render budgets. Runner hardware is slower and noisier than a dev box,
+  # so the budgets are scaled — a failure here means a real order-of-magnitude
+  # regression, not a slow runner.
+  perf:
+    name: perf budgets
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PERF_BUDGET_SCALE: '3'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-web
+          path: dist
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --grep "@perf"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-perf
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

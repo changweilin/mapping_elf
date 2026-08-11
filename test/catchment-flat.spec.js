@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { flatElevation, flood, osrm } from './helpers/apiMocks.mjs';
 
 // 平地 is an ANSWER, not a failed read. On a dead-flat DEM the panel must mark
 // every column 平地, treat the load as successful (no "—", no retry sweep), and
@@ -10,18 +11,6 @@ import { expect, test } from '@playwright/test';
 // 2-waypoint route is 2) rather than by raw call count.
 const DEM_MIN_POINTS = 50;
 const FULL_GRID_POINTS = 529;
-
-function flatElevation(page, stats) {
-  return page.route(/v1\/elevation/, (route) => {
-    const lats = (new URL(route.request().url()).searchParams.get('latitude') || '').split(',');
-    if (lats.length >= DEM_MIN_POINTS) { stats.demCalls++; stats.demPoints += lats.length; }
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ elevation: lats.map(() => 100) }),
-    });
-  });
-}
 
 function forecast(page) {
   return page.route(/v1\/forecast/, (route) => {
@@ -39,20 +28,6 @@ function forecast(page) {
     const hourly = { time: times };
     for (const v of hourlyVars) hourly[v] = times.map(() => val(v));
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation: 100, hourly, daily: { time: days } }) });
-  });
-}
-
-function flood(page) {
-  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ daily: { time: ['2026-07-18'], river_discharge: [5], river_discharge_mean: [4] } }) });
-  });
-}
-
-function osrm(page) {
-  return page.route('**/route/v1/**', (route) => {
-    const coordPart = new URL(route.request().url()).pathname.split('/').pop();
-    const coords = coordPart.split(';').map((c) => c.split(',').map(Number));
-    route.fulfill({ json: { code: 'Ok', routes: [{ distance: 1000, duration: 1000, geometry: { type: 'LineString', coordinates: coords } }] } });
   });
 }
 
@@ -88,13 +63,17 @@ async function twoWaypoints(page) {
 
 async function openFlatRoute(page, stats) {
   await catchmentInit(page);
-  await osrm(page); await forecast(page); await flood(page); await flatElevation(page, stats);
+  await osrm(page); await forecast(page); await flood(page); await flatElevation(page, { stats });
   await page.goto('/');
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
   await twoWaypoints(page);
 }
 
+// Both tests boot the app, route it and probe the DEM (the second also reloads),
+// and their inner waits already ask for 60 s — more than the default 45 s test
+// budget can grant. Budget them explicitly instead of running at 96% of the cap.
 test('flat terrain: every column is marked 平地, on the probe alone', async ({ page }) => {
+  test.setTimeout(120_000);
   const stats = { demCalls: 0, demPoints: 0 };
   await openFlatRoute(page, stats);
 
@@ -114,6 +93,7 @@ test('flat terrain: every column is marked 平地, on the probe alone', async ({
 });
 
 test('flat terrain: the 平地 verdict survives a reload without re-probing', async ({ page }) => {
+  test.setTimeout(120_000);
   const stats = { demCalls: 0, demPoints: 0 };
   await openFlatRoute(page, stats);
 

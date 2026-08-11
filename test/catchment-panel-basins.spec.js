@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fbmElevation, flood } from './helpers/apiMocks.mjs';
 
 // The 集水區 bottom panel must draw each column's basin ON THE MAP, not just fill
 // the table. Regression: the overlay was gated solely on a card's 集水區 view, so
@@ -9,24 +10,7 @@ import { expect, test } from '@playwright/test';
 // arbitrary waypoint; forecast/flood stubs feed the hydrology rows.
 const ANCHOR = [23.5, 121.0];
 
-function fbmElevation(page) {
-  return page.route(/v1\/elevation/, (route) => {
-    const url = new URL(route.request().url());
-    const lats = (url.searchParams.get('latitude') || '').split(',').map(Number);
-    const lngs = (url.searchParams.get('longitude') || '').split(',').map(Number);
-    const elevation = lats.map((la, i) => {
-      const dy = (la - ANCHOR[0]) * 111320;
-      const dx = (lngs[i] - ANCHOR[1]) * 111320 * Math.cos(ANCHOR[0] * Math.PI / 180);
-      let e = 1200 + dy * 0.03 - dx * 0.02;
-      for (let k = 0; k < 5; k++) {
-        const a = 300 / 2 ** k, w = 2 ** k / 900;
-        e += a * Math.sin(dx * w + k) * Math.cos(dy * w * 1.3 + k * 2);
-      }
-      return e;
-    });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elevation }) });
-  });
-}
+
 
 function forecast(page) {
   return page.route(/v1\/forecast/, (route) => {
@@ -47,16 +31,7 @@ function forecast(page) {
   });
 }
 
-function flood(page) {
-  return page.route(/flood-api\.open-meteo\.com\/v1\/flood/, (route) => {
-    const start = new URL(route.request().url()).searchParams.get('start_date');
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ daily: { time: [start], river_discharge: [5], river_discharge_mean: [4] } }),
-    });
-  });
-}
+
 
 // Basin overlays currently on the map, with their rendered size — a polygon that
 // exists but collapsed to a couple of pixels is not "displayed".

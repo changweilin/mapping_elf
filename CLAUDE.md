@@ -39,13 +39,17 @@
 npm run dev              # dev server (--host)
 npm run build:web        # base=/mapping_elf/
 npm run build:app        # base=./（Capacitor）
-npm run test:numeric     # 數值回歸（距離/爬升/配速，純 node，最快）
-npm run test:smoke       # Playwright 冒煙（自動起 preview server）
+npm run test:unit        # 純 node 閘門（numeric＋weather-points＋native-config，秒級）
+npm run test:smoke       # Playwright 全套，不含 @perf（自動起 preview server）
+npm run test:perf        # 只跑 @perf 效能預算（PERF_BUDGET_SCALE 可放寬）
+npm run test:ci          # test:unit ＋ build:web ＋ 全套 e2e（CI 跑的同一組）
 node test/run-playwright-with-preview.mjs test/<file>.spec.js   # 單一 spec
 npm run cap:sync:android # 建置並同步 Android 專案
 ```
 
 - 測試對應：改數值邏輯 → `test:numeric` 必跑；改 UI/流程 → 對應 Playwright spec；改匯入匯出 → `test:import-export`。無 linter — 風格以周邊程式碼為準。
+- 外部 API stub（cone/fbm/flat DEM、OSRM、flood）一律用 `test/helpers/apiMocks.mjs`，不要再在 spec 內複製一份；`forecast` 各 spec 差異太大，刻意保留在各自檔案。
+- CI：`.github/workflows/ci.yml`（PR＋main）跑 unit → build(web＋app＋chunks) → e2e 四路 sharding → perf；`deploy.yml` 在上 Pages 前跑同一組 node 閘門與雙模式建置。preview 服務的是 **既有 dist**，改 `src/**` 後沒重建就是測舊版（runner 會警告）。
 - 本機環境：Windows + PowerShell 5.1（無 `&&`，用 `;`）。驗證一律用專案自帶 Playwright 驅動 dev/preview server。
 
 ## 5. 記憶檔案架構與維護規則
