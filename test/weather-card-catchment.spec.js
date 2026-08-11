@@ -195,6 +195,27 @@ test('weather card: catchment toggle draws basin + set-to-now buttons work', asy
   expect(cacheLen).toBeGreaterThan(0);
 });
 
+// The side-by-side pair only makes sense with BOTH halves. With 水文資訊 off the
+// card must fall back to a single full-width 集水區域 block rather than a lonely
+// half-width column beside empty space.
+test('水文資訊 off: the card shows 集水區域 alone, not the side-by-side pair', async ({ page }) => {
+  await setupRoute(page, { collective: false });
+
+  const cardId = await openFirstCardFull(page);
+  const card = page.locator(`#${cardId}`);
+  await clickCardControl(card.locator('.wc-view-btn[data-wc-view="catchment"]'));
+  await expect(card.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
+  await expect(card.locator('.wc-catchment .wc-catch-col')).toHaveCount(2);
+
+  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#catchment-enable-info').uncheck();
+
+  await expect(card.locator('.wc-catchment .wc-catch-pair')).toHaveCount(0);
+  await expect(card.locator('.wc-catchment [data-catch="hydro"]')).toHaveCount(0);
+  await expect(card.locator('.wc-catchment [data-catch="terrain"]')).toHaveCount(1);
+  await expect(card.locator('.wc-catchment')).toContainText('集水區面積');
+});
+
 test('catchment basin persists through compact / minimize / reopen', async ({ page }) => {
   await setupRoute(page, { collective: false });
   const poly = page.locator('#map .leaflet-overlay-pane path.wc-catchment-poly');

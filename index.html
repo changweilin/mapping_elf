@@ -983,16 +983,23 @@
           <div class="weather-cache-note">點擊「更新天氣」會清除臨時庫；清理條件依資料最後更新時間判斷。</div>
         </div>
         <div class="settings-divider"></div>
-        <!-- Catchment: one master switch for a feature that reaches four separate
-             surfaces (量測工具 mode, 底部面板 view, 3D layer, info-card toggle). Off
-             locks every one of them instead of leaving dead buttons scattered
-             around the UI. It lives under 天氣設置 because every catchment read-out
-             is a weather read-out plus terrain/hydrology. -->
+        <!-- Catchment splits into its two halves of work, in load order:
+             集水區域 = the DEM delineation (map/3D range + 面積/坡度/主流長度),
+             time-independent; 水文資訊 = the hydrology read for the column's
+             date/hour. 水文 is computed FROM the 區域, so unchecking 區域 locks it
+             and turns the whole feature off — 量測工具 mode, 底部面板 view, 3D layer
+             and the info-card toggle all lock instead of leaving dead buttons
+             scattered around the UI. It lives under 天氣設置 because every catchment
+             read-out is a weather read-out plus terrain/hydrology. -->
         <div class="catchment-settings-group" id="catchment-settings-group">
           <div class="settings-group-label">集水區</div>
-          <label class="section-switch catchment-enable-switch" title="關閉後，量測工具、下方面板、3D 圖層與資訊卡的集水區功能都會鎖定">
-            <input type="checkbox" id="catchment-enable" checked>
-            <span>啟用集水區</span>
+          <label class="section-switch catchment-enable-switch" title="集水範圍與地形數值。關閉後，量測工具、下方面板、3D 圖層與資訊卡的集水區功能都會鎖定">
+            <input type="checkbox" id="catchment-enable-block" checked>
+            <span>集水區域</span>
+          </label>
+          <label class="section-switch catchment-enable-switch" title="土壤含水量、逕流量與溪水暴漲/土石流風險等水文指標，依各欄日期時間計算。需要集水區域">
+            <input type="checkbox" id="catchment-enable-info" checked>
+            <span>水文資訊</span>
           </label>
           <div class="weather-quick-actions catchment-quick-actions">
             <button class="btn-secondary weather-quick-btn" id="btn-catchment-quick-fetch" title="取得集水區">

@@ -954,12 +954,24 @@ let wpDetailWeather = localStorage.getItem(LS_WP_DETAIL_WEATHER_KEY) !== '0';   
 let wpDetailCatchment = localStorage.getItem(LS_WP_DETAIL_CATCHMENT_KEY) !== '0'; // default true
 let imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';    // default false
 let imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1'; // default false
-// 集水區 master switch. The feature reaches four separate surfaces (量測工具
+// 集水區 splits into its two halves of work, in the order the loader runs them:
+//   集水區域 — the DEM delineation: the range drawn on the map/3D plus the 地形
+//     rows (面積/出水口海拔/海拔範圍/坡度/主流長度). Time-INdependent, so it is
+//     computed once and never re-read for a date/hour change.
+//   水文資訊 — the hydrology read for the column's schedule (土壤含水量/前期降雨/
+//     逕流/河川流量/暴漲與土石流風險). Time-DEpendent, and derived FROM the 區域
+//     geometry, so it can only run once that column's basin is settled.
+// 區域 is therefore the feature master: it reaches four separate surfaces (量測工具
 // mode, 底部面板 view, 3D layer, info-card 天氣/集水區 toggle) plus the per-point
-// 詳細集水區 flags; this one flag gates them all so turning it off leaves no
-// live entry point and schedules no DEM work.
+// 詳細集水區 flags, and turning it off leaves no live entry point and schedules no
+// DEM work. `catchmentEnabled` keeps its name as that master (and its storage key,
+// so existing installs carry over untouched).
 const LS_CATCHMENT_ENABLED_KEY = 'mappingElf_catchmentEnabled';
-let catchmentEnabled = localStorage.getItem(LS_CATCHMENT_ENABLED_KEY) !== '0';   // default true
+const LS_CATCHMENT_INFO_KEY = 'mappingElf_catchmentInfoEnabled';
+let catchmentEnabled = localStorage.getItem(LS_CATCHMENT_ENABLED_KEY) !== '0';   // 集水區域, default true
+let catchmentInfoEnabled = localStorage.getItem(LS_CATCHMENT_INFO_KEY) !== '0';  // 水文資訊, default true
+// Effective hydrology gate: 水文 needs a basin to describe, so 區域 off vetoes it.
+const catchmentHydroEnabled = () => catchmentEnabled && catchmentInfoEnabled;
 const weatherDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailWeather : imDetailWeather);
 const catchmentDetailEnabledFor = (pt) =>
   catchmentEnabled && (pt?.isWaypoint ? wpDetailCatchment : imDetailCatchment);
@@ -968,9 +980,12 @@ const catchmentDetailEnabledFor = (pt) =>
 // and the switch's effect is visible right where the user is already looking.
 function syncCatchmentEnabledUI() {
   const on = catchmentEnabled;
-  const enableEl = document.getElementById('catchment-enable');
+  const enableEl = document.getElementById('catchment-enable-block');
   if (enableEl) enableEl.checked = on;
+  const infoEl = document.getElementById('catchment-enable-info');
+  if (infoEl) infoEl.checked = catchmentInfoEnabled;
   [
+    infoEl,                                    // 水文指標算不出來，沒有區域可描述
     document.getElementById('wp-detail-catchment'),
     document.getElementById('im-detail-catchment'),
     document.getElementById('btn-catchment-quick-fetch'),
@@ -1012,8 +1027,24 @@ function applyCatchmentEnabled(on, { persist = true } = {}) {
     clearCardCatchment('cursor');
   }
   if (bottomPanelReady) {
+    renderCatchmentPanel();     // 資訊 off drops the 水文 rows from the table
     refreshOpenWeatherCards();
     syncCatchmentBasins();
+  }
+}
+
+// 水文資訊 (hydrology) switch. Purely additive to the 區域 half — no live state to
+// tear down, so this only re-renders the surfaces that show 水文 rows. Saved
+// hydrology readouts are kept: turning it back on shows them again immediately.
+function applyCatchmentInfoEnabled(on, { persist = true } = {}) {
+  catchmentInfoEnabled = !!on;
+  if (persist) {
+    try { localStorage.setItem(LS_CATCHMENT_INFO_KEY, catchmentInfoEnabled ? '1' : '0'); } catch (_) { }
+  }
+  syncCatchmentEnabledUI();
+  if (bottomPanelReady) {
+    renderCatchmentPanel();
+    refreshOpenWeatherCards();
   }
 }
 
@@ -1442,6 +1473,7 @@ function applySettingsFromStorage() {
   imDetailWeather = localStorage.getItem(LS_IM_DETAIL_WEATHER_KEY) === '1';
   imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1';
   catchmentEnabled = localStorage.getItem(LS_CATCHMENT_ENABLED_KEY) !== '0';
+  catchmentInfoEnabled = localStorage.getItem(LS_CATCHMENT_INFO_KEY) !== '0';
   try {
     paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
   } catch {
@@ -1516,6 +1548,7 @@ function applySettingsFromStorage() {
   const imDetailCatchmentEl = document.getElementById('im-detail-catchment');
   if (imDetailCatchmentEl) imDetailCatchmentEl.checked = imDetailCatchment;
   applyCatchmentEnabled(catchmentEnabled, { persist: false });
+  applyCatchmentInfoEnabled(catchmentInfoEnabled, { persist: false });
   syncWeatherCacheSettingsUI();
 
   // Refresh UI
@@ -2115,19 +2148,33 @@ function initWaypointSettings() {
   bindDetailToggle('im-detail-weather', LS_IM_DETAIL_WEATHER_KEY, imDetailWeather, (v) => { imDetailWeather = v; });
   bindDetailToggle('im-detail-catchment', LS_IM_DETAIL_CATCHMENT_KEY, imDetailCatchment, (v) => { imDetailCatchment = v; });
 
-  // 集水區 master switch. Same busy-defer contract as the detail toggles above.
-  const catchmentEnableEl = document.getElementById('catchment-enable');
-  if (catchmentEnableEl) {
-    catchmentEnableEl.checked = catchmentEnabled;
-    catchmentEnableEl.addEventListener('change', () => {
+  // 集水區域 / 水文資訊 switches. Same busy-defer contract as the detail toggles
+  // above. 區域 is the master (水文 is derived from it), so it applies last-write-wins
+  // and syncCatchmentEnabledUI locks the 水文 box whenever 區域 is off.
+  const catchmentBlockEl = document.getElementById('catchment-enable-block');
+  if (catchmentBlockEl) {
+    catchmentBlockEl.checked = catchmentEnabled;
+    catchmentBlockEl.addEventListener('change', () => {
       if (isRouteWeatherBusy()) {
-        runOrDeferBusySetting('catchment-enable', () => catchmentEnableEl.dispatchEvent(new Event('change')));
+        runOrDeferBusySetting('catchment-enable-block', () => catchmentBlockEl.dispatchEvent(new Event('change')));
         return;
       }
-      applyCatchmentEnabled(catchmentEnableEl.checked);
+      applyCatchmentEnabled(catchmentBlockEl.checked);
+    });
+  }
+  const catchmentInfoEl = document.getElementById('catchment-enable-info');
+  if (catchmentInfoEl) {
+    catchmentInfoEl.checked = catchmentInfoEnabled;
+    catchmentInfoEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('catchment-enable-info', () => catchmentInfoEl.dispatchEvent(new Event('change')));
+        return;
+      }
+      applyCatchmentInfoEnabled(catchmentInfoEl.checked);
     });
   }
   applyCatchmentEnabled(catchmentEnabled, { persist: false });
+  applyCatchmentInfoEnabled(catchmentInfoEnabled, { persist: false });
 
   const importAutoSortEl = document.getElementById('import-auto-sort-enable');
   if (importAutoSortEl) {
@@ -12653,9 +12700,15 @@ function renderCatchmentPanel() {
   html += `</tr>`;
   html += buildCatchmentScheduleRowHtml(visibleIndices, firstReturnIdx, saved);
   html += '</thead><tbody>';
-  CATCHMENT_TABLE_ROWS.forEach((row) => { html += buildCatchmentDataRowHtml(row, visibleIndices, firstReturnIdx); });
+  // 水文資訊 off → the 水文 rows are neither rendered nor computed, so the table is
+  // 區域-only. The cell writers below key off `data-cat-section`, so the missing rows
+  // simply have no cells to fill; no other call site needs to know.
+  const hydroOn = catchmentHydroEnabled();
+  CATCHMENT_TABLE_ROWS
+    .filter((row) => hydroOn || row.section !== 'hydro')
+    .forEach((row) => { html += buildCatchmentDataRowHtml(row, visibleIndices, firstReturnIdx); });
   html += '</tbody></table>';
-  html += `<div class="ct-disclaimer catchment-table-note">水文指標為粗略估算，僅供參考</div>`;
+  if (hydroOn) html += `<div class="ct-disclaimer catchment-table-note">水文指標為粗略估算，僅供參考</div>`;
   container.innerHTML = html;
 }
 
@@ -12703,14 +12756,30 @@ function catchmentCellsMatchSchedule(saved, dateStr, hour) {
   return true;
 }
 
-// A catchment column needs (re)fetching when it has no OK readout, or its saved
-// readout was computed for a different schedule than the column shows now — parity
-// with weather's hasCompletedWeatherLoad gating.
-function catchmentColumnNeedsFetch(pt, colIdx) {
+// 區域 (delineation) is needed until the column has a settled readout. NO schedule
+// check: the terrain is time-independent, so changing a column's date/hour must
+// never cost a second DEM read.
+function catchmentBlockNeedsFetch(pt, force = false) {
+  if (force) return true;
+  return !isSettledCatchmentReadout(getSavedCatchmentCells(getSemanticKey(pt)));
+}
+
+// 資訊 (hydrology) is needed once the basin is settled and the saved 水文 rows are
+// missing or were computed for a different schedule than the column shows now —
+// parity with weather's hasCompletedWeatherLoad gating.
+function catchmentInfoNeedsFetch(pt, colIdx, force = false) {
   const saved = getSavedCatchmentCells(getSemanticKey(pt));
-  if (!isSettledCatchmentReadout(saved)) return true;
+  if (!isSettledCatchmentReadout(saved)) return true;   // 區域 pass settles it first
+  if (saved.status === 'flat') return false;            // 平地: no basin to describe
+  if (force || !Array.isArray(saved.hydro)) return true;
   const schedule = getWeatherPointSchedule(pt, colIdx);
   return !catchmentCellsMatchSchedule(saved, schedule?.date || null, schedule?.hour ?? null);
+}
+
+// Does this column still owe EITHER half of the work? Drives the auto-fetch.
+function catchmentColumnNeedsFetch(pt, colIdx) {
+  return catchmentBlockNeedsFetch(pt)
+    || (catchmentHydroEnabled() && catchmentInfoNeedsFetch(pt, colIdx));
 }
 
 // Load-priority tier of a 集水區 column: nothing stored → an unsettled/partial
@@ -12753,30 +12822,55 @@ function autoFetchCatchment({ notify = false } = {}) {
   fetchAllCatchmentData();
 }
 
-// Delineate + hydrology for one point, save to the shared cache, return
-// { status, terrain[], hydro[] } (HTML strings). Aborts propagate to the caller.
-async function computeCatchmentReadout(pt, colIdx, signal) {
-  const schedule = getWeatherPointSchedule(pt, colIdx);
-  const dateStr = schedule?.date || null;
-  const hour = schedule?.hour ?? 8;
-
+// 區域 half: delineate one point (cache-first) and save its 地形 rows. Deliberately
+// carries NO schedule stamp of its own — the terrain is time-independent, so the
+// saved dateStr/hour describe the hydrology only and are left to the 資訊 half.
+// Remembered hydrology is preserved so a re-run never blanks rows already on screen.
+// Returns { status, terrain[], hydro[]|null }. Aborts propagate to the caller.
+async function computeCatchmentBlock(pt, signal) {
+  const semKey = getSemanticKey(pt);
+  const prev = getSavedCatchmentCells(semKey);
   const result = await getCatchmentFor(pt.lat, pt.lng, { signal });
-  // 平地: a settled answer with no basin — save it so the column shows 平地 and
-  // the auto-fetch stops asking. No hydrology read either; there is no catchment
-  // for it to describe.
+  // 平地: a settled answer with no basin — save it so the column shows 平地 and the
+  // auto-fetch stops asking. No hydrology either; there is no catchment to describe.
   if (result?.status === 'flat') {
-    const flat = buildFlatCatchmentReadout();
-    saveCatchmentCells(getSemanticKey(pt), {
-      ...flat,
-      dateStr: dateStr || null,
-      hour: Number.isFinite(Number(hour)) ? Number(hour) : null,
-    });
+    const flat = {
+      ...buildFlatCatchmentReadout(),
+      dateStr: prev?.dateStr ?? null,
+      hour: prev?.hour ?? null,
+    };
+    saveCatchmentCells(semKey, flat);
     return flat;
   }
   if (!result || result.status !== 'ok' || !result.outer?.length) return { status: result?.status || 'error' };
 
   const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
-  const terrain = [formatArea(result.areaM2), outlet, ...computeGeometryRows(result).map(catchmentValueHtml)];
+  const readout = {
+    status: 'ok',
+    terrain: [formatArea(result.areaM2), outlet, ...computeGeometryRows(result).map(catchmentValueHtml)],
+    hydro: Array.isArray(prev?.hydro) ? prev.hydro : null,
+    dateStr: prev?.dateStr ?? null,
+    hour: prev?.hour ?? null,
+  };
+  saveCatchmentCells(semKey, readout);
+  return readout;
+}
+
+// 資訊 half: the time-dependent hydrology read for the column's schedule, folded
+// into the saved readout. Runs only after the 區域 pass settled this column, so the
+// getCatchmentFor below is a cache hit — no second DEM read. Returns the merged
+// readout, or null when the environment read gave nothing (cells keep what they had).
+async function computeCatchmentInfo(pt, colIdx, signal) {
+  const semKey = getSemanticKey(pt);
+  const saved = getSavedCatchmentCells(semKey);
+  if (!isSettledCatchmentReadout(saved) || saved.status === 'flat') return saved;
+
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+
+  const result = await getCatchmentFor(pt.lat, pt.lng, { signal });
+  if (!result || result.status !== 'ok' || !result.outer?.length) return null;
 
   let hydroEnv = null;
   try {
@@ -12785,36 +12879,42 @@ async function computeCatchmentReadout(pt, colIdx, signal) {
     if (isAbortError(err)) throw err;
     hydroEnv = null;
   }
-  const hydro = (hydroEnv && hydroEnv.available)
-    ? computeHydroIndicators(result, hydroEnv).map(catchmentValueHtml)
-    : CATCHMENT_HYDRO_LABELS.map(() => '—');
+  if (!hydroEnv?.available) return null;
 
-  saveCatchmentCells(getSemanticKey(pt), {
-    status: 'ok', terrain, hydro,
+  const merged = {
+    ...saved,
+    hydro: computeHydroIndicators(result, hydroEnv).map(catchmentValueHtml),
     dateStr: dateStr || null,
     hour: Number.isFinite(Number(hour)) ? Number(hour) : null,
-  });
-  return { status: 'ok', terrain, hydro };
+  };
+  saveCatchmentCells(semKey, merged);
+  return merged;
 }
 
-function setCatchmentColumnCells(colIdx, valueFor) {
+// `section` limits the write to one half of the column (null = both), so the 區域
+// pass never stamps over 水文 cells the 資訊 pass owns, and vice versa.
+function setCatchmentColumnCells(colIdx, valueFor, section = null) {
   const container = document.getElementById('catchment-table-container');
   if (!container) return;
   CATCHMENT_TABLE_ROWS.forEach((row) => {
+    if (section && row.section !== section) return;
     const cell = container.querySelector(`[data-cat-col="${colIdx}"][data-cat-section="${row.section}"][data-cat-i="${row.i}"] .wt-cell-value`);
     if (cell) cell.innerHTML = valueFor(row);
   });
 }
 
-function fillCatchmentTableColumn(colIdx, readout) {
+function fillCatchmentTableColumn(colIdx, readout, section = null) {
   const settled = isSettledCatchmentReadout(readout);
   setCatchmentColumnCells(colIdx, (row) => {
     const arr = settled ? (row.section === 'terrain' ? readout.terrain : readout.hydro) : null;
     return (arr && arr[row.i] != null) ? arr[row.i] : '—';
-  });
+  }, section);
 }
 
-// Batch-load 集水區 read-outs for every visible column, progress-bar managed.
+// Batch-load 集水區 read-outs for every visible column, progress-bar managed, in
+// TWO ordered passes: every column's 集水區域 first, then every column's 水文資訊.
+// The basins land on the map as a group before the hydrology starts, and the 資訊
+// pass reads each basin straight out of the cache the 區域 pass just filled.
 // `force` re-fetches all columns; otherwise only the uncached ones.
 async function fetchAllCatchmentData(options = {}) {
   const { force = false, onlyColIndex = null } = options;
@@ -12831,19 +12931,21 @@ async function fetchAllCatchmentData(options = {}) {
   // NOT only the uncached ones, so 航點完成數 climbs through the whole route. Each
   // target carries whether it still needs a DEM read; cached columns are applied
   // instantly in-loop (no fetch, no inter-request delay) yet still count toward N/total.
+  const hydroOn = catchmentHydroEnabled();
   const allTargets = visibleIndices
     .filter((colIdx) => onlyColIndex === null || colIdx === onlyColIndex)   // single-column retry
     .map((colIdx) => ({ colIdx, pt: weatherPoints[colIdx] }))
     .filter(({ pt }) => pt)
     .map((t) => ({
       ...t,
-      needsFetch: force || catchmentColumnNeedsFetch(t.pt, t.colIdx),
+      needsBlock: catchmentBlockNeedsFetch(t.pt, force),
+      needsInfo: hydroOn && catchmentInfoNeedsFetch(t.pt, t.colIdx, force),
       tier: catchmentDataTier(t.pt, t.colIdx),   // captured before this pass rewrites the readouts
     }));
 
   // Nothing needs a fetch → apply saved readouts synchronously, no progress bar
   // (mirrors weather's !needsNetworkFetch fast path).
-  if (!allTargets.some((t) => t.needsFetch)) {
+  if (!allTargets.some((t) => t.needsBlock || t.needsInfo)) {
     allTargets.forEach(({ colIdx }) =>
       fillCatchmentTableColumn(colIdx, getSavedCatchmentCells(getSemanticKey(weatherPoints[colIdx]))));
     syncCatchmentBasins();   // readouts were cached, the basins may not be drawn yet
@@ -12860,12 +12962,16 @@ async function fetchAllCatchmentData(options = {}) {
   const run = { id: ++catchmentFetchRunSeq, controller, signal: controller.signal, cancelled: false, paused: false, lockScope: 'edit', _resume: null };
   activeCatchmentFetchRun = run;
   isCatchmentFetching = true;
+  // Progress runs as ONE monotonic 0-100% sweep across both passes, so the ring
+  // never resets at the hand-over; the N/total in the detail line restarts per pass
+  // because that is the count the user is watching (每欄一次區域、每欄一次水文).
   const total = allTargets.length;
-  let done = 0;
+  const grandTotal = total + (hydroOn ? total : 0);
+  let doneAll = 0;
   let okCount = 0;
   const busyTask = beginRouteWeatherBusyTask({
-    title: '正在載入集水區資訊',
-    detail: `載入集水區資訊 0/${total}`,
+    title: '正在載入集水區域',
+    detail: `載入集水區域 0/${total}`,
     progress: 0,
     lockScope: 'edit',
   });
@@ -12874,24 +12980,26 @@ async function fetchAllCatchmentData(options = {}) {
   const fetchBtn = document.querySelector('[data-action="fetch-catchment"]');
   if (fetchBtn) fetchBtn.disabled = true;
 
-  // Compute + apply ONE column's 集水區 readout. Returns 'ok' | 'fail' | 'cancel'.
-  // Draws the point's map basin incrementally (cache hit → no refetch), mirroring
-  // weather's per-point setWaypointWeather so 已算完的航點先顯示集水區.
-  const loadOneCatchment = async ({ colIdx, pt }) => {
+  // Delineate + apply ONE column's 區域. Returns 'ok' | 'fail' | 'cancel'. Draws the
+  // point's map basin incrementally (cache hit → no refetch), mirroring weather's
+  // per-point setWaypointWeather so 已算完的航點先顯示集水區.
+  const loadOneBlock = async ({ colIdx, pt }) => {
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
     await waitIfLoadPaused(run);                        // park here while 停止 is active
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
-    setCatchmentColumnCells(colIdx, () => '…');
+    setCatchmentColumnCells(colIdx, () => '…', 'terrain');
     let readout;
     try {
-      readout = await computeCatchmentReadout(pt, colIdx, run.signal);
+      readout = await computeCatchmentBlock(pt, run.signal);
     } catch (err) {
       if (isAbortError(err) || isCatchmentFetchRunCancelled(run)) return 'cancel';
-      console.warn(`Catchment fetch failed for ${pt.label}:`, err?.message);
+      console.warn(`Catchment block failed for ${pt.label}:`, err?.message);
       readout = { status: 'error' };
     }
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
-    fillCatchmentTableColumn(colIdx, readout);
+    // 平地 has no 水文 to come, so it fills both halves here; an 'ok' basin leaves the
+    // 水文 cells to the 資訊 pass rather than blanking them to '—' in between.
+    fillCatchmentTableColumn(colIdx, readout, readout?.status === 'flat' ? null : 'terrain');
     // 平地 counts as answered, not failed: there is nothing to draw and nothing a
     // retry would change, so it must not join the retry sweep or the 部分失敗 tally.
     const settled = isSettledCatchmentReadout(readout);
@@ -12899,6 +13007,29 @@ async function fetchAllCatchmentData(options = {}) {
     // Keep an open card that's showing this point's catchment view in sync.
     if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
     return settled ? 'ok' : 'fail';
+  };
+
+  // Hydrology for ONE column, after its 區域 settled. A column whose 區域 failed has
+  // nothing to describe — it is already counted as a 區域 failure, so it is skipped
+  // here rather than being tallied (and retried) a second time.
+  const loadOneInfo = async ({ colIdx, pt }) => {
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    await waitIfLoadPaused(run);                        // park here while 停止 is active
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    if (!isSettledCatchmentReadout(getSavedCatchmentCells(getSemanticKey(pt)))) return 'skip';
+    setCatchmentColumnCells(colIdx, () => '…', 'hydro');
+    let readout;
+    try {
+      readout = await computeCatchmentInfo(pt, colIdx, run.signal);
+    } catch (err) {
+      if (isAbortError(err) || isCatchmentFetchRunCancelled(run)) return 'cancel';
+      console.warn(`Catchment hydrology failed for ${pt.label}:`, err?.message);
+      readout = null;
+    }
+    if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    fillCatchmentTableColumn(colIdx, readout || getSavedCatchmentCells(getSemanticKey(pt)), 'hydro');
+    if (typeof _wcStates !== 'undefined' && _wcStates.has(colIdx) && isCatchmentView(colIdx)) _renderWeatherCard(colIdx);
+    return Array.isArray(readout?.hydro) ? 'ok' : 'fail';
   };
 
   // Apply ONE already-cached column instantly (parity with weather's cache path):
@@ -12912,57 +13043,99 @@ async function fetchAllCatchmentData(options = {}) {
     return isSettledCatchmentReadout(saved);
   };
 
-  const failedTargets = [];
-  let remainingFailures = 0;
-  try {
+  // One progress pass over the ordered targets. Both halves share it so the cancel /
+  // 停止 / inter-request-delay guards live in exactly one place. `countOk` is set for
+  // the 區域 pass only: 有無算出集水區 is what decides the 全軍覆沒 message, and counting
+  // both passes would double it. Returns the targets whose work failed.
+  const runPass = async ({ title, label, needs, loadOne, countOk = false }) => {
+    let passDone = 0;
+    const failed = [];
+    busyTask.set({ title, detail: `${label} 0/${total}`, progress: (doneAll / grandTotal) * 100 });
     for (const target of orderedTargets) {
-      if (isCatchmentFetchRunCancelled(run)) break;
+      if (isCatchmentFetchRunCancelled(run)) return failed;
       await waitIfLoadPaused(run);                       // park here while 停止 is active
-      if (isCatchmentFetchRunCancelled(run)) break;      // cancelled while paused
+      if (isCatchmentFetchRunCancelled(run)) return failed;   // cancelled while paused
 
-      // Cached column: no fetch, no delay — just fill + advance the counter.
-      if (!target.needsFetch) {
-        if (fillCachedColumn(target)) okCount++;
-        done++;
-        busyTask.set({ detail: `載入集水區資訊 ${done}/${total}`, progress: (done / total) * 100 });
-        continue;
+      let fetched = false;
+      if (needs(target)) {
+        const outcome = await loadOne(target);       // 'ok' | 'fail' | 'skip' | 'cancel'
+        if (outcome === 'cancel') return failed;
+        if (outcome === 'fail') failed.push(target);
+        else if (outcome === 'ok' && countOk) okCount++;
+        fetched = outcome !== 'skip';               // a skip issued no request → no spacing
+      } else if (fillCachedColumn(target) && countOk) {
+        okCount++;
       }
-
-      const outcome = await loadOneCatchment(target);
-      if (outcome === 'cancel') break;
-      if (outcome === 'ok') okCount++;
-      else failedTargets.push(target);
-      done++;
-      busyTask.set({ detail: `載入集水區資訊 ${done}/${total}`, progress: (done / total) * 100 });
-      if (done < total) {
+      passDone++;
+      doneAll++;
+      busyTask.set({ detail: `${label} ${passDone}/${total}`, progress: (doneAll / grandTotal) * 100 });
+      // Only a real request earns the rate-limit spacing; cached columns fly through.
+      if (fetched && passDone < total) {
         const cont = await waitForWeatherFetchDelay(300, run.signal);
+        if (!cont || isCatchmentFetchRunCancelled(run)) return failed;
+      }
+    }
+    return failed;
+  };
+
+  // Retry sweep — parity with weather: the burst tail is the most 429/timeout-prone;
+  // re-attempt failures once (主航點 first) now the rate-limit window has recovered.
+  const runRetry = async ({ label, targets, loadOne, countOk = false }) => {
+    if (isCatchmentFetchRunCancelled(run) || !targets.length) return targets;
+    const retryList = orderByLoadPriority(targets, (t) => t.pt);
+    const stillFailed = [];
+    let retryDone = 0;
+    for (const target of retryList) {
+      if (isCatchmentFetchRunCancelled(run)) { stillFailed.push(target); continue; }
+      busyTask.set({ detail: `${label} ${retryDone + 1}/${retryList.length}` });
+      const outcome = await loadOne(target);
+      if (outcome === 'cancel') { stillFailed.push(target); break; }
+      if (outcome === 'fail') stillFailed.push(target);
+      else if (outcome === 'ok' && countOk) okCount++;
+      retryDone++;
+      if (retryDone < retryList.length) {
+        const cont = await waitForWeatherFetchDelay(500, run.signal);
         if (!cont || isCatchmentFetchRunCancelled(run)) break;
       }
     }
+    return stillFailed;
+  };
 
-    // Retry sweep — parity with weather: the burst tail is the most 429/timeout-prone;
-    // re-attempt failures once (主航點 first) now the rate-limit window has recovered.
-    let stillFailed = failedTargets;
-    if (!isCatchmentFetchRunCancelled(run) && stillFailed.length) {
-      const retryList = orderByLoadPriority(stillFailed, (t) => t.pt);
-      stillFailed = [];
-      const retryTotal = retryList.length;
-      let retryDone = 0;
-      for (const target of retryList) {
-        if (isCatchmentFetchRunCancelled(run)) { stillFailed.push(target); continue; }
-        busyTask.set({ detail: `重試載入集水區 ${retryDone + 1}/${retryTotal}`, progress: 100 });
-        const outcome = await loadOneCatchment(target);
-        if (outcome === 'cancel') { stillFailed.push(target); break; }
-        if (outcome === 'ok') okCount++;
-        else stillFailed.push(target);
-        retryDone++;
-        if (retryDone < retryTotal) {
-          const cont = await waitForWeatherFetchDelay(500, run.signal);
-          if (!cont || isCatchmentFetchRunCancelled(run)) break;
-        }
-      }
+  let remainingFailures = 0;
+  try {
+    // ---- Pass 1: 集水區域 (DEM delineation) for every column ----
+    let blockFailed = await runPass({
+      title: '正在載入集水區域',
+      label: '載入集水區域',
+      needs: (t) => t.needsBlock,
+      loadOne: loadOneBlock,
+      countOk: true,
+    });
+    blockFailed = await runRetry({
+      label: '重試載入集水區域', targets: blockFailed, loadOne: loadOneBlock, countOk: true,
+    });
+
+    // ---- Pass 2: 水文資訊 (hydrology) for every column, basins now in cache ----
+    let infoFailed = [];
+    // Re-asked AFTER pass 1, never OR-ed with the pre-pass `needsInfo` snapshot: that
+    // snapshot says "true" for every column that had no readout yet, which would drag
+    // the 平地 columns pass 1 just settled through a hydrology pass they can never use
+    // (there is no basin to describe) — paying the inter-request spacing for nothing.
+    const infoNeeded = hydroOn
+      ? new Set(allTargets.filter((t) => catchmentInfoNeedsFetch(t.pt, t.colIdx, force)).map((t) => t.colIdx))
+      : new Set();
+    if (infoNeeded.size && !isCatchmentFetchRunCancelled(run)) {
+      infoFailed = await runPass({
+        title: '正在載入水文資訊',
+        label: '載入水文資訊',
+        needs: (t) => infoNeeded.has(t.colIdx),
+        loadOne: loadOneInfo,
+      });
+      infoFailed = await runRetry({
+        label: '重試載入水文資訊', targets: infoFailed, loadOne: loadOneInfo,
+      });
     }
-    remainingFailures = stillFailed.length;
+    remainingFailures = blockFailed.length + infoFailed.length;
   } finally {
     const wasCancelled = isCatchmentFetchRunCancelled(run);
     pausableLoadRuns.delete(run);
@@ -13595,7 +13768,7 @@ function catchmentValueHtml(row) {
 // renderCardCatchment (area, outlet, computeGeometryRows / computeHydroIndicators).
 // `1` = full-width row (like the weather card's is-wide coords row) for the long
 // values that don't fit a half-column.
-function buildCatchmentSkeletonHtml(weatherOnly = false) {
+function buildCatchmentSkeletonHtml(weatherOnly = false, hydroOn = true) {
   const TERRAIN = [['集水區面積', 0], ['出水口海拔', 0], ['海拔範圍', 1], ['平均坡度', 1], ['主流長度', 0]];
   const WEATHER = CATCHMENT_CARD_WEATHER_KEYS.map(([, label]) => [label, 0]);
   const HYDRO = [['土壤含水量', 0], ['前期降雨', 1], ['預估逕流量', 0], ['河川流量', 1], ['溪水暴漲風險', 0], ['土石流風險', 0]];
@@ -13611,10 +13784,16 @@ function buildCatchmentSkeletonHtml(weatherOnly = false) {
   const column = (title, section, rows) =>
     `<div class="wc-catch-col"><div class="wc-catch-col-title">${title}</div>${grid(section, rows, true)}</div>`;
   // Weather sits at the TOP. When 詳細集水區資訊 is off, only the weather group shows
-  // (地形/水文 are neither rendered nor computed).
+  // (地形/水文 are neither rendered nor computed); with 水文資訊 off it is 天氣＋地形,
+  // and the 水文 group is likewise never rendered nor read.
   if (weatherOnly) return grid('weather', WEATHER);
-  // 集水區域 and 水文 are the two halves of one reading, so they sit side by side
-  // (titled, since adjacency alone no longer says which rows belong to which).
+  // 水文資訊 off → 集水區域 is the only block, so it keeps the normal full-width
+  // 2-column grid (nothing to sit beside) and the 水文 disclaimer has nothing to
+  // disclaim.
+  if (!hydroOn) return grid('weather', WEATHER) + grid('terrain', TERRAIN);
+  // Both on: 集水區域 and 水文 are the two halves of one reading, so they sit side
+  // by side (titled, since adjacency alone no longer says which rows belong to
+  // which).
   return grid('weather', WEATHER)
     + `<div class="wc-catch-pair">${column('集水區域', 'terrain', TERRAIN)}${column('水文', 'hydro', HYDRO)}</div>`
     + `<div class="ct-disclaimer">水文指標為粗略估算，僅供參考</div>`;
@@ -13647,7 +13826,8 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
   _cardPanelAbort.set(key, abort);
   const stale = () => token !== _cardPanelToken.get(key);
 
-  container.innerHTML = buildCatchmentSkeletonHtml(!detailed);
+  const hydroOn = catchmentHydroEnabled();
+  container.innerHTML = buildCatchmentSkeletonHtml(!detailed, hydroOn);
   const fill = (section, values) => {
     const cells = container.querySelectorAll(`[data-catch="${section}"] .wc-catch-val`);
     values.forEach((v, i) => { if (cells[i]) cells[i].innerHTML = v; });
@@ -13710,6 +13890,21 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
   const outlet = Number.isFinite(result.outletEle) ? formatElevation(result.outletEle) : '—';
   const terrainVals = [formatArea(result.areaM2), outlet, ...geoRows.map(catchmentValueHtml)];
   fill('terrain', terrainVals);
+
+  // 水文資訊 off: 區域-only card. Save the terrain and stop — no hydrology request,
+  // and the remembered 水文 (plus its schedule stamp) is left untouched so turning
+  // 資訊 back on shows it again without a refetch.
+  if (!hydroOn) {
+    if (_cardPanelAbort.get(key) === abort) _cardPanelAbort.delete(key);
+    saveCatchmentCells(semKey, {
+      status: 'ok',
+      terrain: terrainVals,
+      hydro: Array.isArray(saved?.hydro) ? saved.hydro : null,
+      dateStr: saved?.dateStr ?? null,
+      hour: saved?.hour ?? null,
+    });
+    return;
+  }
 
   let hydroEnv = null;
   try {
