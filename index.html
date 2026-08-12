@@ -182,6 +182,12 @@
         <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor" />
       </svg>
     </button>
+    <button id="btn-star-tool" class="map-action-btn" title="魔法陣" aria-label="魔法陣" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="20" height="20">
+        <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.55" />
+        <path d="M12 3.6 19.1 19.6 4.3 9.4h15.4L4.9 19.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+      </svg>
+    </button>
   </div>
 
   <!-- F2: Measurement tools panel -->
@@ -257,6 +263,133 @@
     <div class="measure-panel-actions shape-panel-actions">
       <button type="button" class="btn-secondary measure-clear-btn" id="btn-shape-clear">清除</button>
       <button type="button" class="btn-primary measure-clear-btn" id="btn-shape-generate">產生路線</button>
+    </div>
+  </div>
+
+  <!-- Magic circle: find POIs that form a star, animate it, hand the vertices
+       to route planning. Shares the measure-panel shell and the same map
+       corner as 量測工具 / 繪圖板 (opening one closes the others). -->
+  <div id="star-panel" class="measure-panel star-panel hidden" role="group" aria-label="魔法陣">
+    <div class="measure-panel-head">
+      <span class="shape-panel-title" data-i18n="魔法陣">魔法陣</span>
+      <button type="button" class="measure-close-btn" id="btn-star-close" title="關閉魔法陣" aria-label="關閉魔法陣">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" /></svg>
+      </button>
+    </div>
+    <p class="measure-hint" id="star-hint" data-i18n="設定中心與半徑，從周邊地標找出可構成星形的組合">設定中心與半徑，從周邊地標找出可構成星形的組合</p>
+
+    <div class="star-section">
+      <label class="mr-label" for="star-center-input" data-i18n="搜索中心">搜索中心</label>
+      <div class="star-center-row">
+        <input type="text" id="star-center-input" class="shape-distance-input" placeholder="地標、地址或座標" autocomplete="off">
+        <button type="button" class="star-icon-btn" id="btn-star-search-place" title="搜尋地點" aria-label="搜尋地點">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" /></svg>
+        </button>
+        <button type="button" class="star-icon-btn" id="btn-star-center-map" title="用地圖中心" aria-label="用地圖中心">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v2.06C6.83 3.52 3.52 6.83 3.06 11H1v2h2.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-2.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" fill="currentColor" /></svg>
+        </button>
+      </div>
+      <ul class="star-place-list hidden" id="star-place-list" role="listbox" aria-label="地點搜尋結果"></ul>
+      <p class="star-center-readout" id="star-center-readout"></p>
+    </div>
+
+    <div class="star-section">
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-inner-input" data-i18n="內半徑">內半徑</label>
+        <input type="number" id="star-inner-input" class="shape-distance-input" min="0" max="49.5" step="0.5" value="4">
+        <span class="mr-label">km</span>
+      </div>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-outer-input" data-i18n="外半徑">外半徑</label>
+        <input type="number" id="star-outer-input" class="shape-distance-input" min="0.5" max="50" step="0.5" value="6">
+        <span class="mr-label">km</span>
+      </div>
+    </div>
+
+    <div class="star-section">
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-mode-select" data-i18n="星形模式">星形模式</label>
+        <select id="star-mode-select" class="shape-distance-input"></select>
+      </div>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-shape-select" data-i18n="魔法陣形體">魔法陣形體</label>
+        <select id="star-shape-select" class="shape-distance-input"></select>
+      </div>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-variant-select" data-i18n="數值">數值</label>
+        <select id="star-variant-select" class="shape-distance-input"></select>
+      </div>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-element-select" data-i18n="元素">元素</label>
+        <select id="star-element-select" class="shape-distance-input"></select>
+      </div>
+    </div>
+
+    <details class="star-details" id="star-category-details">
+      <summary data-i18n="目標類別">目標類別 <span class="star-count" id="star-category-count"></span></summary>
+      <div class="star-category-list" id="star-category-list"></div>
+    </details>
+
+    <details class="star-details" id="star-advanced-details">
+      <summary data-i18n="進階參數">進階參數</summary>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-strategy-select" data-i18n="搜尋策略">搜尋策略</label>
+        <select id="star-strategy-select" class="shape-distance-input">
+          <option value="honeycomb" data-i18n="蜂巢">蜂巢</option>
+          <option value="angular" data-i18n="角度">角度</option>
+        </select>
+      </div>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-tolerance-input" data-i18n="角度容差">角度容差</label>
+        <input type="number" id="star-tolerance-input" class="shape-distance-input" min="1" max="36" step="1" value="6">
+        <span class="mr-label">°</span>
+      </div>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-rotation-input" data-i18n="旋轉步進">旋轉步進</label>
+        <input type="number" id="star-rotation-input" class="shape-distance-input" min="1" max="90" step="1" value="3">
+        <span class="mr-label">°</span>
+      </div>
+      <div class="shape-distance-row">
+        <label class="mr-label" for="star-candidates-input" data-i18n="每角候選數">每角候選數</label>
+        <input type="number" id="star-candidates-input" class="shape-distance-input" min="1" max="16" step="1" value="4">
+      </div>
+      <div class="shape-distance-row" id="star-hexcell-row">
+        <label class="mr-label" for="star-hexcell-input" data-i18n="蜂巢格半徑">蜂巢格半徑</label>
+        <input type="number" id="star-hexcell-input" class="shape-distance-input" min="0.25" max="10" step="0.25" value="0.5">
+        <span class="mr-label">km</span>
+      </div>
+    </details>
+
+    <div class="measure-panel-actions shape-panel-actions">
+      <button type="button" class="btn-secondary measure-clear-btn" id="btn-star-clear" data-i18n="清除">清除</button>
+      <button type="button" class="btn-primary measure-clear-btn" id="btn-star-solve" data-i18n="搜尋並繪製">搜尋並繪製</button>
+    </div>
+
+    <!-- Result + playback: hidden until a star exists, so the resting panel
+         stays as short as the other two map tools. -->
+    <div class="star-result hidden" id="star-result">
+      <div class="star-result-nav">
+        <button type="button" class="star-icon-btn" id="btn-star-prev" title="上一個結果" aria-label="上一個結果">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6z" fill="currentColor" /></svg>
+        </button>
+        <span class="star-result-index" id="star-result-index">1 / 1</span>
+        <button type="button" class="star-icon-btn" id="btn-star-next" title="下一個結果" aria-label="下一個結果">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M8.6 7.4 10 6l6 6-6 6-1.4-1.4 4.6-4.6z" fill="currentColor" /></svg>
+        </button>
+        <div class="star-playback">
+          <button type="button" class="star-icon-btn" id="btn-star-rewind" title="倒轉" aria-label="倒轉魔法陣動畫">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M16 6v12L7 12z" fill="currentColor" /></svg>
+          </button>
+          <button type="button" class="star-icon-btn star-icon-btn--primary" id="btn-star-play" title="播放" aria-label="播放魔法陣動畫" aria-pressed="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
+          </button>
+          <select id="star-speed-select" class="shape-distance-input star-speed-select" aria-label="播放速度"></select>
+        </div>
+      </div>
+      <div class="measure-readout" id="star-readout"></div>
+      <div class="measure-panel-actions">
+        <button type="button" class="btn-primary measure-clear-btn" id="btn-star-to-route" data-i18n="帶入路線規劃">帶入路線規劃</button>
+      </div>
     </div>
   </div>
 

@@ -60,14 +60,17 @@ const PREFERENCE_STATE_KEYS = [
   'mappingElf_shapeRouteDistanceKm',
   'mappingElf_shapeRouteAngleTolDeg',
   'mappingElf_shapeRouteTrimSpurs',
+  'mappingElf_starSettings',
 ];
 
-// Map-tool workspace state (量測工具 / 繪圖板): panel open state, mode, clicked
-// points and the drawn shape. Persisted so a reload lands back on what the user
-// was doing, and carried in .melmap like the other workspace keys.
+// Map-tool workspace state (量測工具 / 繪圖板 / 魔法陣): panel open state, mode,
+// clicked points, the drawn shape and the star search centre. Persisted so a
+// reload lands back on what the user was doing, and carried in .melmap like the
+// other workspace keys.
 const TOOL_STATE_KEYS = [
   'mappingElf_measureTool',
   'mappingElf_shapeBoard',
+  'mappingElf_starTool',
 ];
 
 const LAYOUT_STATE_KEYS = [
