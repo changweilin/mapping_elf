@@ -6283,7 +6283,9 @@ async function runStarSolve() {
       onCategoryResult: (progress) => {
         busyTask.set({
           detail: `${translatePhrase('取得地標')} ${progress.completedCategories}/${progress.totalCategories} · ${progress.category.label}`,
-          progress: (progress.completedCategories / Math.max(1, progress.totalCategories)) * 0.4,
+          // busyTask progress is 0-100 (see updateRouteWeatherBusyOverlay's clamp).
+          // The Overpass fetch owns the first 40% of the bar, the solve the rest.
+          progress: (progress.completedCategories / Math.max(1, progress.totalCategories)) * 40,
         });
       },
     });
@@ -6313,11 +6315,15 @@ async function runStarSolve() {
 
     // The solver is a synchronous generator; drive it in slices so the progress
     // bar paints and 停止/取消 stay responsive on long searches.
+    //
+    // The overlay is repainted on the SAME ~60/s cadence as the yield, not once
+    // per stage: a default 五芒星 sweep is ~144 stages, and repainting on every
+    // one of them costs more than the search itself on a slow device.
     let step = iterator.next();
     let lastYield = performance.now();
     while (!step.done) {
-      busyTask.set({ detail: step.value.label, progress: 0.4 + step.value.progress * 0.6 });
       if (performance.now() - lastYield > 16) {
+        busyTask.set({ detail: step.value.label, progress: 40 + step.value.progress * 60 });
         await new Promise((resolve) => setTimeout(resolve, 0));
         await waitIfLoadPaused(run);
         lastYield = performance.now();
@@ -6368,7 +6374,9 @@ function setStarPlaybackSilently(playback) {
 // generated options, which applyTranslations() (data-i18n attributes only)
 // cannot reach — so drop and rebuild them on a language switch.
 function refreshStarToolLanguage() {
-  if (!starPanel) return;
+  // Nothing to re-translate until the panel has been opened once — the controls
+  // do not exist yet, and building them here would undo that saving.
+  if (!starPanel || starPanel.classList.contains('hidden')) return;
   starModeSelect?.replaceChildren();
   starShapeSelect?.replaceChildren();
   starElementSelect?.replaceChildren();
@@ -6381,12 +6389,16 @@ function refreshStarToolLanguage() {
 // Boot restore. Only the user's own inputs come back (settings, centre, panel
 // open state) — the POIs and the solved star are recomputed on demand, exactly
 // like 量測工具 recomputes its readout.
+//
+// The controls themselves (5 selects plus 19 translated category rows) are NOT
+// built here: setStarActive(true) builds them on first open, and most sessions
+// never open this tool. Doing it at boot added measurable startup work for
+// everyone and delayed the point where the map accepts its first click.
 function restoreStarToolState() {
   starSettings = loadStarSettings();
   const saved = loadStarToolState();
   starCenter = saved.center;
   starCenterName = saved.centerName;
-  syncStarControls();
   if (saved.open) setStarActive(true);
 }
 

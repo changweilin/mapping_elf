@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ANCHOR, flatElevation, nominatim, osrm, overpass } from './helpers/apiMocks.mjs';
+import { ANCHOR, flatElevation, mapTiles, nominatim, osrm, overpass } from './helpers/apiMocks.mjs';
 
 // 魔法陣 (star tool): pick a centre + radius ring, pull POIs from Overpass, solve
 // for a star, animate it, hand the vertices to route planning.
@@ -45,6 +45,7 @@ async function openApp(page, { overpassOpts = {}, nominatimOpts = null } = {}) {
   await page.route('**/v1/forecast**', (route) => route.fulfill({ json: forecastPayload() }));
   await page.route('**/v1/archive**', (route) => route.fulfill({ json: forecastPayload() }));
   await page.route('**://brouter.de/**', (route) => route.abort());
+  await mapTiles(page);
   await flatElevation(page);
   await osrm(page);
   await page.route('**://nominatim.openstreetmap.org/**', (route) => route.fulfill({ json: [] }));
@@ -52,7 +53,15 @@ async function openApp(page, { overpassOpts = {}, nominatimOpts = null } = {}) {
   await overpass(page, overpassOpts);
   if (nominatimOpts) await nominatim(page, nominatimOpts);
 
-  await page.addInitScript(() => { window.__mappingElfTestHooks = { events: [] }; });
+  // Capture page errors too: a control's change handler that throws leaves the
+  // circle showing the PREVIOUS render forever, which looks exactly like a slow
+  // render from the outside. starLayerState() surfaces these on failure.
+  await page.addInitScript(() => {
+    window.__mappingElfTestHooks = { events: [] };
+    window.__pageErrors = [];
+    window.addEventListener('error', (e) => window.__pageErrors.push(String(e.message)));
+    window.addEventListener('unhandledrejection', (e) => window.__pageErrors.push('rejection: ' + String(e.reason)));
+  });
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
@@ -83,6 +92,65 @@ const events = (page, type) => page.evaluate(
   type,
 );
 
+/**
+ * Click without Playwright's actionability wait. The magic circle keeps ~100
+ * animated layers alive next to these controls, and the stability check ahead
+ * of a normal .click() stalled for 5-19 s per press (same trap the weather-card
+ * specs hit). The handler is what matters here, so dispatch straight at it.
+ */
+const press = (page, selector) => page.locator(selector).dispatchEvent('click');
+
+/**
+ * Set a select/input and fire `change`, skipping the same actionability wait.
+ * `selectOption`/`fill` stall exactly like `.click()` does here — one of them
+ * burned the full 120 s test budget on CI while the circle animated.
+ */
+const setControl = (page, selector, value) => page.locator(selector).evaluate((el, v) => {
+  el.value = v;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, value);
+
+/**
+ * Count matching elements through page.evaluate rather than a locator.
+ *
+ * Playwright's locator machinery stalls badly on this page — with ~100 CSS-
+ * animated layers alive, `locator('.magic-drawable').count()` has taken >10 s
+ * and blown the expect budget while `document.querySelectorAll(...).length`
+ * answered instantly with 103. Same root cause as the `press` helper above, so
+ * everything that inspects the magic circle goes through evaluate.
+ */
+const countOf = (page, selector) =>
+  page.evaluate((sel) => document.querySelectorAll(sel).length, selector);
+
+const expectCount = (page, selector, value) =>
+  expect.poll(() => countOf(page, selector), { timeout: 30_000, intervals: [100, 250, 500] })
+    .toBe(value);
+
+/**
+ * What the star layer currently looks like, as one string. Used as the polled
+ * value for the element/geometry assertions so a CI timeout reports the actual
+ * state instead of just "expected 5, got 0" — the difference between knowing
+ * the render was skipped and knowing only that it did not match.
+ */
+const starLayerState = (page) => page.evaluate(() => {
+  const points = [...document.querySelectorAll('.star-point')];
+  const elementClass = (el) => [...el.classList].find((c) => c.startsWith('magic-element--')) || 'none';
+  const tally = {};
+  points.forEach((el) => { const k = elementClass(el); tally[k] = (tally[k] || 0) + 1; });
+  return [
+    `points=${points.length}`,
+    `elements=${Object.entries(tally).map(([k, n]) => `${k}:${n}`).join(',') || '-'}`,
+    `rose=${document.querySelectorAll('.magic-rose-curve').length}`,
+    `drawable=${document.querySelectorAll('.magic-drawable').length}`,
+    `resultHidden=${document.getElementById('star-result')?.classList.contains('hidden')}`,
+    `errors=${(window.__pageErrors || []).slice(0, 2).join('|') || 'none'}`,
+  ].join(' ');
+});
+
+const expectStarLayer = (page, expected) =>
+  expect.poll(() => starLayerState(page), { timeout: 30_000, intervals: [100, 250, 500] })
+    .toContain(expected);
+
 async function openStarPanel(page) {
   await page.locator('#btn-star-tool').click();
   await expect(page.locator('#star-panel')).toBeVisible();
@@ -95,21 +163,25 @@ async function useMapCentreAsStarCentre(page) {
 }
 
 async function solve(page) {
-  await page.locator('#btn-star-solve').click();
+  await press(page, '#btn-star-solve');
   await expect.poll(async () => (await events(page, 'star-solved')).length, { timeout: 60000 })
     .toBeGreaterThan(0);
 }
 
 /**
- * Coarsen the rotation sweep before solving. The default 3° step runs ~120
- * solver stages, each yielding to the event loop — fine in the app, but it
- * dominates the runtime of tests that only care about what happens *after* a
- * star exists. Solve quality is asserted separately.
+ * Coarsen the search before solving. The app defaults (3° rotation step, 4
+ * candidates per corner) run ~144 solver stages exploring up to 4^5 combos
+ * each — right for a real search, but it is the single biggest cost in this
+ * spec and on a CI runner it dominated the whole shard.
+ *
+ * 36° + 2 candidates is ~12 stages and still finds the seeded ring exactly
+ * (verified: same 5 results, pentagon first, 0.00° angle error), so every
+ * assertion here survives — including the exactness one.
  */
-async function useCoarseSolve(page) {
+async function useFastSolve(page) {
   await page.locator('#star-advanced-details').evaluate((el) => { el.open = true; });
-  await page.locator('#star-rotation-input').fill('18');
-  await page.locator('#star-rotation-input').dispatchEvent('change');
+  await setControl(page, '#star-rotation-input', '36');
+  await setControl(page, '#star-candidates-input', '2');
 }
 
 test('star tool opens, shares the map corner with the other two tools', async ({ page }) => {
@@ -150,12 +222,13 @@ test('solving finds the seeded star and draws an animated magic circle', async (
   await openStarPanel(page);
 
   // No centre yet → refuses to search and makes no Overpass call.
-  await page.locator('#btn-star-solve').click();
+  await press(page, '#btn-star-solve');
   expect(stats.calls).toBe(0);
 
   await useMapCentreAsStarCentre(page);
-  await page.locator('#star-inner-input').fill('3');
-  await page.locator('#star-outer-input').fill('8');
+  await setControl(page, '#star-inner-input', '3');
+  await setControl(page, '#star-outer-input', '8');
+  await useFastSolve(page);
   await solve(page);
 
   const solved = (await events(page, 'star-solved'))[0].detail;
@@ -170,8 +243,9 @@ test('solving finds the seeded star and draws an animated magic circle', async (
   await expect(page.locator('#star-readout')).toContainText('星點');
 
   // The magic circle is on the map: animated strokes + one marker per vertex.
-  await expect.poll(async () => page.locator('.magic-drawable').count()).toBeGreaterThan(0);
-  await expect(page.locator('.star-point')).toHaveCount(5);
+  await expect.poll(() => countOf(page, '.magic-drawable'),
+    { timeout: 30_000, intervals: [100, 250, 500] }).toBeGreaterThan(0);
+  await expectCount(page, '.star-point', 5);
 
   // The solver picked the seeded perfect ring, not the noise: a geometrically
   // exact star has ~zero angle error.
@@ -179,88 +253,102 @@ test('solving finds the seeded star and draws an animated magic circle', async (
 });
 
 test('playback pauses and resumes, and results can be stepped through', async ({ page }) => {
-  // Solve + several full re-renders of ~100 animated strokes each; the 60 s
-  // default leaves no headroom (see catchment-flat.spec.js for the precedent).
-  test.setTimeout(150_000);
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
-  await useCoarseSolve(page);
+  // Playback control is geometry-independent, and this test re-renders the
+  // circle five times. The default 星芒 draws 98 strokes; 玫瑰曲線 k=3 draws 36,
+  // which is the whole difference between ~2 min and ~40 s on a CI runner.
+  // Geometry-specific rendering is covered by the two tests that assert on it.
+  await setControl(page, '#star-shape-select', 'rose');
+  await setControl(page, '#star-variant-select', 'k-3');
+  await useFastSolve(page);
   await solve(page);
 
   const play = page.locator('#btn-star-play');
   await expect(play).toHaveAttribute('aria-pressed', 'true');
 
+  // Toggling playback re-renders the whole circle, so the element a single
+  // querySelector found is routinely replaced mid-poll — sample a handful and
+  // require them to agree. Reading *every* stroke instead makes each poll a
+  // getComputedStyle sweep over the full circle, which on CI cost more than the
+  // thing being measured.
   const playState = () => page.evaluate(() => {
-    const el = document.querySelector('.magic-drawable');
-    return el ? getComputedStyle(el).animationPlayState : null;
+    const els = [...document.querySelectorAll('.magic-drawable')].slice(0, 6);
+    if (!els.length) return null;
+    const states = new Set(els.map((el) => getComputedStyle(el).animationPlayState));
+    return states.size === 1 ? [...states][0] : `mixed:${[...states].join('+')}`;
   });
-  await expect.poll(playState).toBe('running');
+  const expectPlayState = (value) =>
+    expect.poll(playState, { timeout: 60_000, intervals: [100, 250, 500] }).toBe(value);
 
-  await play.click();
+  await expectPlayState('running');
+
+  await press(page, '#btn-star-play');
   await expect(play).toHaveAttribute('aria-pressed', 'false');
-  await expect.poll(playState).toBe('paused');
+  await expectPlayState('paused');
 
-  await play.click();
+  await press(page, '#btn-star-play');
   await expect(play).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(playState).toBe('running');
+  await expectPlayState('running');
 
   // Stepping results keeps exactly one star drawn.
   const indexText = () => page.locator('#star-result-index').innerText();
+  const poll = (fn) => expect.poll(fn, { timeout: 60_000, intervals: [100, 250, 500] });
   const first = await indexText();
-  await page.locator('#btn-star-next').click();
-  await expect.poll(indexText).not.toBe(first);
-  await expect(page.locator('.star-point')).toHaveCount(5);
-  await page.locator('#btn-star-prev').click();
-  await expect.poll(indexText).toBe(first);
+  await press(page, '#btn-star-next');
+  await poll(indexText).not.toBe(first);
+  await expectCount(page, '.star-point', 5);
+  await press(page, '#btn-star-prev');
+  await poll(indexText).toBe(first);
 });
 
 test('changing the element or geometry restyles the same star; changing mode invalidates it', async ({ page }) => {
-  test.setTimeout(150_000);
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
-  await useCoarseSolve(page);
+  await useFastSolve(page);
   await solve(page);
 
-  await expect(page.locator('.magic-element--metal').first()).toBeVisible();
+  await expect.poll(() => countOf(page, '.magic-element--metal'),
+    { timeout: 30_000, intervals: [100, 250, 500] }).toBeGreaterThan(0);
 
   // Element switch → same 5 vertices, new element class on the markers.
-  await page.locator('#star-element-select').selectOption('2');   // 水
-  await expect(page.locator('.star-point.magic-element--water')).toHaveCount(5);
+  await setControl(page, '#star-element-select', '2');   // 水
+  await expectStarLayer(page, 'elements=magic-element--water:5');
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Geometry switch → still the same result, different stroke family.
-  await page.locator('#star-shape-select').selectOption('rose');
-  await expect(page.locator('.magic-rose-curve').first()).toBeVisible();
+  await setControl(page, '#star-shape-select', 'rose');
+  await expect.poll(() => starLayerState(page),
+    { timeout: 30_000, intervals: [100, 250, 500] }).not.toContain('rose=0');
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Mode switch changes what a result even means → the old star is dropped.
-  await page.locator('#star-mode-select').selectOption('6');
+  await setControl(page, '#star-mode-select', '6');
   await expect(page.locator('#star-result')).toBeHidden();
-  await expect(page.locator('.star-point')).toHaveCount(0);
+  await expectCount(page, '.star-point', 0);
 });
 
 test('each magic-circle geometry remembers its own variant', async ({ page }) => {
   await openApp(page);
   await openStarPanel(page);
 
-  const shape = page.locator('#star-shape-select');
   const variant = page.locator('#star-variant-select');
 
-  await shape.selectOption('rose');
+  await setControl(page, '#star-shape-select', 'rose');
   await expect(variant).toHaveValue('k-7');           // rose's own default
-  await variant.selectOption('k-4');
+  await setControl(page, '#star-variant-select', 'k-4');
 
   // Switching away and back must not clobber the choice. Regression: the
   // variant select still lists the OLD shape's ids at the moment the shape
   // changes, so reading it as the new shape's variant wrote an invalid value
   // and normalisation silently reset that shape to its first option.
-  await shape.selectOption('star');
+  await setControl(page, '#star-shape-select', 'star');
   await expect(variant).toHaveValue('5');
-  await shape.selectOption('zodiac');
+  await setControl(page, '#star-shape-select', 'zodiac');
   await expect(variant).toHaveValue('1');
-  await shape.selectOption('rose');
+  await setControl(page, '#star-shape-select', 'rose');
   await expect(variant).toHaveValue('k-4');
 
   const stored = await page.evaluate(() =>
@@ -272,9 +360,10 @@ test('vertices hand off to route planning in star-line order, as an O繞 loop', 
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
+  await useFastSolve(page);
   await solve(page);
 
-  await page.locator('#btn-star-to-route').click();
+  await press(page, '#btn-star-to-route');
 
   await expect.poll(async () => (await events(page, 'star-route-applied')).length, { timeout: 20000 })
     .toBeGreaterThan(0);
@@ -295,8 +384,10 @@ test('vertices hand off to route planning in star-line order, as an O繞 loop', 
 });
 
 test('handoff over an existing route asks first and honours a cancel', async ({ page }) => {
-  // Seeds a real route (route → weather → 集水區 loads) before it can even start.
-  test.setTimeout(180_000);
+  // The only test here that seeds a real route first, so it pays for the whole
+  // route → weather → 集水區 chain twice (once to settle, once after the handoff)
+  // before it can assert anything. Every other test fits the default budget.
+  test.setTimeout(150_000);
   await openApp(page);
 
   // Seed a route by clicking the map twice. Two guards, both load-bearing:
@@ -313,6 +404,7 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
 
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
+  await useFastSolve(page);
   await solve(page);
 
   // The handoff is refused outright while the route is still planning, so let
@@ -323,7 +415,7 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
   // Decline → the existing route survives untouched, nothing is applied.
   let prompted = 0;
   page.once('dialog', (dialog) => { prompted += 1; dialog.dismiss(); });
-  await page.locator('#btn-star-to-route').click();
+  await press(page, '#btn-star-to-route');
   // Assert on the reason, not just the absence of an apply: without this a
   // busy-guard bail would look identical to the user declining.
   await expect.poll(async () => (await events(page, 'star-route-blocked')).map((e) => e.detail.reason))
@@ -335,7 +427,7 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
 
   // Accept → the magic circle replaces it.
   page.once('dialog', (dialog) => { prompted += 1; dialog.accept(); });
-  await page.locator('#btn-star-to-route').click();
+  await press(page, '#btn-star-to-route');
   await expect.poll(() => prompted).toBe(2);
   await expect.poll(async () => (await events(page, 'star-route-applied')).length, { timeout: 20000 })
     .toBeGreaterThan(0);
@@ -369,12 +461,13 @@ test('hostile OSM names are escaped, not executed', async ({ page }) => {
 
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
+  await useFastSolve(page);
   await solve(page);
 
   expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
   // The name is rendered as text, so the tag survives verbatim and no <img> exists.
   await expect(page.locator('#star-readout')).toContainText('<img src=x');
-  expect(await page.locator('#star-readout img').count()).toBe(0);
+  expect(await countOf(page, '#star-readout img')).toBe(0);
 });
 
 test('a failing Overpass surfaces an error instead of breaking the panel', async ({ page }) => {
@@ -382,7 +475,7 @@ test('a failing Overpass surfaces an error instead of breaking the panel', async
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
 
-  await page.locator('#btn-star-solve').click();
+  await press(page, '#btn-star-solve');
 
   // The panel stays usable and no result block appears.
   await expect(page.locator('#star-panel')).toBeVisible({ timeout: 30000 });
@@ -395,13 +488,13 @@ test('centre, settings and panel state survive a reload', async ({ page }) => {
   await openApp(page, { nominatimOpts: { label: '測試中心' } });
   await openStarPanel(page);
 
-  await page.locator('#star-center-input').fill('測試中心');
+  await setControl(page, '#star-center-input', '測試中心');
   await page.locator('#btn-star-search-place').click();
   await expect(page.locator('#star-center-readout')).toContainText('測試中心');
 
-  await page.locator('#star-mode-select').selectOption('7');
-  await page.locator('#star-outer-input').fill('9');
-  await page.locator('#star-element-select').selectOption('3');
+  await setControl(page, '#star-mode-select', '7');
+  await setControl(page, '#star-outer-input', '9');
+  await setControl(page, '#star-element-select', '3');
 
   await page.reload();
   await expect(page.locator('#map')).toBeVisible();

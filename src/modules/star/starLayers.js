@@ -85,6 +85,31 @@ const makeCenterIcon = () => L.divIcon({
   iconAnchor: [15, 15],
 });
 
+/**
+ * Apply a stroke's animation timing, retrying on the next frame if Leaflet has
+ * not produced the layer's DOM element yet.
+ *
+ * applyMagicStrokeTiming() silently returns when `getElement()` is null, and a
+ * stroke that misses it never gets `.magic-drawable` — it renders as a static
+ * line with no draw-on animation and no play/pause control. That is exactly
+ * what a whole circle looked like on a slow machine where the layers were not
+ * rendered by the time the render loop reached them.
+ */
+function applyStrokeTimingWhenRendered(layer, stroke, speed, playback, direction, durationMs, positionMs) {
+  const apply = () => {
+    const hasElement = typeof layer.getElement === 'function' && layer.getElement();
+    if (hasElement) {
+      applyMagicStrokeTiming(layer, stroke, speed, playback, direction, durationMs, positionMs);
+      return true;
+    }
+    return false;
+  };
+  if (apply()) return;
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => { apply(); });
+  }
+}
+
 const makeMagicSymbolIcon = (stroke) => L.divIcon({
   className: 'magic-symbol-anchor',
   html: `<span class="${stroke.className}"><span class="magic-symbol__aura"></span>`
@@ -193,7 +218,7 @@ export function renderMagicCircle(group, result, {
       });
     }
     layer.addTo(group);
-    applyMagicStrokeTiming(layer, stroke, speed, playback, direction, durationMs, clampedPositionMs);
+    applyStrokeTimingWhenRendered(layer, stroke, speed, playback, direction, durationMs, clampedPositionMs);
   });
 
   result.points.forEach((poi, index) => {
@@ -218,8 +243,11 @@ export function renderMagicCircle(group, result, {
     if (onPointClick) marker.on('click', () => onPointClick(poi, index));
     marker.addTo(group);
 
-    const el = marker.getElement();
-    if (el) {
+    // Same "element may not exist yet" retry as the strokes above — a vertex
+    // that misses its timing never fades in and ignores play/pause.
+    const applyPointTiming = () => {
+      const el = marker.getElement();
+      if (!el) return false;
       el.classList.add('magic-drawable');
       applyMagicMarkerTiming(
         el,
@@ -227,6 +255,10 @@ export function renderMagicCircle(group, result, {
         MAGIC_POINT_DURATION_MS,
         speed, playback, direction, durationMs, clampedPositionMs
       );
+      return true;
+    };
+    if (!applyPointTiming() && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => { applyPointTiming(); });
     }
   });
 
