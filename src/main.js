@@ -6283,7 +6283,9 @@ async function runStarSolve() {
       onCategoryResult: (progress) => {
         busyTask.set({
           detail: `${translatePhrase('取得地標')} ${progress.completedCategories}/${progress.totalCategories} · ${progress.category.label}`,
-          progress: (progress.completedCategories / Math.max(1, progress.totalCategories)) * 0.4,
+          // busyTask progress is 0-100 (see updateRouteWeatherBusyOverlay's clamp).
+          // The Overpass fetch owns the first 40% of the bar, the solve the rest.
+          progress: (progress.completedCategories / Math.max(1, progress.totalCategories)) * 40,
         });
       },
     });
@@ -6313,11 +6315,15 @@ async function runStarSolve() {
 
     // The solver is a synchronous generator; drive it in slices so the progress
     // bar paints and 停止/取消 stay responsive on long searches.
+    //
+    // The overlay is repainted on the SAME ~60/s cadence as the yield, not once
+    // per stage: a default 五芒星 sweep is ~144 stages, and repainting on every
+    // one of them costs more than the search itself on a slow device.
     let step = iterator.next();
     let lastYield = performance.now();
     while (!step.done) {
-      busyTask.set({ detail: step.value.label, progress: 0.4 + step.value.progress * 0.6 });
       if (performance.now() - lastYield > 16) {
+        busyTask.set({ detail: step.value.label, progress: 40 + step.value.progress * 60 });
         await new Promise((resolve) => setTimeout(resolve, 0));
         await waitIfLoadPaused(run);
         lastYield = performance.now();

@@ -92,6 +92,26 @@ export function osrm(page) {
   });
 }
 
+const TRANSPARENT_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'base64',
+);
+
+/**
+ * Basemap tiles as a 1×1 transparent PNG. Anything that pans or zooms the map
+ * (fitBounds after a search, a restored route) otherwise fires dozens of real
+ * tile requests per move, which is both slow and a flake source.
+ */
+export function mapTiles(page) {
+  return page.route(/basemaps\.cartocdn\.com|tile\.opentopomap\.org|server\.arcgisonline\.com|tile\.openstreetmap\.org/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+      body: TRANSPARENT_PNG,
+    }));
+}
+
 const EARTH_R = 6371000;
 
 /** Point `distanceMeters` from `[lat,lng]` along `bearingDeg` (great circle). */

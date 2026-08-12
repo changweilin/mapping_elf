@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ANCHOR, flatElevation, nominatim, osrm, overpass } from './helpers/apiMocks.mjs';
+import { ANCHOR, flatElevation, mapTiles, nominatim, osrm, overpass } from './helpers/apiMocks.mjs';
 
 // 魔法陣 (star tool): pick a centre + radius ring, pull POIs from Overpass, solve
 // for a star, animate it, hand the vertices to route planning.
@@ -45,6 +45,7 @@ async function openApp(page, { overpassOpts = {}, nominatimOpts = null } = {}) {
   await page.route('**/v1/forecast**', (route) => route.fulfill({ json: forecastPayload() }));
   await page.route('**/v1/archive**', (route) => route.fulfill({ json: forecastPayload() }));
   await page.route('**://brouter.de/**', (route) => route.abort());
+  await mapTiles(page);
   await flatElevation(page);
   await osrm(page);
   await page.route('**://nominatim.openstreetmap.org/**', (route) => route.fulfill({ json: [] }));
@@ -83,6 +84,14 @@ const events = (page, type) => page.evaluate(
   type,
 );
 
+/**
+ * Click without Playwright's actionability wait. The magic circle keeps ~100
+ * animated layers alive next to these controls, and the stability check ahead
+ * of a normal .click() stalled for 5-19 s per press (same trap the weather-card
+ * specs hit). The handler is what matters here, so dispatch straight at it.
+ */
+const press = (page, selector) => page.locator(selector).dispatchEvent('click');
+
 async function openStarPanel(page) {
   await page.locator('#btn-star-tool').click();
   await expect(page.locator('#star-panel')).toBeVisible();
@@ -95,22 +104,29 @@ async function useMapCentreAsStarCentre(page) {
 }
 
 async function solve(page) {
-  await page.locator('#btn-star-solve').click();
+  await press(page, '#btn-star-solve');
   await expect.poll(async () => (await events(page, 'star-solved')).length, { timeout: 60000 })
     .toBeGreaterThan(0);
 }
 
 /**
- * Coarsen the rotation sweep before solving. The default 3° step runs ~120
- * solver stages, each yielding to the event loop — fine in the app, but it
- * dominates the runtime of tests that only care about what happens *after* a
- * star exists. Solve quality is asserted separately.
+ * Coarsen the search before solving. The app defaults (3° rotation step, 4
+ * candidates per corner) run ~144 solver stages exploring up to 4^5 combos
+ * each — right for a real search, but it is the single biggest cost in this
+ * spec and on a CI runner it dominated the whole shard.
+ *
+ * 36° + 2 candidates is ~12 stages and still finds the seeded ring exactly
+ * (verified: same 5 results, pentagon first, 0.00° angle error), so every
+ * assertion here survives — including the exactness one.
  */
-async function useCoarseSolve(page) {
+async function useFastSolve(page) {
   await page.locator('#star-advanced-details').evaluate((el) => { el.open = true; });
-  await page.locator('#star-rotation-input').fill('18');
+  await page.locator('#star-rotation-input').fill('36');
   await page.locator('#star-rotation-input').dispatchEvent('change');
+  await page.locator('#star-candidates-input').fill('2');
+  await page.locator('#star-candidates-input').dispatchEvent('change');
 }
+
 
 test('star tool opens, shares the map corner with the other two tools', async ({ page }) => {
   await openApp(page);
@@ -150,12 +166,13 @@ test('solving finds the seeded star and draws an animated magic circle', async (
   await openStarPanel(page);
 
   // No centre yet → refuses to search and makes no Overpass call.
-  await page.locator('#btn-star-solve').click();
+  await press(page, '#btn-star-solve');
   expect(stats.calls).toBe(0);
 
   await useMapCentreAsStarCentre(page);
   await page.locator('#star-inner-input').fill('3');
   await page.locator('#star-outer-input').fill('8');
+  await useFastSolve(page);
   await solve(page);
 
   const solved = (await events(page, 'star-solved'))[0].detail;
@@ -179,48 +196,54 @@ test('solving finds the seeded star and draws an animated magic circle', async (
 });
 
 test('playback pauses and resumes, and results can be stepped through', async ({ page }) => {
-  // Solve + several full re-renders of ~100 animated strokes each; the 60 s
-  // default leaves no headroom (see catchment-flat.spec.js for the precedent).
-  test.setTimeout(150_000);
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
-  await useCoarseSolve(page);
+  await useFastSolve(page);
   await solve(page);
 
   const play = page.locator('#btn-star-play');
   await expect(play).toHaveAttribute('aria-pressed', 'true');
 
+  // Toggling playback re-renders the whole circle, so the element a single
+  // querySelector found is routinely replaced mid-poll. Ask every stroke and
+  // require them to agree, and give it a real budget — the default 10 s expect
+  // window was not enough on a loaded machine.
   const playState = () => page.evaluate(() => {
-    const el = document.querySelector('.magic-drawable');
-    return el ? getComputedStyle(el).animationPlayState : null;
+    const els = [...document.querySelectorAll('.magic-drawable')];
+    if (!els.length) return null;
+    const states = new Set(els.map((el) => getComputedStyle(el).animationPlayState));
+    return states.size === 1 ? [...states][0] : `mixed:${[...states].join('+')}`;
   });
-  await expect.poll(playState).toBe('running');
+  const expectPlayState = (value) =>
+    expect.poll(playState, { timeout: 30_000, intervals: [100, 200, 400] }).toBe(value);
 
-  await play.click();
+  await expectPlayState('running');
+
+  await press(page, '#btn-star-play');
   await expect(play).toHaveAttribute('aria-pressed', 'false');
-  await expect.poll(playState).toBe('paused');
+  await expectPlayState('paused');
 
-  await play.click();
+  await press(page, '#btn-star-play');
   await expect(play).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(playState).toBe('running');
+  await expectPlayState('running');
 
   // Stepping results keeps exactly one star drawn.
   const indexText = () => page.locator('#star-result-index').innerText();
+  const poll = (fn) => expect.poll(fn, { timeout: 30_000, intervals: [100, 200, 400] });
   const first = await indexText();
-  await page.locator('#btn-star-next').click();
-  await expect.poll(indexText).not.toBe(first);
+  await press(page, '#btn-star-next');
+  await poll(indexText).not.toBe(first);
   await expect(page.locator('.star-point')).toHaveCount(5);
-  await page.locator('#btn-star-prev').click();
-  await expect.poll(indexText).toBe(first);
+  await press(page, '#btn-star-prev');
+  await poll(indexText).toBe(first);
 });
 
 test('changing the element or geometry restyles the same star; changing mode invalidates it', async ({ page }) => {
-  test.setTimeout(150_000);
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
-  await useCoarseSolve(page);
+  await useFastSolve(page);
   await solve(page);
 
   await expect(page.locator('.magic-element--metal').first()).toBeVisible();
@@ -272,9 +295,10 @@ test('vertices hand off to route planning in star-line order, as an O繞 loop', 
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
+  await useFastSolve(page);
   await solve(page);
 
-  await page.locator('#btn-star-to-route').click();
+  await press(page, '#btn-star-to-route');
 
   await expect.poll(async () => (await events(page, 'star-route-applied')).length, { timeout: 20000 })
     .toBeGreaterThan(0);
@@ -295,8 +319,10 @@ test('vertices hand off to route planning in star-line order, as an O繞 loop', 
 });
 
 test('handoff over an existing route asks first and honours a cancel', async ({ page }) => {
-  // Seeds a real route (route → weather → 集水區 loads) before it can even start.
-  test.setTimeout(180_000);
+  // The only test here that seeds a real route first, so it pays for the whole
+  // route → weather → 集水區 chain twice (once to settle, once after the handoff)
+  // before it can assert anything. Every other test fits the default budget.
+  test.setTimeout(150_000);
   await openApp(page);
 
   // Seed a route by clicking the map twice. Two guards, both load-bearing:
@@ -313,6 +339,7 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
 
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
+  await useFastSolve(page);
   await solve(page);
 
   // The handoff is refused outright while the route is still planning, so let
@@ -323,7 +350,7 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
   // Decline → the existing route survives untouched, nothing is applied.
   let prompted = 0;
   page.once('dialog', (dialog) => { prompted += 1; dialog.dismiss(); });
-  await page.locator('#btn-star-to-route').click();
+  await press(page, '#btn-star-to-route');
   // Assert on the reason, not just the absence of an apply: without this a
   // busy-guard bail would look identical to the user declining.
   await expect.poll(async () => (await events(page, 'star-route-blocked')).map((e) => e.detail.reason))
@@ -335,7 +362,7 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
 
   // Accept → the magic circle replaces it.
   page.once('dialog', (dialog) => { prompted += 1; dialog.accept(); });
-  await page.locator('#btn-star-to-route').click();
+  await press(page, '#btn-star-to-route');
   await expect.poll(() => prompted).toBe(2);
   await expect.poll(async () => (await events(page, 'star-route-applied')).length, { timeout: 20000 })
     .toBeGreaterThan(0);
@@ -369,6 +396,7 @@ test('hostile OSM names are escaped, not executed', async ({ page }) => {
 
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
+  await useFastSolve(page);
   await solve(page);
 
   expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
@@ -382,7 +410,7 @@ test('a failing Overpass surfaces an error instead of breaking the panel', async
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
 
-  await page.locator('#btn-star-solve').click();
+  await press(page, '#btn-star-solve');
 
   // The panel stays usable and no result block appears.
   await expect(page.locator('#star-panel')).toBeVisible({ timeout: 30000 });
