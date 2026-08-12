@@ -92,6 +92,16 @@ const events = (page, type) => page.evaluate(
  */
 const press = (page, selector) => page.locator(selector).dispatchEvent('click');
 
+/**
+ * Set a select/input and fire `change`, skipping the same actionability wait.
+ * `selectOption`/`fill` stall exactly like `.click()` does here — one of them
+ * burned the full 120 s test budget on CI while the circle animated.
+ */
+const setControl = (page, selector, value) => page.locator(selector).evaluate((el, v) => {
+  el.value = v;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, value);
+
 async function openStarPanel(page) {
   await page.locator('#btn-star-tool').click();
   await expect(page.locator('#star-panel')).toBeVisible();
@@ -121,12 +131,9 @@ async function solve(page) {
  */
 async function useFastSolve(page) {
   await page.locator('#star-advanced-details').evaluate((el) => { el.open = true; });
-  await page.locator('#star-rotation-input').fill('36');
-  await page.locator('#star-rotation-input').dispatchEvent('change');
-  await page.locator('#star-candidates-input').fill('2');
-  await page.locator('#star-candidates-input').dispatchEvent('change');
+  await setControl(page, '#star-rotation-input', '36');
+  await setControl(page, '#star-candidates-input', '2');
 }
-
 
 test('star tool opens, shares the map corner with the other two tools', async ({ page }) => {
   await openApp(page);
@@ -170,8 +177,8 @@ test('solving finds the seeded star and draws an animated magic circle', async (
   expect(stats.calls).toBe(0);
 
   await useMapCentreAsStarCentre(page);
-  await page.locator('#star-inner-input').fill('3');
-  await page.locator('#star-outer-input').fill('8');
+  await setControl(page, '#star-inner-input', '3');
+  await setControl(page, '#star-outer-input', '8');
   await useFastSolve(page);
   await solve(page);
 
@@ -203,8 +210,8 @@ test('playback pauses and resumes, and results can be stepped through', async ({
   // circle five times. The default 星芒 draws 98 strokes; 玫瑰曲線 k=3 draws 36,
   // which is the whole difference between ~2 min and ~40 s on a CI runner.
   // Geometry-specific rendering is covered by the two tests that assert on it.
-  await page.locator('#star-shape-select').selectOption('rose');
-  await page.locator('#star-variant-select').selectOption('k-3');
+  await setControl(page, '#star-shape-select', 'rose');
+  await setControl(page, '#star-variant-select', 'k-3');
   await useFastSolve(page);
   await solve(page);
 
@@ -256,17 +263,17 @@ test('changing the element or geometry restyles the same star; changing mode inv
   await expect(page.locator('.magic-element--metal').first()).toBeVisible();
 
   // Element switch → same 5 vertices, new element class on the markers.
-  await page.locator('#star-element-select').selectOption('2');   // 水
+  await setControl(page, '#star-element-select', '2');   // 水
   await expect(page.locator('.star-point.magic-element--water')).toHaveCount(5);
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Geometry switch → still the same result, different stroke family.
-  await page.locator('#star-shape-select').selectOption('rose');
+  await setControl(page, '#star-shape-select', 'rose');
   await expect(page.locator('.magic-rose-curve').first()).toBeVisible();
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Mode switch changes what a result even means → the old star is dropped.
-  await page.locator('#star-mode-select').selectOption('6');
+  await setControl(page, '#star-mode-select', '6');
   await expect(page.locator('#star-result')).toBeHidden();
   await expect(page.locator('.star-point')).toHaveCount(0);
 });
@@ -275,22 +282,21 @@ test('each magic-circle geometry remembers its own variant', async ({ page }) =>
   await openApp(page);
   await openStarPanel(page);
 
-  const shape = page.locator('#star-shape-select');
   const variant = page.locator('#star-variant-select');
 
-  await shape.selectOption('rose');
+  await setControl(page, '#star-shape-select', 'rose');
   await expect(variant).toHaveValue('k-7');           // rose's own default
-  await variant.selectOption('k-4');
+  await setControl(page, '#star-variant-select', 'k-4');
 
   // Switching away and back must not clobber the choice. Regression: the
   // variant select still lists the OLD shape's ids at the moment the shape
   // changes, so reading it as the new shape's variant wrote an invalid value
   // and normalisation silently reset that shape to its first option.
-  await shape.selectOption('star');
+  await setControl(page, '#star-shape-select', 'star');
   await expect(variant).toHaveValue('5');
-  await shape.selectOption('zodiac');
+  await setControl(page, '#star-shape-select', 'zodiac');
   await expect(variant).toHaveValue('1');
-  await shape.selectOption('rose');
+  await setControl(page, '#star-shape-select', 'rose');
   await expect(variant).toHaveValue('k-4');
 
   const stored = await page.evaluate(() =>
@@ -430,13 +436,13 @@ test('centre, settings and panel state survive a reload', async ({ page }) => {
   await openApp(page, { nominatimOpts: { label: '測試中心' } });
   await openStarPanel(page);
 
-  await page.locator('#star-center-input').fill('測試中心');
+  await setControl(page, '#star-center-input', '測試中心');
   await page.locator('#btn-star-search-place').click();
   await expect(page.locator('#star-center-readout')).toContainText('測試中心');
 
-  await page.locator('#star-mode-select').selectOption('7');
-  await page.locator('#star-outer-input').fill('9');
-  await page.locator('#star-element-select').selectOption('3');
+  await setControl(page, '#star-mode-select', '7');
+  await setControl(page, '#star-outer-input', '9');
+  await setControl(page, '#star-element-select', '3');
 
   await page.reload();
   await expect(page.locator('#map')).toBeVisible();
