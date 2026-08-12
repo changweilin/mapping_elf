@@ -199,6 +199,12 @@ test('playback pauses and resumes, and results can be stepped through', async ({
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
+  // Playback control is geometry-independent, and this test re-renders the
+  // circle five times. The default 星芒 draws 98 strokes; 玫瑰曲線 k=3 draws 36,
+  // which is the whole difference between ~2 min and ~40 s on a CI runner.
+  // Geometry-specific rendering is covered by the two tests that assert on it.
+  await page.locator('#star-shape-select').selectOption('rose');
+  await page.locator('#star-variant-select').selectOption('k-3');
   await useFastSolve(page);
   await solve(page);
 
@@ -206,17 +212,18 @@ test('playback pauses and resumes, and results can be stepped through', async ({
   await expect(play).toHaveAttribute('aria-pressed', 'true');
 
   // Toggling playback re-renders the whole circle, so the element a single
-  // querySelector found is routinely replaced mid-poll. Ask every stroke and
-  // require them to agree, and give it a real budget — the default 10 s expect
-  // window was not enough on a loaded machine.
+  // querySelector found is routinely replaced mid-poll — sample a handful and
+  // require them to agree. Reading *every* stroke instead makes each poll a
+  // getComputedStyle sweep over the full circle, which on CI cost more than the
+  // thing being measured.
   const playState = () => page.evaluate(() => {
-    const els = [...document.querySelectorAll('.magic-drawable')];
+    const els = [...document.querySelectorAll('.magic-drawable')].slice(0, 6);
     if (!els.length) return null;
     const states = new Set(els.map((el) => getComputedStyle(el).animationPlayState));
     return states.size === 1 ? [...states][0] : `mixed:${[...states].join('+')}`;
   });
   const expectPlayState = (value) =>
-    expect.poll(playState, { timeout: 30_000, intervals: [100, 200, 400] }).toBe(value);
+    expect.poll(playState, { timeout: 60_000, intervals: [100, 250, 500] }).toBe(value);
 
   await expectPlayState('running');
 
@@ -230,7 +237,7 @@ test('playback pauses and resumes, and results can be stepped through', async ({
 
   // Stepping results keeps exactly one star drawn.
   const indexText = () => page.locator('#star-result-index').innerText();
-  const poll = (fn) => expect.poll(fn, { timeout: 30_000, intervals: [100, 200, 400] });
+  const poll = (fn) => expect.poll(fn, { timeout: 60_000, intervals: [100, 250, 500] });
   const first = await indexText();
   await press(page, '#btn-star-next');
   await poll(indexText).not.toBe(first);
