@@ -3,6 +3,10 @@ import { test, expect } from '@playwright/test';
 async function openMeasure(page) {
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
+  // Boot is not finished when the Leaflet container appears: the loading screen
+  // still covers the map and map clicks are dropped until it lifts. Waiting only
+  // on the container made this spec fail on slow CI runners.
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached', timeout: 30_000 });
   await page.locator('#btn-measure-tool').click();
   await expect(page.locator('#measure-panel')).toBeVisible();
   await expect(page.locator('#btn-measure-tool')).toHaveAttribute('aria-pressed', 'true');
@@ -59,6 +63,10 @@ test('F2: segment click on the planned track measures without inserting a waypoi
 
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
+  // Boot is not finished when the Leaflet container appears: the loading screen
+  // still covers the map and map clicks are dropped until it lifts. Waiting only
+  // on the container made this spec fail on slow CI runners.
+  await page.locator('#loading-screen.hidden').waitFor({ state: 'attached', timeout: 30_000 });
 
   const box = await page.locator('#map').boundingBox();
   const p1 = { x: box.x + 400, y: box.y + 220 };

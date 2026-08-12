@@ -6374,7 +6374,9 @@ function setStarPlaybackSilently(playback) {
 // generated options, which applyTranslations() (data-i18n attributes only)
 // cannot reach — so drop and rebuild them on a language switch.
 function refreshStarToolLanguage() {
-  if (!starPanel) return;
+  // Nothing to re-translate until the panel has been opened once — the controls
+  // do not exist yet, and building them here would undo that saving.
+  if (!starPanel || starPanel.classList.contains('hidden')) return;
   starModeSelect?.replaceChildren();
   starShapeSelect?.replaceChildren();
   starElementSelect?.replaceChildren();
@@ -6387,12 +6389,16 @@ function refreshStarToolLanguage() {
 // Boot restore. Only the user's own inputs come back (settings, centre, panel
 // open state) — the POIs and the solved star are recomputed on demand, exactly
 // like 量測工具 recomputes its readout.
+//
+// The controls themselves (5 selects plus 19 translated category rows) are NOT
+// built here: setStarActive(true) builds them on first open, and most sessions
+// never open this tool. Doing it at boot added measurable startup work for
+// everyone and delayed the point where the map accepts its first click.
 function restoreStarToolState() {
   starSettings = loadStarSettings();
   const saved = loadStarToolState();
   starCenter = saved.center;
   starCenterName = saved.centerName;
-  syncStarControls();
   if (saved.open) setStarActive(true);
 }
 
