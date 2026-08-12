@@ -7,6 +7,18 @@ export default defineConfig(({ mode }) => ({
       output: {
         codeSplitting: {
           groups: [
+            // 魔法陣 tool logic (ported from mapping_star). ~90 kB dominated by
+            // magicCircle's 16-element / 12-constellation tables — kept out of
+            // index-* so the app bundle stays under its ratcheted budget
+            // (test/chunk-output.mjs) without touching main.js (INC-207).
+            // Priority stays BELOW leaflet's: starLayers.js imports leaflet, and
+            // a higher priority pulls the whole Leaflet runtime into this group,
+            // which deletes the expected leaflet-* chunk.
+            {
+              name: 'star',
+              test: /src[\\/]modules[\\/]star[\\/]/,
+              priority: 10,
+            },
             {
               name: 'leaflet',
               test: /node_modules[\\/]leaflet/,

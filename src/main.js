@@ -19,6 +19,16 @@ import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
 import { countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
+// 魔法陣 (star tool) — logic ported 1:1 from the mapping_star project.
+import { categoryById } from './modules/star/categories.js';
+import { fetchPoisDetailed } from './modules/star/overpass.js';
+import { searchPlaces } from './modules/star/placeSearch.js';
+import { solveStarFromPoisSteps } from './modules/star/solver.js';
+import { STAR_PATTERN_OPTIONS, maxAngleToleranceForMode, starLineSequencesForMode, starModeLabel } from './modules/star/starPatterns.js';
+import { MAGIC_DRAW_SHAPE_OPTIONS, getMagicDrawVariantOption, MAGIC_DRAW_VARIANT_OPTIONS } from './modules/star/magicDraw.js';
+import { MAGIC_SPEED_OPTIONS, ZODIAC_CONSTELLATIONS, getMagicAnimationOptions } from './modules/star/magicCircle.js';
+import { getCategoryGroups, loadStarSettings, loadStarToolState, normalizeStarSettings, saveStarSettings, saveStarToolState } from './modules/star/starSettings.js';
+import { makeRadiusBounds, makeStarBounds, renderMagicCircle, renderSearchContext } from './modules/star/starLayers.js';
 
 function showNotification(message, type = 'info', duration = 3500) {
   rawShowNotification(translatePhrase(message), type, duration);
@@ -5076,7 +5086,7 @@ function replayPendingMeasure() {
 mapManager.onMeasureClick = handleMeasureClick;
 btnMeasureTool?.addEventListener('click', () => {
   const opening = measurePanel?.classList.contains('hidden');
-  if (opening) setShapeActive(false); // shares the same corner of the map
+  if (opening) { setShapeActive(false); setStarActive(false); } // shared map corner
   setMeasureActive(opening);
 });
 document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) => {
@@ -5314,12 +5324,14 @@ function restoreMapToolsState() {
   try {
     restoreMeasureToolState();
     restoreShapeBoardState();
+    restoreStarToolState();
   } catch (err) {
     console.warn('Map tool state restore failed:', err);
   }
   toolStateRestored = true;
   saveMeasureToolState();
   saveShapeBoardState();
+  saveStarToolStateNow();
 }
 
 function ensureShapePreviewLayer() {
@@ -5344,6 +5356,7 @@ function setShapeActive(active) {
   btnShapeTool?.setAttribute('aria-pressed', String(active));
   if (active) {
     setMeasureActive(false);   // shares the same corner of the map
+    setStarActive(false);
     syncShapeCanvasSize();
     hydrateShapeStrokes();
     redrawShapeCanvas();
@@ -5823,6 +5836,711 @@ btnShapeTool?.addEventListener('click', () => {
 document.getElementById('btn-shape-close')?.addEventListener('click', () => setShapeActive(false));
 document.getElementById('btn-shape-clear')?.addEventListener('click', clearShapeBoard);
 document.getElementById('btn-shape-generate')?.addEventListener('click', generateShapeRoute);
+
+// =========== 魔法陣 (star tool) ===========
+// Pick a centre and a radius ring, pull POIs from Overpass, and let the solver
+// find the combination that best forms a star. The winning result is drawn as
+// an animated magic circle, and its vertices can be handed to route planning.
+//
+// All the maths/POI logic lives in src/modules/star/* (a 1:1 port of the
+// mapping_star project, verified bit-identical against the original); this
+// block is only the elf wiring — panel state, Leaflet groups, progress/cancel
+// and the route handoff.
+const starPanel = document.getElementById('star-panel');
+const btnStarTool = document.getElementById('btn-star-tool');
+const starCenterInput = document.getElementById('star-center-input');
+const starPlaceList = document.getElementById('star-place-list');
+const starCenterReadout = document.getElementById('star-center-readout');
+const starInnerInput = document.getElementById('star-inner-input');
+const starOuterInput = document.getElementById('star-outer-input');
+const starModeSelect = document.getElementById('star-mode-select');
+const starShapeSelect = document.getElementById('star-shape-select');
+const starVariantSelect = document.getElementById('star-variant-select');
+const starElementSelect = document.getElementById('star-element-select');
+const starStrategySelect = document.getElementById('star-strategy-select');
+const starToleranceInput = document.getElementById('star-tolerance-input');
+const starRotationInput = document.getElementById('star-rotation-input');
+const starCandidatesInput = document.getElementById('star-candidates-input');
+const starHexCellInput = document.getElementById('star-hexcell-input');
+const starHexCellRow = document.getElementById('star-hexcell-row');
+const starCategoryList = document.getElementById('star-category-list');
+const starCategoryCount = document.getElementById('star-category-count');
+const starResultBox = document.getElementById('star-result');
+const starResultIndexEl = document.getElementById('star-result-index');
+const starReadoutEl = document.getElementById('star-readout');
+const starSpeedSelect = document.getElementById('star-speed-select');
+const btnStarPlay = document.getElementById('btn-star-play');
+
+let starSettings = normalizeStarSettings(null);   // real values loaded on restore
+let starCenter = null;
+let starCenterName = '';
+let starPois = [];
+let starResults = [];
+let starResultIndex = 0;
+let starSolveRun = null;
+let starSolving = false;
+let starPlaceAbort = null;
+let starContextLayer = null;
+let starMagicLayer = null;
+// Playback clock. CSS drives the animation itself (animation-play-state), so we
+// only track where the timeline stands, to re-render mid-animation without
+// snapping the circle back to frame zero.
+let starPlayback = 'playing';
+let starDirection = 'forward';
+let starTimelineDurationMs = 0;
+let starTimelineBaseMs = 0;      // position banked at the last pause
+let starTimelineStartedAt = 0;   // performance.now() when playback last started
+
+function starCurrentPositionMs() {
+  if (starPlayback !== 'playing') return starTimelineBaseMs;
+  const elapsed = (performance.now() - starTimelineStartedAt) * starSettings.magicSpeed;
+  return Math.max(0, Math.min(starTimelineDurationMs, starTimelineBaseMs + elapsed));
+}
+
+function starBankPosition() {
+  starTimelineBaseMs = starCurrentPositionMs();
+  starTimelineStartedAt = performance.now();
+}
+
+function ensureStarLayers() {
+  if (!starContextLayer) starContextLayer = L.layerGroup().addTo(mapManager.map);
+  if (!starMagicLayer) starMagicLayer = L.layerGroup().addTo(mapManager.map);
+}
+
+function starSelectedResult() {
+  return starResults[starResultIndex] || null;
+}
+
+function starGeometry() {
+  const option = getMagicDrawVariantOption(starSettings.magicShape, starSettings.magicVariants[starSettings.magicShape]);
+  return { pattern: option.geometryPattern, options: option.geometryOptions || {} };
+}
+
+// --- Panel population -------------------------------------------------------
+function populateStarSelects() {
+  if (starModeSelect && !starModeSelect.options.length) {
+    STAR_PATTERN_OPTIONS.forEach(({ mode, label }) => {
+      starModeSelect.add(new Option(translatePhrase(label), String(mode)));
+    });
+  }
+  if (starShapeSelect && !starShapeSelect.options.length) {
+    MAGIC_DRAW_SHAPE_OPTIONS.forEach(({ id, label }) => {
+      starShapeSelect.add(new Option(translatePhrase(label), id));
+    });
+  }
+  if (starElementSelect && !starElementSelect.options.length) {
+    getMagicAnimationOptions(starSettings.mode).forEach(({ index, label }) => {
+      starElementSelect.add(new Option(translatePhrase(label), String(index)));
+    });
+  }
+  if (starSpeedSelect && !starSpeedSelect.options.length) {
+    MAGIC_SPEED_OPTIONS.forEach((speed) => starSpeedSelect.add(new Option(`${speed}x`, String(speed))));
+  }
+  if (starCategoryList && !starCategoryList.childElementCount) {
+    getCategoryGroups().forEach(([group, categories]) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'star-category-group';
+      const head = document.createElement('p');
+      head.className = 'star-category-group-title';
+      head.textContent = translatePhrase(group);
+      wrap.appendChild(head);
+      categories.forEach((category) => {
+        const label = document.createElement('label');
+        label.className = 'star-category-item';
+        label.title = category.description;
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = category.id;
+        box.addEventListener('change', onStarCategoryToggle);
+        const swatch = document.createElement('span');
+        swatch.className = 'star-category-swatch';
+        swatch.style.background = category.color;
+        const text = document.createElement('span');
+        text.textContent = translatePhrase(category.label);
+        label.append(box, swatch, text);
+        wrap.appendChild(label);
+      });
+      starCategoryList.appendChild(wrap);
+    });
+  }
+}
+
+// Variant labels are composed rather than translated whole: mapping_star bakes
+// numbers into them ("1 牡羊座", "k=4 (8瓣)"), which no phrase table can match.
+// Only the words go through i18n.
+function starVariantLabel(shape, option) {
+  const opts = option.geometryOptions || {};
+  if (shape === 'zodiac' && Number.isInteger(opts.zodiacIndex)) {
+    const constellation = ZODIAC_CONSTELLATIONS[opts.zodiacIndex];
+    return `${opts.zodiacIndex + 1} ${translatePhrase(constellation?.name || option.label)}`;
+  }
+  if (shape === 'rose' && Number.isFinite(opts.rosePetalFactor)) {
+    const k = opts.rosePetalFactor;
+    return k % 2 === 0 ? `k=${k} (${k * 2}${translatePhrase('瓣')})` : `k=${k}`;
+  }
+  return translatePhrase(option.label);
+}
+
+function syncStarVariantSelect() {
+  if (!starVariantSelect) return;
+  const options = MAGIC_DRAW_VARIANT_OPTIONS[starSettings.magicShape] || [];
+  starVariantSelect.replaceChildren();
+  options.forEach((option) => starVariantSelect.add(new Option(starVariantLabel(starSettings.magicShape, option), option.id)));
+  starVariantSelect.value = getMagicDrawVariantOption(starSettings.magicShape, starSettings.magicVariants[starSettings.magicShape]).id;
+  starVariantSelect.disabled = options.length <= 1;
+  // Which shape these options belong to. On a shape change the select still
+  // holds the OLD shape's id until this runs, and reading it as the new shape's
+  // variant would clobber that shape's saved choice with an invalid value.
+  starVariantSelect.dataset.shape = starSettings.magicShape;
+}
+
+function syncStarControls() {
+  populateStarSelects();
+  if (starModeSelect) starModeSelect.value = String(starSettings.mode);
+  if (starInnerInput) starInnerInput.value = String(starSettings.innerRadiusKm);
+  if (starOuterInput) starOuterInput.value = String(starSettings.outerRadiusKm);
+  if (starShapeSelect) starShapeSelect.value = starSettings.magicShape;
+  if (starElementSelect) starElementSelect.value = String(starSettings.magicElement);
+  if (starSpeedSelect) starSpeedSelect.value = String(starSettings.magicSpeed);
+  if (starStrategySelect) starStrategySelect.value = starSettings.searchStrategy;
+  if (starToleranceInput) {
+    // The ceiling is half a slot and moves with the mode, so re-clamp the input
+    // whenever the mode changes rather than only on read.
+    starToleranceInput.max = String(maxAngleToleranceForMode(starSettings.mode));
+    starToleranceInput.value = String(starSettings.angleToleranceDeg);
+  }
+  if (starRotationInput) starRotationInput.value = String(starSettings.rotationStepDeg);
+  if (starCandidatesInput) starCandidatesInput.value = String(starSettings.candidatesPerSlot);
+  if (starHexCellInput) starHexCellInput.value = String(starSettings.hexCellRadiusKm);
+  if (starHexCellRow) starHexCellRow.classList.toggle('hidden', starSettings.searchStrategy !== 'honeycomb');
+  syncStarVariantSelect();
+
+  const selected = new Set(starSettings.categoryIds);
+  starCategoryList?.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+    box.checked = selected.has(box.value);
+  });
+  if (starCategoryCount) starCategoryCount.textContent = `(${starSettings.categoryIds.length})`;
+  syncStarCenterReadout();
+}
+
+function syncStarCenterReadout() {
+  if (!starCenterReadout) return;
+  if (!starCenter) {
+    starCenterReadout.textContent = translatePhrase('尚未設定中心');
+    return;
+  }
+  const coords = `${starCenter.lat.toFixed(5)}, ${starCenter.lng.toFixed(5)}`;
+  // A coordinate search names the place after the coordinates themselves, which
+  // would render as "25.033964, 121.564468 · 25.03396, 121.56447".
+  const isCoordName = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(starCenterName.trim());
+  // Stored canonically (zh-TW for our own labels, verbatim for Nominatim
+  // results) and translated on render — a translated string must never be what
+  // gets persisted.
+  starCenterReadout.textContent = starCenterName && !isCoordName
+    ? `${translatePhrase(starCenterName)} · ${coords}`
+    : coords;
+}
+
+function onStarCategoryToggle() {
+  const ids = [...(starCategoryList?.querySelectorAll('input[type="checkbox"]:checked') || [])].map((b) => b.value);
+  starSettings = normalizeStarSettings({ ...starSettings, categoryIds: ids.length ? ids : starSettings.categoryIds });
+  if (!ids.length) {
+    showNotification('請至少選擇一種目標類別', 'warning', 1800);
+    syncStarControls();
+    return;
+  }
+  if (starCategoryCount) starCategoryCount.textContent = `(${starSettings.categoryIds.length})`;
+  saveStarSettings(starSettings);
+}
+
+// Read every control back into `starSettings` at once — normalizeStarSettings
+// owns all the clamping, so no caller has to know the individual limits.
+function readStarSettingsFromControls() {
+  const shape = starShapeSelect?.value || starSettings.magicShape;
+  // Only take the variant select when it was populated for THIS shape — right
+  // after a shape change it still lists the previous shape's values.
+  const variants = { ...starSettings.magicVariants };
+  if (starVariantSelect && starVariantSelect.dataset.shape === shape) {
+    variants[shape] = starVariantSelect.value;
+  }
+  starSettings = normalizeStarSettings({
+    ...starSettings,
+    mode: Number(starModeSelect?.value),
+    innerRadiusKm: Number(starInnerInput?.value),
+    outerRadiusKm: Number(starOuterInput?.value),
+    angleToleranceDeg: Number(starToleranceInput?.value),
+    rotationStepDeg: Number(starRotationInput?.value),
+    candidatesPerSlot: Number(starCandidatesInput?.value),
+    hexCellRadiusKm: Number(starHexCellInput?.value),
+    searchStrategy: starStrategySelect?.value,
+    magicShape: shape,
+    magicVariants: variants,
+    magicElement: Number(starElementSelect?.value),
+    magicSpeed: Number(starSpeedSelect?.value),
+  });
+  saveStarSettings(starSettings);
+  syncStarControls();
+}
+
+// --- Rendering --------------------------------------------------------------
+function renderStarContext() {
+  if (!starContextLayer) return;
+  renderSearchContext(starContextLayer, {
+    center: starCenter,
+    innerRadiusMeters: starSettings.innerRadiusKm * 1000,
+    outerRadiusMeters: starSettings.outerRadiusKm * 1000,
+    pois: starPois,
+    showRing: !!starCenter,
+    onPoiClick: null,
+  });
+}
+
+function renderStarMagic({ restart = false } = {}) {
+  if (!starMagicLayer) return;
+  const result = starSelectedResult();
+  if (!result) {
+    starMagicLayer.clearLayers();
+    starResultBox?.classList.add('hidden');
+    return;
+  }
+  if (restart) {
+    starTimelineBaseMs = 0;
+    starTimelineStartedAt = performance.now();
+  }
+  const geometry = starGeometry();
+  const { durationMs } = renderMagicCircle(starMagicLayer, result, {
+    elementIndex: starSettings.magicElement,
+    geometryPattern: geometry.pattern,
+    geometryOptions: geometry.options,
+    speed: starSettings.magicSpeed,
+    playback: starPlayback,
+    direction: starDirection,
+    positionMs: starCurrentPositionMs(),
+  });
+  starTimelineDurationMs = durationMs;
+  renderStarReadout(result);
+}
+
+function renderStarReadout(result) {
+  starResultBox?.classList.remove('hidden');
+  if (starResultIndexEl) starResultIndexEl.textContent = `${starResultIndex + 1} / ${starResults.length}`;
+  if (!starReadoutEl) return;
+  const row = (label, value) =>
+    `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`;
+  starReadoutEl.innerHTML = [
+    row('星形', translatePhrase(starModeLabel(result.mode))),
+    row('平均半徑', formatDistance(result.radiusMeanMeters)),
+    row('圓周誤差', formatDistance(result.radiusStdMeters)),
+    row('角度偏差', `${result.angleErrorDeg.toFixed(1)}°`),
+    row('中心偏移', formatDistance(result.centerErrorMeters)),
+    `<div class="mr-section">${translatePhrase('頂點')}</div>`,
+    // POI names come straight from OSM tags, which anybody can edit — escape.
+    ...result.points.map((poi, i) =>
+      `<div class="mr-row"><span class="mr-label">${i + 1}. ${_escapeHtml(poi.name)}</span>`
+      + `<span class="mr-value">${_escapeHtml(translatePhrase(poi.categoryLabel))}</span></div>`),
+  ].join('');
+}
+
+function setStarPlayback(playback) {
+  if (playback === starPlayback) return;
+  starBankPosition();
+  starPlayback = playback;
+  btnStarPlay?.setAttribute('aria-pressed', String(playback === 'playing'));
+  btnStarPlay?.classList.toggle('active', playback === 'playing');
+  renderStarMagic();
+}
+
+// --- Panel state ------------------------------------------------------------
+function setStarActive(active) {
+  if (!starPanel) return;
+  starPanel.classList.toggle('hidden', !active);
+  btnStarTool?.setAttribute('aria-pressed', String(active));
+  if (active) {
+    ensureStarLayers();
+    syncStarControls();
+    renderStarContext();
+    renderStarMagic();
+  } else {
+    starContextLayer?.clearLayers();
+    starMagicLayer?.clearLayers();
+  }
+  saveStarToolStateNow();
+}
+
+function saveStarToolStateNow() {
+  if (!toolStateRestored) return;
+  saveStarToolState({
+    open: !!starPanel && !starPanel.classList.contains('hidden'),
+    center: starCenter,
+    centerName: starCenterName,
+  });
+}
+
+function clearStarTool() {
+  starPois = [];
+  starResults = [];
+  starResultIndex = 0;
+  starTimelineDurationMs = 0;
+  starTimelineBaseMs = 0;
+  starMagicLayer?.clearLayers();
+  starResultBox?.classList.add('hidden');
+  renderStarContext();
+  saveStarToolStateNow();
+}
+
+function setStarCenter(center, name = '') {
+  starCenter = center ? { lat: Number(center.lat), lng: Number(center.lng) } : null;
+  starCenterName = name || '';
+  // The previous star belongs to the previous centre — keep it on screen and it
+  // reads as a result for the new search.
+  starResults = [];
+  starResultIndex = 0;
+  starPois = [];
+  starMagicLayer?.clearLayers();
+  starResultBox?.classList.add('hidden');
+  syncStarCenterReadout();
+  renderStarContext();
+  saveStarToolStateNow();
+  if (starCenter) {
+    mapManager.map.fitBounds(makeRadiusBounds(starCenter, starSettings.outerRadiusKm * 1000), { padding: [40, 40] });
+  }
+}
+
+// --- Place search -----------------------------------------------------------
+function hideStarPlaceList() {
+  starPlaceList?.classList.add('hidden');
+  if (starPlaceList) starPlaceList.replaceChildren();
+}
+
+async function runStarPlaceSearch() {
+  const text = (starCenterInput?.value || '').trim();
+  if (!text) { showNotification('請輸入地標、地址或座標', 'warning', 1800); return; }
+  starPlaceAbort?.abort();
+  const controller = new AbortController();
+  starPlaceAbort = controller;
+  try {
+    const results = await searchPlaces(text, { signal: controller.signal });
+    if (starPlaceAbort !== controller) return;   // superseded by a newer search
+    if (results.length === 1) { hideStarPlaceList(); setStarCenter(results[0].center, results[0].label); return; }
+    if (!starPlaceList) return;
+    starPlaceList.replaceChildren();
+    results.slice(0, 8).forEach((place) => {
+      const item = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'star-place-item';
+      // Nominatim display names are third-party data — build with text nodes.
+      const name = document.createElement('strong');
+      name.textContent = place.label;
+      btn.appendChild(name);
+      if (place.detail) {
+        const detail = document.createElement('small');
+        detail.textContent = place.detail;
+        btn.appendChild(detail);
+      }
+      btn.addEventListener('click', () => { hideStarPlaceList(); setStarCenter(place.center, place.label); });
+      item.appendChild(btn);
+      starPlaceList.appendChild(item);
+    });
+    starPlaceList.classList.remove('hidden');
+  } catch (err) {
+    if (isAbortError(err) || starPlaceAbort !== controller) return;
+    console.warn('Star place search failed:', err);
+    showNotification(err.message || '地點搜尋失敗', 'warning', 2400);
+  } finally {
+    if (starPlaceAbort === controller) starPlaceAbort = null;
+  }
+}
+
+// --- Search + solve ---------------------------------------------------------
+async function runStarSolve() {
+  if (starSolving) return;
+  readStarSettingsFromControls();
+  if (!starCenter) { showNotification('請先設定搜索中心', 'warning', 2000); return; }
+  const categories = starSettings.categoryIds.map(categoryById).filter(Boolean);
+  if (!categories.length) { showNotification('請至少選擇一種目標類別', 'warning', 2000); return; }
+
+  ensureStarLayers();
+  const outerM = starSettings.outerRadiusKm * 1000;
+  const innerM = starSettings.innerRadiusKm * 1000;
+  const controller = new AbortController();
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '魔法陣搜尋中',
+    detail: '取得周邊地標...',
+    progress: 0,
+    // 'none': the star search is independent of the route, so it shows progress
+    // (and 停止/取消) without freezing unrelated route editing.
+    lockScope: 'none',
+  });
+  const run = { id: `star_${Date.now()}`, cancelled: false, paused: false, lockScope: 'none', _resume: null, busyTask, controller };
+  starSolveRun = run;
+  starSolving = true;
+  registerPausableLoad(run);
+
+  try {
+    const { pois, warnings } = await fetchPoisDetailed(starCenter, outerM, categories, innerM, {
+      signal: controller.signal,
+      onCategoryResult: (progress) => {
+        busyTask.set({
+          detail: `${translatePhrase('取得地標')} ${progress.completedCategories}/${progress.totalCategories} · ${progress.category.label}`,
+          progress: (progress.completedCategories / Math.max(1, progress.totalCategories)) * 0.4,
+        });
+      },
+    });
+    if (run.cancelled) return;
+    warnings.forEach((warning) => console.warn('Overpass:', warning));
+
+    starPois = pois;
+    renderStarContext();
+    if (pois.length < starSettings.mode) {
+      showNotification('周邊地標不足以構成星形，請放大半徑或增加類別', 'warning', 3000);
+      emitTestEvent('star-solve-empty', { poiCount: pois.length });
+      return;
+    }
+
+    const iterator = solveStarFromPoisSteps(pois, {
+      mode: starSettings.mode,
+      center: starCenter,
+      radiusMeters: outerM,
+      innerRadiusMeters: innerM,
+      maxResults: starSettings.maxResults,
+      angleToleranceDeg: starSettings.angleToleranceDeg,
+      candidatesPerSlot: starSettings.candidatesPerSlot,
+      rotationStepDeg: starSettings.rotationStepDeg,
+      searchStrategy: starSettings.searchStrategy,
+      hexCellRadiusMeters: starSettings.hexCellRadiusKm * 1000,
+    });
+
+    // The solver is a synchronous generator; drive it in slices so the progress
+    // bar paints and 停止/取消 stay responsive on long searches.
+    let step = iterator.next();
+    let lastYield = performance.now();
+    while (!step.done) {
+      busyTask.set({ detail: step.value.label, progress: 0.4 + step.value.progress * 0.6 });
+      if (performance.now() - lastYield > 16) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await waitIfLoadPaused(run);
+        lastYield = performance.now();
+      }
+      if (run.cancelled) return;
+      step = iterator.next();
+    }
+
+    starResults = step.value || [];
+    starResultIndex = 0;
+    if (!starResults.length) {
+      showNotification('找不到符合條件的星形組合，請放寬角度容差或半徑', 'warning', 3000);
+      emitTestEvent('star-solve-empty', { poiCount: pois.length });
+      return;
+    }
+
+    setStarPlaybackSilently('playing');
+    renderStarMagic({ restart: true });
+    mapManager.map.fitBounds(makeStarBounds(starResults[0]), { padding: [50, 50] });
+    showNotification(`已找到 ${starResults.length} 個魔法陣`, 'success', 2400);
+    emitTestEvent('star-solved', {
+      resultCount: starResults.length,
+      poiCount: pois.length,
+      mode: starSettings.mode,
+      pointCount: starResults[0].points.length,
+    });
+  } catch (err) {
+    if (isAbortError(err) || run.cancelled) return;
+    console.warn('Star solve failed:', err);
+    showNotification(err.message || '魔法陣搜尋失敗', 'error', 3200);
+  } finally {
+    starSolving = false;
+    pausableLoadRuns.delete(run);
+    if (starSolveRun === run) starSolveRun = null;
+    busyTask.end();
+  }
+}
+
+function setStarPlaybackSilently(playback) {
+  starPlayback = playback;
+  starTimelineBaseMs = 0;
+  starTimelineStartedAt = performance.now();
+  btnStarPlay?.setAttribute('aria-pressed', String(playback === 'playing'));
+  btnStarPlay?.classList.toggle('active', playback === 'playing');
+}
+
+// The star selects and the category checklist carry translated text inside
+// generated options, which applyTranslations() (data-i18n attributes only)
+// cannot reach — so drop and rebuild them on a language switch.
+function refreshStarToolLanguage() {
+  if (!starPanel) return;
+  starModeSelect?.replaceChildren();
+  starShapeSelect?.replaceChildren();
+  starElementSelect?.replaceChildren();
+  starCategoryList?.replaceChildren();
+  syncStarControls();
+  const result = starSelectedResult();
+  if (result) renderStarReadout(result);
+}
+
+// Boot restore. Only the user's own inputs come back (settings, centre, panel
+// open state) — the POIs and the solved star are recomputed on demand, exactly
+// like 量測工具 recomputes its readout.
+function restoreStarToolState() {
+  starSettings = loadStarSettings();
+  const saved = loadStarToolState();
+  starCenter = saved.center;
+  starCenterName = saved.centerName;
+  syncStarControls();
+  if (saved.open) setStarActive(true);
+}
+
+// --- Wiring -----------------------------------------------------------------
+btnStarTool?.addEventListener('click', () => {
+  const opening = starPanel?.classList.contains('hidden');
+  if (opening) { setMeasureActive(false); setShapeActive(false); }   // shared map corner
+  setStarActive(opening);
+});
+document.getElementById('btn-star-close')?.addEventListener('click', () => setStarActive(false));
+document.getElementById('btn-star-clear')?.addEventListener('click', clearStarTool);
+document.getElementById('btn-star-solve')?.addEventListener('click', () => { void runStarSolve(); });
+document.getElementById('btn-star-search-place')?.addEventListener('click', () => { void runStarPlaceSearch(); });
+document.getElementById('btn-star-center-map')?.addEventListener('click', () => {
+  const c = mapManager.map.getCenter();
+  hideStarPlaceList();
+  setStarCenter({ lat: c.lat, lng: c.lng }, '地圖中心');   // canonical; translated on render
+});
+starCenterInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); void runStarPlaceSearch(); }
+});
+
+[starModeSelect, starShapeSelect, starVariantSelect, starElementSelect, starStrategySelect,
+  starInnerInput, starOuterInput, starToleranceInput, starRotationInput, starCandidatesInput, starHexCellInput]
+  .forEach((el) => el?.addEventListener('change', () => {
+    const before = starSettings;
+    readStarSettingsFromControls();
+    renderStarContext();
+    // Shape/variant/element only restyle the existing star; mode and the search
+    // parameters invalidate it, so the user must re-solve.
+    const invalidated = before.mode !== starSettings.mode;
+    if (invalidated && starResults.length) {
+      starResults = [];
+      starResultIndex = 0;
+      starMagicLayer?.clearLayers();
+      starResultBox?.classList.add('hidden');
+    } else {
+      renderStarMagic({ restart: true });
+    }
+  }));
+
+starSpeedSelect?.addEventListener('change', () => {
+  starBankPosition();
+  readStarSettingsFromControls();
+  renderStarMagic();
+});
+
+btnStarPlay?.addEventListener('click', () => {
+  setStarPlayback(starPlayback === 'playing' ? 'paused' : 'playing');
+});
+document.getElementById('btn-star-rewind')?.addEventListener('click', () => {
+  starDirection = starDirection === 'reverse' ? 'forward' : 'reverse';
+  setStarPlaybackSilently('playing');
+  renderStarMagic({ restart: true });
+});
+document.getElementById('btn-star-prev')?.addEventListener('click', () => {
+  if (starResults.length < 2) return;
+  starResultIndex = (starResultIndex - 1 + starResults.length) % starResults.length;
+  renderStarMagic({ restart: true });
+});
+document.getElementById('btn-star-next')?.addEventListener('click', () => {
+  if (starResults.length < 2) return;
+  starResultIndex = (starResultIndex + 1) % starResults.length;
+  renderStarMagic({ restart: true });
+});
+document.getElementById('btn-star-to-route')?.addEventListener('click', () => { void sendStarToRoutePlanning(); });
+
+// --- 魔法陣 → 路線規劃 ------------------------------------------------------
+// Visit order comes from the star's own line sequence (starLineSequencesForMode),
+// so the route traces the figure the user watched being drawn rather than the
+// solver's slot order. Modes whose figure is several disjoint strokes (六芒星 =
+// two triangles, 八卦圖 = ring + diagonals) flatten to first-visit order: every
+// vertex once, in an order that still follows the drawing.
+function starVisitOrder(mode, pointCount) {
+  const order = [];
+  const seen = new Set();
+  starLineSequencesForMode(mode).flat().forEach((index) => {
+    if (index < 0 || index >= pointCount || seen.has(index)) return;
+    seen.add(index);
+    order.push(index);
+  });
+  // Defensive: a sequence that somehow misses a vertex must not silently drop it.
+  for (let i = 0; i < pointCount; i += 1) if (!seen.has(i)) order.push(i);
+  return order;
+}
+
+async function sendStarToRoutePlanning() {
+  const blocked = (reason) => { emitTestEvent('star-route-blocked', { reason }); };
+  const result = starSelectedResult();
+  if (!result) { showNotification('請先搜尋並繪製魔法陣', 'warning', 2000); blocked('no-result'); return; }
+  if (isRouteWeatherBusy()) { showRouteWeatherBusyNotice(); blocked('busy'); return; }
+
+  const order = starVisitOrder(result.mode, result.points.length);
+  const points = order.map((index) => result.points[index]);
+  if (points.length < 2) { showNotification('魔法陣頂點不足以規劃路線', 'warning', 2000); blocked('too-few-points'); return; }
+
+  // Existing route is the user's work — never replace it silently.
+  if (mapManager.waypoints.length > 0
+    && !confirm(translatePhrase('目前已有航點，帶入魔法陣會清除現有路線並重新規劃。要繼續嗎？'))) {
+    blocked('declined');
+    return;
+  }
+
+  // Leaving imported-track mode: the magic circle replaces the whole route.
+  importedTrackMode = false;
+  importedIntermediatePoints = [];
+  importedWaypointMeta = [];
+  clearImportedTrackSession();
+  syncTrackModeUI();
+  _wcStates.clear();
+  mapManager.closeWeatherPopup();
+
+  // A magic circle is a closed figure, so the route has to come back to the
+  // first vertex — O繞. Route mode and pace activity are left alone: the
+  // vertices can be city-blocks or mountains apart, so forcing 步行/跑步 the way
+  // 繪圖板 does would be wrong here.
+  roundTripMode = false;
+  oLoopMode = true;
+  bumpRouteVersion();
+  try {
+    localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
+    localStorage.setItem(LS_OLOOP_KEY, '1');
+  } catch (_) { }
+  const navRadio = document.getElementById('nav-mode-oloop');
+  if (navRadio) navRadio.checked = true;
+
+  // Carry the POI names across so the route reads as the places, not 航點 N.
+  points.forEach((poi) => {
+    const key = _geocodeKey(poi.lat, poi.lng);
+    if (poi.name) waypointCustomNames[key] = poi.name;
+  });
+  try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
+
+  // Bulk-replace without per-point recalculation (the import/繪圖板 pattern),
+  // then one routing pass over the finished loop.
+  const cb = mapManager.onWaypointChange;
+  mapManager.onWaypointChange = () => { };
+  try {
+    mapManager.clearWaypoints();
+    points.forEach((poi) => mapManager.addWaypoint(poi.lat, poi.lng));
+  } finally {
+    mapManager.onWaypointChange = cb;
+  }
+  onWaypointsChanged(mapManager.waypoints);
+  mapManager.fitToRoute();
+
+  setStarActive(false);   // hand the map over to route planning
+  showNotification(`已帶入 ${points.length} 個魔法陣頂點並開始規劃路線`, 'success', 2600);
+  emitTestEvent('star-route-applied', {
+    waypointCount: points.length,
+    mode: result.mode,
+    order,
+  });
+}
 
 function pickRouteFile() {
   return platform.pickFile({
@@ -14990,6 +15708,7 @@ function refreshLanguageSensitiveUi() {
   renderFavoritesList();
   refreshOpenWeatherCards();
   refreshKeywordSearchResults?.();
+  refreshStarToolLanguage();
   syncTvLanguageSelect();
   applyTranslations();
 }

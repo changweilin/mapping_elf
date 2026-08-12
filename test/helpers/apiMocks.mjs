@@ -92,6 +92,70 @@ export function osrm(page) {
   });
 }
 
+const EARTH_R = 6371000;
+
+/** Point `distanceMeters` from `[lat,lng]` along `bearingDeg` (great circle). */
+export function destination([lat, lng], distanceMeters, bearingDeg) {
+  const br = (bearingDeg * Math.PI) / 180;
+  const ad = distanceMeters / EARTH_R;
+  const la1 = (lat * Math.PI) / 180;
+  const ln1 = (lng * Math.PI) / 180;
+  const la2 = Math.asin(Math.sin(la1) * Math.cos(ad) + Math.cos(la1) * Math.sin(ad) * Math.cos(br));
+  const ln2 = ln1 + Math.atan2(Math.sin(br) * Math.sin(ad) * Math.cos(la1), Math.cos(ad) - Math.sin(la1) * Math.sin(la2));
+  return [(la2 * 180) / Math.PI, (((ln2 * 180) / Math.PI + 540) % 360) - 180];
+}
+
+/**
+ * Overpass stub for the 魔法陣 tool. Answers every query with a ring of POIs at
+ * exact bearings around `center`, so the solver has a geometrically perfect
+ * star to find and the spec can assert on the result rather than on whatever
+ * the live API happens to return.
+ *
+ * The POIs are tagged `amenity=place_of_worship`, which is the 宗教 category —
+ * the tool's default selection.
+ *
+ * @param {object} [opts]
+ * @param {[number,number]} [opts.center]
+ * @param {number} [opts.points]        vertices in the perfect ring (default 5)
+ * @param {number} [opts.radiusMeters]  ring radius
+ * @param {number} [opts.noise]         extra off-pattern POIs
+ * @param {{calls:number}} [opts.stats]
+ * @param {number} [opts.status]        respond with this HTTP status instead (failure path)
+ */
+export function overpass(page, {
+  center = ANCHOR, points = 5, radiusMeters = 5000, noise = 24, stats = null, status = 0,
+} = {}) {
+  return page.route(/overpass/, async (route) => {
+    if (stats) stats.calls = (stats.calls || 0) + 1;
+    if (status) { await route.fulfill({ status, contentType: 'text/plain', body: 'stubbed failure' }); return; }
+    const elements = [];
+    for (let i = 0; i < points; i += 1) {
+      const [lat, lon] = destination(center, radiusMeters, (360 / points) * i);
+      elements.push({ type: 'node', id: 1000 + i, lat, lon, tags: { amenity: 'place_of_worship', name: `星點 ${i + 1}` } });
+    }
+    for (let i = 0; i < noise; i += 1) {
+      // Deliberately off both the target radius and the target bearings.
+      const [lat, lon] = destination(center, radiusMeters * (0.72 + ((i * 7) % 40) / 100), (i * 47) % 360);
+      elements.push({ type: 'node', id: 5000 + i, lat, lon, tags: { amenity: 'place_of_worship', name: `雜點 ${i + 1}` } });
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elements }) });
+  });
+}
+
+/** Nominatim place-search stub used by the 魔法陣 centre input. */
+export function nominatim(page, { center = ANCHOR, results = 1, label = '測試地點' } = {}) {
+  return page.route(/nominatim.*\/search/, (route) => {
+    const body = Array.from({ length: results }, (_, i) => ({
+      place_id: 900 + i,
+      lat: String(center[0] + i * 0.01),
+      lon: String(center[1]),
+      name: results === 1 ? label : `${label} ${i + 1}`,
+      display_name: `${label} ${i + 1}, 台灣`,
+    }));
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+}
+
 /**
  * River-discharge (hydrology) stub, answering across the whole requested date
  * range. `discharge`/`mean` receive (dayString, index) so a spec can ramp the

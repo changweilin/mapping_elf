@@ -9155,3 +9155,905 @@ html.light-theme .terrain-player-bar .tp-slider::-webkit-slider-thumb {
 /* 3D terrain button lives in the route-planning section header (an .icon-btn).
    Tint it with the accent so it stands out among the route tools. */
 #btn-open-3d-viewer:not(:disabled) { color: var(--accent-primary); }
+
+/* ======================================
+   魔法陣 (star tool)
+   ====================================== */
+
+/* --- Panel chrome: elf's own design language, sharing the .measure-panel shell
+       with 量測工具 / 繪圖板. The panel runs a little wider than the other two
+       because it carries a settings stack rather than a single readout. --- */
+.star-panel {
+  width: 268px;
+}
+
+@media (max-width: 768px) {
+  .star-panel {
+    width: min(268px, calc(100vw - 68px));
+  }
+}
+
+.star-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.star-section:last-of-type {
+  border-bottom: none;
+}
+
+.star-center-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.star-center-row .shape-distance-input {
+  flex: 1;
+}
+
+.star-icon-btn {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  /* Deliberately NOT transitioned. A transition on a property whose value comes
+     from a theme custom property leaves the element stuck on the OLD theme's
+     colour after 切換深淺色 — the transition never resolves to the new value.
+     .measure-close-btn avoids it the same way. */
+}
+
+.star-icon-btn:hover:not(:disabled) {
+  color: var(--accent-primary);
+  border-color: var(--border-hover);
+}
+
+.star-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.star-icon-btn--primary.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
+.star-center-readout {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nominatim candidates. Capped + scrollable so a broad query can't push the
+   solve button out of a short panel. */
+.star-place-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+}
+
+.star-place-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.star-place-item:hover {
+  background: var(--bg-soft-hover);
+}
+
+.star-place-item small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.star-details {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.star-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  list-style: none;
+}
+
+.star-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.star-details > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 12px;
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.star-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.star-count {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.star-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+
+.star-category-group-title {
+  margin: 0 0 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.star-category-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 1px 0;
+}
+
+.star-category-swatch {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+
+.star-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.star-result-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.star-result-index {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  text-align: center;
+}
+
+.star-playback {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.star-speed-select {
+  width: 56px;
+  flex: 0 0 auto;
+}
+
+/* --- Map-layer visuals, ported from mapping_star. These draw the magic circle
+       itself, so they are the feature rather than app chrome and are kept as
+       authored. Timing/colour come from inline --magic-* custom properties set
+       by magicPlayback.js. --- */
+.star-label {
+  color: var(--accent-secondary);
+  font-weight: 800;
+}
+
+.star-label--below {
+  margin-top: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.star-line,
+.magic-circle,
+.magic-stroke {
+  filter: drop-shadow(0 0 4px rgba(38, 63, 209, 0.28));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.star-line--draw,
+.magic-circle--draw,
+.magic-stroke--draw {
+  animation: draw-magic-line var(--magic-duration, 980ms)
+    cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation-delay: var(--magic-delay, 0ms);
+}
+
+.magic-rune {
+  filter: drop-shadow(0 0 5px rgba(223, 138, 31, 0.32));
+}
+
+.magic-rose-curve {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter:
+    drop-shadow(0 0 4px currentColor)
+    drop-shadow(0 0 10px rgba(255, 255, 255, 0.28));
+}
+
+.magic-sierpinski {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter:
+    drop-shadow(0 0 3px currentColor)
+    drop-shadow(0 0 8px rgba(99, 207, 255, 0.24));
+}
+
+.magic-zodiac-line,
+.magic-zodiac-star,
+.magic-zodiac-gate {
+  filter:
+    drop-shadow(0 0 4px currentColor)
+    drop-shadow(0 0 10px rgba(255, 217, 106, 0.28));
+}
+
+.magic-zodiac-line {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.magic-drawable * {
+  animation-play-state: inherit;
+}
+
+.magic-foundation {
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+.magic-material--metal-etch {
+  stroke-dasharray: 0.22 0.025 0.035 0.025;
+  filter:
+    drop-shadow(0 0 3px rgba(255, 230, 132, 0.52))
+    drop-shadow(0 0 8px rgba(166, 122, 24, 0.3));
+}
+
+.magic-material--vine-grow {
+  stroke-dasharray: 0.16 0.018 0.025 0.012;
+  filter: drop-shadow(0 0 6px rgba(119, 211, 90, 0.45));
+}
+
+.magic-material--water-wash,
+.magic-material--mist-stream,
+.magic-material--spirit-wisp {
+  stroke-dasharray: 0.34 0.035;
+  filter: drop-shadow(0 0 7px rgba(116, 228, 255, 0.5));
+}
+
+.magic-material--fuse-flame,
+.magic-material--lightning-snap,
+.magic-material--solar-flare {
+  filter:
+    drop-shadow(0 0 4px rgba(255, 237, 120, 0.72))
+    drop-shadow(0 0 10px rgba(255, 94, 24, 0.48));
+}
+
+.magic-material--fuse-flame.magic-stroke--draw,
+.magic-material--fuse-flame.star-line--draw,
+.magic-material--lightning-snap.magic-stroke--draw,
+.magic-material--lightning-snap.star-line--draw,
+.magic-material--solar-flare.magic-stroke--draw,
+.magic-material--solar-flare.star-line--draw {
+  animation-name: draw-magic-line, magic-material-flicker;
+  animation-duration: var(--magic-duration, 980ms), 740ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1), steps(2);
+  animation-delay: var(--magic-delay, 0ms), calc(var(--magic-delay, 0ms) + 180ms);
+  animation-iteration-count: 1, infinite;
+  animation-fill-mode: forwards, both;
+}
+
+.magic-material--stone-crack,
+.magic-material--bone-dust {
+  stroke-dasharray: 0.09 0.025 0.045 0.02;
+  filter: drop-shadow(0 0 4px rgba(232, 201, 141, 0.38));
+}
+
+.magic-material--frost-trace {
+  stroke-dasharray: 0.12 0.014 0.03 0.014;
+  filter:
+    drop-shadow(0 0 4px rgba(255, 255, 255, 0.72))
+    drop-shadow(0 0 10px rgba(92, 213, 255, 0.5));
+}
+
+.magic-material--shadow-tear {
+  stroke-dasharray: 0.18 0.08 0.02 0.06;
+  filter: drop-shadow(0 0 9px rgba(53, 45, 88, 0.72));
+}
+
+.magic-material--blood-ink {
+  stroke-dasharray: 0.2 0.018 0.045 0.012;
+  filter:
+    drop-shadow(0 0 4px rgba(255, 74, 90, 0.52))
+    drop-shadow(0 0 9px rgba(104, 0, 18, 0.45));
+}
+
+.magic-material--acid-bubble {
+  stroke-dasharray: 0.06 0.035;
+  filter:
+    drop-shadow(0 0 5px rgba(187, 255, 54, 0.58))
+    drop-shadow(0 0 9px rgba(42, 105, 0, 0.42));
+}
+
+.magic-material--moonlight {
+  stroke-dasharray: 0.28 0.04;
+  filter:
+    drop-shadow(0 0 6px rgba(219, 228, 255, 0.6))
+    drop-shadow(0 0 12px rgba(127, 148, 232, 0.36));
+}
+
+.magic-material--starlace {
+  stroke-dasharray: 0.045 0.026;
+  filter:
+    drop-shadow(0 0 4px rgba(255, 228, 130, 0.58))
+    drop-shadow(0 0 8px rgba(83, 100, 242, 0.5));
+}
+
+.magic-stroke.magic-rose-curve {
+  shape-rendering: geometricPrecision;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter:
+    drop-shadow(0 1px 2px rgba(12, 18, 28, 0.5))
+    drop-shadow(0 0 6px currentColor)
+    drop-shadow(0 0 15px rgba(255, 255, 255, 0.42));
+}
+
+.magic-rose-curve.magic-stroke--draw {
+  animation-name: draw-magic-line;
+  animation-duration: var(--magic-duration, 1480ms);
+  animation-timing-function: cubic-bezier(0.16, 0.74, 0.18, 1);
+  animation-delay: var(--magic-delay, 0ms);
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+
+/* Keep after material dash patterns so every stroke starts fully hidden. */
+.star-line--draw,
+.magic-circle--draw,
+.magic-stroke--draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+.magic-symbol-anchor {
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  pointer-events: none;
+}
+
+.magic-symbol {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: var(--magic-symbol-size, 24px) !important;
+  height: var(--magic-symbol-size, 24px) !important;
+  color: var(--magic-symbol-color);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  filter:
+    drop-shadow(0 0 6px color-mix(in srgb, var(--magic-symbol-color), transparent 16%))
+    drop-shadow(0 0 14px color-mix(in srgb, var(--magic-symbol-accent), transparent 26%));
+}
+
+.magic-symbol--appear {
+  animation: magic-symbol-shell-appear var(--magic-duration, 560ms) ease-out both;
+  animation-delay: var(--magic-delay, 0ms);
+}
+
+.magic-symbol__aura,
+.magic-symbol__trail,
+.magic-symbol__glyph {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.magic-symbol__aura {
+  border: 1px solid color-mix(in srgb, var(--magic-symbol-pale), transparent 18%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--magic-symbol-pale), transparent 58%) 0 18%, transparent 42%),
+    conic-gradient(from var(--magic-symbol-phase, 0deg), transparent, color-mix(in srgb, var(--magic-symbol-accent), transparent 28%), transparent);
+  animation: magic-symbol-aura 2200ms ease-in-out infinite;
+  animation-delay: calc(var(--magic-delay, 0ms) + var(--magic-duration, 560ms));
+}
+
+.magic-symbol__trail {
+  inset: 13%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 25% 20%, color-mix(in srgb, var(--magic-symbol-pale), transparent 18%) 0 7%, transparent 9%),
+    radial-gradient(circle at 78% 70%, color-mix(in srgb, var(--magic-symbol-accent), transparent 24%) 0 6%, transparent 8%);
+  opacity: 0.78;
+  animation: magic-symbol-orbit 2800ms linear infinite;
+  animation-delay: calc(var(--magic-delay, 0ms) + var(--magic-duration, 560ms));
+}
+
+.magic-symbol__glyph {
+  --symbol-shape-turn: 0deg;
+  inset: 19%;
+  background: var(--magic-symbol-color);
+  border: 1px solid color-mix(in srgb, var(--magic-symbol-pale), transparent 18%);
+  box-shadow: inset 0 0 8px color-mix(in srgb, var(--magic-symbol-pale), transparent 22%);
+  transform: rotate(calc(var(--magic-symbol-rotate, 0deg) + var(--symbol-shape-turn))) scale(0.68);
+  animation:
+    magic-symbol-glyph-pop var(--magic-duration, 560ms) cubic-bezier(0.2, 0.86, 0.2, 1.2) both,
+    magic-symbol-idle 2600ms ease-in-out infinite;
+  animation-delay:
+    var(--magic-delay, 0ms),
+    calc(var(--magic-delay, 0ms) + var(--magic-duration, 560ms));
+}
+
+.magic-symbol--ambient .magic-symbol__aura {
+  opacity: 0.54;
+}
+
+.magic-symbol--center .magic-symbol__aura,
+.magic-symbol--endpoint .magic-symbol__aura {
+  border-width: 2px;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--magic-symbol-pale), transparent 28%) 0 20%, transparent 48%),
+    conic-gradient(from var(--magic-symbol-phase, 0deg), transparent, color-mix(in srgb, var(--magic-symbol-accent), transparent 10%), transparent);
+}
+
+.magic-symbol--center .magic-symbol__glyph {
+  inset: 14%;
+  border-width: 2px;
+}
+
+.magic-symbol--ambient .magic-symbol__glyph {
+  inset: 25%;
+}
+
+.magic-symbol--endpoint .magic-symbol__glyph {
+  inset: 9%;
+  border-width: 2px;
+  box-shadow:
+    inset 0 0 10px color-mix(in srgb, var(--magic-symbol-pale), transparent 8%),
+    0 0 14px color-mix(in srgb, var(--magic-symbol-color), transparent 8%);
+}
+
+.magic-symbol--prism .magic-symbol__glyph,
+.magic-symbol--blade .magic-symbol__glyph,
+.magic-symbol--ice-shard .magic-symbol__glyph,
+.magic-symbol--crystal-mountain .magic-symbol__glyph,
+.magic-symbol--pillar .magic-symbol__glyph {
+  clip-path: polygon(50% 0, 88% 36%, 70% 100%, 30% 100%, 12% 36%);
+}
+
+.magic-symbol--blade .magic-symbol__glyph,
+.magic-symbol--ice-shard .magic-symbol__glyph,
+.magic-symbol--ray .magic-symbol__glyph {
+  clip-path: polygon(50% 0, 68% 72%, 50% 100%, 32% 72%);
+}
+
+.magic-symbol--tree-ring .magic-symbol__glyph {
+  border-radius: 50%;
+  background:
+    repeating-radial-gradient(circle, transparent 0 16%, color-mix(in srgb, var(--magic-symbol-pale), transparent 24%) 17% 21%, transparent 22% 33%),
+    var(--magic-symbol-color);
+}
+
+.magic-symbol--leaf-bud .magic-symbol__glyph,
+.magic-symbol--feather .magic-symbol__glyph {
+  --symbol-shape-turn: 45deg;
+  border-radius: 78% 0 78% 0;
+}
+
+.magic-symbol--vortex .magic-symbol__glyph,
+.magic-symbol--cyclone .magic-symbol__glyph {
+  border: 2px solid var(--magic-symbol-pale);
+  border-left-color: transparent;
+  border-radius: 50%;
+  background: conic-gradient(from 30deg, transparent 0 28%, var(--magic-symbol-color) 42%, transparent 74%);
+}
+
+.magic-symbol--droplet .magic-symbol__glyph,
+.magic-symbol--blood-drop .magic-symbol__glyph,
+.magic-symbol--blood-bead .magic-symbol__glyph,
+.magic-symbol--venom-orb .magic-symbol__glyph,
+.magic-symbol--bubble .magic-symbol__glyph {
+  --symbol-shape-turn: 45deg;
+  border-radius: 70% 70% 70% 6%;
+}
+
+.magic-symbol--bubble .magic-symbol__glyph {
+  background: radial-gradient(circle at 32% 28%, var(--magic-symbol-pale) 0 16%, transparent 18%), color-mix(in srgb, var(--magic-symbol-color), transparent 32%);
+}
+
+.magic-symbol--flame-core .magic-symbol__glyph,
+.magic-symbol--ember .magic-symbol__glyph,
+.magic-symbol--soul-flame .magic-symbol__glyph,
+.magic-symbol--will-o-wisp .magic-symbol__glyph {
+  --symbol-shape-turn: -10deg;
+  border-radius: 76% 18% 68% 34%;
+  clip-path: polygon(51% 0, 76% 28%, 66% 60%, 89% 100%, 49% 86%, 14% 100%, 31% 58%, 20% 31%);
+}
+
+.magic-symbol--snowflake .magic-symbol__glyph,
+.magic-symbol--thunder-rune .magic-symbol__glyph,
+.magic-symbol--arc-node .magic-symbol__glyph,
+.magic-symbol--bone-mark .magic-symbol__glyph,
+.magic-symbol--bone-chip .magic-symbol__glyph {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.magic-symbol--snowflake .magic-symbol__glyph::before,
+.magic-symbol--snowflake .magic-symbol__glyph::after,
+.magic-symbol--thunder-rune .magic-symbol__glyph::before,
+.magic-symbol--thunder-rune .magic-symbol__glyph::after,
+.magic-symbol--bone-mark .magic-symbol__glyph::before,
+.magic-symbol--bone-mark .magic-symbol__glyph::after {
+  content: "";
+  position: absolute;
+  inset: 45% 3%;
+  height: 10%;
+  background: var(--magic-symbol-pale);
+  border-radius: 999px;
+  box-shadow: 0 0 8px var(--magic-symbol-color);
+}
+
+.magic-symbol--snowflake .magic-symbol__glyph::before,
+.magic-symbol--bone-mark .magic-symbol__glyph::before {
+  transform: rotate(60deg);
+}
+
+.magic-symbol--snowflake .magic-symbol__glyph::after,
+.magic-symbol--bone-mark .magic-symbol__glyph::after {
+  transform: rotate(-60deg);
+}
+
+.magic-symbol--thunder-rune .magic-symbol__glyph::before,
+.magic-symbol--arc-node .magic-symbol__glyph {
+  clip-path: polygon(52% 0, 20% 52%, 48% 48%, 34% 100%, 82% 36%, 55% 41%);
+  inset: 8% 24%;
+  height: auto;
+  background: var(--magic-symbol-accent);
+}
+
+.magic-symbol--void .magic-symbol__glyph,
+.magic-symbol--shade .magic-symbol__glyph {
+  border-radius: 50%;
+  background: radial-gradient(circle, transparent 0 34%, var(--magic-symbol-color) 36% 62%, var(--magic-symbol-accent) 63% 100%);
+}
+
+.magic-symbol--sun-disc .magic-symbol__glyph,
+.magic-symbol--moon-phase .magic-symbol__glyph {
+  border-radius: 50%;
+}
+
+.magic-symbol--sun-disc .magic-symbol__glyph {
+  background: radial-gradient(circle, var(--magic-symbol-pale) 0 22%, var(--magic-symbol-color) 24% 58%, transparent 60%);
+  box-shadow: 0 0 12px var(--magic-symbol-accent);
+}
+
+.magic-symbol--moon-phase .magic-symbol__glyph,
+.magic-symbol--crescent .magic-symbol__glyph {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 64% 50%, transparent 0 36%, var(--magic-symbol-pale) 38% 39%, transparent 41%),
+    var(--magic-symbol-color);
+}
+
+.magic-symbol--compass-star .magic-symbol__glyph,
+.magic-symbol--star-glyph .magic-symbol__glyph {
+  clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 56%, 79% 91%, 50% 70%, 21% 91%, 32% 56%, 2% 35%, 39% 35%);
+}
+
+.magic-element--metal {
+  filter: drop-shadow(0 0 5px rgba(255, 214, 99, 0.48));
+}
+
+.magic-element--wood {
+  filter: drop-shadow(0 0 5px rgba(125, 210, 91, 0.44));
+}
+
+.magic-element--water {
+  filter: drop-shadow(0 0 6px rgba(99, 207, 255, 0.5));
+}
+
+.magic-element--fire {
+  filter: drop-shadow(0 0 7px rgba(255, 86, 30, 0.58));
+}
+
+.magic-element--earth {
+  filter: drop-shadow(0 0 4px rgba(165, 119, 62, 0.46));
+}
+
+.magic-element--ice {
+  filter: drop-shadow(0 0 7px rgba(201, 250, 255, 0.64));
+}
+
+.magic-element--wind {
+  filter: drop-shadow(0 0 6px rgba(154, 255, 236, 0.45));
+}
+
+.magic-element--thunder {
+  filter:
+    drop-shadow(0 0 4px rgba(255, 231, 85, 0.58))
+    drop-shadow(0 0 8px rgba(108, 70, 232, 0.44));
+}
+
+.magic-element--shadow {
+  filter: drop-shadow(0 0 7px rgba(68, 59, 108, 0.58));
+}
+
+.magic-element--blood {
+  filter: drop-shadow(0 0 6px rgba(202, 18, 36, 0.56));
+}
+
+.magic-element--poison {
+  filter: drop-shadow(0 0 7px rgba(159, 255, 46, 0.5));
+}
+
+.magic-element--undead {
+  filter: drop-shadow(0 0 6px rgba(187, 215, 135, 0.45));
+}
+
+.magic-element--sun {
+  filter:
+    drop-shadow(0 0 5px rgba(255, 230, 88, 0.68))
+    drop-shadow(0 0 10px rgba(255, 150, 32, 0.42));
+}
+
+.magic-element--moon {
+  filter: drop-shadow(0 0 7px rgba(199, 211, 255, 0.58));
+}
+
+.magic-element--star {
+  filter:
+    drop-shadow(0 0 4px rgba(255, 233, 150, 0.62))
+    drop-shadow(0 0 8px rgba(87, 102, 242, 0.46));
+}
+
+.magic-element--soul {
+  filter:
+    drop-shadow(0 0 6px rgba(123, 255, 240, 0.52))
+    drop-shadow(0 0 10px rgba(139, 116, 255, 0.4));
+}
+
+.star-point--appear {
+  animation: magic-point-appear var(--magic-duration, 520ms) ease-out both;
+  animation-delay: var(--magic-delay, 0ms);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes draw-magic-line {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes magic-material-flicker {
+  0%,
+  100% {
+    opacity: 0.98;
+  }
+
+  45% {
+    opacity: 0.62;
+  }
+
+  70% {
+    opacity: 1;
+  }
+}
+
+@keyframes magic-symbol-shell-appear {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: var(--magic-symbol-opacity, 1);
+  }
+}
+
+@keyframes magic-symbol-glyph-pop {
+  0% {
+    opacity: 0;
+    transform: rotate(calc(var(--magic-symbol-rotate, 0deg) + var(--symbol-shape-turn))) scale(0.24);
+  }
+
+  68% {
+    opacity: 1;
+    transform: rotate(calc(var(--magic-symbol-rotate, 0deg) + var(--symbol-shape-turn))) scale(1.18);
+  }
+
+  100% {
+    opacity: 1;
+    transform: rotate(calc(var(--magic-symbol-rotate, 0deg) + var(--symbol-shape-turn))) scale(1);
+  }
+}
+
+@keyframes magic-symbol-idle {
+  0%,
+  100% {
+    transform: rotate(calc(var(--magic-symbol-rotate, 0deg) + var(--symbol-shape-turn))) scale(1);
+  }
+
+  50% {
+    transform: rotate(calc(var(--magic-symbol-rotate, 0deg) + var(--symbol-shape-turn) + 8deg)) scale(1.08);
+  }
+}
+
+@keyframes magic-symbol-aura {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+
+  50% {
+    opacity: 0.88;
+  }
+}
+
+@keyframes magic-symbol-orbit {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes magic-symbol-haunt {
+  0%,
+  100% {
+    translate: -8% 0;
+    opacity: 0.48;
+  }
+
+  50% {
+    translate: 10% -12%;
+    opacity: 0.9;
+  }
+}
+
+@keyframes magic-symbol-drip {
+  0% {
+    translate: 0 -20%;
+    opacity: 0;
+  }
+
+  45% {
+    opacity: 0.9;
+  }
+
+  100% {
+    translate: 0 28%;
+    opacity: 0;
+  }
+}
+
+@keyframes magic-point-appear {
+  0% {
+    opacity: 0;
+    transform: scale(0.28);
+  }
+
+  70% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-line--draw,
+  .magic-circle--draw,
+  .magic-stroke--draw,
+  .magic-symbol--appear,
+  .magic-symbol--appear *,
+  .star-point--appear {
+    animation: none;
+  }
+
+  .star-line--draw,
+  .magic-circle--draw,
+  .magic-stroke--draw {
+    stroke-dashoffset: 0;
+  }
+
+  .magic-symbol--appear {
+    opacity: var(--magic-symbol-opacity, 1);
+  }
+
+  .magic-symbol__glyph {
+    transform: rotate(calc(var(--magic-symbol-rotate, 0deg) + var(--symbol-shape-turn))) scale(1);
+  }
+}
+
+/* Search context: centre pin, radius ring and candidate POIs. Written in elf's
+   language rather than ported — mapping_star's .center-pin used its own tokens. */
+.star-center-pin {
+  position: relative;
+}
+
+.star-center-pin__ring,
+.star-center-pin__dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+
+.star-center-pin__ring {
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--accent-primary);
+  opacity: 0.55;
+}
+
+.star-center-pin__dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-primary);
+}
+
+.star-ring {
+  pointer-events: none;
+}
+
+.star-candidate {
+  transition: opacity var(--transition-fast);
+}

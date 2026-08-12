@@ -557,6 +557,137 @@ const PHRASES = {
   '天氣資訊已更新': { en: 'Weather updated', ja: '天気情報を更新しました', ko: '날씨 정보 업데이트됨', fr: 'Météo mise à jour', de: 'Wetter aktualisiert', es: 'Tiempo actualizado', it: 'Meteo aggiornato' },
   '已加入航點': { en: 'Waypoint added', ja: 'ウェイポイントを追加しました', ko: '웨이포인트 추가됨', fr: 'Waypoint ajouté', de: 'Wegpunkt hinzugefügt', es: 'Waypoint añadido', it: 'Waypoint aggiunto' },
   '語言': { en: 'Language', ja: '言語', ko: '언어', fr: 'Langue', de: 'Sprache', es: 'Idioma', it: 'Lingua' },
+
+  // --- 魔法陣 (star tool) ---
+  '魔法陣': { en: 'Magic circle', ja: '魔法陣', ko: '마법진', fr: 'Cercle magique', de: 'Zauberkreis', es: 'Círculo mágico', it: 'Cerchio magico' },
+  '關閉魔法陣': { en: 'Close magic circle', ja: '魔法陣を閉じる', ko: '마법진 닫기', fr: 'Fermer le cercle magique', de: 'Zauberkreis schließen', es: 'Cerrar círculo mágico', it: 'Chiudi cerchio magico' },
+  '設定中心與半徑，從周邊地標找出可構成星形的組合': { en: 'Set a centre and radius, then find nearby landmarks that form a star', ja: '中心と半径を設定し、星形を構成できる周辺のランドマークを探します', ko: '중심과 반경을 설정해 별 모양을 이루는 주변 랜드마크를 찾습니다', fr: 'Définissez un centre et un rayon, puis trouvez les lieux formant une étoile', de: 'Zentrum und Radius festlegen und Orte finden, die einen Stern bilden', es: 'Define un centro y un radio y busca lugares que formen una estrella', it: 'Imposta centro e raggio e trova luoghi che formano una stella' },
+  '搜索中心': { en: 'Search centre', ja: '検索の中心', ko: '검색 중심', fr: 'Centre de recherche', de: 'Suchzentrum', es: 'Centro de búsqueda', it: 'Centro di ricerca' },
+  '地標、地址或座標': { en: 'Landmark, address or coordinates', ja: 'ランドマーク・住所・座標', ko: '랜드마크, 주소 또는 좌표', fr: 'Lieu, adresse ou coordonnées', de: 'Ort, Adresse oder Koordinaten', es: 'Lugar, dirección o coordenadas', it: 'Luogo, indirizzo o coordinate' },
+  '搜尋地點': { en: 'Search place', ja: '地点を検索', ko: '장소 검색', fr: 'Rechercher un lieu', de: 'Ort suchen', es: 'Buscar lugar', it: 'Cerca luogo' },
+  '用地圖中心': { en: 'Use map centre', ja: '地図の中心を使う', ko: '지도 중심 사용', fr: 'Utiliser le centre de la carte', de: 'Kartenmitte verwenden', es: 'Usar el centro del mapa', it: 'Usa il centro della mappa' },
+  '地點搜尋結果': { en: 'Place search results', ja: '地点検索の結果', ko: '장소 검색 결과', fr: 'Résultats de recherche', de: 'Ortssuchergebnisse', es: 'Resultados de búsqueda', it: 'Risultati della ricerca' },
+  '尚未設定中心': { en: 'No centre set yet', ja: '中心が未設定です', ko: '중심이 설정되지 않았습니다', fr: 'Aucun centre défini', de: 'Kein Zentrum festgelegt', es: 'Centro sin definir', it: 'Nessun centro impostato' },
+  '地圖中心': { en: 'Map centre', ja: '地図の中心', ko: '지도 중심', fr: 'Centre de la carte', de: 'Kartenmitte', es: 'Centro del mapa', it: 'Centro della mappa' },
+  '內半徑': { en: 'Inner radius', ja: '内半径', ko: '내부 반경', fr: 'Rayon intérieur', de: 'Innenradius', es: 'Radio interior', it: 'Raggio interno' },
+  '外半徑': { en: 'Outer radius', ja: '外半径', ko: '외부 반경', fr: 'Rayon extérieur', de: 'Außenradius', es: 'Radio exterior', it: 'Raggio esterno' },
+  '星形模式': { en: 'Star pattern', ja: '星形モード', ko: '별 모양 모드', fr: 'Motif d’étoile', de: 'Sternmuster', es: 'Patrón de estrella', it: 'Motivo a stella' },
+  '魔法陣形體': { en: 'Circle geometry', ja: '魔法陣の形', ko: '마법진 형태', fr: 'Géométrie du cercle', de: 'Kreisgeometrie', es: 'Geometría del círculo', it: 'Geometria del cerchio' },
+  '數值': { en: 'Value', ja: '数値', ko: '값', fr: 'Valeur', de: 'Wert', es: 'Valor', it: 'Valore' },
+  '元素': { en: 'Element', ja: '元素', ko: '원소', fr: 'Élément', de: 'Element', es: 'Elemento', it: 'Elemento' },
+  '目標類別': { en: 'Target categories', ja: '対象カテゴリ', ko: '대상 카테고리', fr: 'Catégories cibles', de: 'Zielkategorien', es: 'Categorías objetivo', it: 'Categorie target' },
+  '進階參數': { en: 'Advanced', ja: '詳細設定', ko: '고급 설정', fr: 'Paramètres avancés', de: 'Erweitert', es: 'Avanzado', it: 'Avanzate' },
+  '搜尋策略': { en: 'Search strategy', ja: '探索方式', ko: '검색 전략', fr: 'Stratégie de recherche', de: 'Suchstrategie', es: 'Estrategia de búsqueda', it: 'Strategia di ricerca' },
+  '蜂巢': { en: 'Honeycomb', ja: 'ハニカム', ko: '벌집', fr: 'Nid d’abeille', de: 'Wabe', es: 'Panal', it: 'Alveare' },
+  '角度': { en: 'Angular', ja: '角度', ko: '각도', fr: 'Angulaire', de: 'Winkel', es: 'Angular', it: 'Angolare' },
+  '角度容差': { en: 'Angle tolerance', ja: '角度の許容差', ko: '각도 허용치', fr: 'Tolérance angulaire', de: 'Winkeltoleranz', es: 'Tolerancia angular', it: 'Tolleranza angolare' },
+  '旋轉步進': { en: 'Rotation step', ja: '回転ステップ', ko: '회전 단계', fr: 'Pas de rotation', de: 'Drehschritt', es: 'Paso de rotación', it: 'Passo di rotazione' },
+  '每角候選數': { en: 'Candidates per corner', ja: '頂点ごとの候補数', ko: '꼭짓점당 후보 수', fr: 'Candidats par sommet', de: 'Kandidaten pro Ecke', es: 'Candidatos por vértice', it: 'Candidati per vertice' },
+  '蜂巢格半徑': { en: 'Honeycomb cell radius', ja: 'ハニカムセル半径', ko: '벌집 셀 반경', fr: 'Rayon de cellule', de: 'Wabenzellenradius', es: 'Radio de celda', it: 'Raggio della cella' },
+  '搜尋並繪製': { en: 'Search & draw', ja: '検索して描画', ko: '검색 후 그리기', fr: 'Rechercher et tracer', de: 'Suchen & zeichnen', es: 'Buscar y dibujar', it: 'Cerca e disegna' },
+  '帶入路線規劃': { en: 'Send to route planning', ja: 'ルート計画に取り込む', ko: '경로 계획으로 보내기', fr: 'Envoyer vers l’itinéraire', de: 'In Routenplanung übernehmen', es: 'Enviar a planificación de ruta', it: 'Invia alla pianificazione' },
+  '上一個結果': { en: 'Previous result', ja: '前の結果', ko: '이전 결과', fr: 'Résultat précédent', de: 'Vorheriges Ergebnis', es: 'Resultado anterior', it: 'Risultato precedente' },
+  '下一個結果': { en: 'Next result', ja: '次の結果', ko: '다음 결과', fr: 'Résultat suivant', de: 'Nächstes Ergebnis', es: 'Resultado siguiente', it: 'Risultato successivo' },
+  '倒轉': { en: 'Reverse', ja: '逆再生', ko: '되감기', fr: 'Inverser', de: 'Rückwärts', es: 'Invertir', it: 'Inverti' },
+  '播放': { en: 'Play', ja: '再生', ko: '재생', fr: 'Lecture', de: 'Abspielen', es: 'Reproducir', it: 'Riproduci' },
+  '播放速度': { en: 'Playback speed', ja: '再生速度', ko: '재생 속도', fr: 'Vitesse de lecture', de: 'Wiedergabegeschwindigkeit', es: 'Velocidad de reproducción', it: 'Velocità di riproduzione' },
+  '倒轉魔法陣動畫': { en: 'Reverse magic circle animation', ja: '魔法陣アニメを逆再生', ko: '마법진 애니메이션 되감기', fr: 'Inverser l’animation du cercle', de: 'Zauberkreis-Animation rückwärts', es: 'Invertir la animación del círculo', it: 'Inverti l’animazione del cerchio' },
+  '播放魔法陣動畫': { en: 'Play magic circle animation', ja: '魔法陣アニメを再生', ko: '마법진 애니메이션 재생', fr: 'Lire l’animation du cercle', de: 'Zauberkreis-Animation abspielen', es: 'Reproducir la animación del círculo', it: 'Riproduci l’animazione del cerchio' },
+  '取得地標': { en: 'Fetching landmarks', ja: 'ランドマークを取得中', ko: '랜드마크 가져오는 중', fr: 'Récupération des lieux', de: 'Orte werden geladen', es: 'Obteniendo lugares', it: 'Recupero luoghi' },
+  '魔法陣搜尋中': { en: 'Searching for a magic circle', ja: '魔法陣を探索中', ko: '마법진 검색 중', fr: 'Recherche du cercle magique', de: 'Zauberkreis wird gesucht', es: 'Buscando círculo mágico', it: 'Ricerca del cerchio magico' },
+  '星形': { en: 'Star', ja: '星形', ko: '별 모양', fr: 'Étoile', de: 'Stern', es: 'Estrella', it: 'Stella' },
+  '平均半徑': { en: 'Mean radius', ja: '平均半径', ko: '평균 반경', fr: 'Rayon moyen', de: 'Mittlerer Radius', es: 'Radio medio', it: 'Raggio medio' },
+  '圓周誤差': { en: 'Radius deviation', ja: '半径のばらつき', ko: '반경 편차', fr: 'Écart de rayon', de: 'Radiusabweichung', es: 'Desviación del radio', it: 'Deviazione del raggio' },
+  // NOT '角度誤差' — that key is already taken by 繪圖板's angle-tolerance
+  // setting, and a second entry would silently override it.
+  '角度偏差': { en: 'Angle error', ja: '角度誤差', ko: '각도 오차', fr: 'Erreur angulaire', de: 'Winkelfehler', es: 'Error angular', it: 'Errore angolare' },
+  '中心偏移': { en: 'Centre offset', ja: '中心のずれ', ko: '중심 오프셋', fr: 'Décalage du centre', de: 'Zentrumsversatz', es: 'Desplazamiento del centro', it: 'Scostamento del centro' },
+  '頂點': { en: 'Vertices', ja: '頂点', ko: '꼭짓점', fr: 'Sommets', de: 'Eckpunkte', es: 'Vértices', it: 'Vertici' },
+  '瓣': { en: ' petals', ja: '弁', ko: '갈래', fr: ' pétales', de: ' Blätter', es: ' pétalos', it: ' petali' },
+
+  // Star tool — notifications
+  '請至少選擇一種目標類別': { en: 'Select at least one target category', ja: '対象カテゴリを1つ以上選んでください', ko: '대상 카테고리를 하나 이상 선택하세요', fr: 'Sélectionnez au moins une catégorie cible', de: 'Mindestens eine Zielkategorie wählen', es: 'Selecciona al menos una categoría', it: 'Seleziona almeno una categoria' },
+  '請先設定搜索中心': { en: 'Set a search centre first', ja: '先に検索の中心を設定してください', ko: '먼저 검색 중심을 설정하세요', fr: 'Définissez d’abord un centre de recherche', de: 'Zuerst ein Suchzentrum festlegen', es: 'Define primero un centro de búsqueda', it: 'Imposta prima un centro di ricerca' },
+  '請輸入地標、地址或座標': { en: 'Enter a landmark, address or coordinates', ja: 'ランドマーク・住所・座標を入力してください', ko: '랜드마크, 주소 또는 좌표를 입력하세요', fr: 'Saisissez un lieu, une adresse ou des coordonnées', de: 'Ort, Adresse oder Koordinaten eingeben', es: 'Introduce un lugar, dirección o coordenadas', it: 'Inserisci un luogo, indirizzo o coordinate' },
+  '周邊地標不足以構成星形，請放大半徑或增加類別': { en: 'Not enough nearby landmarks to form a star — widen the radius or add categories', ja: '星形を作るにはランドマークが不足しています。半径を広げるかカテゴリを追加してください', ko: '별을 만들 랜드마크가 부족합니다. 반경을 넓히거나 카테고리를 추가하세요', fr: 'Pas assez de lieux pour former une étoile — élargissez le rayon ou ajoutez des catégories', de: 'Zu wenige Orte für einen Stern – Radius vergrößern oder Kategorien ergänzen', es: 'No hay suficientes lugares para formar una estrella: amplía el radio o añade categorías', it: 'Luoghi insufficienti per formare una stella: allarga il raggio o aggiungi categorie' },
+  '找不到符合條件的星形組合，請放寬角度容差或半徑': { en: 'No matching star found — relax the angle tolerance or the radius', ja: '条件に合う星形が見つかりません。角度の許容差か半径を緩めてください', ko: '조건에 맞는 별을 찾지 못했습니다. 각도 허용치나 반경을 완화하세요', fr: 'Aucune étoile trouvée — assouplissez la tolérance angulaire ou le rayon', de: 'Kein passender Stern gefunden – Winkeltoleranz oder Radius lockern', es: 'No se encontró ninguna estrella: relaja la tolerancia angular o el radio', it: 'Nessuna stella trovata: allenta la tolleranza angolare o il raggio' },
+  '地點搜尋失敗': { en: 'Place search failed', ja: '地点検索に失敗しました', ko: '장소 검색 실패', fr: 'Échec de la recherche de lieu', de: 'Ortssuche fehlgeschlagen', es: 'Error en la búsqueda de lugar', it: 'Ricerca del luogo non riuscita' },
+  '魔法陣搜尋失敗': { en: 'Magic circle search failed', ja: '魔法陣の探索に失敗しました', ko: '마법진 검색 실패', fr: 'Échec de la recherche du cercle magique', de: 'Zauberkreis-Suche fehlgeschlagen', es: 'Error al buscar el círculo mágico', it: 'Ricerca del cerchio magico non riuscita' },
+  '請先搜尋並繪製魔法陣': { en: 'Search and draw a magic circle first', ja: '先に魔法陣を検索して描画してください', ko: '먼저 마법진을 검색해 그리세요', fr: 'Recherchez et tracez d’abord un cercle magique', de: 'Zuerst einen Zauberkreis suchen und zeichnen', es: 'Primero busca y dibuja un círculo mágico', it: 'Prima cerca e disegna un cerchio magico' },
+  '魔法陣頂點不足以規劃路線': { en: 'Not enough magic circle vertices to plan a route', ja: '魔法陣の頂点がルート計画に足りません', ko: '경로를 계획하기에 마법진 꼭짓점이 부족합니다', fr: 'Pas assez de sommets pour planifier un itinéraire', de: 'Zu wenige Eckpunkte für eine Routenplanung', es: 'Vértices insuficientes para planificar una ruta', it: 'Vertici insufficienti per pianificare un percorso' },
+  '目前已有航點，帶入魔法陣會清除現有路線並重新規劃。要繼續嗎？': { en: 'There are already waypoints. Importing the magic circle clears the current route and re-plans it. Continue?', ja: '既にウェイポイントがあります。魔法陣を取り込むと現在のルートを消去して再計画します。続けますか？', ko: '이미 웨이포인트가 있습니다. 마법진을 가져오면 현재 경로를 지우고 다시 계획합니다. 계속할까요?', fr: 'Des waypoints existent déjà. Importer le cercle magique effacera l’itinéraire actuel et le recalculera. Continuer ?', de: 'Es sind bereits Wegpunkte vorhanden. Der Zauberkreis löscht die aktuelle Route und plant sie neu. Fortfahren?', es: 'Ya hay waypoints. Importar el círculo mágico borrará la ruta actual y la replanificará. ¿Continuar?', it: 'Ci sono già waypoint. Importare il cerchio magico cancella il percorso attuale e lo ripianifica. Continuare?' },
+
+  // Star tool — star patterns and circle geometries
+  '五芒星': { en: 'Pentagram', ja: '五芒星', ko: '오각별', fr: 'Pentagramme', de: 'Pentagramm', es: 'Pentagrama', it: 'Pentagramma' },
+  '六芒星': { en: 'Hexagram', ja: '六芒星', ko: '육각별', fr: 'Hexagramme', de: 'Hexagramm', es: 'Hexagrama', it: 'Esagramma' },
+  '七芒星': { en: 'Heptagram', ja: '七芒星', ko: '칠각별', fr: 'Heptagramme', de: 'Heptagramm', es: 'Heptagrama', it: 'Ettagramma' },
+  '十字星': { en: 'Cross star', ja: '十字星', ko: '십자별', fr: 'Étoile en croix', de: 'Kreuzstern', es: 'Estrella en cruz', it: 'Stella a croce' },
+  '八卦圖': { en: 'Bagua', ja: '八卦図', ko: '팔괘도', fr: 'Bagua', de: 'Bagua', es: 'Bagua', it: 'Bagua' },
+  '星芒': { en: 'Star rays', ja: '星芒', ko: '별빛', fr: 'Rayons d’étoile', de: 'Sternstrahlen', es: 'Rayos de estrella', it: 'Raggi di stella' },
+  '八卦陣': { en: 'Bagua array', ja: '八卦陣', ko: '팔괘진', fr: 'Formation Bagua', de: 'Bagua-Formation', es: 'Formación Bagua', it: 'Formazione Bagua' },
+  '玫瑰曲線': { en: 'Rose curve', ja: 'バラ曲線', ko: '장미 곡선', fr: 'Courbe en rosace', de: 'Rosenkurve', es: 'Curva rosa', it: 'Curva a rosa' },
+  'Sierpinski 三角形': { en: 'Sierpinski triangle', ja: 'シェルピンスキーの三角形', ko: '시에르핀스키 삼각형', fr: 'Triangle de Sierpiński', de: 'Sierpinski-Dreieck', es: 'Triángulo de Sierpiński', it: 'Triangolo di Sierpiński' },
+  '星座': { en: 'Constellation', ja: '星座', ko: '별자리', fr: 'Constellation', de: 'Sternbild', es: 'Constelación', it: 'Costellazione' },
+
+  // Star tool — the 16 element circles
+  '金魔法陣': { en: 'Metal circle', ja: '金の魔法陣', ko: '금 마법진', fr: 'Cercle du métal', de: 'Metall-Zauberkreis', es: 'Círculo de metal', it: 'Cerchio del metallo' },
+  '木魔法陣': { en: 'Wood circle', ja: '木の魔法陣', ko: '목 마법진', fr: 'Cercle du bois', de: 'Holz-Zauberkreis', es: 'Círculo de madera', it: 'Cerchio del legno' },
+  '水魔法陣': { en: 'Water circle', ja: '水の魔法陣', ko: '수 마법진', fr: 'Cercle de l’eau', de: 'Wasser-Zauberkreis', es: 'Círculo de agua', it: 'Cerchio dell’acqua' },
+  '火魔法陣': { en: 'Fire circle', ja: '火の魔法陣', ko: '화 마법진', fr: 'Cercle du feu', de: 'Feuer-Zauberkreis', es: 'Círculo de fuego', it: 'Cerchio del fuoco' },
+  '土魔法陣': { en: 'Earth circle', ja: '土の魔法陣', ko: '토 마법진', fr: 'Cercle de la terre', de: 'Erd-Zauberkreis', es: 'Círculo de tierra', it: 'Cerchio della terra' },
+  '冰魔法陣': { en: 'Ice circle', ja: '氷の魔法陣', ko: '얼음 마법진', fr: 'Cercle de glace', de: 'Eis-Zauberkreis', es: 'Círculo de hielo', it: 'Cerchio del ghiaccio' },
+  '風魔法陣': { en: 'Wind circle', ja: '風の魔法陣', ko: '바람 마법진', fr: 'Cercle du vent', de: 'Wind-Zauberkreis', es: 'Círculo de viento', it: 'Cerchio del vento' },
+  '雷魔法陣': { en: 'Thunder circle', ja: '雷の魔法陣', ko: '번개 마법진', fr: 'Cercle de la foudre', de: 'Donner-Zauberkreis', es: 'Círculo del trueno', it: 'Cerchio del tuono' },
+  '影魔法陣': { en: 'Shadow circle', ja: '影の魔法陣', ko: '그림자 마법진', fr: 'Cercle de l’ombre', de: 'Schatten-Zauberkreis', es: 'Círculo de sombra', it: 'Cerchio dell’ombra' },
+  '血魔法陣': { en: 'Blood circle', ja: '血の魔法陣', ko: '피 마법진', fr: 'Cercle du sang', de: 'Blut-Zauberkreis', es: 'Círculo de sangre', it: 'Cerchio del sangue' },
+  '毒魔法陣': { en: 'Poison circle', ja: '毒の魔法陣', ko: '독 마법진', fr: 'Cercle du poison', de: 'Gift-Zauberkreis', es: 'Círculo de veneno', it: 'Cerchio del veleno' },
+  '不死魔法陣': { en: 'Undead circle', ja: '不死の魔法陣', ko: '언데드 마법진', fr: 'Cercle des morts-vivants', de: 'Untoten-Zauberkreis', es: 'Círculo de los no muertos', it: 'Cerchio dei non morti' },
+  '日魔法陣': { en: 'Sun circle', ja: '日の魔法陣', ko: '태양 마법진', fr: 'Cercle du soleil', de: 'Sonnen-Zauberkreis', es: 'Círculo del sol', it: 'Cerchio del sole' },
+  '月魔法陣': { en: 'Moon circle', ja: '月の魔法陣', ko: '달 마법진', fr: 'Cercle de la lune', de: 'Mond-Zauberkreis', es: 'Círculo de la luna', it: 'Cerchio della luna' },
+  '星魔法陣': { en: 'Star circle', ja: '星の魔法陣', ko: '별 마법진', fr: 'Cercle des étoiles', de: 'Stern-Zauberkreis', es: 'Círculo de las estrellas', it: 'Cerchio delle stelle' },
+  '靈魂魔法陣': { en: 'Soul circle', ja: '魂の魔法陣', ko: '영혼 마법진', fr: 'Cercle de l’âme', de: 'Seelen-Zauberkreis', es: 'Círculo del alma', it: 'Cerchio dell’anima' },
+
+  // Star tool — zodiac constellations
+  '牡羊座': { en: 'Aries', ja: 'おひつじ座', ko: '양자리', fr: 'Bélier', de: 'Widder', es: 'Aries', it: 'Ariete' },
+  '金牛座': { en: 'Taurus', ja: 'おうし座', ko: '황소자리', fr: 'Taureau', de: 'Stier', es: 'Tauro', it: 'Toro' },
+  '雙子座': { en: 'Gemini', ja: 'ふたご座', ko: '쌍둥이자리', fr: 'Gémeaux', de: 'Zwillinge', es: 'Géminis', it: 'Gemelli' },
+  '巨蟹座': { en: 'Cancer', ja: 'かに座', ko: '게자리', fr: 'Cancer', de: 'Krebs', es: 'Cáncer', it: 'Cancro' },
+  '獅子座': { en: 'Leo', ja: 'しし座', ko: '사자자리', fr: 'Lion', de: 'Löwe', es: 'Leo', it: 'Leone' },
+  '處女座': { en: 'Virgo', ja: 'おとめ座', ko: '처녀자리', fr: 'Vierge', de: 'Jungfrau', es: 'Virgo', it: 'Vergine' },
+  '天秤座': { en: 'Libra', ja: 'てんびん座', ko: '천칭자리', fr: 'Balance', de: 'Waage', es: 'Libra', it: 'Bilancia' },
+  '天蠍座': { en: 'Scorpio', ja: 'さそり座', ko: '전갈자리', fr: 'Scorpion', de: 'Skorpion', es: 'Escorpio', it: 'Scorpione' },
+  '射手座': { en: 'Sagittarius', ja: 'いて座', ko: '궁수자리', fr: 'Sagittaire', de: 'Schütze', es: 'Sagitario', it: 'Sagittario' },
+  '魔羯座': { en: 'Capricorn', ja: 'やぎ座', ko: '염소자리', fr: 'Capricorne', de: 'Steinbock', es: 'Capricornio', it: 'Capricorno' },
+  '水瓶座': { en: 'Aquarius', ja: 'みずがめ座', ko: '물병자리', fr: 'Verseau', de: 'Wassermann', es: 'Acuario', it: 'Acquario' },
+  '雙魚座': { en: 'Pisces', ja: 'うお座', ko: '물고기자리', fr: 'Poissons', de: 'Fische', es: 'Piscis', it: 'Pesci' },
+
+  // Star tool — POI category groups
+  '人文觀光': { en: 'Culture & sights', ja: '文化・観光', ko: '문화·관광', fr: 'Culture et tourisme', de: 'Kultur & Sehenswürdigkeiten', es: 'Cultura y turismo', it: 'Cultura e turismo' },
+  '公共機構': { en: 'Public services', ja: '公共機関', ko: '공공기관', fr: 'Services publics', de: 'Öffentliche Einrichtungen', es: 'Servicios públicos', it: 'Servizi pubblici' },
+  '商業': { en: 'Commercial', ja: '商業', ko: '상업', fr: 'Commerce', de: 'Gewerbe', es: 'Comercial', it: 'Commerciale' },
+  '餐飲': { en: 'Food & drink', ja: '飲食', ko: '식음료', fr: 'Restauration', de: 'Gastronomie', es: 'Restauración', it: 'Ristorazione' },
+  '自然': { en: 'Nature', ja: '自然', ko: '자연', fr: 'Nature', de: 'Natur', es: 'Naturaleza', it: 'Natura' },
+
+  // Star tool — POI categories
+  '宗教': { en: 'Religion', ja: '宗教', ko: '종교', fr: 'Religion', de: 'Religion', es: 'Religión', it: 'Religione' },
+  '景點展館': { en: 'Attractions', ja: '観光・展示', ko: '명소·전시', fr: 'Sites et musées', de: 'Attraktionen', es: 'Atracciones', it: 'Attrazioni' },
+  '古蹟': { en: 'Historic sites', ja: '史跡', ko: '유적', fr: 'Sites historiques', de: 'Historische Stätten', es: 'Sitios históricos', it: 'Siti storici' },
+  '公園': { en: 'Parks', ja: '公園', ko: '공원', fr: 'Parcs', de: 'Parks', es: 'Parques', it: 'Parchi' },
+  '山峰': { en: 'Peaks', ja: '山頂', ko: '봉우리', fr: 'Sommets', de: 'Gipfel', es: 'Cumbres', it: 'Cime' },
+  '水體': { en: 'Water bodies', ja: '水域', ko: '수역', fr: 'Plans d’eau', de: 'Gewässer', es: 'Masas de agua', it: 'Specchi d’acqua' },
+  '水道': { en: 'Waterways', ja: '水路', ko: '수로', fr: 'Cours d’eau', de: 'Wasserläufe', es: 'Cursos de agua', it: 'Corsi d’acqua' },
+  '公共建築': { en: 'Public buildings', ja: '公共建築', ko: '공공건물', fr: 'Bâtiments publics', de: 'Öffentliche Gebäude', es: 'Edificios públicos', it: 'Edifici pubblici' },
+  '大眾運輸': { en: 'Public transport', ja: '公共交通', ko: '대중교통', fr: 'Transports publics', de: 'Nahverkehr', es: 'Transporte público', it: 'Trasporto pubblico' },
+  '醫療': { en: 'Healthcare', ja: '医療', ko: '의료', fr: 'Santé', de: 'Gesundheit', es: 'Sanidad', it: 'Sanità' },
+  '學校': { en: 'Schools', ja: '学校', ko: '학교', fr: 'Écoles', de: 'Schulen', es: 'Escuelas', it: 'Scuole' },
+  '餐廳': { en: 'Restaurants', ja: 'レストラン', ko: '음식점', fr: 'Restaurants', de: 'Restaurants', es: 'Restaurantes', it: 'Ristoranti' },
+  '速食連鎖': { en: 'Fast food chains', ja: 'ファストフード', ko: '패스트푸드', fr: 'Fast-foods', de: 'Fast-Food-Ketten', es: 'Comida rápida', it: 'Fast food' },
+  '咖啡茶飲': { en: 'Cafés & tea', ja: 'カフェ・茶', ko: '카페·차', fr: 'Cafés et thés', de: 'Cafés & Tee', es: 'Cafés y té', it: 'Caffè e tè' },
+  '夜生活': { en: 'Nightlife', ja: 'ナイトライフ', ko: '나이트라이프', fr: 'Vie nocturne', de: 'Nachtleben', es: 'Vida nocturna', it: 'Vita notturna' },
+  '便利店': { en: 'Convenience stores', ja: 'コンビニ', ko: '편의점', fr: 'Supérettes', de: 'Kioske', es: 'Tiendas de conveniencia', it: 'Minimarket' },
+  '賣場': { en: 'Stores & malls', ja: '量販・百貨', ko: '대형매장', fr: 'Grandes surfaces', de: 'Kaufhäuser', es: 'Grandes superficies', it: 'Centri commerciali' },
+  '商辦': { en: 'Office towers', ja: 'オフィスビル', ko: '오피스빌딩', fr: 'Tours de bureaux', de: 'Bürotürme', es: 'Torres de oficinas', it: 'Torri per uffici' },
+  '旅館複合': { en: 'Hotels & mixed use', ja: 'ホテル・複合', ko: '호텔·복합', fr: 'Hôtels et usage mixte', de: 'Hotels & Mischnutzung', es: 'Hoteles y uso mixto', it: 'Hotel e uso misto' },
 };
 
 const WMO_DESC = {
@@ -1067,6 +1198,10 @@ function translatePattern(text) {
   if (m) return withNum('{n} options', '{n}案', '{n}개 경로', '{n} options', '{n} Optionen', '{n} opciones', '{n} opzioni', m[1]);
   m = text.match(/^(\d+) 個航點$/);
   if (m) return withNum('{n} waypoints', '{n}ウェイポイント', '{n}개 웨이포인트', '{n} waypoints', '{n} Wegpunkte', '{n} waypoints', '{n} waypoint', m[1]);
+  m = text.match(/^已找到 (\d+) 個魔法陣$/);
+  if (m) return withNum('Found {n} magic circles', '魔法陣を{n}件見つけました', '마법진 {n}개를 찾았습니다', '{n} cercles magiques trouvés', '{n} Zauberkreise gefunden', '{n} círculos mágicos encontrados', 'Trovati {n} cerchi magici', m[1]);
+  m = text.match(/^已帶入 (\d+) 個魔法陣頂點並開始規劃路線$/);
+  if (m) return withNum('Imported {n} magic circle vertices — planning the route', '魔法陣の頂点{n}件を取り込み、ルートを計画します', '마법진 꼭짓점 {n}개를 가져와 경로를 계획합니다', '{n} sommets importés — planification de l’itinéraire', '{n} Eckpunkte übernommen – Route wird geplant', '{n} vértices importados: planificando la ruta', 'Importati {n} vertici: pianificazione del percorso', m[1]);
   m = text.match(/^圖磚 (\d+)\/(\d+)$/);
   if (m) return withNum('Tiles {n}', 'タイル {n}', '타일 {n}', 'Tuiles {n}', 'Kacheln {n}', 'Teselas {n}', 'Tile {n}', `${m[1]}/${m[2]}`);
   m = text.match(/^還原圖磚 (\d+)\/(\d+)$/);
