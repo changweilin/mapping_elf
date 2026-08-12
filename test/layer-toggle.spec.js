@@ -121,14 +121,26 @@ async function addWaypointsAtFractions(page, points) {
   const box = await page.locator('#map').boundingBox();
   expect(box).not.toBeNull();
 
+  const busy = page.locator('#route-weather-busy-overlay');
+  const items = page.locator('#waypoint-list .waypoint-item');
   for (let i = 0; i < points.length; i++) {
     // Map clicks are intentionally swallowed while the route/weather busy lock
     // is active, so wait out the previous waypoint's planning before clicking —
     // otherwise this helper races the lock and the click is silently dropped.
-    await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 15000 });
+    // One waypoint drives TWO busy cycles, so "hidden" can also be the gap
+    // between them: a click there is still swallowed. Retry rather than widen
+    // the wait, which costs nothing whenever the first click lands.
     const [x, y] = points[i];
-    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
-    await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(i + 1);
+    for (let attempt = 0; ; attempt++) {
+      await expect(busy).toBeHidden({ timeout: 15000 });
+      await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+      try {
+        await expect(items).toHaveCount(i + 1, { timeout: 5000 });
+        break;
+      } catch (err) {
+        if (attempt >= 2) throw err;
+      }
+    }
   }
 }
 
@@ -779,7 +791,11 @@ test('reverse replan button reverses waypoint order and recalculates once', asyn
 test('opening a restored track shows weather loading progress', async ({ page }) => {
   await openLayerTestApp(page, {
     roundTrip: '0',
-    weatherDelayMs: 1200,
+    // The restore's weather load starts during boot, so with a short delay it can
+    // finish before openLayerTestApp even returns and the overlay assertion below
+    // then sees a load that already ended. Hold the responses long enough that the
+    // busy state is still up on a fast box (a slow runner was never the problem).
+    weatherDelayMs: 6000,
     importedTrackSession: {
       coords: [
         [24.00, 121.00],
@@ -808,7 +824,7 @@ test('opening a restored track shows weather loading progress', async ({ page })
   await page.mouse.click(box.x + box.width * 0.70, box.y + box.height * 0.50);
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
 
-  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 8000 });
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 20_000 });
 });
 
 test('restored weather detail info prevents automatic weather fetch', async ({ page }) => {
