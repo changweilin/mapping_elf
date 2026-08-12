@@ -53,7 +53,15 @@ async function openApp(page, { overpassOpts = {}, nominatimOpts = null } = {}) {
   await overpass(page, overpassOpts);
   if (nominatimOpts) await nominatim(page, nominatimOpts);
 
-  await page.addInitScript(() => { window.__mappingElfTestHooks = { events: [] }; });
+  // Capture page errors too: a control's change handler that throws leaves the
+  // circle showing the PREVIOUS render forever, which looks exactly like a slow
+  // render from the outside. starLayerState() surfaces these on failure.
+  await page.addInitScript(() => {
+    window.__mappingElfTestHooks = { events: [] };
+    window.__pageErrors = [];
+    window.addEventListener('error', (e) => window.__pageErrors.push(String(e.message)));
+    window.addEventListener('unhandledrejection', (e) => window.__pageErrors.push('rejection: ' + String(e.reason)));
+  });
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
@@ -117,6 +125,31 @@ const countOf = (page, selector) =>
 const expectCount = (page, selector, value) =>
   expect.poll(() => countOf(page, selector), { timeout: 30_000, intervals: [100, 250, 500] })
     .toBe(value);
+
+/**
+ * What the star layer currently looks like, as one string. Used as the polled
+ * value for the element/geometry assertions so a CI timeout reports the actual
+ * state instead of just "expected 5, got 0" — the difference between knowing
+ * the render was skipped and knowing only that it did not match.
+ */
+const starLayerState = (page) => page.evaluate(() => {
+  const points = [...document.querySelectorAll('.star-point')];
+  const elementClass = (el) => [...el.classList].find((c) => c.startsWith('magic-element--')) || 'none';
+  const tally = {};
+  points.forEach((el) => { const k = elementClass(el); tally[k] = (tally[k] || 0) + 1; });
+  return [
+    `points=${points.length}`,
+    `elements=${Object.entries(tally).map(([k, n]) => `${k}:${n}`).join(',') || '-'}`,
+    `rose=${document.querySelectorAll('.magic-rose-curve').length}`,
+    `drawable=${document.querySelectorAll('.magic-drawable').length}`,
+    `resultHidden=${document.getElementById('star-result')?.classList.contains('hidden')}`,
+    `errors=${(window.__pageErrors || []).slice(0, 2).join('|') || 'none'}`,
+  ].join(' ');
+});
+
+const expectStarLayer = (page, expected) =>
+  expect.poll(() => starLayerState(page), { timeout: 30_000, intervals: [100, 250, 500] })
+    .toContain(expected);
 
 async function openStarPanel(page) {
   await page.locator('#btn-star-tool').click();
@@ -282,13 +315,13 @@ test('changing the element or geometry restyles the same star; changing mode inv
 
   // Element switch → same 5 vertices, new element class on the markers.
   await setControl(page, '#star-element-select', '2');   // 水
-  await expectCount(page, '.star-point.magic-element--water', 5);
+  await expectStarLayer(page, 'elements=magic-element--water:5');
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Geometry switch → still the same result, different stroke family.
   await setControl(page, '#star-shape-select', 'rose');
-  await expect.poll(() => countOf(page, '.magic-rose-curve'),
-    { timeout: 30_000, intervals: [100, 250, 500] }).toBeGreaterThan(0);
+  await expect.poll(() => starLayerState(page),
+    { timeout: 30_000, intervals: [100, 250, 500] }).not.toContain('rose=0');
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Mode switch changes what a result even means → the old star is dropped.
