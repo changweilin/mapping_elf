@@ -102,6 +102,22 @@ const setControl = (page, selector, value) => page.locator(selector).evaluate((e
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }, value);
 
+/**
+ * Count matching elements through page.evaluate rather than a locator.
+ *
+ * Playwright's locator machinery stalls badly on this page — with ~100 CSS-
+ * animated layers alive, `locator('.magic-drawable').count()` has taken >10 s
+ * and blown the expect budget while `document.querySelectorAll(...).length`
+ * answered instantly with 103. Same root cause as the `press` helper above, so
+ * everything that inspects the magic circle goes through evaluate.
+ */
+const countOf = (page, selector) =>
+  page.evaluate((sel) => document.querySelectorAll(sel).length, selector);
+
+const expectCount = (page, selector, value) =>
+  expect.poll(() => countOf(page, selector), { timeout: 30_000, intervals: [100, 250, 500] })
+    .toBe(value);
+
 async function openStarPanel(page) {
   await page.locator('#btn-star-tool').click();
   await expect(page.locator('#star-panel')).toBeVisible();
@@ -194,8 +210,9 @@ test('solving finds the seeded star and draws an animated magic circle', async (
   await expect(page.locator('#star-readout')).toContainText('星點');
 
   // The magic circle is on the map: animated strokes + one marker per vertex.
-  await expect.poll(async () => page.locator('.magic-drawable').count()).toBeGreaterThan(0);
-  await expect(page.locator('.star-point')).toHaveCount(5);
+  await expect.poll(() => countOf(page, '.magic-drawable'),
+    { timeout: 30_000, intervals: [100, 250, 500] }).toBeGreaterThan(0);
+  await expectCount(page, '.star-point', 5);
 
   // The solver picked the seeded perfect ring, not the noise: a geometrically
   // exact star has ~zero angle error.
@@ -248,7 +265,7 @@ test('playback pauses and resumes, and results can be stepped through', async ({
   const first = await indexText();
   await press(page, '#btn-star-next');
   await poll(indexText).not.toBe(first);
-  await expect(page.locator('.star-point')).toHaveCount(5);
+  await expectCount(page, '.star-point', 5);
   await press(page, '#btn-star-prev');
   await poll(indexText).toBe(first);
 });
@@ -260,22 +277,24 @@ test('changing the element or geometry restyles the same star; changing mode inv
   await useFastSolve(page);
   await solve(page);
 
-  await expect(page.locator('.magic-element--metal').first()).toBeVisible();
+  await expect.poll(() => countOf(page, '.magic-element--metal'),
+    { timeout: 30_000, intervals: [100, 250, 500] }).toBeGreaterThan(0);
 
   // Element switch → same 5 vertices, new element class on the markers.
   await setControl(page, '#star-element-select', '2');   // 水
-  await expect(page.locator('.star-point.magic-element--water')).toHaveCount(5);
+  await expectCount(page, '.star-point.magic-element--water', 5);
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Geometry switch → still the same result, different stroke family.
   await setControl(page, '#star-shape-select', 'rose');
-  await expect(page.locator('.magic-rose-curve').first()).toBeVisible();
+  await expect.poll(() => countOf(page, '.magic-rose-curve'),
+    { timeout: 30_000, intervals: [100, 250, 500] }).toBeGreaterThan(0);
   await expect(page.locator('#star-result')).toBeVisible();
 
   // Mode switch changes what a result even means → the old star is dropped.
   await setControl(page, '#star-mode-select', '6');
   await expect(page.locator('#star-result')).toBeHidden();
-  await expect(page.locator('.star-point')).toHaveCount(0);
+  await expectCount(page, '.star-point', 0);
 });
 
 test('each magic-circle geometry remembers its own variant', async ({ page }) => {
@@ -415,7 +434,7 @@ test('hostile OSM names are escaped, not executed', async ({ page }) => {
   expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
   // The name is rendered as text, so the tag survives verbatim and no <img> exists.
   await expect(page.locator('#star-readout')).toContainText('<img src=x');
-  expect(await page.locator('#star-readout img').count()).toBe(0);
+  expect(await countOf(page, '#star-readout img')).toBe(0);
 });
 
 test('a failing Overpass surfaces an error instead of breaking the panel', async ({ page }) => {
