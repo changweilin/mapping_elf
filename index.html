@@ -178,8 +178,14 @@
       </svg>
     </button>
     <button id="btn-shape-tool" class="map-action-btn" title="繪圖板" aria-label="繪圖板" aria-pressed="false">
-      <svg viewBox="0 0 24 24" width="20" height="20">
-        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor" />
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8.5 3.5l1 2.5M7 4l1.2 2.5" />
+        <path d="M8.2 6.5c-1.2.7-2.7 1.5-4 2.5-.6.5-.4 1.4.4 1.7 1 .3 2-.3 3-1.1.8 1.4 1.6 2.9 2 4.9L9 20.5M11.2 15l.3 5.5" />
+        <path d="M9.5 6c2 1.2 3.5 1.5 5.5 1.8 2 .2 3.2 1.2 3.6 3.2.3 1.5 0 3-.4 4.5" />
+        <path d="M11.5 15.8c1.7.4 3.5.2 5-.6L16 20.5M18 15.5l.5 5" />
+        <path d="M18.2 11.5c1.6.5 3 1.7 3.4 3.3.2 1.4-.8 2.7-2.2 2.4-.8-.2-1.2-1.2-2.4" />
+        <path d="M10 6.5c.8 1.5 1.2 3 1 4.5M12.2 8c.8 1.5 1 3 .6 4.2" />
+        <circle cx="6.5" cy="8.6" r="0.75" fill="currentColor" />
       </svg>
     </button>
     <button id="btn-star-tool" class="map-action-btn" title="魔法陣" aria-label="魔法陣" aria-pressed="false">
@@ -236,6 +242,38 @@
       </button>
     </div>
     <p class="measure-hint">在下方畫出想跑的形狀，將在當前位置附近規劃最接近該形狀的 O繞跑步路線</p>
+    <div class="shape-distance-row">
+      <label class="mr-label" for="shape-preset-select" data-i18n="預設形狀">預設形狀</label>
+      <select id="shape-preset-select" class="shape-distance-input">
+        <option value="" data-i18n="自訂手繪">自訂手繪</option>
+        <option value="heart" data-i18n="愛心">愛心</option>
+        <option value="star" data-i18n="星星">星星</option>
+        <option value="moon" data-i18n="月亮">月亮</option>
+        <option value="sun" data-i18n="太陽">太陽</option>
+        <option value="diamond" data-i18n="鑽石">鑽石</option>
+        <option value="club" data-i18n="梅花">梅花</option>
+        <option value="cat" data-i18n="貓">貓</option>
+        <option value="dog" data-i18n="狗">狗</option>
+        <option value="bird" data-i18n="鳥">鳥</option>
+        <option value="fish" data-i18n="魚">魚</option>
+        <option value="horse" data-i18n="馬">馬</option>
+        <option value="butterfly" data-i18n="蝴蝶">蝴蝶</option>
+      </select>
+    </div>
+    <div class="shape-preset-chips" id="shape-preset-chips" role="group" aria-label="預設形狀選項">
+      <button type="button" class="shape-preset-chip" data-preset="heart" data-i18n-title="愛心" data-i18n-aria-label="愛心" title="愛心" aria-label="愛心">❤️ <span data-i18n="愛心">愛心</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="star" data-i18n-title="星星" data-i18n-aria-label="星星" title="星星" aria-label="星星">⭐ <span data-i18n="星星">星星</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="moon" data-i18n-title="月亮" data-i18n-aria-label="月亮" title="月亮" aria-label="月亮">🌙 <span data-i18n="月亮">月亮</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="sun" data-i18n-title="太陽" data-i18n-aria-label="太陽" title="太陽" aria-label="太陽">☀️ <span data-i18n="太陽">太陽</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="diamond" data-i18n-title="鑽石" data-i18n-aria-label="鑽石" title="鑽石" aria-label="鑽石">💎 <span data-i18n="鑽石">鑽石</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="club" data-i18n-title="梅花" data-i18n-aria-label="梅花" title="梅花" aria-label="梅花">♣️ <span data-i18n="梅花">梅花</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="cat" data-i18n-title="貓" data-i18n-aria-label="貓" title="貓" aria-label="貓">🐱 <span data-i18n="貓">貓</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="dog" data-i18n-title="狗" data-i18n-aria-label="狗" title="狗" aria-label="狗">🐶 <span data-i18n="狗">狗</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="bird" data-i18n-title="鳥" data-i18n-aria-label="鳥" title="鳥" aria-label="鳥">🐦 <span data-i18n="鳥">鳥</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="fish" data-i18n-title="魚" data-i18n-aria-label="魚" title="魚" aria-label="魚">🐟 <span data-i18n="魚">魚</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="horse" data-i18n-title="馬" data-i18n-aria-label="馬" title="馬" aria-label="馬">🐴 <span data-i18n="馬">馬</span></button>
+      <button type="button" class="shape-preset-chip" data-preset="butterfly" data-i18n-title="蝴蝶" data-i18n-aria-label="蝴蝶" title="蝴蝶" aria-label="蝴蝶">🦋 <span data-i18n="蝴蝶">蝴蝶</span></button>
+    </div>
     <canvas id="shape-canvas" class="shape-canvas" width="216" height="216"></canvas>
     <div class="shape-distance-row">
       <label class="mr-label" for="shape-distance-input">目標距離</label>

@@ -19,6 +19,7 @@ import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
 import { countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
+import { getShapePresetPoints } from './modules/shapePresets.js';
 // 魔法陣 (star tool) — logic ported 1:1 from the mapping_star project.
 import { categoryById } from './modules/star/categories.js';
 import { fetchPoisDetailed } from './modules/star/overpass.js';
@@ -5113,6 +5114,8 @@ const shapeReadoutEl = document.getElementById('shape-readout');
 const shapeDistanceInput = document.getElementById('shape-distance-input');
 const shapeAngleSelect = document.getElementById('shape-angle-select');
 const shapeTrimSpursInput = document.getElementById('shape-trim-spurs');
+const shapePresetSelect = document.getElementById('shape-preset-select');
+const shapePresetChips = document.getElementById('shape-preset-chips');
 const btnShapeTool = document.getElementById('btn-shape-tool');
 const btnShapeUndo = document.getElementById('btn-shape-undo');
 const btnShapeRedo = document.getElementById('btn-shape-redo');
@@ -5253,10 +5256,40 @@ function pushShapeHistory() {
   updateShapeToolButtons();
 }
 
+function syncShapePresetUI(presetId) {
+  if (shapePresetSelect && shapePresetSelect.value !== (presetId || '')) {
+    shapePresetSelect.value = presetId || '';
+  }
+  if (shapePresetChips) {
+    shapePresetChips.querySelectorAll('.shape-preset-chip').forEach((btn) => {
+      const active = btn.dataset.preset === presetId;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+  }
+}
+
+function applyShapePreset(presetId) {
+  if (!presetId) {
+    syncShapePresetUI('');
+    return;
+  }
+  const pts = getShapePresetPoints(presetId, shapeCanvasCssWidth() || 216);
+  if (!pts || pts.length < 2) return;
+  pushShapeHistory();
+  shapeStrokes = [ pts ];
+  shapeDrawing = false;
+  redrawShapeCanvas();
+  saveShapeBoardState();
+  updateShapeToolButtons();
+  syncShapePresetUI(presetId);
+}
+
 function shapeUndo() {
   if (shapeUndoStack.length === 0) return;
   shapeRedoStack.push(shapeStrokes.map(s => s.map(p => [p[0], p[1]])));
   shapeStrokes = shapeUndoStack.pop();
+  syncShapePresetUI('');
   redrawShapeCanvas();
   saveShapeBoardState();
   updateShapeToolButtons();
@@ -5266,6 +5299,7 @@ function shapeRedo() {
   if (shapeRedoStack.length === 0) return;
   shapeUndoStack.push(shapeStrokes.map(s => s.map(p => [p[0], p[1]])));
   shapeStrokes = shapeRedoStack.pop();
+  syncShapePresetUI('');
   redrawShapeCanvas();
   saveShapeBoardState();
   updateShapeToolButtons();
@@ -5332,6 +5366,7 @@ function appendShapePoint(e) {
 
 shapeCanvas?.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  syncShapePresetUI('');
   try { shapeCanvas.setPointerCapture(e.pointerId); } catch (_) { }
   if (shapeToolMode === 'eraser') {
     pushShapeHistory();
@@ -5397,11 +5432,12 @@ function saveShapeBoardState() {
   try {
     const open = !!shapePanel && !shapePanel.classList.contains('hidden');
     const strokes = normalizedShapeStrokes();
+    const preset = shapePresetSelect?.value || '';
     if (!open && !strokes.length) {
       localStorage.removeItem(LS_SHAPE_BOARD_KEY);
       return;
     }
-    localStorage.setItem(LS_SHAPE_BOARD_KEY, JSON.stringify({ open, strokes }));
+    localStorage.setItem(LS_SHAPE_BOARD_KEY, JSON.stringify({ open, strokes, preset }));
   } catch (_) { }
 }
 
@@ -5416,6 +5452,7 @@ function restoreShapeBoardState() {
       Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1])) : []))
     .filter((stroke) => stroke.length >= 2);
   shapeStrokesPending = strokes.length ? strokes : null;
+  if (saved.preset) syncShapePresetUI(saved.preset);
   if (saved.open) setShapeActive(true);
 }
 
@@ -5451,6 +5488,7 @@ function clearShapeBoard() {
   shapeRouteRun = null;
   shapePreviewLayer?.clearLayers();
   if (shapeReadoutEl) shapeReadoutEl.innerHTML = '';
+  syncShapePresetUI('');
   redrawShapeCanvas();
   saveShapeBoardState();
   updateShapeToolButtons();
@@ -5952,6 +5990,14 @@ btnShapeUndo?.addEventListener('click', shapeUndo);
 btnShapeRedo?.addEventListener('click', shapeRedo);
 btnShapeModeToggle?.addEventListener('click', () => {
   setShapeToolMode(shapeToolMode === 'pen' ? 'eraser' : 'pen');
+});
+shapePresetSelect?.addEventListener('change', () => {
+  applyShapePreset(shapePresetSelect.value);
+});
+shapePresetChips?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.shape-preset-chip');
+  if (!btn) return;
+  applyShapePreset(btn.dataset.preset);
 });
 
 // =========== 魔法陣 (star tool) ===========

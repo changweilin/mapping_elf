@@ -171,5 +171,61 @@ test('drawing board supports undo/redo, pen/eraser mode, and clear/generate icon
   await expect(undoBtn).toBeEnabled(); // clearing is also undoable
 });
 
+test('drawing board provides 12 preset shapes (愛心, 星星, 月亮, 太陽, 鑽石, 梅花, 貓, 狗, 鳥, 魚, 馬, 蝴蝶) and hand-drawn pony icon', async ({ page }) => {
+  await openApp(page);
+
+  // Icon of drawing board button is a hand-drawn pony
+  const toolBtn = page.locator('#btn-shape-tool');
+  await expect(toolBtn).toBeVisible();
+  const svg = toolBtn.locator('svg');
+  await expect(svg).toBeVisible();
+
+  // Open drawing board
+  await toolBtn.click();
+  const panel = page.locator('#shape-panel');
+  await expect(panel).toBeVisible();
+
+  const presetSelect = page.locator('#shape-preset-select');
+  await expect(presetSelect).toBeVisible();
+
+  const presetChips = page.locator('#shape-preset-chips .shape-preset-chip');
+  await expect(presetChips).toHaveCount(12);
+
+  const expectedPresets = [
+    'heart', 'star', 'moon', 'sun', 'diamond', 'club',
+    'cat', 'dog', 'bird', 'fish', 'horse', 'butterfly'
+  ];
+
+  // Verify all 12 options exist in select
+  for (const presetId of expectedPresets) {
+    await expect(presetSelect.locator(`option[value="${presetId}"]`)).toHaveCount(1);
+  }
+
+  // Select 'heart' preset via select
+  await presetSelect.selectOption('heart');
+  await expect(presetSelect).toHaveValue('heart');
+  await expect(page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]')).toHaveClass(/active/);
+
+  // Generate route directly from preset shape without manual drawing
+  await page.locator('#shape-distance-input').fill('4');
+  await page.locator('#btn-shape-generate').click();
+
+  await expect.poll(async () => page.evaluate(() =>
+    (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
+  )).toBeGreaterThanOrEqual(3);
+
+  // Select 'horse' preset via chip
+  const horseChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="horse"]');
+  await horseChip.click();
+  await expect(presetSelect).toHaveValue('horse');
+  await expect(horseChip).toHaveClass(/active/);
+
+  // Clear resets preset UI
+  await page.locator('#btn-shape-clear').click();
+  await expect(presetSelect).toHaveValue('');
+  await expect(horseChip).not.toHaveClass(/active/);
+});
+
+
 
 
