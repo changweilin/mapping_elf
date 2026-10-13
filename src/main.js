@@ -5114,12 +5114,18 @@ const shapeDistanceInput = document.getElementById('shape-distance-input');
 const shapeAngleSelect = document.getElementById('shape-angle-select');
 const shapeTrimSpursInput = document.getElementById('shape-trim-spurs');
 const btnShapeTool = document.getElementById('btn-shape-tool');
+const btnShapeUndo = document.getElementById('btn-shape-undo');
+const btnShapeRedo = document.getElementById('btn-shape-redo');
+const btnShapeModeToggle = document.getElementById('btn-shape-mode-toggle');
 const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
 const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
 const LS_SHAPE_TRIM_KEY = 'mappingElf_shapeRouteTrimSpurs';
 const LS_SHAPE_BOARD_KEY = 'mappingElf_shapeBoard';
 const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
 let shapeStrokes = [];            // drawn strokes (筆畫), each an array of [x, y] CSS px
+let shapeUndoStack = [];          // history snapshots for undo
+let shapeRedoStack = [];          // history snapshots for redo
+let shapeToolMode = 'pen';        // 'pen' | 'eraser'
 let shapeStrokesPending = null;   // restored strokes in 0-1 units, awaiting a laid-out canvas
 let shapeDrawing = false;
 let shapePreviewLayer = null;     // dashed target-shape outline on the map
@@ -5223,6 +5229,84 @@ function redrawShapeCanvas() {
   ctx.fill();
 }
 
+function updateShapeToolButtons() {
+  if (btnShapeUndo) btnShapeUndo.disabled = shapeUndoStack.length === 0;
+  if (btnShapeRedo) btnShapeRedo.disabled = shapeRedoStack.length === 0;
+  if (btnShapeModeToggle) {
+    const isPen = shapeToolMode === 'pen';
+    btnShapeModeToggle.setAttribute('data-shape-mode', shapeToolMode);
+    btnShapeModeToggle.title = isPen ? '橡皮擦' : '繪筆';
+    btnShapeModeToggle.setAttribute('aria-label', isPen ? '橡皮擦' : '繪筆');
+    btnShapeModeToggle.querySelector('.shape-mode-icon-pen')?.classList.toggle('hidden', !isPen);
+    btnShapeModeToggle.querySelector('.shape-mode-icon-eraser')?.classList.toggle('hidden', isPen);
+    btnShapeModeToggle.classList.toggle('active', !isPen);
+  }
+  if (shapeCanvas) {
+    shapeCanvas.classList.toggle('eraser-mode', shapeToolMode === 'eraser');
+  }
+}
+
+function pushShapeHistory() {
+  shapeUndoStack.push(shapeStrokes.map(s => s.map(p => [p[0], p[1]])));
+  if (shapeUndoStack.length > 50) shapeUndoStack.shift();
+  shapeRedoStack = [];
+  updateShapeToolButtons();
+}
+
+function shapeUndo() {
+  if (shapeUndoStack.length === 0) return;
+  shapeRedoStack.push(shapeStrokes.map(s => s.map(p => [p[0], p[1]])));
+  shapeStrokes = shapeUndoStack.pop();
+  redrawShapeCanvas();
+  saveShapeBoardState();
+  updateShapeToolButtons();
+}
+
+function shapeRedo() {
+  if (shapeRedoStack.length === 0) return;
+  shapeUndoStack.push(shapeStrokes.map(s => s.map(p => [p[0], p[1]])));
+  shapeStrokes = shapeRedoStack.pop();
+  redrawShapeCanvas();
+  saveShapeBoardState();
+  updateShapeToolButtons();
+}
+
+function setShapeToolMode(mode) {
+  shapeToolMode = mode;
+  updateShapeToolButtons();
+}
+
+function distToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const l2 = dx * dx + dy * dy;
+  if (l2 === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function eraseShapeAt(clientX, clientY) {
+  const rect = shapeCanvas.getBoundingClientRect();
+  const x = Math.min(rect.width, Math.max(0, clientX - rect.left));
+  const y = Math.min(rect.height, Math.max(0, clientY - rect.top));
+  const eraseRadius = 12;
+  const originalCount = shapeStrokes.length;
+  shapeStrokes = shapeStrokes.filter((stroke) => {
+    if (stroke.length < 2) return false;
+    for (let i = 0; i < stroke.length - 1; i++) {
+      if (distToSegment(x, y, stroke[i][0], stroke[i][1], stroke[i + 1][0], stroke[i + 1][1]) <= eraseRadius) {
+        return false;
+      }
+    }
+    return true;
+  });
+  if (shapeStrokes.length !== originalCount) {
+    redrawShapeCanvas();
+    saveShapeBoardState();
+  }
+}
+
 function appendShapePoint(e) {
   const stroke = shapeStrokes[shapeStrokes.length - 1];
   if (!stroke) return;
@@ -5248,22 +5332,37 @@ function appendShapePoint(e) {
 
 shapeCanvas?.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  shapeDrawing = true;
-  shapeStrokes.push([]);       // each pointerdown starts a new 筆畫
   try { shapeCanvas.setPointerCapture(e.pointerId); } catch (_) { }
-  appendShapePoint(e);
+  if (shapeToolMode === 'eraser') {
+    pushShapeHistory();
+    shapeDrawing = true;
+    eraseShapeAt(e.clientX, e.clientY);
+  } else {
+    pushShapeHistory();
+    shapeDrawing = true;
+    shapeStrokes.push([]);       // each pointerdown starts a new 筆畫
+    appendShapePoint(e);
+  }
 });
 shapeCanvas?.addEventListener('pointermove', (e) => {
-  if (shapeDrawing) appendShapePoint(e);
+  if (!shapeDrawing) return;
+  if (shapeToolMode === 'eraser') {
+    eraseShapeAt(e.clientX, e.clientY);
+  } else {
+    appendShapePoint(e);
+  }
 });
 ['pointerup', 'pointercancel'].forEach((ev) => shapeCanvas?.addEventListener(ev, () => {
   if (!shapeDrawing) return;
   shapeDrawing = false;
-  // Drop accidental taps that never became a line.
-  const last = shapeStrokes[shapeStrokes.length - 1];
-  if (last && last.length < 2) shapeStrokes.pop();
+  if (shapeToolMode === 'pen') {
+    // Drop accidental taps that never became a line.
+    const last = shapeStrokes[shapeStrokes.length - 1];
+    if (last && last.length < 2) shapeStrokes.pop();
+  }
   redrawShapeCanvas();
   saveShapeBoardState();
+  updateShapeToolButtons();
 }));
 
 // --- 繪圖板 暫存: the sketch itself survives a reload ------------------------
@@ -5343,6 +5442,9 @@ function ensureShapePreviewLayer() {
 }
 
 function clearShapeBoard() {
+  if (shapeStrokes.length > 0) {
+    pushShapeHistory();
+  }
   shapeStrokes = [];
   shapeStrokesPending = null;
   shapeDrawing = false;
@@ -5351,6 +5453,7 @@ function clearShapeBoard() {
   if (shapeReadoutEl) shapeReadoutEl.innerHTML = '';
   redrawShapeCanvas();
   saveShapeBoardState();
+  updateShapeToolButtons();
 }
 
 function setShapeActive(active) {
@@ -5363,6 +5466,7 @@ function setShapeActive(active) {
     syncShapeCanvasSize();
     hydrateShapeStrokes();
     redrawShapeCanvas();
+    updateShapeToolButtons();
   } else {
     shapePreviewLayer?.clearLayers();
   }
@@ -5844,6 +5948,11 @@ btnShapeTool?.addEventListener('click', () => {
 document.getElementById('btn-shape-close')?.addEventListener('click', () => setShapeActive(false));
 document.getElementById('btn-shape-clear')?.addEventListener('click', clearShapeBoard);
 document.getElementById('btn-shape-generate')?.addEventListener('click', generateShapeRoute);
+btnShapeUndo?.addEventListener('click', shapeUndo);
+btnShapeRedo?.addEventListener('click', shapeRedo);
+btnShapeModeToggle?.addEventListener('click', () => {
+  setShapeToolMode(shapeToolMode === 'pen' ? 'eraser' : 'pen');
+});
 
 // =========== 魔法陣 (star tool) ===========
 // Pick a centre and a radius ring, pull POIs from Overpass, and let the solver

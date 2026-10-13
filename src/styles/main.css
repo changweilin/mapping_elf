@@ -1551,7 +1551,59 @@ body.weather-card-busy .weather-edit-control:disabled {
 }
 
 .shape-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.shape-tools-group,
+.shape-main-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shape-tool-btn,
+.shape-action-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.shape-tool-btn:hover:not(:disabled),
+.shape-action-btn:hover:not(:disabled) {
+  color: var(--accent-primary);
+  border-color: var(--border-hover);
+}
+
+.shape-tool-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
+.shape-action-btn--primary {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
+.shape-action-btn--primary:hover:not(:disabled) {
+  opacity: 0.9;
+  color: #fff;
+}
+
+.shape-canvas.eraser-mode {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M15.14 3c-.51 0-1.02.2-1.41.59L2.59 14.73c-.78.78-.78 2.05 0 2.83L6.44 21.4c.78.78 2.05.78 2.83 0l11.14-11.14c.78-.78.78-2.05 0-2.83l-3.85-3.85c-.39-.38-.9-.58-1.42-.58zm-1.41 3.41L17.59 10 13 14.59 9.14 10.73l4.59-4.32zM4 16.14l3.73-3.73 3.86 3.86L7.86 20 4 16.14z' fill='%23ef4444' stroke='%23ffffff' stroke-width='0.8'/%3E%3C/svg%3E") 4 20, cell;
 }
 
 /* Hikingbook-style route summary strip — the key numbers stay in view above

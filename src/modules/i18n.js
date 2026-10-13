@@ -616,6 +616,10 @@ const PHRASES = {
   '請先搜尋並繪製魔法陣': { en: 'Search and draw a magic circle first', ja: '先に魔法陣を検索して描画してください', ko: '먼저 마법진을 검색해 그리세요', fr: 'Recherchez et tracez d’abord un cercle magique', de: 'Zuerst einen Zauberkreis suchen und zeichnen', es: 'Primero busca y dibuja un círculo mágico', it: 'Prima cerca e disegna un cerchio magico' },
   '魔法陣頂點不足以規劃路線': { en: 'Not enough magic circle vertices to plan a route', ja: '魔法陣の頂点がルート計画に足りません', ko: '경로를 계획하기에 마법진 꼭짓점이 부족합니다', fr: 'Pas assez de sommets pour planifier un itinéraire', de: 'Zu wenige Eckpunkte für eine Routenplanung', es: 'Vértices insuficientes para planificar una ruta', it: 'Vertici insufficienti per pianificare un percorso' },
   '目前已有航點，帶入魔法陣會清除現有路線並重新規劃。要繼續嗎？': { en: 'There are already waypoints. Importing the magic circle clears the current route and re-plans it. Continue?', ja: '既にウェイポイントがあります。魔法陣を取り込むと現在のルートを消去して再計画します。続けますか？', ko: '이미 웨이포인트가 있습니다. 마법진을 가져오면 현재 경로를 지우고 다시 계획합니다. 계속할까요?', fr: 'Des waypoints existent déjà. Importer le cercle magique effacera l’itinéraire actuel et le recalculera. Continuer ?', de: 'Es sind bereits Wegpunkte vorhanden. Der Zauberkreis löscht die aktuelle Route und plant sie neu. Fortfahren?', es: 'Ya hay waypoints. Importar el círculo mágico borrará la ruta actual y la replanificará. ¿Continuar?', it: 'Ci sono già waypoint. Importare il cerchio magico cancella il percorso attuale e lo ripianifica. Continuare?' },
+  '上一動': { en: 'Undo', ja: '元に戻す', ko: '실행 취소', fr: 'Annuler', de: 'Rückgängig', es: 'Deshacer', it: 'Annulla' },
+  '下一動': { en: 'Redo', ja: 'やり直す', ko: '다시 실행', fr: 'Rétablir', de: 'Wiederholen', es: 'Rehacer', it: 'Ripeti' },
+  '繪筆': { en: 'Pen', ja: 'ペン', ko: '펜', fr: 'Stylet', de: 'Stift', es: 'Lápiz', it: 'Penna' },
+  '橡皮擦': { en: 'Eraser', ja: '消しゴム', ko: '지우개', fr: 'Gomme', de: 'Radierer', es: 'Borrador', it: 'Gomma' },
 
   // Star tool — star patterns and circle geometries
   '五芒星': { en: 'Pentagram', ja: '五芒星', ko: '오각별', fr: 'Pentagramme', de: 'Pentagramm', es: 'Pentagrama', it: 'Pentagramma' },

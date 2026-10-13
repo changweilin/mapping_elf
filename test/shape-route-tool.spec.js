@@ -124,4 +124,52 @@ test('drawing board anchors at most recently placed map cursor or waypoint', asy
   expect(Math.abs(firstWp[0] - 25.034)).toBeGreaterThan(0.1);
 });
 
+test('drawing board supports undo/redo, pen/eraser mode, and clear/generate icon buttons', async ({ page }) => {
+  await openApp(page);
+  await page.locator('#btn-shape-tool').click();
+  const panel = page.locator('#shape-panel');
+  await expect(panel).toBeVisible();
+
+  const undoBtn = page.locator('#btn-shape-undo');
+  const redoBtn = page.locator('#btn-shape-redo');
+  const modeBtn = page.locator('#btn-shape-mode-toggle');
+  const clearBtn = page.locator('#btn-shape-clear');
+  const genBtn = page.locator('#btn-shape-generate');
+
+  // Verify initial states
+  await expect(undoBtn).toBeDisabled();
+  await expect(redoBtn).toBeDisabled();
+  await expect(modeBtn).toHaveAttribute('data-shape-mode', 'pen');
+  await expect(clearBtn).toBeVisible();
+  await expect(genBtn).toBeVisible();
+
+  // Draw stroke 1
+  await drawSquare(page);
+  await expect(undoBtn).toBeEnabled();
+  await expect(redoBtn).toBeDisabled();
+
+  // Undo stroke 1
+  await undoBtn.click();
+  await expect(undoBtn).toBeDisabled();
+  await expect(redoBtn).toBeEnabled();
+
+  // Redo stroke 1
+  await redoBtn.click();
+  await expect(undoBtn).toBeEnabled();
+  await expect(redoBtn).toBeDisabled();
+
+  // Switch to eraser mode
+  await modeBtn.click();
+  await expect(modeBtn).toHaveAttribute('data-shape-mode', 'eraser');
+
+  // Switch back to pen mode
+  await modeBtn.click();
+  await expect(modeBtn).toHaveAttribute('data-shape-mode', 'pen');
+
+  // Clear with icon button
+  await clearBtn.click();
+  await expect(undoBtn).toBeEnabled(); // clearing is also undoable
+});
+
+
 
