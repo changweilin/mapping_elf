@@ -1256,6 +1256,9 @@ const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
+if (typeof window !== 'undefined' && window.__mappingElfTestHooks) {
+  window.__mappingElfTestHooks.mapManager = mapManager;
+}
 mapManager.onFrozenInteraction = () => {
   if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
   else showImportedTrackEditNotice();
@@ -5394,18 +5397,20 @@ async function generateShapeRoute() {
   shapeGenerating = true;
   shapeRouteRun = null;          // supersede any pending calibration pass
   try {
-    // Anchor at the GPS fix; the free geolocation path fails often, so fall
-    // back to the map centre instead of blocking the feature.
-    let anchor;
-    try {
-      showNotification('正在定位...', 'info', 1500);
-      const pos = await platform.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
-      anchor = [pos.coords.latitude, pos.coords.longitude];
-    } catch (err) {
-      console.warn('Shape route: geolocation failed, using map centre:', err);
-      const c = mapManager.map.getCenter();
-      anchor = [c.lat, c.lng];
-      showNotification('無法取得目前位置，改以地圖中心規劃', 'info', 2000);
+    // Anchor at the most recently set cursor/coordinate on the map if present;
+    // otherwise fall back to GPS fix, and then map centre.
+    let anchor = mapManager.getRecentCoordinate?.();
+    if (!anchor) {
+      try {
+        showNotification('正在定位...', 'info', 1500);
+        const pos = await platform.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+        anchor = [pos.coords.latitude, pos.coords.longitude];
+      } catch (err) {
+        console.warn('Shape route: geolocation failed, using map centre:', err);
+        const c = mapManager.map.getCenter();
+        anchor = [c.lat, c.lng];
+        showNotification('無法取得目前位置，改以地圖中心規劃', 'info', 2000);
+      }
     }
 
     const targetM = km * 1000;
@@ -5543,6 +5548,9 @@ function applyShapeWaypoints(wps) {
   try {
     mapManager.clearWaypoints();
     wps.forEach(([lat, lng]) => mapManager.addWaypoint(lat, lng));
+    if (wps.length > 0) {
+      mapManager._lastPlacedCoordinate = { lat: wps[0][0], lng: wps[0][1], time: Date.now(), source: 'waypoint' };
+    }
   } finally {
     mapManager.onWaypointChange = cb;
   }

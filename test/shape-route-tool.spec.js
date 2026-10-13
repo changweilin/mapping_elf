@@ -95,3 +95,33 @@ test('measure tool and drawing board never overlap', async ({ page }) => {
   await expect(page.locator('#shape-panel')).toBeVisible();
   await expect(page.locator('#measure-panel')).toBeHidden();
 });
+
+test('drawing board anchors at most recently placed map cursor or waypoint', async ({ page }) => {
+  await openApp(page);
+
+  // 1. Place a map cursor far from default geolocation (25.034, 121.564)
+  await page.evaluate(() => {
+    window.__mappingElfTestHooks.mapManager.setMapCursor(24.800, 120.900);
+  });
+
+  const panel = page.locator('#shape-panel');
+  await page.locator('#btn-shape-tool').click();
+  await expect(panel).toBeVisible();
+
+  await drawSquare(page);
+  await page.locator('#shape-distance-input').fill('2');
+  await page.locator('#shape-angle-select').selectOption('0');
+  await page.locator('#btn-shape-generate').click();
+
+  await expect.poll(async () => page.evaluate(() =>
+    (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
+  )).toBeGreaterThanOrEqual(3);
+
+  // Check the first waypoint is anchored near 24.800, 120.900 (not default GPS 25.034, 121.564)
+  const firstWp = await page.evaluate(() => window.__mappingElfTestHooks.mapManager.waypoints[0]);
+  expect(Math.abs(firstWp[0] - 24.800)).toBeLessThan(0.03);
+  expect(Math.abs(firstWp[1] - 120.900)).toBeLessThan(0.03);
+  expect(Math.abs(firstWp[0] - 25.034)).toBeGreaterThan(0.1);
+});
+
+

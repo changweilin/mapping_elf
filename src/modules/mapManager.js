@@ -233,6 +233,7 @@ export class MapManager {
     this._mapCursorLatLng = null;
     this._mapCursorMenuPopup = null;
     this._cursorWeatherPopup = null; // Ad-hoc weather card anchored at the cursor (independent of weatherPoints)
+    this._lastPlacedCoordinate = null; // { lat, lng, time, source: 'cursor' | 'waypoint' }
     this.onMapCursorAction = null; // callback(action, lat, lng)
     this.onGpsFix = null; // callback(lat, lng)
     this._mapZoomingTimer = null;
@@ -664,6 +665,7 @@ export class MapManager {
 
   setMapCursor(lat, lng) {
     this._mapCursorLatLng = [lat, lng];
+    this._lastPlacedCoordinate = { lat, lng, time: Date.now(), source: 'cursor' };
     this._closeMapCursorMenu();
     this.closeCursorWeatherPopup();
     if (!this._mapCursor) {
@@ -688,6 +690,34 @@ export class MapManager {
       this._mapCursor = null;
     }
     this._mapCursorLatLng = null;
+    if (this._lastPlacedCoordinate?.source === 'cursor') {
+      this._lastPlacedCoordinate = null;
+    }
+  }
+
+  getRecentCoordinate() {
+    if (this._lastPlacedCoordinate) {
+      if (this._lastPlacedCoordinate.source === 'cursor' && this._mapCursorLatLng) {
+        return [...this._mapCursorLatLng];
+      }
+      if (this._lastPlacedCoordinate.source === 'waypoint' && this.waypoints.length > 0) {
+        const exists = this.waypoints.some(([la, ln]) =>
+          Math.abs(la - this._lastPlacedCoordinate.lat) < 1e-6 &&
+          Math.abs(ln - this._lastPlacedCoordinate.lng) < 1e-6
+        );
+        if (exists) return [this._lastPlacedCoordinate.lat, this._lastPlacedCoordinate.lng];
+      }
+    }
+    if (this._mapCursorLatLng) {
+      return [...this._mapCursorLatLng];
+    }
+    if (this.highlightedWpIndex >= 0 && this.waypoints[this.highlightedWpIndex]) {
+      return [...this.waypoints[this.highlightedWpIndex]];
+    }
+    if (this.waypoints.length > 0) {
+      return [...this.waypoints[this.waypoints.length - 1]];
+    }
+    return null;
   }
 
   /**
@@ -1029,6 +1059,7 @@ export class MapManager {
   addWaypoint(lat, lng, insertIndex = null) {
     const idx = insertIndex !== null ? insertIndex : this.waypoints.length;
     this.waypoints.splice(idx, 0, [lat, lng]);
+    this._lastPlacedCoordinate = { lat, lng, time: Date.now(), source: 'waypoint' };
     this.waypointLayerSwapped.splice(idx, 0, true);
     this.waypointWeather.splice(idx, 0, null);
     this.waypointColors.splice(idx, 0, null);
@@ -1208,6 +1239,7 @@ export class MapManager {
                   : marker.getLatLng();
                 marker.setLatLng(pos);
                 this.waypoints[idx] = [pos.lat, pos.lng];
+                this._lastPlacedCoordinate = { lat: pos.lat, lng: pos.lng, time: Date.now(), source: 'waypoint' };
                 this._emitWaypointChange();
                 // Post-drag highlight (on release)
                 this.onWaypointSelect?.(idx, false);
@@ -1409,6 +1441,7 @@ export class MapManager {
                   : marker.getLatLng();
                 marker.setLatLng(pos);
                 this.waypoints[idx] = [pos.lat, pos.lng];
+                this._lastPlacedCoordinate = { lat: pos.lat, lng: pos.lng, time: Date.now(), source: 'waypoint' };
                 this._emitWaypointChange();
                 // Post-drag highlight (on release)
                 this.onWaypointSelect?.(idx, false);
@@ -1742,6 +1775,7 @@ export class MapManager {
             if (_leafletDragStartLatLng) marker.setLatLng(_leafletDragStartLatLng);
           } else {
             this.waypoints[idx] = [pos.lat, pos.lng];
+            this._lastPlacedCoordinate = { lat: pos.lat, lng: pos.lng, time: Date.now(), source: 'waypoint' };
             this._emitWaypointChange();
           }
         }
@@ -1767,6 +1801,9 @@ export class MapManager {
     this.waypointColors.splice(index, 1);
     this.waypointLabels.splice(index, 1);
     this.waypointMetadata.splice(index, 1);
+    if (this.waypoints.length === 0 && this._lastPlacedCoordinate?.source === 'waypoint') {
+      this._lastPlacedCoordinate = null;
+    }
     this._updateMarkerIcons();
     this._emitWaypointChange();
   }
@@ -1860,6 +1897,9 @@ export class MapManager {
     this.waypointColors = [];
     this.waypointLabels = [];
     this.waypointMetadata = [];
+    if (this._lastPlacedCoordinate?.source === 'waypoint') {
+      this._lastPlacedCoordinate = null;
+    }
     this.clearAllRoutes();
     this._emitWaypointChange();
   }
@@ -4192,6 +4232,10 @@ export class MapManager {
     this._resetWaypointMarkerZ();
     this.highlightedWpIndex = wpIndex;
     this.highlightedIsReturn = false;
+    if (this.waypoints[wpIndex]) {
+      const [lat, lng] = this.waypoints[wpIndex];
+      this._lastPlacedCoordinate = { lat, lng, time: Date.now(), source: 'waypoint' };
+    }
     const m = this.waypointMarkers[wpIndex];
     if (m) {
       const el = m.getElement();
