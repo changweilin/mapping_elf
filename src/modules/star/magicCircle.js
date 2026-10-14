@@ -332,7 +332,7 @@ const makeZodiacConstellation = ({
   const meanDeclinationDeg = uniqueSkyPoints.reduce((total, [, declinationDeg]) => total + declinationDeg, 0) / uniqueSkyPoints.length;
   const declinationScale = Math.cos(meanDeclinationDeg * Math.PI / 180);
   const rawPoints = uniqueSkyPoints.map(([longitudeDeg, declinationDeg]) => ({
-    x: ((unwrappedLongitudes.get(longitudeDeg) ?? longitudeDeg) - meanLongitudeDeg) * declinationScale,
+    x: -((unwrappedLongitudes.get(longitudeDeg) ?? longitudeDeg) - meanLongitudeDeg) * declinationScale,
     y: declinationDeg - meanDeclinationDeg
   }));
   const maxRadius = Math.max(

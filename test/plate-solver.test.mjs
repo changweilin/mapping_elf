@@ -235,7 +235,7 @@ function destination([lat, lng], distanceMeters, bearingDeg) {
   const meanDec = leoPoints.reduce((acc, p) => acc + p[1], 0) / leoPoints.length;
   const cosDec = Math.cos(meanDec * DEG_TO_RAD);
   const rawPoints = leoPoints.map(([ra, dec]) => ({
-    x: (ra - meanRa) * cosDec,
+    x: -(ra - meanRa) * cosDec,
     y: dec - meanDec
   }));
   const maxExtent = Math.max(...rawPoints.map(p => Math.hypot(p.x, p.y)));
