@@ -226,6 +226,47 @@ test('drawing board provides 12 preset shapes (愛心, 星星, 月亮, 太陽, �
   await expect(horseChip).not.toHaveClass(/active/);
 });
 
+test('drawing board anchors at most recently set waypoint, clears remaining original waypoints, and draws route', async ({ page }) => {
+  await openApp(page);
+
+  // 1. Add 3 waypoints on the map: WP0, WP1, WP2
+  await page.evaluate(() => {
+    const mm = window.__mappingElfTestHooks.mapManager;
+    mm.addWaypoint(25.010, 121.510);
+    mm.addWaypoint(25.020, 121.520);
+    mm.addWaypoint(25.030, 121.530);
+  });
+
+  const waypointsBefore = await page.evaluate(() => window.__mappingElfTestHooks.mapManager.waypoints.length);
+  expect(waypointsBefore).toBe(3);
+
+  // 2. Open drawing board and select a preset (e.g. heart)
+  const panel = page.locator('#shape-panel');
+  await page.locator('#btn-shape-tool').click();
+  await expect(panel).toBeVisible();
+
+  const presetSelect = page.locator('#shape-preset-select');
+  await presetSelect.selectOption('heart');
+  await page.locator('#shape-distance-input').fill('2');
+  await page.locator('#btn-shape-generate').click();
+
+  // 3. Verify route generated
+  await expect.poll(async () => page.evaluate(() =>
+    (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
+  )).toBeGreaterThanOrEqual(3);
+
+  // 4. Check the starting waypoint is anchored at the most recently set waypoint (25.030, 121.530)
+  const waypointsAfter = await page.evaluate(() => window.__mappingElfTestHooks.mapManager.waypoints);
+  expect(waypointsAfter[0][0]).toBeCloseTo(25.030, 4);
+  expect(waypointsAfter[0][1]).toBeCloseTo(121.530, 4);
+
+  // 5. Check the remaining original waypoints (25.010, 121.510) and (25.020, 121.520) were cleared
+  const hasOldWP0 = waypointsAfter.slice(1).some(([lat, lng]) => Math.abs(lat - 25.010) < 1e-4 && Math.abs(lng - 121.510) < 1e-4);
+  const hasOldWP1 = waypointsAfter.slice(1).some(([lat, lng]) => Math.abs(lat - 25.020) < 1e-4 && Math.abs(lng - 121.520) < 1e-4);
+  expect(hasOldWP0).toBe(false);
+  expect(hasOldWP1).toBe(false);
+});
+
 
 
 

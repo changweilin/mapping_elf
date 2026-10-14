@@ -720,6 +720,21 @@ export class MapManager {
     return null;
   }
 
+  getRecentWaypoint() {
+    if (this.waypoints.length === 0) return null;
+    if (this._lastPlacedCoordinate?.source === 'waypoint') {
+      const wp = this.waypoints.find(([la, ln]) =>
+        Math.abs(la - this._lastPlacedCoordinate.lat) < 1e-6 &&
+        Math.abs(ln - this._lastPlacedCoordinate.lng) < 1e-6
+      );
+      if (wp) return [...wp];
+    }
+    if (this.highlightedWpIndex >= 0 && this.waypoints[this.highlightedWpIndex]) {
+      return [...this.waypoints[this.highlightedWpIndex]];
+    }
+    return [...this.waypoints[this.waypoints.length - 1]];
+  }
+
   /**
    * Open an ad-hoc weather card popup anchored at the GPS cursor's location.
    * Independent of `_weatherPopups` (which keys by weatherPoints colIdx).

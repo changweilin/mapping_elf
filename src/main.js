@@ -5539,9 +5539,27 @@ async function generateShapeRoute() {
   shapeGenerating = true;
   shapeRouteRun = null;          // supersede any pending calibration pass
   try {
-    // Anchor at the most recently set cursor/coordinate on the map if present;
-    // otherwise fall back to GPS fix, and then map centre.
-    let anchor = mapManager.getRecentCoordinate?.();
+    // Anchor at the most recently set waypoint on the map if present;
+    // otherwise cursor/coordinate, GPS fix, and then map centre.
+    let anchor = null;
+    const recentWp = mapManager.getRecentWaypoint?.();
+    if (recentWp) {
+      anchor = recentWp;
+      // 清除其餘原有航點，保留最近設的航點作為起點
+      if (mapManager.waypoints.length > 1) {
+        const cb = mapManager.onWaypointChange;
+        mapManager.onWaypointChange = () => { };
+        try {
+          mapManager.clearWaypoints();
+          mapManager.addWaypoint(anchor[0], anchor[1]);
+        } finally {
+          mapManager.onWaypointChange = cb;
+        }
+        onWaypointsChanged(mapManager.waypoints);
+      }
+    } else {
+      anchor = mapManager.getRecentCoordinate?.();
+    }
     if (!anchor) {
       try {
         showNotification('正在定位...', 'info', 1500);
@@ -5586,7 +5604,7 @@ async function generateShapeRoute() {
     if (!ring) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
     // Curvature features (star tips, cusps, finger notches) get waypoints
     // first — a shortest-path router chords across any sharp tip without one.
-    const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, wpCount));
+    const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, wpCount), anchor);
     const wps = snapped.wps;
     if (wps.length < 3) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
     drawShapePreview(ring);
@@ -5659,17 +5677,21 @@ async function generateShapeRoute() {
 // each surviving waypoint paired with its arc fraction so refinement and
 // ring re-scaling stay aligned. Falls back to the raw points when snapping
 // thins the loop below 3 points.
-async function snapShapeWaypoints(ring, ts) {
+async function snapShapeWaypoints(ring, ts, anchor = null) {
   const raw = waypointsFromTs(ring, ts);
   const snaps = await routeEngine.snapToFootNetwork(raw);
   const kept = [];
   snaps.forEach((s, i) => {
+    const pt = (i === 0 && anchor) ? [anchor[0], anchor[1]] : s.point;
     const prev = kept[kept.length - 1];
-    if (prev && haversineDistance(prev.wp, s.point) < 30) return;
-    kept.push({ t: ts[i], wp: s.point });
+    if (prev && haversineDistance(prev.wp, pt) < 30) return;
+    kept.push({ t: ts[i], wp: pt });
   });
   if (kept.length >= 2 && haversineDistance(kept[0].wp, kept[kept.length - 1].wp) < 30) kept.pop();
-  if (kept.length < 3) return { ts: [...ts], wps: raw };
+  if (kept.length < 3) {
+    if (anchor && raw.length > 0) raw[0] = [anchor[0], anchor[1]];
+    return { ts: [...ts], wps: raw };
+  }
   return { ts: kept.map((k) => k.t), wps: kept.map((k) => k.wp) };
 }
 
@@ -5872,7 +5894,7 @@ async function continueShapeCalibration(run, actualM) {
   const scaledTargetM = nextCalibratedTarget(run.scaledTargetM, actualM, run.targetM);
   const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaledTargetM, { rotationDeg: run.rotationDeg });
   if (!ring) return false;
-  const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, run.wpCount));
+  const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, run.wpCount), run.anchor);
   if (shapeRunSuperseded(run)) return true;   // abandon quietly
   if (snapped.wps.length < 3) return false;
   drawShapePreview(ring);
@@ -5889,7 +5911,7 @@ async function continueShapeCalibration(run, actualM) {
 // the drawn arc. The result is verified on the next completion (pendingCheck)
 // and reverted if the added waypoints didn't move the route toward the shape.
 async function continueShapeRefinement(run, dev, nextTs, actualM) {
-  const snapped = await snapShapeWaypoints(run.ring, nextTs);
+  const snapped = await snapShapeWaypoints(run.ring, nextTs, run.anchor);
   if (shapeRunSuperseded(run)) return true;
   // Snap-dedupe ate every insertion — nothing new to route.
   if (snapped.wps.length < 3 || snapped.wps.length <= mapManager.waypoints.length) return false;
@@ -5919,7 +5941,7 @@ async function continueShapePostCalibration(run, actualM) {
     run.scaledTargetM * Math.sqrt(run.targetM / actualM)));
   const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaled, { rotationDeg: run.rotationDeg });
   if (!ring) return false;
-  const snapped = await snapShapeWaypoints(ring, run.ts);
+  const snapped = await snapShapeWaypoints(ring, run.ts, run.anchor);
   if (shapeRunSuperseded(run)) return true;
   if (snapped.wps.length < 3) return false;
   run.pendingCheck = {
