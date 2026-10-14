@@ -167,12 +167,14 @@ export async function computeCatchment(clat, clng, { signal, offlineDem } = {}) 
     for (let c = 0; c < GRID_N; c++) { lats.push(latOf(r)); lngs.push(lngOf(c)); }
   }
 
-  // --- 2. Acquire elevations: cached terrain offline, else robust API fetch ---
-  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  // --- 2. Acquire elevations: cached terrain (offline or online), else robust API fetch ---
   let raw = null, source = 'api';
-  if (offline && offlineDem) {
-    raw = sampleOfflineDem(offlineDem, lats, lngs);
-    source = 'cached';
+  if (offlineDem) {
+    const cached = sampleOfflineDem(offlineDem, lats, lngs);
+    if (finiteFrac(cached) >= MIN_FINITE_FRAC) {
+      raw = cached;
+      source = 'cached';
+    }
   }
   if (finiteFrac(raw) < MIN_FINITE_FRAC) {
     // 2a. One cheap request first — flat here means we never ask for the rest.

@@ -12438,6 +12438,7 @@ function renderWeatherPanel() {
     });
   }
   weatherPoints = buildWeatherPoints();
+  premarkFlatCatchmentPoints();
   // Basin overlays are keyed by colIdx; a rebuild re-maps colIdx→point. Clear them
   // all, then (below) redraw for every catchment-view point at its new position —
   // independent of whether its card is open, so 副航點/compact/closed basins survive.
@@ -13628,6 +13629,7 @@ function renderCatchmentPanel() {
     container.innerHTML = '<div class="weather-empty-state"><p>完成規劃路線後點擊「取得集水區」</p></div>';
     return;
   }
+  premarkFlatCatchmentPoints();
   const { labelW, colWidths, visibleIndices, firstReturnIdx } = computeCatchmentColumnLayout();
   const saved = loadWeatherSettings();
 
@@ -13700,10 +13702,97 @@ function catchmentCellsMatchSchedule(saved, dateStr, hour) {
   return true;
 }
 
+// Flat-terrain detector for route points: checks whether the point sits in a flat plain
+// based on elevation profile metrics. When true, the column is settled as 平地 immediately,
+// avoiding expensive DEM downloads and hydrology requests.
+function isPointFlat(pt) {
+  if (!pt) return false;
+
+  const elevs = elevationProfile?.elevations;
+  const dists = elevationProfile?.distances;
+  if (!Array.isArray(elevs) || elevs.length < 2 || !Array.isArray(dists) || dists.length < 2) {
+    return false;
+  }
+
+  // 1. Entire route check: relief <= 8m across the route
+  const stats = typeof elevationProfile._calcStats === 'function' ? elevationProfile._calcStats() : null;
+  if (stats && Number.isFinite(stats.maxElev) && Number.isFinite(stats.minElev)) {
+    const routeRelief = stats.maxElev - stats.minElev;
+    if (routeRelief <= 8 && (stats.ascent || 0) <= 15) {
+      return true;
+    }
+  }
+
+  // 2. Local window check around pt._cum (±700m window matching FLAT_WINDOW_R * 100m)
+  const cumM = Number.isFinite(pt._cum) ? pt._cum : null;
+  if (cumM == null) return false;
+
+  const windowRadiusM = 700;
+  const minCum = cumM - windowRadiusM;
+  const maxCum = cumM + windowRadiusM;
+
+  const winElevs = [];
+  const winDists = [];
+  for (let i = 0; i < dists.length; i++) {
+    const d = dists[i];
+    if (d >= minCum && d <= maxCum) {
+      const e = elevs[i];
+      if (Number.isFinite(e)) {
+        winElevs.push(e);
+        winDists.push(d);
+      }
+    }
+  }
+
+  if (winElevs.length < 2) return false;
+  const spanM = winDists[winDists.length - 1] - winDists[0];
+  if (spanM < 200) return false;
+
+  const lo = Math.min(...winElevs);
+  const hi = Math.max(...winElevs);
+  const relief = hi - lo;
+  if (relief > 8) return false;
+
+  const flatTan = Math.tan(2 * Math.PI / 180);
+  let flatSegments = 0;
+  let totalSegments = 0;
+  for (let i = 0; i < winElevs.length - 1; i++) {
+    const dx = winDists[i + 1] - winDists[i];
+    if (dx <= 0) continue;
+    totalSegments++;
+    const dy = Math.abs(winElevs[i + 1] - winElevs[i]);
+    if (dy / dx < flatTan) flatSegments++;
+  }
+
+  return totalSegments > 0 && (flatSegments / totalSegments) >= 0.85;
+}
+
+function premarkFlatCatchmentPoints() {
+  if (!Array.isArray(weatherPoints) || !weatherPoints.length) return;
+  weatherPoints.forEach((pt) => {
+    if (isPointFlat(pt)) {
+      const semKey = getSemanticKey(pt);
+      const existing = getSavedCatchmentCells(semKey);
+      if (!isSettledCatchmentReadout(existing)) {
+        saveCatchmentCells(semKey, buildFlatCatchmentReadout());
+        setCatchmentCacheData(pt.lat, pt.lng, { status: 'flat', source: 'profile' });
+      }
+    }
+  });
+}
+
 // 區域 (delineation) is needed until the column has a settled readout. NO schedule
 // check: the terrain is time-independent, so changing a column's date/hour must
-// never cost a second DEM read.
+// never cost a second DEM read. Flat ground settles immediately with no fetch.
 function catchmentBlockNeedsFetch(pt, force = false) {
+  if (isPointFlat(pt)) {
+    const semKey = getSemanticKey(pt);
+    if (!isSettledCatchmentReadout(getSavedCatchmentCells(semKey))) {
+      saveCatchmentCells(semKey, buildFlatCatchmentReadout());
+      setCatchmentCacheData(pt.lat, pt.lng, { status: 'flat', source: 'profile' });
+    }
+    return false;
+  }
   if (force) return true;
   return !isSettledCatchmentReadout(getSavedCatchmentCells(getSemanticKey(pt)));
 }
@@ -13712,6 +13801,7 @@ function catchmentBlockNeedsFetch(pt, force = false) {
 // missing or were computed for a different schedule than the column shows now —
 // parity with weather's hasCompletedWeatherLoad gating.
 function catchmentInfoNeedsFetch(pt, colIdx, force = false) {
+  if (isPointFlat(pt)) return false;
   const saved = getSavedCatchmentCells(getSemanticKey(pt));
   if (!isSettledCatchmentReadout(saved)) return true;   // 區域 pass settles it first
   if (saved.status === 'flat') return false;            // 平地: no basin to describe
@@ -13774,6 +13864,16 @@ function autoFetchCatchment({ notify = false } = {}) {
 async function computeCatchmentBlock(pt, signal) {
   const semKey = getSemanticKey(pt);
   const prev = getSavedCatchmentCells(semKey);
+  if (isPointFlat(pt)) {
+    const flat = {
+      ...buildFlatCatchmentReadout(),
+      dateStr: prev?.dateStr ?? null,
+      hour: prev?.hour ?? null,
+    };
+    saveCatchmentCells(semKey, flat);
+    setCatchmentCacheData(pt.lat, pt.lng, { status: 'flat', source: 'profile' });
+    return flat;
+  }
   const result = await getCatchmentFor(pt.lat, pt.lng, { signal });
   // 平地: a settled answer with no basin — save it so the column shows 平地 and the
   // auto-fetch stops asking. No hydrology either; there is no catchment to describe.
@@ -14787,6 +14887,17 @@ async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weath
   // while the live compute runs — and the info survives if a fetch fails / offline.
   const saved = getSavedCatchmentCells(semKey);
   const hasSaved = isSettledCatchmentReadout(saved);
+  if (saved?.status === 'flat' || isPointFlat(pt)) {
+    const flat = buildFlatCatchmentReadout();
+    fill('terrain', flat.terrain);
+    fill('hydro', flat.hydro);
+    const note = container.querySelector('.ct-disclaimer');
+    if (note) note.textContent = CATCHMENT_FLAT_NOTE;
+    saveCatchmentCells(semKey, { ...flat, dateStr: dateStr || null, hour: Number.isFinite(Number(hour)) ? Number(hour) : null });
+    setCatchmentCacheData(lat, lng, { status: 'flat', source: 'profile' });
+    if (_cardPanelAbort.get(key) === abort) _cardPanelAbort.delete(key);
+    return;
+  }
   if (hasSaved) {
     if (Array.isArray(saved.terrain)) fill('terrain', saved.terrain);
     if (Array.isArray(saved.hydro)) fill('hydro', saved.hydro);
