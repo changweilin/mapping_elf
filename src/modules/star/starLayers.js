@@ -53,9 +53,9 @@ export function makeStarBounds(result) {
     ...result.points.map((p) => [p.lat, p.lng]),
   ]);
   const outerRadius = Math.max(
-    result.radiusMeanMeters,
-    ...result.points.map((p) => p.distanceMeters)
-  );
+    result.radiusMeanMeters || 0,
+    ...result.points.map((p) => (Number.isFinite(p.distanceMeters) ? p.distanceMeters : 0))
+  ) || 1000;
   [0, 90, 180, 270].forEach((bearing) => {
     const edge = destinationPoint(result.center, outerRadius, bearing);
     bounds.extend([edge.lat, edge.lng]);

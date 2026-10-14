@@ -403,6 +403,9 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
   }
 
   await openStarPanel(page);
+  await page.evaluate(([lat, lng]) => {
+    window.__mappingElfTestHooks.mapManager.map.setView([lat, lng], 12, { animate: false });
+  }, ANCHOR);
   await useMapCentreAsStarCentre(page);
   await useFastSolve(page);
   await solve(page);
@@ -540,5 +543,42 @@ test('star tool anchors center at most recent waypoint matching drawing board be
   await press(page, '#btn-star-center-waypoint');
   await expect(readout).toContainText('24.52000, 120.82000');
   await expect(readout).toContainText(/最新航點|Latest waypoint/);
+});
+
+test('solving constellation matches POIs and renders zodiac lines and stars on map', async ({ page }) => {
+  const { ZODIAC_CONSTELLATIONS } = await import('../src/modules/star/magicCircle.js');
+  const leo = ZODIAC_CONSTELLATIONS[4]; // 5 獅子座 (Leo)
+  const scale = 5000;
+  const EARTH_R = 6371000;
+  const cosLat = Math.cos(ANCHOR[0] * Math.PI / 180);
+
+  const customElements = leo.points.map((p, i) => {
+    const dLat = (p.y * scale) / EARTH_R * (180 / Math.PI);
+    const dLng = (p.x * scale) / (EARTH_R * cosLat) * (180 / Math.PI);
+    return {
+      type: 'node',
+      id: 7000 + i,
+      lat: ANCHOR[0] + dLat,
+      lon: ANCHOR[1] + dLng,
+      tags: { amenity: 'place_of_worship', name: `獅子座星 ${i + 1}` },
+    };
+  });
+
+  await openApp(page, { overpassOpts: { customElements } });
+  await openStarPanel(page);
+  await useMapCentreAsStarCentre(page);
+
+  await setControl(page, '#star-shape-select', 'zodiac');
+  await setControl(page, '#star-variant-select', '5');
+
+  await solve(page);
+
+  await expect(page.locator('#star-result')).toBeVisible();
+  await expect(page.locator('#star-readout')).toContainText('獅子座 (Leo)');
+  await expect(page.locator('#star-readout')).toContainText('9 星點');
+
+  await expect.poll(() => countOf(page, '.magic-zodiac-line'), { timeout: 10_000 }).toBeGreaterThan(0);
+  await expect.poll(() => countOf(page, '.magic-zodiac-star'), { timeout: 10_000 }).toBe(9);
+  await expectCount(page, '.star-point', 9);
 });
 

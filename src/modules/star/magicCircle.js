@@ -1398,7 +1398,7 @@ const makeMagicCircleStrokes = (result, animationIndex, geometryPattern = "combi
       pushCircleAt(
         `zodiac-star-${zodiacConstellation.id}-${index}`,
         point,
-        radiusMeters * 0.022 * (sourcePoint.size ?? 1),
+        radiusMeters * 0.022 * (sourcePoint?.size ?? 1),
         index % 2 === 0 ? element.pale : element.accent,
         1.15,
         0.9,

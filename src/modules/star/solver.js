@@ -450,11 +450,12 @@ function* solveStarFromPoisSteps(pois, {
   patternEdges,
   patternName
 }) {
-  const minimumRadiusMeters = Math.max(minDistanceMeters, innerRadiusMeters);
-  const prepared = preparePois(pois, center).filter(
-    (poi) => poi.distanceMeters >= minimumRadiusMeters && poi.distanceMeters <= radiusMeters
-  );
   const searchTargetNodes = getSearchTargetNodes(targetNodes);
+  const isConstellation = (patternNodes && patternNodes.length > 0) || (searchTargetNodes && searchTargetNodes.length > 0);
+  const effectiveMinRadius = isConstellation ? minDistanceMeters : Math.max(minDistanceMeters, innerRadiusMeters);
+  const prepared = preparePois(pois, center).filter(
+    (poi) => poi.distanceMeters >= effectiveMinRadius && poi.distanceMeters <= radiusMeters
+  );
   const requiredCount = (patternNodes && patternNodes.length > 0)
     ? patternNodes.length
     : (searchTargetNodes.length > 0 ? searchTargetNodes.length : mode);
@@ -476,10 +477,9 @@ function* solveStarFromPoisSteps(pois, {
   if (searchStrategy === "plate-solver" || (patternNodes && patternNodes.length > 0)) {
     let pNodes = patternNodes;
     let pEdges = patternEdges;
-    let isConstellation = false;
 
     if (pNodes && pNodes.length > 0) {
-      isConstellation = true;
+      // pNodes already set
     } else if (searchTargetNodes.length > 0) {
       pNodes = searchTargetNodes.map((node, i) => {
         const rad = (node.bearingDeg * Math.PI) / 180;
@@ -494,7 +494,6 @@ function* solveStarFromPoisSteps(pois, {
       for (let i = 0; i < pNodes.length - 1; i++) {
         pEdges.push({ fromIndex: i, toIndex: i + 1 });
       }
-      isConstellation = true;
     } else {
       pNodes = [];
       for (let i = 0; i < mode; i++) {
@@ -504,7 +503,6 @@ function* solveStarFromPoisSteps(pois, {
       pEdges = starLineSequences(mode).flatMap((seq) =>
         seq.slice(0, -1).map((from, idx) => ({ fromIndex: from, toIndex: seq[idx + 1] }))
       );
-      isConstellation = false;
     }
 
     const plateToleranceM = Math.max(
@@ -512,9 +510,13 @@ function* solveStarFromPoisSteps(pois, {
       targetRadiusMeters * Math.sin(toleranceDeg * DEG_TO_RAD) * 0.5
     );
 
+    const minDiameterMeters = isConstellation
+      ? Math.max(60, (innerRadiusMeters > 0 ? Math.min(innerRadiusMeters, radiusMeters * 0.25) : radiusMeters * 0.2) * 2)
+      : Math.max(effectiveMinRadius, innerRadiusMeters || 30) * 2;
+
     const plateGen = findConstellationOnOSMSteps(pNodes, pEdges, prepared, {
       center,
-      minDiameterMeters: Math.max(minimumRadiusMeters, innerRadiusMeters || 30) * 2,
+      minDiameterMeters,
       maxDiameterMeters: radiusMeters * 2,
       radiusMeters: targetRadiusMeters,
       minToleranceMeters: plateToleranceM,
@@ -563,12 +565,18 @@ function* solveStarFromPoisSteps(pois, {
           matchedNodes: canonicalPoints,
         };
       } else {
-        const points = res.matchedNodes.filter(Boolean);
+        const centerPt = res.center ?? center;
+        const points = res.matchedNodes.filter(Boolean).map((p) => ({
+          ...p,
+          distanceMeters: haversineDistanceMeters(centerPt, p),
+          bearingDeg: bearingDegrees(centerPt, p),
+        }));
         return {
           id: `constellation-${mode}-${Date.now()}-${index}`,
           mode: points.length,
           patternName: patternName ?? '星座圖',
-          center: res.center ?? center,
+          patternEdges: pEdges,
+          center: centerPt,
           points,
           rotationDeg: res.rotationDeg,
           createdAt: new Date().toISOString(),

@@ -143,11 +143,15 @@ export function destination([lat, lng], distanceMeters, bearingDeg) {
  * @param {number} [opts.status]        respond with this HTTP status instead (failure path)
  */
 export function overpass(page, {
-  center = ANCHOR, points = 5, radiusMeters = 5000, noise = 24, stats = null, status = 0,
+  center = ANCHOR, points = 5, radiusMeters = 5000, noise = 24, stats = null, status = 0, customElements = null,
 } = {}) {
   return page.route(/overpass/, async (route) => {
     if (stats) stats.calls = (stats.calls || 0) + 1;
     if (status) { await route.fulfill({ status, contentType: 'text/plain', body: 'stubbed failure' }); return; }
+    if (customElements) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elements: customElements }) });
+      return;
+    }
     const elements = [];
     for (let i = 0; i < points; i += 1) {
       const [lat, lon] = destination(center, radiusMeters, (360 / points) * i);

@@ -6270,9 +6270,10 @@ function readStarSettingsFromControls() {
 // --- Rendering --------------------------------------------------------------
 function renderStarContext() {
   if (!starContextLayer) return;
+  const isConstellation = starSettings.magicShape === 'zodiac';
   renderSearchContext(starContextLayer, {
     center: starCenter,
-    innerRadiusMeters: starSettings.innerRadiusKm * 1000,
+    innerRadiusMeters: isConstellation ? 0 : starSettings.innerRadiusKm * 1000,
     outerRadiusMeters: starSettings.outerRadiusKm * 1000,
     pois: starPois,
     showRing: !!starCenter,
@@ -6471,8 +6472,9 @@ async function runStarSolve() {
   if (!categories.length) { showNotification('請至少選擇一種目標類別', 'warning', 2000); return; }
 
   ensureStarLayers();
+  const isConstellation = starSettings.magicShape === 'zodiac';
   const outerM = starSettings.outerRadiusKm * 1000;
-  const innerM = starSettings.innerRadiusKm * 1000;
+  const innerM = isConstellation ? 0 : starSettings.innerRadiusKm * 1000;
   const controller = new AbortController();
   const busyTask = beginRouteWeatherBusyTask({
     title: '魔法陣搜尋中',
@@ -6509,7 +6511,7 @@ async function runStarSolve() {
     let patternEdges = null;
     let patternName = null;
 
-    if (starSettings.magicShape === 'zodiac') {
+    if (isConstellation) {
       const geometry = starGeometry();
       const zodiacIndex = geometry.options?.zodiacIndex ?? 0;
       const constellation = ZODIAC_CONSTELLATIONS[zodiacIndex];
@@ -6716,14 +6718,25 @@ document.getElementById('btn-star-to-route')?.addEventListener('click', () => { 
 // solver's slot order. Modes whose figure is several disjoint strokes (六芒星 =
 // two triangles, 八卦圖 = ring + diagonals) flatten to first-visit order: every
 // vertex once, in an order that still follows the drawing.
-function starVisitOrder(mode, pointCount) {
+function starVisitOrder(mode, pointCount, patternEdges = null) {
   const order = [];
   const seen = new Set();
-  starLineSequencesForMode(mode).flat().forEach((index) => {
-    if (index < 0 || index >= pointCount || seen.has(index)) return;
-    seen.add(index);
-    order.push(index);
-  });
+  if (Array.isArray(patternEdges) && patternEdges.length > 0) {
+    patternEdges.forEach((edge) => {
+      [edge.fromIndex, edge.toIndex].forEach((index) => {
+        if (Number.isInteger(index) && index >= 0 && index < pointCount && !seen.has(index)) {
+          seen.add(index);
+          order.push(index);
+        }
+      });
+    });
+  } else {
+    starLineSequencesForMode(mode).flat().forEach((index) => {
+      if (index < 0 || index >= pointCount || seen.has(index)) return;
+      seen.add(index);
+      order.push(index);
+    });
+  }
   // Defensive: a sequence that somehow misses a vertex must not silently drop it.
   for (let i = 0; i < pointCount; i += 1) if (!seen.has(i)) order.push(i);
   return order;
@@ -6735,7 +6748,7 @@ async function sendStarToRoutePlanning() {
   if (!result) { showNotification('請先搜尋並繪製魔法陣', 'warning', 2000); blocked('no-result'); return; }
   if (isRouteWeatherBusy()) { showRouteWeatherBusyNotice(); blocked('busy'); return; }
 
-  const order = starVisitOrder(result.mode, result.points.length);
+  const order = starVisitOrder(result.mode, result.points.length, result.patternEdges);
   const points = order.map((index) => result.points[index]);
   if (points.length < 2) { showNotification('魔法陣頂點不足以規劃路線', 'warning', 2000); blocked('too-few-points'); return; }
 
