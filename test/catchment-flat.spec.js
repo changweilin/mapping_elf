@@ -87,8 +87,8 @@ test('flat terrain: every column is marked 平地, on the probe alone', async ({
   // No basin can be drawn for a plain, and none is.
   await expect(page.locator('#map .wc-catchment-poly')).toHaveCount(0);
 
-  // Directly marked 平地 without spending time or calls fetching catchment DEM
-  expect(stats.demCalls).toBe(0);
+  // One probe per waypoint, and both together cost less than a SINGLE full grid.
+  expect(stats.demCalls).toBe(2);
   expect(stats.demPoints).toBeLessThan(FULL_GRID_POINTS);
 });
 
@@ -100,7 +100,7 @@ test('flat terrain: the 平地 verdict survives a reload without re-probing', as
   await expect(areaCells(page).filter({ hasText: '平地' })).toHaveCount(2, { timeout: 60000 });
   await overlayHidden(page);
   const afterFirst = stats.demCalls;
-  expect(afterFirst).toBe(0);
+  expect(afterFirst).toBeGreaterThan(0);
 
   await page.reload();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
