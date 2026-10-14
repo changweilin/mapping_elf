@@ -706,3 +706,21 @@ export function shapeSimilarity(routeCoords, ring) {
   const d = (meanNearest(a, b) + meanNearest(b, a)) / 2;
   return Math.max(0, Math.min(1, 1 - d / meanRadius));
 }
+
+// Re-export 5-stage shape-constrained routing engine functions from shapeRouteMatcher
+export {
+  generateShapeMatchedRoute,
+  createOsrmShapeAdapter,
+  chaikinSmooth,
+  normalizeCanvasGeometry,
+  simplifyRDP,
+  resampleWithCurvatureAnchors,
+  projectToGeo,
+  splitIntoTopologicalSegments,
+  fitSegmentToRoadNetwork,
+  stitchSegments,
+  pruneSpursAndSpikes,
+  evaluateShapeSimilarity,
+  discreteFrechetDistance,
+  averageTangentSimilarity,
+} from './shapeRouteMatcher.js';
