@@ -6344,6 +6344,11 @@ function setStarActive(active) {
   btnStarTool?.setAttribute('aria-pressed', String(active));
   if (active) {
     ensureStarLayers();
+    const recentWp = mapManager.getRecentWaypoint?.();
+    if (recentWp) {
+      const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
+      setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+    }
     syncStarControls();
     renderStarContext();
     renderStarMagic();
@@ -6399,6 +6404,17 @@ function hideStarPlaceList() {
   if (starPlaceList) starPlaceList.replaceChildren();
 }
 
+function setStarCenterToRecentWaypoint() {
+  hideStarPlaceList();
+  const recentWp = mapManager.getRecentWaypoint?.();
+  if (recentWp) {
+    const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
+    setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+  } else {
+    showNotification('尚未建立任何航點', 'warning', 1800);
+  }
+}
+
 async function runStarPlaceSearch() {
   const text = (starCenterInput?.value || '').trim();
   if (!text) { showNotification('請輸入地標、地址或座標', 'warning', 1800); return; }
@@ -6443,6 +6459,13 @@ async function runStarPlaceSearch() {
 async function runStarSolve() {
   if (starSolving) return;
   readStarSettingsFromControls();
+  if (!starCenter) {
+    const recentWp = mapManager.getRecentWaypoint?.();
+    if (recentWp) {
+      const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
+      setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+    }
+  }
   if (!starCenter) { showNotification('請先設定搜索中心', 'warning', 2000); return; }
   const categories = starSettings.categoryIds.map(categoryById).filter(Boolean);
   if (!categories.length) { showNotification('請至少選擇一種目標類別', 'warning', 2000); return; }
@@ -6632,6 +6655,7 @@ document.getElementById('btn-star-close')?.addEventListener('click', () => setSt
 document.getElementById('btn-star-clear')?.addEventListener('click', clearStarTool);
 document.getElementById('btn-star-solve')?.addEventListener('click', () => { void runStarSolve(); });
 document.getElementById('btn-star-search-place')?.addEventListener('click', () => { void runStarPlaceSearch(); });
+document.getElementById('btn-star-center-waypoint')?.addEventListener('click', setStarCenterToRecentWaypoint);
 document.getElementById('btn-star-center-map')?.addEventListener('click', () => {
   const c = mapManager.map.getCenter();
   hideStarPlaceList();

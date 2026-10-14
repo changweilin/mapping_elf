@@ -507,3 +507,38 @@ test('centre, settings and panel state survive a reload', async ({ page }) => {
   await expect(page.locator('#star-element-select')).toHaveValue('3');
   await expect(page.locator('#star-center-readout')).toContainText('測試中心');
 });
+
+test('star tool anchors center at most recent waypoint matching drawing board behavior', async ({ page }) => {
+  await openApp(page);
+
+  // 1. When no waypoints exist, clicking #btn-star-center-waypoint warns
+  await openStarPanel(page);
+  await press(page, '#btn-star-center-waypoint');
+  await expect(page.locator('.notification.warning')).toContainText(/尚未建立任何航點|No waypoints created yet/);
+
+  // Close star tool
+  await press(page, '#btn-star-close');
+
+  // 2. Add waypoints WP0 and WP1
+  await page.evaluate(() => {
+    const mm = window.__mappingElfTestHooks.mapManager;
+    mm.addWaypoint(24.510, 120.810);
+    mm.addWaypoint(24.520, 120.820);
+  });
+
+  // 3. Open star tool: center should automatically be set to the latest waypoint (24.520, 120.820)
+  await openStarPanel(page);
+  const readout = page.locator('#star-center-readout');
+  await expect(readout).toContainText('24.52000, 120.82000');
+  await expect(readout).toContainText(/最新航點|Latest waypoint/);
+
+  // 4. Change center to map center via #btn-star-center-map
+  await press(page, '#btn-star-center-map');
+  await expect(readout).toContainText(/地圖中心|Map centre/);
+
+  // 5. Click #btn-star-center-waypoint to return to the latest waypoint
+  await press(page, '#btn-star-center-waypoint');
+  await expect(readout).toContainText('24.52000, 120.82000');
+  await expect(readout).toContainText(/最新航點|Latest waypoint/);
+});
+
