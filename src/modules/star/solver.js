@@ -19,7 +19,16 @@ import {
   defaultRotationStepForMode,
   starLineSequencesForMode
 } from "./starPatterns.js";
-const DEFAULT_SOLVER_SEARCH_STRATEGY = "honeycomb";
+import {
+  FlatKDTree2D,
+  refineWithUmeyama2D,
+  computeEdgeAngleErrorDeg,
+  findConstellationOnOSM,
+  findConstellationOnOSMSteps,
+  DEG_TO_RAD,
+  RAD_TO_DEG
+} from "./plateSolver.js";
+const DEFAULT_SOLVER_SEARCH_STRATEGY = "plate-solver";
 const DEFAULT_HEX_CELL_RADIUS_METERS = 4e3;
 const starLineSequences = starLineSequencesForMode;
 const getTargets = (mode, rotationDeg) => Array.from(
@@ -436,26 +445,175 @@ function* solveStarFromPoisSteps(pois, {
   hexCellRadiusMeters,
   hexPriorityRings,
   targetNodes,
-  targetRotationSpanDeg
+  targetRotationSpanDeg,
+  patternNodes,
+  patternEdges,
+  patternName
 }) {
   const minimumRadiusMeters = Math.max(minDistanceMeters, innerRadiusMeters);
   const prepared = preparePois(pois, center).filter(
     (poi) => poi.distanceMeters >= minimumRadiusMeters && poi.distanceMeters <= radiusMeters
   );
   const searchTargetNodes = getSearchTargetNodes(targetNodes);
-  if (prepared.length < (searchTargetNodes.length > 0 ? searchTargetNodes.length : mode)) {
+  const requiredCount = (patternNodes && patternNodes.length > 0)
+    ? patternNodes.length
+    : (searchTargetNodes.length > 0 ? searchTargetNodes.length : mode);
+  if (prepared.length < requiredCount) {
     return [];
   }
-  const results = [];
   const slotWidth = 360 / mode;
   const halfSlot = slotWidth / 2;
-  const step = Math.max(
-    1,
-    Math.min(slotWidth, rotationStepDeg ?? defaultRotationStepForMode(mode))
-  );
   const toleranceDeg = Math.max(
     1,
     Math.min(halfSlot, angleToleranceDeg ?? halfSlot * angleToleranceMultiplier)
+  );
+  const targetRadiusMeters = resolveTargetRadiusMeters(
+    radiusMeters,
+    innerRadiusMeters,
+    requestedTargetRadiusMeters
+  );
+
+  if (searchStrategy === "plate-solver" || (patternNodes && patternNodes.length > 0)) {
+    let pNodes = patternNodes;
+    let pEdges = patternEdges;
+    let isConstellation = false;
+
+    if (pNodes && pNodes.length > 0) {
+      isConstellation = true;
+    } else if (searchTargetNodes.length > 0) {
+      pNodes = searchTargetNodes.map((node, i) => {
+        const rad = (node.bearingDeg * Math.PI) / 180;
+        return {
+          id: node.id ?? `target-${i}`,
+          x: node.radiusScale * Math.sin(rad),
+          y: node.radiusScale * Math.cos(rad),
+          weight: 1.0,
+        };
+      });
+      pEdges = [];
+      for (let i = 0; i < pNodes.length - 1; i++) {
+        pEdges.push({ fromIndex: i, toIndex: i + 1 });
+      }
+      isConstellation = true;
+    } else {
+      pNodes = [];
+      for (let i = 0; i < mode; i++) {
+        const a = (2 * Math.PI * i) / mode;
+        pNodes.push({ id: `star-v${i}`, x: Math.sin(a), y: Math.cos(a), weight: 1.0 });
+      }
+      pEdges = starLineSequences(mode).flatMap((seq) =>
+        seq.slice(0, -1).map((from, idx) => ({ fromIndex: from, toIndex: seq[idx + 1] }))
+      );
+      isConstellation = false;
+    }
+
+    const plateToleranceM = Math.max(
+      12,
+      targetRadiusMeters * Math.sin(toleranceDeg * DEG_TO_RAD) * 0.5
+    );
+
+    const plateGen = findConstellationOnOSMSteps(pNodes, pEdges, prepared, {
+      center,
+      minDiameterMeters: Math.max(minimumRadiusMeters, innerRadiusMeters || 30) * 2,
+      maxDiameterMeters: radiusMeters * 2,
+      radiusMeters: targetRadiusMeters,
+      minToleranceMeters: plateToleranceM,
+      relativeTolerance: Math.max(0.02, toleranceDeg / 90),
+      maxMissingNodes: 0,
+      allowReflection: false,
+      isSymmetric: !isConstellation,
+      topK: maxResults,
+    });
+
+    const formatPlateResult = (res, index) => {
+      if (!isConstellation) {
+        const rawPoints = res.matchedNodes.filter(Boolean);
+        if (rawPoints.length < mode) return null;
+        const bearings = rawPoints.map((p) => p.bearingDeg);
+        let minDiff = 360;
+        let minIdx = 0;
+        bearings.forEach((b, idx) => {
+          const diff = Math.min(b, 360 - b);
+          if (diff < minDiff) {
+            minDiff = diff;
+            minIdx = idx;
+          }
+        });
+        const canonicalPoints = rawPoints.slice(minIdx).concat(rawPoints.slice(0, minIdx));
+        const rotationDeg = canonicalPoints[0].bearingDeg;
+        const targets = getTargets(mode, rotationDeg);
+        const evaluated = evaluate(
+          canonicalPoints,
+          targets,
+          radiusMeters,
+          innerRadiusMeters,
+          targetRadiusMeters
+        );
+        return {
+          id: `star-${mode}-${Date.now()}-${index}`,
+          mode,
+          center,
+          points: canonicalPoints,
+          rotationDeg,
+          createdAt: new Date().toISOString(),
+          ...evaluated,
+          rmseMeters: res.rmseMeters,
+          scale: res.scale,
+          fittedPatternLatLon: res.fittedPatternLatLon,
+          matchedNodes: canonicalPoints,
+        };
+      } else {
+        const points = res.matchedNodes.filter(Boolean);
+        return {
+          id: `constellation-${mode}-${Date.now()}-${index}`,
+          mode: points.length,
+          patternName: patternName ?? '星座圖',
+          center: res.center ?? center,
+          points,
+          rotationDeg: res.rotationDeg,
+          createdAt: new Date().toISOString(),
+          score: res.score,
+          radiusMeanMeters: res.radiusMeanMeters,
+          radiusStdMeters: res.radiusStdMeters,
+          angleErrorDeg: res.angleErrorDeg,
+          centerErrorMeters: res.centerErrorMeters,
+          rmseMeters: res.rmseMeters,
+          scale: res.scale,
+          fittedPatternLatLon: res.fittedPatternLatLon,
+          matchedNodes: res.matchedNodes,
+        };
+      }
+    };
+
+    let step = plateGen.next();
+    while (!step.done) {
+      const yielded = step.value;
+      const formatted = (yielded.results || [])
+        .map((r, i) => formatPlateResult(r, i))
+        .filter(Boolean);
+      yield {
+        stage: yielded.stage,
+        label: yielded.label,
+        completedSteps: yielded.completedSteps,
+        totalSteps: yielded.totalSteps,
+        progress: yielded.progress,
+        results: formatted.slice(0, maxResults),
+        bestResult: formatted[0] ?? null,
+      };
+      step = plateGen.next();
+    }
+    const finalRaw = step.value || [];
+    const finalFormatted = finalRaw
+      .map((r, i) => formatPlateResult(r, i))
+      .filter(Boolean)
+      .sort((a, b) => a.score - b.score);
+    return finalFormatted.slice(0, maxResults);
+  }
+
+  const results = [];
+  const step = Math.max(
+    1,
+    Math.min(slotWidth, rotationStepDeg ?? defaultRotationStepForMode(mode))
   );
   const slotCandidateLimit = Math.max(
     1,
@@ -465,11 +623,6 @@ function* solveStarFromPoisSteps(pois, {
     )
   );
   const resultPool = Math.max(maxResults * 8, 24);
-  const targetRadiusMeters = resolveTargetRadiusMeters(
-    radiusMeters,
-    innerRadiusMeters,
-    requestedTargetRadiusMeters
-  );
   const honeycombContext = searchStrategy === "honeycomb" ? buildHoneycombContext(
     prepared,
     radiusMeters,
@@ -791,7 +944,12 @@ const solveStarFromPois = (pois, options) => {
 export {
   DEFAULT_HEX_CELL_RADIUS_METERS,
   DEFAULT_SOLVER_SEARCH_STRATEGY,
+  FlatKDTree2D,
+  computeEdgeAngleErrorDeg,
+  findConstellationOnOSM,
+  findConstellationOnOSMSteps,
   preparePois,
+  refineWithUmeyama2D,
   solveStarFromPois,
   solveStarFromPoisSteps,
   starLineSequences

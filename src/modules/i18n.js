@@ -592,6 +592,7 @@ const PHRASES = {
   '目標類別': { en: 'Target categories', ja: '対象カテゴリ', ko: '대상 카테고리', fr: 'Catégories cibles', de: 'Zielkategorien', es: 'Categorías objetivo', it: 'Categorie target' },
   '進階參數': { en: 'Advanced', ja: '詳細設定', ko: '고급 설정', fr: 'Paramètres avancés', de: 'Erweitert', es: 'Avanzado', it: 'Avanzate' },
   '搜尋策略': { en: 'Search strategy', ja: '探索方式', ko: '검색 전략', fr: 'Stratégie de recherche', de: 'Suchstrategie', es: 'Estrategia de búsqueda', it: 'Strategia di ricerca' },
+  '星圖錨點 (極速)': { en: 'Plate Solving (Fast)', ja: '星図アンカー (高速)', ko: '성도 앵커 (초고속)', fr: 'Plate Solving (Rapide)', de: 'Plate Solving (Schnell)', es: 'Plate Solving (Rápido)', it: 'Plate Solving (Veloce)' },
   '蜂巢': { en: 'Honeycomb', ja: 'ハニカム', ko: '벌집', fr: 'Nid d’abeille', de: 'Wabe', es: 'Panal', it: 'Alveare' },
   '角度': { en: 'Angular', ja: '角度', ko: '각도', fr: 'Angulaire', de: 'Winkel', es: 'Angular', it: 'Angolare' },
   '角度容差': { en: 'Angle tolerance', ja: '角度の許容差', ko: '각도 허용치', fr: 'Tolérance angulaire', de: 'Winkeltoleranz', es: 'Tolerancia angular', it: 'Tolleranza angolare' },

@@ -27,7 +27,7 @@ export const DEFAULT_STAR_SETTINGS = Object.freeze({
   angleToleranceDeg: 6,
   candidatesPerSlot: 4,
   rotationStepDeg: 3,
-  searchStrategy: 'honeycomb',
+  searchStrategy: 'plate-solver',
   hexCellRadiusKm: 0.5,
   maxResults: 5,
   magicShape: 'star',
@@ -37,7 +37,7 @@ export const DEFAULT_STAR_SETTINGS = Object.freeze({
 });
 
 const CATEGORY_IDS = new Set(POI_CATEGORIES.map((c) => c.id));
-const STRATEGIES = new Set(['honeycomb', 'angular']);
+const STRATEGIES = new Set(['plate-solver', 'honeycomb', 'angular']);
 
 const num = (value, fallback) => {
   const n = typeof value === 'number' ? value : Number(value);

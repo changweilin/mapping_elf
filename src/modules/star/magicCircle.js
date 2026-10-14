@@ -1320,11 +1320,22 @@ const makeMagicCircleStrokes = (result, animationIndex, geometryPattern = "combi
   let standaloneTargetPoints = [];
   let standaloneTargetPrefix = geometryPattern;
   if (geometryPattern === "zodiac") {
-    const zodiacRotationDeg = phaseDeg + (zodiacConstellation.rotationDeg ?? 0);
-    const zodiacTargetPoints = zodiacConstellation.points.map(
-      (point) => makeZodiacPoint(result.center, radiusMeters, point, zodiacRotationDeg)
-    );
-    const zodiacPoints = zodiacTargetPoints.map((target) => target.position);
+    let zodiacPoints;
+    let zodiacTargetPoints;
+    if (result.fittedPatternLatLon && result.fittedPatternLatLon.length === zodiacConstellation.points.length) {
+      zodiacPoints = result.fittedPatternLatLon.map((p) => ({ lat: p.lat, lng: p.lng ?? p.lon }));
+      zodiacTargetPoints = zodiacPoints.map((pos, idx) => ({
+        position: pos,
+        bearingDeg: pointBearingFromCenter(result.center, pos),
+        sizeScale: zodiacConstellation.points[idx]?.size
+      }));
+    } else {
+      const zodiacRotationDeg = phaseDeg + (zodiacConstellation.rotationDeg ?? 0);
+      zodiacTargetPoints = zodiacConstellation.points.map(
+        (point) => makeZodiacPoint(result.center, radiusMeters, point, zodiacRotationDeg)
+      );
+      zodiacPoints = zodiacTargetPoints.map((target) => target.position);
+    }
     standaloneTargetPoints = zodiacTargetPoints;
     standaloneTargetPrefix = `zodiac-${zodiacConstellation.id}`;
     pushPolyline(

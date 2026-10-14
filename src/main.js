@@ -6309,11 +6309,13 @@ function renderStarMagic({ restart = false } = {}) {
 function renderStarReadout(result) {
   starResultBox?.classList.remove('hidden');
   if (starResultIndexEl) starResultIndexEl.textContent = `${starResultIndex + 1} / ${starResults.length}`;
-  if (!starReadoutEl) return;
   const row = (label, value) =>
     `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`;
+  const shapeTitle = result.patternName
+    ? `${result.patternName} (${result.points.length} ${translatePhrase('星點')})`
+    : translatePhrase(starModeLabel(result.mode));
   starReadoutEl.innerHTML = [
-    row('星形', translatePhrase(starModeLabel(result.mode))),
+    row('星形', shapeTitle),
     row('平均半徑', formatDistance(result.radiusMeanMeters)),
     row('圓周誤差', formatDistance(result.radiusStdMeters)),
     row('角度偏差', `${result.angleErrorDeg.toFixed(1)}°`),
@@ -6479,14 +6481,44 @@ async function runStarSolve() {
 
     starPois = pois;
     renderStarContext();
-    if (pois.length < starSettings.mode) {
-      showNotification('周邊地標不足以構成星形，請放大半徑或增加類別', 'warning', 3000);
+
+    let patternNodes = null;
+    let patternEdges = null;
+    let patternName = null;
+
+    if (starSettings.magicShape === 'zodiac') {
+      const geometry = starGeometry();
+      const zodiacIndex = geometry.options?.zodiacIndex ?? 0;
+      const constellation = ZODIAC_CONSTELLATIONS[zodiacIndex];
+      if (constellation) {
+        patternName = `${constellation.name} (${constellation.latinName})`;
+        patternNodes = constellation.points.map((p, i) => ({
+          id: `${constellation.id}-${i}`,
+          x: p.x,
+          y: p.y,
+          weight: 1.0,
+        }));
+        patternEdges = constellation.lines.flatMap((line) =>
+          line.slice(0, -1).map((from, idx) => ({ fromIndex: from, toIndex: line[idx + 1] }))
+        );
+      }
+    }
+
+    const minRequiredPois = patternNodes ? patternNodes.length : starSettings.mode;
+    if (pois.length < minRequiredPois) {
+      showNotification(
+        patternNodes
+          ? `周邊地標不足以構成${patternName}，請放大半徑或增加類別`
+          : '周邊地標不足以構成星形，請放大半徑或增加類別',
+        'warning',
+        3000
+      );
       emitTestEvent('star-solve-empty', { poiCount: pois.length });
       return;
     }
 
     const iterator = solveStarFromPoisSteps(pois, {
-      mode: starSettings.mode,
+      mode: patternNodes ? patternNodes.length : starSettings.mode,
       center: starCenter,
       radiusMeters: outerM,
       innerRadiusMeters: innerM,
@@ -6496,6 +6528,9 @@ async function runStarSolve() {
       rotationStepDeg: starSettings.rotationStepDeg,
       searchStrategy: starSettings.searchStrategy,
       hexCellRadiusMeters: starSettings.hexCellRadiusKm * 1000,
+      patternNodes,
+      patternEdges,
+      patternName,
     });
 
     // The solver is a synchronous generator; drive it in slices so the progress
