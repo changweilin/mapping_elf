@@ -54,6 +54,6 @@ npm run cap:sync:android # 建置並同步 Android 專案
 
 ## 5. 記憶檔案架構與維護規則
 
-- **分層**：CLAUDE.md（宏觀原則）→ `.claude/skills/*/SKILL.md`（領域規則與 gotchas）→ `references/*`（深度細節，如 `pace-engine/formulas.md`）。改核心邏輯掛 `mapping-elf-core-modules`、樣式掛 `mapping-elf-frontend-design`、資料契約掛 `mapping-elf-parameter-data-steward`、review 掛 `mapping-elf-review`、部署掛 `mapping-elf-deploy`；完整路由表見 `mapping-elf-sub-agent-coordinator`。
-- **單一真相源**：localStorage key 清單 = `stateKeys.js`；配速公式 = `references/pace-engine/formulas.md`；部署事實 = `.github/workflows/deploy.yml` + `vite.config.js`。文件引用它們，**不複製清單** — 複製品必過時。
+- **分層**：CLAUDE.md（宏觀原則）→ `.claude/skills/*/SKILL.md`（領域規則與 gotchas）→ `references/*`（深度細節，如 `pace-engine-formulas.md`）。改核心邏輯掛 `mapping-elf-core-modules`、樣式掛 `mapping-elf-frontend-design`、資料契約掛 `mapping-elf-parameter-data-steward`、review 掛 `mapping-elf-review`、部署掛 `mapping-elf-deploy`；完整路由表見 `mapping-elf-sub-agent-coordinator`。
+- **單一真相源**：localStorage key 清單 = `stateKeys.js`；配速公式 = `references/pace-engine-formulas.md`；部署事實 = `.github/workflows/deploy.yml` + `vite.config.js`。文件引用它們，**不複製清單** — 複製品必過時。
 - **新教訓歸檔**：領域性教訓 → 寫進所屬 skill 的 Gotchas；跨領域、會再咬人的事故 → 升級為 §3 一行地雷（附日期＋INC 編號）。定期把過細、重複、過時的條目往下層搬或刪除。

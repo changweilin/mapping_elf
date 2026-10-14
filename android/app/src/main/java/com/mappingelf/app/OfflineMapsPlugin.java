@@ -212,10 +212,13 @@ public class OfflineMapsPlugin extends Plugin {
         } else if (relativePath != null && !relativePath.trim().isEmpty()) {
             target = new File(getContext().getFilesDir(), relativePath);
         }
-        if (target == null) return null;
+        return validateOfflineMapPath(dir, target);
+    }
 
+    static File validateOfflineMapPath(File baseDir, File target) throws IOException {
+        if (target == null) return null;
         File canonicalTarget = target.getCanonicalFile();
-        String dirPath = dir.getCanonicalPath();
+        String dirPath = baseDir.getCanonicalPath();
         String targetPath = canonicalTarget.getCanonicalPath();
         if (!targetPath.equals(dirPath) && !targetPath.startsWith(dirPath + File.separator)) {
             throw new IOException("Target is outside offline map directory");
@@ -238,13 +241,13 @@ public class OfflineMapsPlugin extends Plugin {
         return fallback == null || fallback.trim().isEmpty() ? "offline-map" : fallback.trim();
     }
 
-    private String extensionFromName(String name) {
+    static String extensionFromName(String name) {
         String lower = name == null ? "" : name.toLowerCase();
         int dot = lower.lastIndexOf('.');
         return dot >= 0 && dot < lower.length() - 1 ? lower.substring(dot + 1) : "";
     }
 
-    private String formatFor(String extension, String mimeType) {
+    static String formatFor(String extension, String mimeType) {
         if ("map".equals(extension)) return "mapsforge";
         if ("mbtiles".equals(extension)) return "mbtiles";
         String type = mimeType == null ? "" : mimeType.toLowerCase();
@@ -252,7 +255,7 @@ public class OfflineMapsPlugin extends Plugin {
         return null;
     }
 
-    private String safeFilename(String displayName, String format) {
+    static String safeFilename(String displayName, String format) {
         String fallback = "offline-map." + ("mbtiles".equals(format) ? "mbtiles" : "map");
         String name = displayName == null || displayName.trim().isEmpty() ? fallback : displayName.trim();
         name = name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]+", "_").replaceAll("\\s+", " ").trim();
@@ -362,7 +365,7 @@ public class OfflineMapsPlugin extends Plugin {
         return zoomRange;
     }
 
-    private Integer parseInteger(String value) {
+    static Integer parseInteger(String value) {
         if (value == null) return null;
         try {
             return Integer.parseInt(value.trim());
@@ -474,7 +477,7 @@ public class OfflineMapsPlugin extends Plugin {
         }
     }
 
-    private String mimeTypeForMbtilesFormat(String format) {
+    static String mimeTypeForMbtilesFormat(String format) {
         String lower = format == null ? "" : format.toLowerCase(Locale.ROOT).trim();
         if (lower.contains("jpg") || lower.contains("jpeg")) return "image/jpeg";
         if (lower.contains("webp")) return "image/webp";
@@ -482,18 +485,18 @@ public class OfflineMapsPlugin extends Plugin {
         return "image/png";
     }
 
-    private String detectTileMimeType(byte[] tile, String fallback) {
-        if (tile.length >= 8
+    static String detectTileMimeType(byte[] tile, String fallback) {
+        if (tile != null && tile.length >= 8
             && tile[0] == (byte) 0x89
             && tile[1] == 0x50
             && tile[2] == 0x4e
             && tile[3] == 0x47) {
             return "image/png";
         }
-        if (tile.length >= 3 && tile[0] == (byte) 0xff && tile[1] == (byte) 0xd8 && tile[2] == (byte) 0xff) {
+        if (tile != null && tile.length >= 3 && tile[0] == (byte) 0xff && tile[1] == (byte) 0xd8 && tile[2] == (byte) 0xff) {
             return "image/jpeg";
         }
-        if (tile.length >= 12
+        if (tile != null && tile.length >= 12
             && tile[0] == 0x52
             && tile[1] == 0x49
             && tile[2] == 0x46
@@ -507,7 +510,8 @@ public class OfflineMapsPlugin extends Plugin {
         return fallback == null || fallback.trim().isEmpty() ? "image/png" : fallback.trim();
     }
 
-    private String bytesToHex(byte[] bytes) {
+    static String bytesToHex(byte[] bytes) {
+        if (bytes == null) return "";
         StringBuilder builder = new StringBuilder(bytes.length * 2);
         for (byte value : bytes) {
             builder.append(String.format("%02x", value));

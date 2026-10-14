@@ -21,7 +21,7 @@ Source: `src/modules/paceEngine.js`
 
 ## Fatigue / Recovery Model
 
-See `references/formulas.md` for the full math.
+See `references/pace-engine-formulas.md` for the full math.
 
 Key rules:
 - Fatigue only activates after **2 h of moving time** (`fatH > 2.0`)
@@ -83,4 +83,4 @@ driving:   40  km/h, no ascent/descent penalty
 - When fatigue is disabled on an activity profile, the `fatigue` param still overrides if explicitly set to `true`.
 - `computeTripStats` returns `kcalExpended` (total burn) and `kcalSuggested` (carb intake, always 250 kcal × movingH).
 
-Read `references/formulas.md` for derivation details.
+Read `references/pace-engine-formulas.md` for derivation details.

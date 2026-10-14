@@ -257,7 +257,7 @@ GUI 驗證至少要保留：
 | `doc/app-store-disclosure-draft.md` | 商店隱私揭露草稿 | live forms 核對結果同步到本文件。 |
 | `doc/store-listing-draft.md` | 商店文案、素材與截圖草稿 | 截圖與送審 checklist 狀態同步到本文件。 |
 | `doc/state-contract.md` | durable state 與 `.melmap` allow-list 契約 | 新 key、新 reset/import 行為必須同步更新。 |
-| `Windy_API.md` | Windy URL 格式筆記 | 只作技術參考，不追蹤進度。 |
+| `doc/Windy_API.md` | Windy URL 格式筆記 | 只作技術參考，不追蹤進度。 |
 
 ## 更新模板
 

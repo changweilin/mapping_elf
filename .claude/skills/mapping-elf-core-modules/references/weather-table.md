@@ -6,7 +6,7 @@ type: library
 
 # Mapping Elf — Weather Table Reference
 
-The weather table is built in `src/main.js`. The key data structures and functions are described below.
+The weather table is built in `src/main.js`. External Windy URL specifications are archived in `doc/Windy_API.md`. The key data structures and functions are described below.
 
 ## `weatherPoints` Array
 

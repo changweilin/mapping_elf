@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+*.local.json
+.claude/settings.local.json
+.claude/worktrees/
 test-results/
 scratch/
 assets/promos-*-backup/
