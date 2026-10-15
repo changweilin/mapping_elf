@@ -875,3 +875,11 @@ function parseGeoPoint(pt) {
 function normalizeCoordArray(coords) {
   return coords.map((p) => (Array.isArray(p) ? [p[0], p[1]] : [p.lat, p.lng]));
 }
+
+export {
+  GPSArtOptimizer,
+  RoadNetworkGraph,
+  RouteConstraints,
+  KDTree2D,
+} from './gpsArtOptimizer.js';
+

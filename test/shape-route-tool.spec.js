@@ -267,6 +267,49 @@ test('drawing board anchors at most recently set waypoint, clears remaining orig
   expect(hasOldWP1).toBe(false);
 });
 
+test('shape generation completes with "匯出 GPX" button replacing generate button and exports GPX file', async ({ page }) => {
+  await openApp(page);
 
+  const toolBtn = page.locator('#btn-shape-tool');
+  await toolBtn.click();
+  const panel = page.locator('#shape-panel');
+  await expect(panel).toBeVisible();
 
+  const generateBtn = page.locator('#btn-shape-generate');
+  const exportGpxBtn = page.locator('#btn-shape-export-gpx');
 
+  // Initial state: generate button is visible, export GPX button is hidden
+  await expect(generateBtn).toBeVisible();
+  await expect(exportGpxBtn).toHaveClass(/hidden/);
+
+  // Select preset and distance
+  const presetSelect = page.locator('#shape-preset-select');
+  await presetSelect.selectOption('star');
+  await page.locator('#shape-distance-input').fill('3');
+
+  // Click generate
+  await generateBtn.click();
+
+  // Wait for route generation event
+  await expect.poll(async () => page.evaluate(() =>
+    (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
+  )).toBeGreaterThanOrEqual(3);
+
+  // After completion: generate button is hidden, export GPX button is visible
+  await expect(generateBtn).toHaveClass(/hidden/);
+  await expect(exportGpxBtn).toBeVisible();
+
+  // Clicking export GPX downloads the gpx file
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    exportGpxBtn.click(),
+  ]);
+
+  const filename = download.suggestedFilename();
+  expect(filename).toMatch(/^GPS_Art_star_\d+m\.gpx$/);
+
+  // Clearing resets export GPX button back to hidden, restoring generate button
+  await page.locator('#btn-shape-clear').click();
+  await expect(exportGpxBtn).toHaveClass(/hidden/);
+  await expect(generateBtn).toBeVisible();
+});

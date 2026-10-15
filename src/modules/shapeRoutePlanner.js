@@ -724,3 +724,11 @@ export {
   discreteFrechetDistance,
   averageTangentSimilarity,
 } from './shapeRouteMatcher.js';
+
+export {
+  GPSArtOptimizer,
+  RoadNetworkGraph,
+  RouteConstraints,
+  KDTree2D,
+} from './gpsArtOptimizer.js';
+

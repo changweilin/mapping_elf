@@ -18,7 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
-import { countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
+import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
 import { getShapePresetPoints } from './modules/shapePresets.js';
 // 魔法陣 (star tool) — logic ported 1:1 from the mapping_star project.
 import { categoryById } from './modules/star/categories.js';
@@ -5120,6 +5120,8 @@ const btnShapeTool = document.getElementById('btn-shape-tool');
 const btnShapeUndo = document.getElementById('btn-shape-undo');
 const btnShapeRedo = document.getElementById('btn-shape-redo');
 const btnShapeModeToggle = document.getElementById('btn-shape-mode-toggle');
+const btnShapeGenerate = document.getElementById('btn-shape-generate');
+const btnShapeExportGpx = document.getElementById('btn-shape-export-gpx');
 const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
 const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
 const LS_SHAPE_TRIM_KEY = 'mappingElf_shapeRouteTrimSpurs';
@@ -5135,6 +5137,13 @@ let shapePreviewLayer = null;     // dashed target-shape outline on the map
 let shapeRouteRun = null;         // pending run: ring/anchor/scale context for the
                                   // distance-calibration + similarity pass on completion
 let shapeGenerating = false;      // guards re-entry across the async generate flow
+let lastShapeOptimizationResult = null; // cached solution for GPX export
+
+function resetShapeGenerateButton() {
+  lastShapeOptimizationResult = null;
+  btnShapeGenerate?.classList.remove('hidden');
+  btnShapeExportGpx?.classList.add('hidden');
+}
 
 {
   const savedKm = Number(localStorage.getItem(LS_SHAPE_DISTANCE_KEY));
@@ -5277,6 +5286,7 @@ function applyShapePreset(presetId) {
   const pts = getShapePresetPoints(presetId, shapeCanvasCssWidth() || 216);
   if (!pts || pts.length < 2) return;
   pushShapeHistory();
+  resetShapeGenerateButton();
   shapeStrokes = [ pts ];
   shapeDrawing = false;
   redrawShapeCanvas();
@@ -5287,6 +5297,7 @@ function applyShapePreset(presetId) {
 
 function shapeUndo() {
   if (shapeUndoStack.length === 0) return;
+  resetShapeGenerateButton();
   shapeRedoStack.push(shapeStrokes.map(s => s.map(p => [p[0], p[1]])));
   shapeStrokes = shapeUndoStack.pop();
   syncShapePresetUI('');
@@ -5297,6 +5308,7 @@ function shapeUndo() {
 
 function shapeRedo() {
   if (shapeRedoStack.length === 0) return;
+  resetShapeGenerateButton();
   shapeUndoStack.push(shapeStrokes.map(s => s.map(p => [p[0], p[1]])));
   shapeStrokes = shapeRedoStack.pop();
   syncShapePresetUI('');
@@ -5367,6 +5379,7 @@ function appendShapePoint(e) {
 shapeCanvas?.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   syncShapePresetUI('');
+  resetShapeGenerateButton();
   try { shapeCanvas.setPointerCapture(e.pointerId); } catch (_) { }
   if (shapeToolMode === 'eraser') {
     pushShapeHistory();
@@ -5486,6 +5499,7 @@ function clearShapeBoard() {
   shapeStrokesPending = null;
   shapeDrawing = false;
   shapeRouteRun = null;
+  resetShapeGenerateButton();
   shapePreviewLayer?.clearLayers();
   if (shapeReadoutEl) shapeReadoutEl.innerHTML = '';
   syncShapePresetUI('');
@@ -5574,40 +5588,39 @@ async function generateShapeRoute() {
     }
 
     const targetM = km * 1000;
-    // Waypoint count scales with the drawing's complexity (筆畫數 + 轉折數).
-    const wpCount = suggestWaypointCount(targetM, {
-      strokeCount: shapeStrokes.length,
-      corners: countShapeCorners(strokePts),
+    let rotBounds = [0, 360];
+    if (angleTol === 0) rotBounds = [0, 0];
+    else if (angleTol < 360) rotBounds = [-angleTol, angleTol];
+
+    const constraints = new RouteConstraints({
+      targetLengthM: targetM,
+      travelMode: 'walk',
+      maxTurningPoints: 15,
+      startPointGeo: anchor,
+      closedLoop: true,
+      rotationBoundsDeg: rotBounds,
+      scaleBoundsRatio: [0.6, 1.4],
+      weightShape: 1.0,
+      weightLength: 250.0,
+      weightOverlap: 300.0,
     });
 
-    // Orientation search inside the allowed angle tolerance: each candidate
-    // rotation is scored by how close its probe waypoints sit to walkable
-    // ways (mean OSRM-nearest snap distance, capped so one unreachable probe
-    // doesn't dominate). Candidate 0 comes first and wins ties, so when the
-    // snap service is unreachable the drawn orientation is kept.
-    let bestDeg = 0;
-    let ring = null;
-    const candidates = rotationCandidates(angleTol);
-    if (candidates.length > 1) {
-      showNotification('正在尋找最符合形狀的方位...', 'info', 2000);
-      let bestScore = Infinity;
-      for (const deg of candidates) {
-        const candRing = strokeToLatLngRing(strokePts, anchor, targetM, { rotationDeg: deg });
-        if (!candRing) continue;
-        const probes = pickShapeWaypoints(candRing, Math.min(6, wpCount));
-        const snaps = await routeEngine.snapToFootNetwork(probes);
-        const score = snaps.reduce((s, x) => s + Math.min(x.distance, 2000), 0) / (snaps.length || 1);
-        if (score < bestScore) { bestScore = score; bestDeg = deg; ring = candRing; }
-      }
+    showNotification('正在依路網拓撲最佳化幾何形狀...', 'info', 2000);
+    const graph = await RoadNetworkGraph.fromOsm(anchor, Math.max(1200, targetM / 2.0), 'walk');
+    const optimizer = new GPSArtOptimizer(graph);
+    const solution = optimizer.optimize(strokePts, constraints);
+    lastShapeOptimizationResult = solution;
+
+    const wps = solution.keyWaypoints && solution.keyWaypoints.length >= 3
+      ? solution.keyWaypoints
+      : (solution.routedGeometryGeo && solution.routedGeometryGeo.length >= 3 ? solution.routedGeometryGeo : null);
+
+    if (!wps || wps.length < 3) {
+      showNotification('無法辨識繪製的形狀，請重畫', 'warning');
+      return;
     }
-    if (!ring) ring = strokeToLatLngRing(strokePts, anchor, targetM);
-    if (!ring) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
-    // Curvature features (star tips, cusps, finger notches) get waypoints
-    // first — a shortest-path router chords across any sharp tip without one.
-    const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, wpCount), anchor);
-    const wps = snapped.wps;
-    if (wps.length < 3) { showNotification('無法辨識繪製的形狀，請重畫', 'warning'); return; }
-    drawShapePreview(ring);
+
+    drawShapePreview(solution.targetGeometryGeo && solution.targetGeometryGeo.length > 0 ? solution.targetGeometryGeo : solution.routedGeometryGeo);
 
     // Running loop: foot routing + running pace + O繞 nav mode.
     applyRouteMode('walking', { syncPaceActivity: false });
@@ -5631,43 +5644,68 @@ async function generateShapeRoute() {
     _wcStates.clear();
     mapManager.closeWeatherPopup();
 
-    // Run context consumed on route completion: distance calibration, then
-    // deviation-driven shape refinement, then a damped re-calibration — each
-    // stage bounded and verified (see onShapeRoutePlanned).
-    shapeRouteRun = {
-      ring,
-      strokePts,
-      anchor,
-      rotationDeg: bestDeg,
-      targetM,
-      scaledTargetM: targetM,
-      wpCount,
-      ts: snapped.ts,
-      trimSpurs,
-      attempt: 0,
-      refineAttempt: 0,
-      postCalibAttempt: 0,
-      spurAttempt: 0,
-      spurTrimmedM: 0,
-      pendingCheck: null,
-      finalize: false,
-      busy: false,
-      appliedKey: routeStateSignature(wps),
-    };
     applyShapeWaypoints(wps);
 
+    // Swap generate button to export GPX button upon completion
+    btnShapeGenerate?.classList.add('hidden');
+    btnShapeExportGpx?.classList.remove('hidden');
+
     if (shapeReadoutEl) {
-      shapeReadoutEl.innerHTML =
-        `<div class="mr-row"><span class="mr-label">${translatePhrase('航點')}</span><span class="mr-value">${wps.length}</span></div>` +
-        `<div class="mr-row"><span class="mr-label">${translatePhrase('目標距離')}</span><span class="mr-value">${formatDistance(targetM)}</span></div>` +
-        (bestDeg !== 0
-          ? `<div class="mr-row"><span class="mr-label">${translatePhrase('方位調整')}</span><span class="mr-value">${Math.round(bestDeg)}°</span></div>`
-          : '');
+      const rows = [
+        ['航點', String(wps.length)],
+        ['目標距離', formatDistance(targetM)],
+        ['實際距離', formatDistance(solution.actualLengthM)],
+        ['形狀相似度', `${solution.similarityPct}%`],
+      ];
+      if (solution.optimalAngleDeg !== 0) {
+        rows.push(['最佳方位', `${Math.round(solution.optimalAngleDeg)}°`]);
+      }
+      rows.push(['重複折返率', `${(solution.overlapRatio * 100).toFixed(1)}%`]);
+      rows.push(['損失評分', `${solution.objectiveScore.toFixed(2)}`]);
+      shapeReadoutEl.innerHTML = rows.map(([label, value]) =>
+        `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
+      ).join('');
     }
-    showNotification(`已依繪製形狀產生 ${wps.length} 個航點`, 'success', 2000);
-    emitTestEvent('shape-route-generated', { waypointCount: wps.length, targetM, rotationDeg: bestDeg });
+    showNotification(`已依路網拓撲最佳化完成 (相似度 ${solution.similarityPct}%)`, 'success', 2500);
+    emitTestEvent('shape-route-generated', { waypointCount: wps.length, targetM, rotationDeg: solution.optimalAngleDeg });
+    emitTestEvent('shape-route-finished', {
+      actualM: solution.actualLengthM,
+      targetM,
+      similarityPct: solution.similarityPct,
+      waypointCount: wps.length,
+      overlapRatio: solution.overlapRatio,
+    });
   } finally {
     shapeGenerating = false;
+  }
+}
+
+async function exportShapeRouteGpx() {
+  if (!lastShapeOptimizationResult || !lastShapeOptimizationResult.routedGeometryGeo || lastShapeOptimizationResult.routedGeometryGeo.length < 2) {
+    showNotification('請先在繪圖板產生路線', 'warning');
+    return;
+  }
+  try {
+    const { GpxExporter } = await ensureRouteExporters();
+    const routeCoords = lastShapeOptimizationResult.routedGeometryGeo;
+    const waypoints = lastShapeOptimizationResult.keyWaypoints && lastShapeOptimizationResult.keyWaypoints.length >= 2
+      ? lastShapeOptimizationResult.keyWaypoints
+      : routeCoords;
+    const wpData = waypoints.map((pt, i) => ({
+      lat: pt[0],
+      lng: pt[1],
+      label: i === 0 ? '起點' : (i === waypoints.length - 1 ? '終點' : `航點 ${i + 1}`),
+      isWaypoint: true,
+      isReturn: false,
+    }));
+    const presetName = shapePresetSelect?.value || 'art';
+    const filename = `GPS_Art_${presetName}_${Math.round(lastShapeOptimizationResult.actualLengthM)}m`;
+    const gpxXml = GpxExporter.generate(wpData, routeCoords, [], filename, { includeWeather: false });
+    await platform.shareFile(GpxExporter.createDownloadPayload(gpxXml, `${filename}.gpx`));
+    showNotification('已匯出 GPX 檔案', 'success');
+  } catch (err) {
+    console.error('Shape GPX export failed:', err);
+    showNotification('匯出 GPX 失敗', 'error');
   }
 }
 
@@ -6008,6 +6046,7 @@ btnShapeTool?.addEventListener('click', () => {
 document.getElementById('btn-shape-close')?.addEventListener('click', () => setShapeActive(false));
 document.getElementById('btn-shape-clear')?.addEventListener('click', clearShapeBoard);
 document.getElementById('btn-shape-generate')?.addEventListener('click', generateShapeRoute);
+document.getElementById('btn-shape-export-gpx')?.addEventListener('click', exportShapeRouteGpx);
 btnShapeUndo?.addEventListener('click', shapeUndo);
 btnShapeRedo?.addEventListener('click', shapeRedo);
 btnShapeModeToggle?.addEventListener('click', () => {

@@ -15,6 +15,10 @@ import {
   haversineDistanceM,
   computeGeoPathLength,
   createOsrmShapeAdapter,
+  GPSArtOptimizer,
+  RoadNetworkGraph,
+  RouteConstraints,
+  KDTree2D,
 } from '../src/modules/shapeRouteMatcher.js';
 
 console.log('Testing shapeRouteMatcher.js...');
@@ -178,4 +182,41 @@ console.log('Testing shapeRouteMatcher.js...');
   );
 }
 
+// 8. GPSArtOptimizer & RoadNetworkGraph & Differential Evolution
+{
+  const city = RoadNetworkGraph.buildSyntheticCityGraph(22, 100.0);
+  assert.ok(city.nodes.size > 100, 'Synthetic city graph should contain nodes');
+  assert.ok(city.kdtree != null, 'KDTree should be built');
+
+  const optimizer = new GPSArtOptimizer(city);
+
+  // Five-pointed star
+  const star = [];
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 === 0 ? 1.0 : 0.42;
+    const th = (i * Math.PI) / 5 - Math.PI / 2;
+    star.push([r * Math.cos(th), r * Math.sin(th)]);
+  }
+  star.push(star[0]);
+
+  const constraints = new RouteConstraints({
+    targetLengthM: 4800.0,
+    travelMode: 'walk',
+    maxTurningPoints: 12,
+    closedLoop: true,
+    rotationBoundsDeg: [0.0, 72.0],
+    scaleBoundsRatio: [0.7, 1.3],
+  });
+
+  const solution = optimizer.optimize(star, constraints);
+
+  assert.ok(solution.actualLengthM > 3000 && solution.actualLengthM < 6500, `Actual distance ${solution.actualLengthM} should be near target 4800m`);
+  assert.ok(solution.keyWaypoints.length >= 3, 'Key waypoints should be generated');
+  assert.ok(solution.routedGeometryGeo.length > 10, 'Full routed geometry should have dense points');
+  assert.ok(solution.overlapRatio >= 0 && solution.overlapRatio <= 1, 'Overlap ratio should be in [0, 1]');
+  assert.ok(solution.objectiveScore > 0, 'Objective score should be positive');
+  assert.ok(solution.similarityPct >= 50, `Expected reasonable shape similarity percentage, got ${solution.similarityPct}`);
+}
+
 console.log('shapeRouteMatcher.js test passed successfully!');
+
