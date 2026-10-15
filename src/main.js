@@ -6345,17 +6345,21 @@ function setStarActive(active) {
   btnStarTool?.setAttribute('aria-pressed', String(active));
   if (active) {
     ensureStarLayers();
-    const recentWp = mapManager.getRecentWaypoint?.();
-    if (recentWp) {
-      const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
-      setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+    if (!starResults.length) {
+      const recentWp = mapManager.getRecentWaypoint?.();
+      if (recentWp) {
+        const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
+        setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+      }
     }
     syncStarControls();
     renderStarContext();
     renderStarMagic();
   } else {
     starContextLayer?.clearLayers();
-    starMagicLayer?.clearLayers();
+    if (!starResults.length) {
+      starMagicLayer?.clearLayers();
+    }
   }
   saveStarToolStateNow();
 }
@@ -6384,13 +6388,6 @@ function clearStarTool() {
 function setStarCenter(center, name = '') {
   starCenter = center ? { lat: Number(center.lat), lng: Number(center.lng) } : null;
   starCenterName = name || '';
-  // The previous star belongs to the previous centre — keep it on screen and it
-  // reads as a result for the new search.
-  starResults = [];
-  starResultIndex = 0;
-  starPois = [];
-  starMagicLayer?.clearLayers();
-  starResultBox?.classList.add('hidden');
   syncStarCenterReadout();
   renderStarContext();
   saveStarToolStateNow();
@@ -6577,13 +6574,15 @@ async function runStarSolve() {
       step = iterator.next();
     }
 
-    starResults = step.value || [];
-    starResultIndex = 0;
-    if (!starResults.length) {
+    const foundResults = step.value || [];
+    if (!foundResults.length) {
       showNotification('找不到符合條件的星形組合，請放寬角度容差或半徑', 'warning', 3000);
       emitTestEvent('star-solve-empty', { poiCount: pois.length });
       return;
     }
+
+    starResults = foundResults;
+    starResultIndex = 0;
 
     setStarPlaybackSilently('playing');
     renderStarMagic({ restart: true });
@@ -6670,20 +6669,9 @@ starCenterInput?.addEventListener('keydown', (e) => {
 [starModeSelect, starShapeSelect, starVariantSelect, starElementSelect, starStrategySelect,
   starInnerInput, starOuterInput, starToleranceInput, starRotationInput, starCandidatesInput, starHexCellInput]
   .forEach((el) => el?.addEventListener('change', () => {
-    const before = starSettings;
     readStarSettingsFromControls();
     renderStarContext();
-    // Shape/variant/element only restyle the existing star; mode and the search
-    // parameters invalidate it, so the user must re-solve.
-    const invalidated = before.mode !== starSettings.mode;
-    if (invalidated && starResults.length) {
-      starResults = [];
-      starResultIndex = 0;
-      starMagicLayer?.clearLayers();
-      starResultBox?.classList.add('hidden');
-    } else {
-      renderStarMagic({ restart: true });
-    }
+    renderStarMagic({ restart: true });
   }));
 
 starSpeedSelect?.addEventListener('change', () => {

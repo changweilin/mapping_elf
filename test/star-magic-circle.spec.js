@@ -303,7 +303,8 @@ test('playback pauses and resumes, and results can be stepped through', async ({
   await poll(indexText).toBe(first);
 });
 
-test('changing the element or geometry restyles the same star; changing mode invalidates it', async ({ page }) => {
+test('changing the element or geometry restyles the same star; mode change preserves it until clear', async ({ page }) => {
+  test.setTimeout(120_000);
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
@@ -324,8 +325,14 @@ test('changing the element or geometry restyles the same star; changing mode inv
     { timeout: 30_000, intervals: [100, 250, 500] }).not.toContain('rose=0');
   await expect(page.locator('#star-result')).toBeVisible();
 
-  // Mode switch changes what a result even means → the old star is dropped.
+  // Mode switch does NOT drop the drawn star; only clear or solving a new star does.
   await setControl(page, '#star-mode-select', '6');
+  await expect(page.locator('#star-result')).toBeVisible();
+  await expectCount(page, '.star-point', 5);
+
+  // Clear button is beside route planning in star-result and clears the drawn star.
+  await expect(page.locator('#star-result #btn-star-clear')).toBeVisible();
+  await press(page, '#btn-star-clear');
   await expect(page.locator('#star-result')).toBeHidden();
   await expectCount(page, '.star-point', 0);
 });
@@ -581,4 +588,35 @@ test('solving constellation matches POIs and renders zodiac lines and stars on m
   await expect.poll(() => countOf(page, '.magic-zodiac-star'), { timeout: 10_000 }).toBe(9);
   await expectCount(page, '.star-point', 9);
 });
+
+test('magic circle persists across center changes and panel close, only cleared by clear button or new solve', async ({ page }) => {
+  await openApp(page);
+  await openStarPanel(page);
+  await useMapCentreAsStarCentre(page);
+  await useFastSolve(page);
+  await solve(page);
+
+  await expect(page.locator('#star-result')).toBeVisible();
+  await expectCount(page, '.star-point', 5);
+
+  // Changing center to map center does not clear the drawn magic circle
+  await press(page, '#btn-star-center-map');
+  await expect(page.locator('#star-result')).toBeVisible();
+  await expectCount(page, '.star-point', 5);
+
+  // Closing and reopening the star panel preserves the drawn magic circle
+  await press(page, '#btn-star-close');
+  await expect(page.locator('#star-panel')).toBeHidden();
+  await expectCount(page, '.star-point', 5);
+
+  await openStarPanel(page);
+  await expect(page.locator('#star-result')).toBeVisible();
+  await expectCount(page, '.star-point', 5);
+
+  // Clear button is beside route planning and clears the magic circle
+  await press(page, '#btn-star-clear');
+  await expect(page.locator('#star-result')).toBeHidden();
+  await expectCount(page, '.star-point', 0);
+});
+
 
