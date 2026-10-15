@@ -61,11 +61,10 @@ test('drawing board opens, generates an O繞 waypoint loop and closes', async ({
     (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
   )).toBeGreaterThanOrEqual(3);
 
-  // Nav mode switched to O繞, waypoints landed in the side panel list.
-  // Poll: a distance-calibration round briefly clears + re-adds the list.
-  await expect(page.locator('#nav-mode-oloop')).toBeChecked();
-  await expect.poll(async () => page.locator('#waypoint-list .waypoint-item').count())
-    .toBeGreaterThanOrEqual(3);
+  // Swapped to Export GPX button, and route planning waypoints are not populated/cleared
+  await expect(page.locator('#btn-shape-generate')).toHaveClass(/hidden/);
+  await expect(page.locator('#btn-shape-export-gpx')).toBeVisible();
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(0);
 
   // Readout shows the plan summary; the target-shape preview is on the map.
   await expect(page.locator('#shape-readout .mr-row').first()).toBeVisible();
@@ -118,7 +117,10 @@ test('drawing board anchors at most recently placed map cursor or waypoint', asy
   )).toBeGreaterThanOrEqual(3);
 
   // Check the first waypoint is anchored near 24.800, 120.900 (not default GPS 25.034, 121.564)
-  const firstWp = await page.evaluate(() => window.__mappingElfTestHooks.mapManager.waypoints[0]);
+  const firstWp = await page.evaluate(() =>
+    window.__mappingElfTestHooks.lastShapeOptimizationResult?.keyWaypoints?.[0] ||
+    (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.firstWaypoint
+  );
   expect(Math.abs(firstWp[0] - 24.800)).toBeLessThan(0.03);
   expect(Math.abs(firstWp[1] - 120.900)).toBeLessThan(0.03);
   expect(Math.abs(firstWp[0] - 25.034)).toBeGreaterThan(0.1);
@@ -226,7 +228,7 @@ test('drawing board provides 12 preset shapes (愛心, 星星, 月亮, 太陽, �
   await expect(horseChip).not.toHaveClass(/active/);
 });
 
-test('drawing board anchors at most recently set waypoint, clears remaining original waypoints, and draws route', async ({ page }) => {
+test('drawing board anchors at most recently set waypoint without clearing existing original waypoints', async ({ page }) => {
   await openApp(page);
 
   // 1. Add 3 waypoints on the map: WP0, WP1, WP2
@@ -255,16 +257,20 @@ test('drawing board anchors at most recently set waypoint, clears remaining orig
     (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
   )).toBeGreaterThanOrEqual(3);
 
-  // 4. Check the starting waypoint is anchored at the most recently set waypoint (25.030, 121.530)
-  const waypointsAfter = await page.evaluate(() => window.__mappingElfTestHooks.mapManager.waypoints);
-  expect(waypointsAfter[0][0]).toBeCloseTo(25.030, 4);
-  expect(waypointsAfter[0][1]).toBeCloseTo(121.530, 4);
+  // 4. Check the starting waypoint of the shape is anchored at the most recently set waypoint (25.030, 121.530)
+  const firstWp = await page.evaluate(() =>
+    window.__mappingElfTestHooks.lastShapeOptimizationResult?.keyWaypoints?.[0] ||
+    (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.firstWaypoint
+  );
+  expect(firstWp[0]).toBeCloseTo(25.030, 4);
+  expect(firstWp[1]).toBeCloseTo(121.530, 4);
 
-  // 5. Check the remaining original waypoints (25.010, 121.510) and (25.020, 121.520) were cleared
-  const hasOldWP0 = waypointsAfter.slice(1).some(([lat, lng]) => Math.abs(lat - 25.010) < 1e-4 && Math.abs(lng - 121.510) < 1e-4);
-  const hasOldWP1 = waypointsAfter.slice(1).some(([lat, lng]) => Math.abs(lat - 25.020) < 1e-4 && Math.abs(lng - 121.520) < 1e-4);
-  expect(hasOldWP0).toBe(false);
-  expect(hasOldWP1).toBe(false);
+  // 5. Existing original waypoints are NOT cleared
+  const waypointsAfter = await page.evaluate(() => window.__mappingElfTestHooks.mapManager.waypoints);
+  expect(waypointsAfter.length).toBe(3);
+  expect(waypointsAfter[0][0]).toBeCloseTo(25.010, 4);
+  expect(waypointsAfter[1][0]).toBeCloseTo(25.020, 4);
+  expect(waypointsAfter[2][0]).toBeCloseTo(25.030, 4);
 });
 
 test('shape generation completes with "匯出 GPX" button replacing generate button and exports GPX file', async ({ page }) => {

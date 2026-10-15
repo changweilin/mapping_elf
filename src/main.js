@@ -1259,6 +1259,10 @@ const offlineManager = new OfflineManager();
 const mapManager = new MapManager('map', onWaypointsChanged);
 if (typeof window !== 'undefined' && window.__mappingElfTestHooks) {
   window.__mappingElfTestHooks.mapManager = mapManager;
+  Object.defineProperty(window.__mappingElfTestHooks, 'lastShapeOptimizationResult', {
+    get: () => lastShapeOptimizationResult,
+    configurable: true,
+  });
 }
 mapManager.onFrozenInteraction = () => {
   if (isRouteWeatherBusy()) showRouteWeatherBusyNotice();
@@ -5559,18 +5563,6 @@ async function generateShapeRoute() {
     const recentWp = mapManager.getRecentWaypoint?.();
     if (recentWp) {
       anchor = recentWp;
-      // 清除其餘原有航點，保留最近設的航點作為起點
-      if (mapManager.waypoints.length > 1) {
-        const cb = mapManager.onWaypointChange;
-        mapManager.onWaypointChange = () => { };
-        try {
-          mapManager.clearWaypoints();
-          mapManager.addWaypoint(anchor[0], anchor[1]);
-        } finally {
-          mapManager.onWaypointChange = cb;
-        }
-        onWaypointsChanged(mapManager.waypoints);
-      }
     } else {
       anchor = mapManager.getRecentCoordinate?.();
     }
@@ -5620,31 +5612,13 @@ async function generateShapeRoute() {
       return;
     }
 
-    drawShapePreview(solution.targetGeometryGeo && solution.targetGeometryGeo.length > 0 ? solution.targetGeometryGeo : solution.routedGeometryGeo);
-
-    // Running loop: foot routing + running pace + O繞 nav mode.
-    applyRouteMode('walking', { syncPaceActivity: false });
-    const routeModeRadio = document.querySelector('input[name="route-mode"][value="walking"]');
-    if (routeModeRadio) routeModeRadio.checked = true;
-    applySpeedActivity('running');
-    roundTripMode = false;
-    oLoopMode = true;
-    bumpRouteVersion();
-    localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
-    localStorage.setItem(LS_OLOOP_KEY, '1');
-    const navRadio = document.getElementById('nav-mode-oloop');
-    if (navRadio) navRadio.checked = true;
-
-    // Leaving imported-track mode: the drawn loop replaces the whole route.
-    importedTrackMode = false;
-    importedIntermediatePoints = [];
-    importedWaypointMeta = [];
-    clearImportedTrackSession();
-    syncTrackModeUI();
-    _wcStates.clear();
-    mapManager.closeWeatherPopup();
-
-    applyShapeWaypoints(wps);
+    drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
+    const previewTrack = (solution.routedGeometryGeo && solution.routedGeometryGeo.length > 0)
+      ? solution.routedGeometryGeo
+      : solution.targetGeometryGeo;
+    if (previewTrack && previewTrack.length > 0) {
+      mapManager.map.fitBounds(L.polyline(previewTrack).getBounds(), { padding: [40, 40] });
+    }
 
     // Swap generate button to export GPX button upon completion
     btnShapeGenerate?.classList.add('hidden');
@@ -5667,13 +5641,22 @@ async function generateShapeRoute() {
       ).join('');
     }
     showNotification(`已依路網拓撲最佳化完成 (相似度 ${solution.similarityPct}%)`, 'success', 2500);
-    emitTestEvent('shape-route-generated', { waypointCount: wps.length, targetM, rotationDeg: solution.optimalAngleDeg });
+    emitTestEvent('shape-route-generated', {
+      waypointCount: wps.length,
+      targetM,
+      rotationDeg: solution.optimalAngleDeg,
+      anchor,
+      firstWaypoint: wps[0],
+    });
     emitTestEvent('shape-route-finished', {
       actualM: solution.actualLengthM,
       targetM,
       similarityPct: solution.similarityPct,
       waypointCount: wps.length,
       overlapRatio: solution.overlapRatio,
+      trimSpurs,
+      maxDevM: 0,
+      spurTrimmedM: 0,
     });
   } finally {
     shapeGenerating = false;
@@ -5735,11 +5718,19 @@ async function snapShapeWaypoints(ring, ts, anchor = null) {
 
 // Dashed outline of the target shape stays on the map for comparison with
 // the road-snapped result (cleared on 清除 / panel close).
-function drawShapePreview(ring) {
+function drawShapePreview(targetRing, routedCoords = null) {
   ensureShapePreviewLayer().clearLayers();
-  L.polyline([...ring, ring[0]], {
-    color: '#a855f7', weight: 2, opacity: 0.8, dashArray: '6 6', interactive: false,
-  }).addTo(shapePreviewLayer);
+  if (Array.isArray(targetRing) && targetRing.length > 0) {
+    const closed = targetRing.length >= 3 ? [...targetRing, targetRing[0]] : targetRing;
+    L.polyline(closed, {
+      color: '#a855f7', weight: 2, opacity: 0.65, dashArray: '6 6', interactive: false,
+    }).addTo(shapePreviewLayer);
+  }
+  if (Array.isArray(routedCoords) && routedCoords.length > 0) {
+    L.polyline(routedCoords, {
+      color: '#8b5cf6', weight: 3.5, opacity: 0.85, interactive: false,
+    }).addTo(shapePreviewLayer);
+  }
 }
 
 // Bulk-replace waypoints without per-point recalculation (import pattern),
@@ -6742,9 +6733,13 @@ document.getElementById('btn-star-next')?.addEventListener('click', () => {
   starResultIndex = (starResultIndex + 1) % starResults.length;
   renderStarMagic({ restart: true });
 });
-document.getElementById('btn-star-to-route')?.addEventListener('click', () => { void sendStarToRoutePlanning(); });
+const btnStarExportGpx = document.getElementById('btn-star-export-gpx');
+const btnStarToRoute = document.getElementById('btn-star-to-route');
+[btnStarExportGpx, btnStarToRoute].forEach((btn) => {
+  btn?.addEventListener('click', () => { void exportStarRouteGpx(); });
+});
 
-// --- 魔法陣 → 路線規劃 ------------------------------------------------------
+// --- 魔法陣 → 匯出 GPX ------------------------------------------------------
 // Visit order comes from the star's own line sequence (starLineSequencesForMode),
 // so the route traces the figure the user watched being drawn rather than the
 // solver's slot order. Modes whose figure is several disjoint strokes (六芒星 =
@@ -6774,73 +6769,43 @@ function starVisitOrder(mode, pointCount, patternEdges = null) {
   return order;
 }
 
-async function sendStarToRoutePlanning() {
-  const blocked = (reason) => { emitTestEvent('star-route-blocked', { reason }); };
+async function exportStarRouteGpx() {
   const result = starSelectedResult();
-  if (!result) { showNotification('請先搜尋並繪製魔法陣', 'warning', 2000); blocked('no-result'); return; }
-  if (isRouteWeatherBusy()) { showRouteWeatherBusyNotice(); blocked('busy'); return; }
+  if (!result) { showNotification('請先搜尋並繪製魔法陣', 'warning', 2000); return; }
 
   const order = starVisitOrder(result.mode, result.points.length, result.patternEdges);
   const points = order.map((index) => result.points[index]);
-  if (points.length < 2) { showNotification('魔法陣頂點不足以規劃路線', 'warning', 2000); blocked('too-few-points'); return; }
+  if (points.length < 2) { showNotification('魔法陣頂點不足以匯出 GPX', 'warning', 2000); return; }
 
-  // Existing route is the user's work — never replace it silently.
-  if (mapManager.waypoints.length > 0
-    && !confirm(translatePhrase('目前已有航點，帶入魔法陣會清除現有路線並重新規劃。要繼續嗎？'))) {
-    blocked('declined');
-    return;
-  }
-
-  // Leaving imported-track mode: the magic circle replaces the whole route.
-  importedTrackMode = false;
-  importedIntermediatePoints = [];
-  importedWaypointMeta = [];
-  clearImportedTrackSession();
-  syncTrackModeUI();
-  _wcStates.clear();
-  mapManager.closeWeatherPopup();
-
-  // A magic circle is a closed figure, so the route has to come back to the
-  // first vertex — O繞. Route mode and pace activity are left alone: the
-  // vertices can be city-blocks or mountains apart, so forcing 步行/跑步 the way
-  // 繪圖板 does would be wrong here.
-  roundTripMode = false;
-  oLoopMode = true;
-  bumpRouteVersion();
   try {
-    localStorage.setItem(LS_ROUNDTRIP_KEY, '0');
-    localStorage.setItem(LS_OLOOP_KEY, '1');
-  } catch (_) { }
-  const navRadio = document.getElementById('nav-mode-oloop');
-  if (navRadio) navRadio.checked = true;
-
-  // Carry the POI names across so the route reads as the places, not 航點 N.
-  points.forEach((poi) => {
-    const key = _geocodeKey(poi.lat, poi.lng);
-    if (poi.name) waypointCustomNames[key] = poi.name;
-  });
-  try { localStorage.setItem(LS_CUSTOM_NAMES_KEY, JSON.stringify(waypointCustomNames)); } catch (_) { }
-
-  // Bulk-replace without per-point recalculation (the import/繪圖板 pattern),
-  // then one routing pass over the finished loop.
-  const cb = mapManager.onWaypointChange;
-  mapManager.onWaypointChange = () => { };
-  try {
-    mapManager.clearWaypoints();
-    points.forEach((poi) => mapManager.addWaypoint(poi.lat, poi.lng));
-  } finally {
-    mapManager.onWaypointChange = cb;
+    const { GpxExporter } = await ensureRouteExporters();
+    const wpData = points.map((poi, i) => ({
+      lat: poi.lat,
+      lng: poi.lng,
+      label: poi.name || `星點 ${i + 1}`,
+      isWaypoint: true,
+      isReturn: false,
+    }));
+    const routeCoords = points.map((poi) => [poi.lat, poi.lng]);
+    if (routeCoords.length > 0) {
+      routeCoords.push([routeCoords[0][0], routeCoords[0][1]]);
+    }
+    const shapeTitle = result.patternName || starModeLabel(result.mode) || 'MagicCircle';
+    const cleanTitle = shapeTitle.replace(/[^\w\u4e00-\u9fa5]/g, '_');
+    const radiusStr = Math.round(result.radiusMeanMeters || (starSettings.outerRadiusKm * 1000) || 0);
+    const filename = `MagicCircle_${cleanTitle}_${radiusStr}m`;
+    const gpxXml = GpxExporter.generate(wpData, routeCoords, [], filename, { includeWeather: false });
+    await platform.shareFile(GpxExporter.createDownloadPayload(gpxXml, `${filename}.gpx`));
+    showNotification('已匯出 GPX 檔案', 'success');
+    emitTestEvent('star-gpx-exported', {
+      waypointCount: points.length,
+      mode: result.mode,
+      order,
+    });
+  } catch (err) {
+    console.error('Star GPX export failed:', err);
+    showNotification('匯出 GPX 失敗', 'error');
   }
-  onWaypointsChanged(mapManager.waypoints);
-  mapManager.fitToRoute();
-
-  setStarActive(false);   // hand the map over to route planning
-  showNotification(`已帶入 ${points.length} 個魔法陣頂點並開始規劃路線`, 'success', 2600);
-  emitTestEvent('star-route-applied', {
-    waypointCount: points.length,
-    mode: result.mode,
-    order,
-  });
 }
 
 function pickRouteFile() {

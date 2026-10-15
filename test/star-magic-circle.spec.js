@@ -364,44 +364,37 @@ test('each magic-circle geometry remembers its own variant', async ({ page }) =>
   expect(stored).toMatchObject({ rose: 'k-4', star: '5', zodiac: '1', sierpinski: 'd-3' });
 });
 
-test('vertices hand off to route planning in star-line order, as an O繞 loop', async ({ page }) => {
+test('vertices export to GPX in star-line order, as a closed loop', async ({ page }) => {
   await openApp(page);
   await openStarPanel(page);
   await useMapCentreAsStarCentre(page);
   await useFastSolve(page);
   await solve(page);
 
-  await press(page, '#btn-star-to-route');
+  const exportBtn = page.locator('#btn-star-export-gpx');
+  await expect(exportBtn).toBeVisible();
 
-  await expect.poll(async () => (await events(page, 'star-route-applied')).length, { timeout: 20000 })
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    exportBtn.click(),
+  ]);
+
+  const filename = download.suggestedFilename();
+  expect(filename).toMatch(/^MagicCircle_.*\.gpx$/);
+
+  await expect.poll(async () => (await events(page, 'star-gpx-exported')).length, { timeout: 20000 })
     .toBeGreaterThan(0);
-  const applied = (await events(page, 'star-route-applied'))[0].detail;
+  const exported = (await events(page, 'star-gpx-exported'))[0].detail;
 
-  expect(applied.waypointCount).toBe(5);
+  expect(exported.waypointCount).toBe(5);
   // 五芒星 is drawn 0→2→4→1→3→0, so that is the visiting order (each vertex once).
-  expect(applied.order).toEqual([0, 2, 4, 1, 3]);
-
-  await expect.poll(async () => page.evaluate(() => document.querySelectorAll('#waypoint-list .waypoint-item').length))
-    .toBe(5);
-  // Closed figure → O繞 nav mode.
-  await expect(page.locator('#nav-mode-oloop')).toBeChecked();
-  // The tool hands the map over once it is done.
-  await expect(page.locator('#star-panel')).toBeHidden();
-  // POI names carried across instead of 航點 N.
-  await expect(page.locator('#waypoint-list')).toContainText('星點');
+  expect(exported.order).toEqual([0, 2, 4, 1, 3]);
 });
 
-test('handoff over an existing route asks first and honours a cancel', async ({ page }) => {
-  // The only test here that seeds a real route first, so it pays for the whole
-  // route → weather → 集水區 chain twice (once to settle, once after the handoff)
-  // before it can assert anything. Every other test fits the default budget.
+test('solving magic circle and exporting GPX preserves existing route waypoints without clearing', async ({ page }) => {
   test.setTimeout(150_000);
   await openApp(page);
 
-  // Seed a route by clicking the map twice. Two guards, both load-bearing:
-  // map clicks are swallowed while the busy lock is up, and back-to-back clicks
-  // register as a dblclick (map zoom) which cancels the pending waypoint — so
-  // wait for the previous waypoint to land before clicking again.
   const box = await page.locator('#map').boundingBox();
   const seeded = [[0.4, 0.4], [0.6, 0.6]];
   for (let i = 0; i < seeded.length; i += 1) {
@@ -418,31 +411,18 @@ test('handoff over an existing route asks first and honours a cancel', async ({ 
   await useFastSolve(page);
   await solve(page);
 
-  // The handoff is refused outright while the route is still planning, so let
-  // the seeded route settle — otherwise this asserts the busy guard, not the
-  // confirm dialog.
-  await busyIdle(page);
-
-  // Decline → the existing route survives untouched, nothing is applied.
-  let prompted = 0;
-  page.once('dialog', (dialog) => { prompted += 1; dialog.dismiss(); });
-  await press(page, '#btn-star-to-route');
-  // Assert on the reason, not just the absence of an apply: without this a
-  // busy-guard bail would look identical to the user declining.
-  await expect.poll(async () => (await events(page, 'star-route-blocked')).map((e) => e.detail.reason))
-    .toEqual(['declined']);
-  expect(prompted).toBe(1);
-  await expect.poll(async () => (await events(page, 'star-route-applied')).length).toBe(0);
+  // Solving magic circle does not clear existing waypoints
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
-  await expect(page.locator('#star-panel')).toBeVisible();
 
-  // Accept → the magic circle replaces it.
-  page.once('dialog', (dialog) => { prompted += 1; dialog.accept(); });
-  await press(page, '#btn-star-to-route');
-  await expect.poll(() => prompted).toBe(2);
-  await expect.poll(async () => (await events(page, 'star-route-applied')).length, { timeout: 20000 })
-    .toBeGreaterThan(0);
-  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(5);
+  // Export GPX does not clear existing waypoints
+  const exportBtn = page.locator('#btn-star-export-gpx');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    exportBtn.click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^MagicCircle_.*\.gpx$/);
+
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(2);
 });
 
 test('hostile OSM names are escaped, not executed', async ({ page }) => {
