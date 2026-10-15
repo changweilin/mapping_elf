@@ -723,6 +723,8 @@ export {
   evaluateShapeSimilarity,
   discreteFrechetDistance,
   averageTangentSimilarity,
+  computeGeoPathLength,
+  haversineDistanceM,
 } from './shapeRouteMatcher.js';
 
 export {

@@ -298,15 +298,23 @@ export class RoadNetworkGraph {
   static async fromOsm(centerLatLon, distM = 1500, mode = 'walk') {
     // Fast path for test hooks or offline environment
     if (typeof window !== 'undefined' && (window.__mappingElfTestHooks || navigator?.onLine === false)) {
-      return RoadNetworkGraph.buildSyntheticCityGraph(24, Math.max(60, distM / 10), centerLatLon);
+      const g = RoadNetworkGraph.buildSyntheticCityGraph(24, Math.max(60, distM / 10), centerLatLon);
+      g.isRealOsm = false;
+      return g;
     }
 
     const graph = new RoadNetworkGraph(centerLatLon);
     const [cLat, cLng] = centerLatLon;
 
-    const query = `[out:json][timeout:15];(way["highway"~"footway|path|pedestrian|living_street|residential|track|service|cycleway|steps|unclassified|tertiary"](around:${distM},${cLat},${cLng}););(._;>;);out skel;`;
+    const highwayFilter = mode === 'bike'
+      ? 'cycleway|path|pedestrian|living_street|residential|track|service|unclassified|tertiary|secondary|primary'
+      : 'footway|path|pedestrian|living_street|residential|track|service|cycleway|steps|unclassified|tertiary';
+
+    const query = `[out:json][timeout:15];(way["highway"~"${highwayFilter}"](around:${distM},${cLat},${cLng}););(._;>;);out skel;`;
     const endpoints = [
       'https://overpass-api.de/api/interpreter',
+      'https://overpass.kumi.systems/api/interpreter',
+      'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
       'https://overpass.private.coffee/api/interpreter',
     ];
 
@@ -314,7 +322,7 @@ export class RoadNetworkGraph {
     for (const ep of endpoints) {
       try {
         const res = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(6000),
         });
         if (res.ok) {
           data = await res.json();
@@ -352,12 +360,15 @@ export class RoadNetworkGraph {
 
       if (graph.nodes.size >= 10) {
         graph.buildIndex();
+        graph.isRealOsm = true;
         return graph;
       }
     }
 
-    // Fallback to high-resolution synthetic city graph centered at location
-    return RoadNetworkGraph.buildSyntheticCityGraph(24, Math.max(60, distM / 10), centerLatLon);
+    // Fallback to synthetic city graph centered at location for heuristic topology search
+    const fallback = RoadNetworkGraph.buildSyntheticCityGraph(24, Math.max(60, distM / 10), centerLatLon);
+    fallback.isRealOsm = false;
+    return fallback;
   }
 }
 
@@ -858,5 +869,41 @@ export class GPSArtOptimizer {
     }
     result.push(coordsGeo[coordsGeo.length - 1]);
     return result;
+  }
+
+  /**
+   * Routes key waypoints on real OpenStreetMap walkable roads via RouteEngine / OSRM.
+   */
+  static async routeWithOsmEngine(keyWaypoints, routeEngine, closedLoop = true) {
+    if (!Array.isArray(keyWaypoints) || keyWaypoints.length < 2 || !routeEngine) {
+      return null;
+    }
+    let snappedWps = keyWaypoints;
+    try {
+      const snaps = await routeEngine.snapToFootNetwork(keyWaypoints);
+      if (Array.isArray(snaps) && snaps.length >= 2) {
+        snappedWps = snaps.map((s, idx) => (s.snapped ? s.point : keyWaypoints[idx]));
+      }
+    } catch (_err) { }
+
+    const loop = [...snappedWps];
+    if (closedLoop && (loop[0][0] !== loop[loop.length - 1][0] || loop[0][1] !== loop[loop.length - 1][1])) {
+      loop.push([loop[0][0], loop[0][1]]);
+    }
+
+    try {
+      const realCoords = await routeEngine.getRoute(loop);
+      if (Array.isArray(realCoords) && realCoords.length >= 2) {
+        return {
+          routedCoords: realCoords,
+          snappedWaypoints: snappedWps,
+        };
+      }
+    } catch (_err) { }
+
+    return {
+      routedCoords: loop,
+      snappedWaypoints: snappedWps,
+    };
   }
 }

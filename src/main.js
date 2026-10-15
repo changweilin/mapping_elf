@@ -18,7 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
-import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
+import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, evaluateShapeSimilarity, computeGeoPathLength, countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
 import { getShapePresetPoints } from './modules/shapePresets.js';
 // 魔法陣 (star tool) — logic ported 1:1 from the mapping_star project.
 import { categoryById } from './modules/star/categories.js';
@@ -5601,9 +5601,7 @@ async function generateShapeRoute() {
     const graph = await RoadNetworkGraph.fromOsm(anchor, Math.max(1200, targetM / 2.0), 'walk');
     const optimizer = new GPSArtOptimizer(graph);
     const solution = optimizer.optimize(strokePts, constraints);
-    lastShapeOptimizationResult = solution;
-
-    const wps = solution.keyWaypoints && solution.keyWaypoints.length >= 3
+    let wps = solution.keyWaypoints && solution.keyWaypoints.length >= 3
       ? solution.keyWaypoints
       : (solution.routedGeometryGeo && solution.routedGeometryGeo.length >= 3 ? solution.routedGeometryGeo : null);
 
@@ -5611,6 +5609,54 @@ async function generateShapeRoute() {
       showNotification('無法辨識繪製的形狀，請重畫', 'warning');
       return;
     }
+
+    // Anchor vertex 0 to the chosen anchor
+    if (anchor && wps.length > 0) {
+      wps[0] = [anchor[0], anchor[1]];
+    }
+
+    // Snap turning waypoints to real walkable OSM network
+    showNotification('正在以 OSM 真實路網規劃軌跡...', 'info', 1500);
+    try {
+      const snaps = await routeEngine.snapToFootNetwork(wps);
+      if (Array.isArray(snaps) && snaps.length >= 3) {
+        wps = snaps.map((s, idx) => {
+          if (idx === 0 && anchor) return [anchor[0], anchor[1]];
+          return s.snapped ? s.point : wps[idx];
+        });
+      }
+    } catch (err) {
+      console.warn('OSM road snap warning:', err);
+    }
+    if (anchor && wps.length > 0) {
+      wps[0] = [anchor[0], anchor[1]];
+    }
+
+    // Route along REAL OpenStreetMap roads via routeEngine (OSRM / BRouter)
+    const loopWps = [...wps];
+    if (constraints.closedLoop && (loopWps[0][0] !== loopWps[loopWps.length - 1][0] || loopWps[0][1] !== loopWps[loopWps.length - 1][1])) {
+      loopWps.push([loopWps[0][0], loopWps[0][1]]);
+    }
+
+    let realOsmRoute = null;
+    try {
+      realOsmRoute = await routeEngine.getRoute(loopWps);
+    } catch (err) {
+      console.warn('Real OSM route calculation failed:', err);
+    }
+
+    if (Array.isArray(realOsmRoute) && realOsmRoute.length >= 2) {
+      solution.routedGeometryGeo = realOsmRoute;
+      const actualOsmDistM = computeGeoPathLength(realOsmRoute);
+      if (actualOsmDistM > 0) solution.actualLengthM = actualOsmDistM;
+
+      if (solution.targetGeometryGeo && solution.targetGeometryGeo.length >= 2) {
+        const sim = evaluateShapeSimilarity(solution.targetGeometryGeo, realOsmRoute);
+        solution.similarityPct = sim.score;
+      }
+    }
+    solution.keyWaypoints = wps;
+    lastShapeOptimizationResult = solution;
 
     drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
     const previewTrack = (solution.routedGeometryGeo && solution.routedGeometryGeo.length > 0)
@@ -6786,9 +6832,23 @@ async function exportStarRouteGpx() {
       isWaypoint: true,
       isReturn: false,
     }));
-    const routeCoords = points.map((poi) => [poi.lat, poi.lng]);
-    if (routeCoords.length > 0) {
-      routeCoords.push([routeCoords[0][0], routeCoords[0][1]]);
+    const loopPoints = points.map((poi) => [poi.lat, poi.lng]);
+    if (loopPoints.length > 0) {
+      loopPoints.push([loopPoints[0][0], loopPoints[0][1]]);
+    }
+
+    showNotification('正在以 OSM 真實路網規劃魔法陣軌跡...', 'info', 1500);
+    let routeCoords = null;
+    try {
+      const realRoute = await routeEngine.getRoute(loopPoints);
+      if (Array.isArray(realRoute) && realRoute.length >= 2) {
+        routeCoords = realRoute;
+      }
+    } catch (err) {
+      console.warn('Star real OSM route planning failed, falling back to star lines:', err);
+    }
+    if (!routeCoords || routeCoords.length < 2) {
+      routeCoords = loopPoints;
     }
     const shapeTitle = result.patternName || starModeLabel(result.mode) || 'MagicCircle';
     const cleanTitle = shapeTitle.replace(/[^\w\u4e00-\u9fa5]/g, '_');
