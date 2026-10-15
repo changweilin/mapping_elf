@@ -385,9 +385,11 @@ export class RouteConstraints {
     closedLoop = true,
     rotationBoundsDeg = [0.0, 360.0],
     scaleBoundsRatio = [0.6, 1.4],
-    weightShape = 1.0,
-    weightLength = 250.0,
-    weightOverlap = 300.0,
+    startFractionBounds = [0.0, 1.0],
+    weightShape = 3.5,
+    weightLength = 180.0,
+    weightOverlap = 240.0,
+    isRefinement = false,
   } = {}) {
     this.targetLengthM = targetLengthM;
     this.travelMode = travelMode;
@@ -397,9 +399,11 @@ export class RouteConstraints {
     this.closedLoop = closedLoop;
     this.rotationBoundsDeg = rotationBoundsDeg;
     this.scaleBoundsRatio = scaleBoundsRatio;
+    this.startFractionBounds = startFractionBounds;
     this.weightShape = weightShape;
     this.weightLength = weightLength;
     this.weightOverlap = weightOverlap;
+    this.isRefinement = isRefinement;
   }
 }
 
@@ -481,15 +485,107 @@ export class GPSArtOptimizer {
   }
 
   /**
-   * Transforms normalized pattern by scale, rotation angle (degrees), and translation.
-   * If anchorStartXY is specified, locks vertex 0 exactly to anchor location.
+   * Cyclically shifts closed polygon coordinates so that an arbitrary intermediate
+   * point at arc-length fraction t in [0, 1) becomes vertex 0.
+   * Enables anchoring at ANY corner or intermediate curve of the drawn shape to
+   * maximize street network alignment and topological similarity.
    */
-  transformPattern(normPattern, scaleM, angleDeg, tx = 0, ty = 0, anchorStartXY = null) {
+  static shiftPatternStart(normPattern, startFraction = 0, closedLoop = true) {
+    if (!Array.isArray(normPattern) || normPattern.length < 3) {
+      return normPattern ? normPattern.slice() : [];
+    }
+
+    const frac = ((startFraction % 1.0) + 1.0) % 1.0;
+    if (frac < 1e-4 || frac > 1.0 - 1e-4) {
+      return normPattern.slice();
+    }
+
+    const N = normPattern.length;
+    const isClosed = closedLoop || Math.hypot(
+      normPattern[0][0] - normPattern[N - 1][0],
+      normPattern[0][1] - normPattern[N - 1][1]
+    ) < 1e-4;
+
+    if (!isClosed) {
+      return normPattern.slice();
+    }
+
+    const cum = [0];
+    for (let i = 0; i < N - 1; i++) {
+      const d = Math.hypot(
+        normPattern[i + 1][0] - normPattern[i][0],
+        normPattern[i + 1][1] - normPattern[i][1]
+      );
+      cum.push(cum[cum.length - 1] + d);
+    }
+    const totalLen = cum[cum.length - 1];
+    if (!(totalLen > 1e-6)) return normPattern.slice();
+
+    const targetD = frac * totalLen;
+    let segIdx = 0;
+    while (segIdx < N - 2 && cum[segIdx + 1] < targetD) {
+      segIdx++;
+    }
+
+    const segSpan = cum[segIdx + 1] - cum[segIdx];
+    const alpha = segSpan > 1e-6 ? (targetD - cum[segIdx]) / segSpan : 0;
+
+    const pA = normPattern[segIdx];
+    const pB = normPattern[segIdx + 1];
+    const newStart = [
+      pA[0] + (pB[0] - pA[0]) * alpha,
+      pA[1] + (pB[1] - pA[1]) * alpha,
+    ];
+
+    if (alpha < 0.04) {
+      const shifted = [];
+      for (let k = segIdx; k < N - 1; k++) shifted.push(normPattern[k]);
+      for (let k = 0; k <= segIdx; k++) shifted.push(normPattern[k]);
+      return shifted;
+    }
+    if (alpha > 0.96) {
+      const nextIdx = (segIdx + 1) % (N - 1);
+      const shifted = [];
+      for (let k = nextIdx; k < N - 1; k++) shifted.push(normPattern[k]);
+      for (let k = 0; k <= nextIdx; k++) shifted.push(normPattern[k]);
+      return shifted;
+    }
+
+    const shifted = [newStart];
+    for (let k = segIdx + 1; k < N - 1; k++) {
+      shifted.push(normPattern[k]);
+    }
+    for (let k = 0; k <= segIdx; k++) {
+      shifted.push(normPattern[k]);
+    }
+    shifted.push([newStart[0], newStart[1]]);
+
+    return shifted;
+  }
+
+  /**
+   * Transforms normalized pattern by scale, rotation angle (degrees), translation, and start fraction.
+   * If anchorStartXY is specified, locks vertex 0 (selected start point) exactly to anchor location.
+   */
+  transformPattern(
+    normPattern,
+    scaleM,
+    angleDeg,
+    tx = 0,
+    ty = 0,
+    anchorStartXY = null,
+    startFraction = 0,
+    closedLoop = true
+  ) {
+    const pattern = startFraction > 0
+      ? GPSArtOptimizer.shiftPatternStart(normPattern, startFraction, closedLoop)
+      : normPattern;
+
     const rad = (angleDeg * Math.PI) / 180;
     const cosR = Math.cos(rad);
     const sinR = Math.sin(rad);
 
-    const scaledAndRotated = normPattern.map(([x, y]) => {
+    const scaledAndRotated = pattern.map(([x, y]) => {
       const sx = x * scaleM;
       const sy = y * scaleM;
       return [sx * cosR - sy * sinR, sx * sinR + sy * cosR];
@@ -640,42 +736,91 @@ export class GPSArtOptimizer {
     const marginX = (this.maxX - this.minX) * 0.15;
     const marginY = (this.maxY - this.minY) * 0.15;
 
-    // Parameter bounds: [scaleM, angleDeg, tx, ty]
-    const bounds = [
-      [sMin, sMax],
-      [rotMin, rotMax],
-      isAnchored ? [0, 1] : [this.minX + marginX, this.maxX - marginX],
-      isAnchored ? [0, 1] : [this.minY + marginY, this.maxY - marginY],
-    ];
+    // Parameter bounds:
+    // When anchored: [scaleM, angleDeg, startFraction]
+    // When floating: [scaleM, angleDeg, tx, ty, startFraction]
+    const bounds = isAnchored
+      ? [
+          [sMin, sMax],
+          [rotMin, rotMax],
+          constraints.startFractionBounds || [0.0, 1.0],
+        ]
+      : [
+          [sMin, sMax],
+          [rotMin, rotMax],
+          [this.minX + marginX, this.maxX - marginX],
+          [this.minY + marginY, this.maxY - marginY],
+          constraints.startFractionBounds || [0.0, 1.0],
+        ];
+
+    // Compute candidate start fractions from corners and midpoints for seeding
+    const cum = [0];
+    for (let i = 0; i < normPattern.length - 1; i++) {
+      cum.push(cum[cum.length - 1] + Math.hypot(
+        normPattern[i + 1][0] - normPattern[i][0],
+        normPattern[i + 1][1] - normPattern[i][1]
+      ));
+    }
+    const totalP = cum[cum.length - 1] || 1;
+    const candidateStarts = [];
+    for (let i = 0; i < normPattern.length - 1; i++) {
+      candidateStarts.push(cum[i] / totalP);
+      if (i < normPattern.length - 2) {
+        candidateStarts.push((cum[i] + cum[i + 1]) / (2 * totalP));
+      }
+    }
 
     const evaluateCost = (params) => {
-      const [scaleM, angleDeg, tx, ty] = params;
+      let scaleM, angleDeg, tx = 0, ty = 0, rawStartFrac = 0;
+      if (isAnchored) {
+        [scaleM, angleDeg, rawStartFrac] = params;
+      } else {
+        [scaleM, angleDeg, tx, ty, rawStartFrac] = params;
+      }
+      const startFraction = ((rawStartFrac % 1.0) + 1.0) % 1.0;
+
       const candidateGeom = this.transformPattern(
         normPattern,
         scaleM,
         angleDeg,
         tx,
         ty,
-        anchorXY
+        anchorXY,
+        startFraction,
+        constraints.closedLoop
       );
       const res = this.matchAndRoute(candidateGeom);
       if (!res || res.totalLengthM === 0) {
-        return { cost: 1e9, routed: null, candidate: candidateGeom };
+        return { cost: 1e9, routed: null, candidate: candidateGeom, shapeErr: 9999, similarityPct: 0 };
       }
 
       const shapeErr = GPSArtOptimizer.computeShapeSimilarityError(candidateGeom, res.routeCoordsXY);
       const lenErr = Math.abs(res.totalLengthM - constraints.targetLengthM) / constraints.targetLengthM;
+      const radiusM = constraints.targetLengthM / (2 * Math.PI);
+      const simPct = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-(shapeErr / Math.max(50, radiusM * 0.4))))));
+
+      // Similarity is top priority: heavily penalize lower similarity
+      const simPenalty = (100 - simPct) * 16.0;
       const totalCost =
+        simPenalty +
         constraints.weightShape * shapeErr +
         constraints.weightLength * lenErr +
         constraints.weightOverlap * res.overlapRatio;
 
-      return { cost: totalCost, routed: res, candidate: candidateGeom, shapeErr };
+      return {
+        cost: totalCost,
+        routed: res,
+        candidate: candidateGeom,
+        shapeErr,
+        similarityPct: simPct,
+        startFraction,
+      };
     };
 
     // Differential Evolution (DE/rand/1/bin)
-    const popSize = 15;
-    const maxIter = 22;
+    const isRefine = Boolean(constraints.isRefinement);
+    const popSize = isRefine ? 8 : Math.min(14, Math.max(10, candidateStarts.length));
+    const maxIter = isRefine ? 10 : 16;
     const F = 0.7;
     const CR = 0.8;
     const dim = bounds.length;
@@ -686,7 +831,7 @@ export class GPSArtOptimizer {
       return (seed - 1) / 2147483646;
     };
 
-    // Initialize population
+    // Initialize population seeded with candidate turning points
     const population = [];
     const costs = [];
     const evaluations = [];
@@ -696,6 +841,13 @@ export class GPSArtOptimizer {
       for (let d = 0; d < dim; d++) {
         ind.push(bounds[d][0] + rand() * (bounds[d][1] - bounds[d][0]));
       }
+      // Seed startFraction with distinct polygon vertices
+      if (candidateStarts.length > 0) {
+        const startIdx = isAnchored ? 2 : 4;
+        const baseFrac = candidateStarts[i % candidateStarts.length];
+        ind[startIdx] = Math.max(0, Math.min(0.9999, baseFrac + (rand() - 0.5) * 0.02));
+      }
+
       population.push(ind);
       const evalRes = evaluateCost(ind);
       costs.push(evalRes.cost);
@@ -753,7 +905,13 @@ export class GPSArtOptimizer {
     const actualLengthM = routedGeom ? routedGeom.totalLengthM : 0;
     const overlapRatio = routedGeom ? routedGeom.overlapRatio : 1.0;
     const radiusM = constraints.targetLengthM / (2 * Math.PI);
-    const similarityPct = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-((bestEval.shapeErr || 100) / Math.max(50, radiusM * 0.4))))));
+    const similarityPct = bestEval.similarityPct != null
+      ? bestEval.similarityPct
+      : Math.max(0, Math.min(100, Math.round(100 * Math.exp(-((bestEval.shapeErr || 100) / Math.max(50, radiusM * 0.4))))));
+
+    const optimalStartFraction = bestEval.startFraction != null
+      ? bestEval.startFraction
+      : (bestParams[isAnchored ? 2 : 4] || 0);
 
     // Select UI key waypoints
     const keyWaypoints = GPSArtOptimizer.selectKeyWaypoints(routedGeometryGeo, constraints.maxTurningPoints);
@@ -773,10 +931,55 @@ export class GPSArtOptimizer {
       overlapRatio,
       optimalScaleM: bestParams[0],
       optimalAngleDeg: bestParams[1],
+      optimalStartFraction,
       objectiveScore: bestEval.cost,
       similarityPct,
       keyWaypoints,
     };
+  }
+
+  /**
+   * Calibrates optimization constraints based on completed length, similarity, and optimal angle/start.
+   * Implements iterative convergence towards the optimal GPS Art route solution.
+   */
+  static calibrateConstraints(currentConstraints, actualLengthM, actualSimilarityPct, options = {}) {
+    const targetM = options.targetM || currentConstraints.targetLengthM;
+    let nextTargetM = currentConstraints.targetLengthM;
+
+    if (actualLengthM > 0 && targetM > 0) {
+      // Compensate for road network detour factor: scale target length proportionally
+      const ratio = targetM / actualLengthM;
+      const dampedRatio = 1.0 + (ratio - 1.0) * 0.85;
+      nextTargetM = Math.min(targetM * 2.2, Math.max(targetM * 0.45, currentConstraints.targetLengthM * dampedRatio));
+    }
+
+    // Narrow angle bounds around best angle if provided
+    let nextRotBounds = currentConstraints.rotationBoundsDeg;
+    if (options.bestAngleDeg != null && currentConstraints.rotationBoundsDeg[0] !== currentConstraints.rotationBoundsDeg[1]) {
+      const span = Math.abs(currentConstraints.rotationBoundsDeg[1] - currentConstraints.rotationBoundsDeg[0]);
+      if (span > 30) {
+        nextRotBounds = [
+          Math.max(currentConstraints.rotationBoundsDeg[0], options.bestAngleDeg - 25),
+          Math.min(currentConstraints.rotationBoundsDeg[1], options.bestAngleDeg + 25),
+        ];
+      }
+    }
+
+    return new RouteConstraints({
+      targetLengthM: nextTargetM,
+      travelMode: currentConstraints.travelMode,
+      maxTurningPoints: currentConstraints.maxTurningPoints,
+      startPointXY: currentConstraints.startPointXY,
+      startPointGeo: currentConstraints.startPointGeo,
+      closedLoop: currentConstraints.closedLoop,
+      rotationBoundsDeg: nextRotBounds,
+      scaleBoundsRatio: [0.85, 1.15],
+      startFractionBounds: currentConstraints.startFractionBounds,
+      weightShape: currentConstraints.weightShape,
+      weightLength: currentConstraints.weightLength * 1.2,
+      weightOverlap: currentConstraints.weightOverlap,
+      isRefinement: true,
+    });
   }
 
   // --- Utility functions ---

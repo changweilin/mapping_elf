@@ -5126,6 +5126,7 @@ const btnShapeRedo = document.getElementById('btn-shape-redo');
 const btnShapeModeToggle = document.getElementById('btn-shape-mode-toggle');
 const btnShapeGenerate = document.getElementById('btn-shape-generate');
 const btnShapeExportGpx = document.getElementById('btn-shape-export-gpx');
+const btnShapeIterate = document.getElementById('btn-shape-iterate');
 const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
 const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
 const LS_SHAPE_TRIM_KEY = 'mappingElf_shapeRouteTrimSpurs';
@@ -5147,6 +5148,7 @@ function resetShapeGenerateButton() {
   lastShapeOptimizationResult = null;
   btnShapeGenerate?.classList.remove('hidden');
   btnShapeExportGpx?.classList.add('hidden');
+  btnShapeIterate?.classList.add('hidden');
 }
 
 {
@@ -5584,7 +5586,7 @@ async function generateShapeRoute() {
     if (angleTol === 0) rotBounds = [0, 0];
     else if (angleTol < 360) rotBounds = [-angleTol, angleTol];
 
-    const constraints = new RouteConstraints({
+    let currentConstraints = new RouteConstraints({
       targetLengthM: targetM,
       travelMode: 'walk',
       maxTurningPoints: 15,
@@ -5592,70 +5594,144 @@ async function generateShapeRoute() {
       closedLoop: true,
       rotationBoundsDeg: rotBounds,
       scaleBoundsRatio: [0.6, 1.4],
-      weightShape: 1.0,
-      weightLength: 250.0,
-      weightOverlap: 300.0,
+      startFractionBounds: [0.0, 1.0],
+      weightShape: 3.5,
+      weightLength: 180.0,
+      weightOverlap: 240.0,
     });
 
-    showNotification('正在依路網拓撲最佳化幾何形狀...', 'info', 2000);
+    showNotification('正在依路網拓撲最佳化幾何形狀 (最高相似度優先)...', 'info', 2000);
     const graph = await RoadNetworkGraph.fromOsm(anchor, Math.max(1200, targetM / 2.0), 'walk');
     const optimizer = new GPSArtOptimizer(graph);
-    const solution = optimizer.optimize(strokePts, constraints);
-    let wps = solution.keyWaypoints && solution.keyWaypoints.length >= 3
-      ? solution.keyWaypoints
-      : (solution.routedGeometryGeo && solution.routedGeometryGeo.length >= 3 ? solution.routedGeometryGeo : null);
 
-    if (!wps || wps.length < 3) {
-      showNotification('無法辨識繪製的形狀，請重畫', 'warning');
-      return;
-    }
+    let bestSolution = null;
+    let bestWaypoints = null;
+    const MAX_ITERATIONS = 3;
 
-    // Anchor vertex 0 to the chosen anchor
-    if (anchor && wps.length > 0) {
-      wps[0] = [anchor[0], anchor[1]];
-    }
+    for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
+      if (iter > 1) {
+        showNotification(
+          `正在依實測長度校正並重新繪製 (第 ${iter}/${MAX_ITERATIONS} 次迭代，目前相似度 ${bestSolution ? bestSolution.similarityPct : 0}%)...`,
+          'info',
+          1800
+        );
+      }
 
-    // Snap turning waypoints to real walkable OSM network
-    showNotification('正在以 OSM 真實路網規劃軌跡...', 'info', 1500);
-    try {
-      const snaps = await routeEngine.snapToFootNetwork(wps);
-      if (Array.isArray(snaps) && snaps.length >= 3) {
-        wps = snaps.map((s, idx) => {
-          if (idx === 0 && anchor) return [anchor[0], anchor[1]];
-          return s.snapped ? s.point : wps[idx];
+      const solution = optimizer.optimize(strokePts, currentConstraints);
+      let wps = solution.keyWaypoints && solution.keyWaypoints.length >= 3
+        ? solution.keyWaypoints
+        : (solution.routedGeometryGeo && solution.routedGeometryGeo.length >= 3 ? solution.routedGeometryGeo : null);
+
+      if (!wps || wps.length < 3) {
+        if (iter === 1) {
+          showNotification('無法辨識繪製的形狀，請重畫', 'warning');
+          return;
+        }
+        break;
+      }
+
+      // Anchor vertex 0 to the chosen anchor
+      if (anchor && wps.length > 0) {
+        wps[0] = [anchor[0], anchor[1]];
+      }
+
+      // Snap turning waypoints to real walkable OSM network
+      try {
+        const snaps = await routeEngine.snapToFootNetwork(wps);
+        if (Array.isArray(snaps) && snaps.length >= 3) {
+          wps = snaps.map((s, idx) => {
+            if (idx === 0 && anchor) return [anchor[0], anchor[1]];
+            return s.snapped ? s.point : wps[idx];
+          });
+        }
+      } catch (err) {
+        console.warn('OSM road snap warning:', err);
+      }
+      if (anchor && wps.length > 0) {
+        wps[0] = [anchor[0], anchor[1]];
+      }
+
+      // Route along REAL OpenStreetMap roads via routeEngine (OSRM / BRouter)
+      const loopWps = [...wps];
+      if (currentConstraints.closedLoop && (loopWps[0][0] !== loopWps[loopWps.length - 1][0] || loopWps[0][1] !== loopWps[loopWps.length - 1][1])) {
+        loopWps.push([loopWps[0][0], loopWps[0][1]]);
+      }
+
+      let realOsmRoute = null;
+      try {
+        realOsmRoute = await routeEngine.getRoute(loopWps);
+      } catch (err) {
+        console.warn('Real OSM route calculation failed:', err);
+      }
+
+      if (Array.isArray(realOsmRoute) && realOsmRoute.length >= 2) {
+        solution.routedGeometryGeo = realOsmRoute;
+        const actualOsmDistM = computeGeoPathLength(realOsmRoute);
+        if (actualOsmDistM > 0) solution.actualLengthM = actualOsmDistM;
+
+        if (solution.targetGeometryGeo && solution.targetGeometryGeo.length >= 2) {
+          const sim = evaluateShapeSimilarity(solution.targetGeometryGeo, realOsmRoute);
+          solution.similarityPct = sim.score;
+        }
+      }
+      solution.keyWaypoints = wps;
+      solution.iteration = iter;
+
+      if (iter === 1) {
+        emitTestEvent('shape-route-generated', {
+          waypointCount: wps.length,
+          targetM,
+          rotationDeg: solution.optimalAngleDeg,
+          anchor,
+          firstWaypoint: wps[0],
         });
       }
-    } catch (err) {
-      console.warn('OSM road snap warning:', err);
-    }
-    if (anchor && wps.length > 0) {
-      wps[0] = [anchor[0], anchor[1]];
-    }
 
-    // Route along REAL OpenStreetMap roads via routeEngine (OSRM / BRouter)
-    const loopWps = [...wps];
-    if (constraints.closedLoop && (loopWps[0][0] !== loopWps[loopWps.length - 1][0] || loopWps[0][1] !== loopWps[loopWps.length - 1][1])) {
-      loopWps.push([loopWps[0][0], loopWps[0][1]]);
-    }
+      // Update live preview during iterative progression
+      drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
 
-    let realOsmRoute = null;
-    try {
-      realOsmRoute = await routeEngine.getRoute(loopWps);
-    } catch (err) {
-      console.warn('Real OSM route calculation failed:', err);
-    }
+      // Prioritize highest similarity when selecting best solution
+      if (!bestSolution) {
+        bestSolution = solution;
+        bestWaypoints = wps;
+      } else {
+        const simGain = solution.similarityPct - bestSolution.similarityPct;
+        const currLenDiff = Math.abs(solution.actualLengthM - targetM);
+        const bestLenDiff = Math.abs(bestSolution.actualLengthM - targetM);
 
-    if (Array.isArray(realOsmRoute) && realOsmRoute.length >= 2) {
-      solution.routedGeometryGeo = realOsmRoute;
-      const actualOsmDistM = computeGeoPathLength(realOsmRoute);
-      if (actualOsmDistM > 0) solution.actualLengthM = actualOsmDistM;
+        if (simGain > 0 || (simGain === 0 && currLenDiff < bestLenDiff)) {
+          bestSolution = solution;
+          bestWaypoints = wps;
+        }
+      }
 
-      if (solution.targetGeometryGeo && solution.targetGeometryGeo.length >= 2) {
-        const sim = evaluateShapeSimilarity(solution.targetGeometryGeo, realOsmRoute);
-        solution.similarityPct = sim.score;
+      // Early convergence if within 3% distance error and >= 92% similarity
+      const lenDiffRatio = Math.abs(solution.actualLengthM - targetM) / targetM;
+      if (lenDiffRatio <= 0.03 && solution.similarityPct >= 92) {
+        break;
+      }
+
+      if (iter < MAX_ITERATIONS) {
+        currentConstraints = GPSArtOptimizer.calibrateConstraints(
+          currentConstraints,
+          solution.actualLengthM,
+          solution.similarityPct,
+          {
+            targetM,
+            bestAngleDeg: solution.optimalAngleDeg,
+            bestStartFraction: solution.optimalStartFraction,
+          }
+        );
       }
     }
-    solution.keyWaypoints = wps;
+
+    const solution = bestSolution;
+    const wps = bestWaypoints;
+    solution.graph = graph;
+    solution.targetM = targetM;
+    solution.anchor = anchor;
+    solution.strokePts = strokePts;
+    solution.constraints = currentConstraints;
     lastShapeOptimizationResult = solution;
 
     drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
@@ -5666,9 +5742,10 @@ async function generateShapeRoute() {
       mapManager.map.fitBounds(L.polyline(previewTrack).getBounds(), { padding: [40, 40] });
     }
 
-    // Swap generate button to export GPX button upon completion
+    // Swap generate button to export GPX and iterate buttons upon completion
     btnShapeGenerate?.classList.add('hidden');
     btnShapeExportGpx?.classList.remove('hidden');
+    btnShapeIterate?.classList.remove('hidden');
 
     if (shapeReadoutEl) {
       const rows = [
@@ -5680,13 +5757,19 @@ async function generateShapeRoute() {
       if (solution.optimalAngleDeg !== 0) {
         rows.push(['最佳方位', `${Math.round(solution.optimalAngleDeg)}°`]);
       }
+      if (solution.optimalStartFraction != null && solution.optimalStartFraction > 0) {
+        rows.push(['起點位置', `${Math.round(solution.optimalStartFraction * 100)}% 處`]);
+      }
+      if (solution.iteration != null) {
+        rows.push(['迭代次數', `第 ${solution.iteration} 次迭代最佳解`]);
+      }
       rows.push(['重複折返率', `${(solution.overlapRatio * 100).toFixed(1)}%`]);
       rows.push(['損失評分', `${solution.objectiveScore.toFixed(2)}`]);
       shapeReadoutEl.innerHTML = rows.map(([label, value]) =>
         `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
       ).join('');
     }
-    showNotification(`已依路網拓撲最佳化完成 (相似度 ${solution.similarityPct}%)`, 'success', 2500);
+    showNotification(`已依路網拓撲持續迭代完成最佳解 (相似度 ${solution.similarityPct}%)`, 'success', 2500);
     emitTestEvent('shape-route-generated', {
       waypointCount: wps.length,
       targetM,
@@ -5704,6 +5787,118 @@ async function generateShapeRoute() {
       maxDevM: 0,
       spurTrimmedM: 0,
     });
+  } finally {
+    shapeGenerating = false;
+  }
+}
+
+async function iterateShapeRoute() {
+  if (shapeGenerating) return;
+  if (!lastShapeOptimizationResult || !lastShapeOptimizationResult.strokePts) {
+    showNotification('請先在繪圖板產生路線', 'warning');
+    return;
+  }
+  shapeGenerating = true;
+  try {
+    const prev = lastShapeOptimizationResult;
+    const targetM = prev.targetM;
+    const anchor = prev.anchor;
+    const strokePts = prev.strokePts;
+    const graph = prev.graph || await RoadNetworkGraph.fromOsm(anchor, Math.max(1200, targetM / 2.0), 'walk');
+    const optimizer = new GPSArtOptimizer(graph);
+
+    showNotification('正在依實測長度與相似度持續迭代最佳解...', 'info', 1800);
+
+    const calibratedConstraints = GPSArtOptimizer.calibrateConstraints(
+      prev.constraints || new RouteConstraints({ targetLengthM: targetM, startPointGeo: anchor, closedLoop: true }),
+      prev.actualLengthM,
+      prev.similarityPct,
+      {
+        targetM,
+        bestAngleDeg: prev.optimalAngleDeg,
+        bestStartFraction: prev.optimalStartFraction,
+      }
+    );
+
+    const solution = optimizer.optimize(strokePts, calibratedConstraints);
+    let wps = solution.keyWaypoints && solution.keyWaypoints.length >= 3
+      ? solution.keyWaypoints
+      : (solution.routedGeometryGeo && solution.routedGeometryGeo.length >= 3 ? solution.routedGeometryGeo : null);
+
+    if (anchor && wps && wps.length > 0) {
+      wps[0] = [anchor[0], anchor[1]];
+    }
+
+    try {
+      const snaps = await routeEngine.snapToFootNetwork(wps);
+      if (Array.isArray(snaps) && snaps.length >= 3) {
+        wps = snaps.map((s, idx) => (idx === 0 && anchor ? [anchor[0], anchor[1]] : (s.snapped ? s.point : wps[idx])));
+      }
+    } catch (_err) { }
+
+    const loopWps = [...wps];
+    if (calibratedConstraints.closedLoop && (loopWps[0][0] !== loopWps[loopWps.length - 1][0] || loopWps[0][1] !== loopWps[loopWps.length - 1][1])) {
+      loopWps.push([loopWps[0][0], loopWps[0][1]]);
+    }
+
+    try {
+      const realRoute = await routeEngine.getRoute(loopWps);
+      if (Array.isArray(realRoute) && realRoute.length >= 2) {
+        solution.routedGeometryGeo = realRoute;
+        const actualDist = computeGeoPathLength(realRoute);
+        if (actualDist > 0) solution.actualLengthM = actualDist;
+        if (solution.targetGeometryGeo && solution.targetGeometryGeo.length >= 2) {
+          solution.similarityPct = evaluateShapeSimilarity(solution.targetGeometryGeo, realRoute).score;
+        }
+      }
+    } catch (_err) { }
+
+    solution.keyWaypoints = wps;
+    solution.iteration = (prev.iteration || 1) + 1;
+    solution.graph = graph;
+    solution.targetM = targetM;
+    solution.anchor = anchor;
+    solution.strokePts = strokePts;
+    solution.constraints = calibratedConstraints;
+
+    const simGain = solution.similarityPct - prev.similarityPct;
+    const newLenDiff = Math.abs(solution.actualLengthM - targetM);
+    const prevLenDiff = Math.abs(prev.actualLengthM - targetM);
+
+    if (simGain > 0 || (simGain === 0 && newLenDiff < prevLenDiff)) {
+      lastShapeOptimizationResult = solution;
+      drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
+      if (solution.routedGeometryGeo && solution.routedGeometryGeo.length > 0) {
+        mapManager.map.fitBounds(L.polyline(solution.routedGeometryGeo).getBounds(), { padding: [40, 40] });
+      }
+      showNotification(`已持續迭代更新最佳解 (相似度 ${solution.similarityPct}%)`, 'success', 2500);
+    } else {
+      showNotification(`迭代完成，目前已為最高相似度最佳解 (${prev.similarityPct}%)`, 'info', 2500);
+    }
+
+    if (shapeReadoutEl) {
+      const active = lastShapeOptimizationResult;
+      const rows = [
+        ['航點', String(active.keyWaypoints.length)],
+        ['目標距離', formatDistance(targetM)],
+        ['實際距離', formatDistance(active.actualLengthM)],
+        ['形狀相似度', `${active.similarityPct}%`],
+      ];
+      if (active.optimalAngleDeg !== 0) {
+        rows.push(['最佳方位', `${Math.round(active.optimalAngleDeg)}°`]);
+      }
+      if (active.optimalStartFraction != null && active.optimalStartFraction > 0) {
+        rows.push(['起點位置', `${Math.round(active.optimalStartFraction * 100)}% 處`]);
+      }
+      if (active.iteration != null) {
+        rows.push(['迭代次數', `第 ${active.iteration} 次迭代最佳解`]);
+      }
+      rows.push(['重複折返率', `${(active.overlapRatio * 100).toFixed(1)}%`]);
+      rows.push(['損失評分', `${active.objectiveScore.toFixed(2)}`]);
+      shapeReadoutEl.innerHTML = rows.map(([label, value]) =>
+        `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
+      ).join('');
+    }
   } finally {
     shapeGenerating = false;
   }
@@ -6084,6 +6279,7 @@ document.getElementById('btn-shape-close')?.addEventListener('click', () => setS
 document.getElementById('btn-shape-clear')?.addEventListener('click', clearShapeBoard);
 document.getElementById('btn-shape-generate')?.addEventListener('click', generateShapeRoute);
 document.getElementById('btn-shape-export-gpx')?.addEventListener('click', exportShapeRouteGpx);
+btnShapeIterate?.addEventListener('click', iterateShapeRoute);
 btnShapeUndo?.addEventListener('click', shapeUndo);
 btnShapeRedo?.addEventListener('click', shapeRedo);
 btnShapeModeToggle?.addEventListener('click', () => {

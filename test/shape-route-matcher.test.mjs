@@ -218,5 +218,46 @@ console.log('Testing shapeRouteMatcher.js...');
   assert.ok(solution.similarityPct >= 50, `Expected reasonable shape similarity percentage, got ${solution.similarityPct}`);
 }
 
+// 9. Pattern Intermediate Start Point Shifting (shiftPatternStart)
+{
+  const square = [
+    [0, 0],
+    [10, 0],
+    [10, 10],
+    [0, 10],
+    [0, 0],
+  ];
+  // Shift by 25% (vertex [10, 0])
+  const shifted25 = GPSArtOptimizer.shiftPatternStart(square, 0.25, true);
+  assert.equal(shifted25.length, square.length, 'Shifted polygon vertex count should match');
+  assert.ok(Math.hypot(shifted25[0][0] - 10, shifted25[0][1] - 0) < 0.5, 'Vertex 0 should shift to intermediate corner');
+  assert.ok(Math.hypot(shifted25[shifted25.length - 1][0] - shifted25[0][0], shifted25[shifted25.length - 1][1] - shifted25[0][1]) < 1e-4, 'Loop should close at new start');
+
+  // Shift by intermediate mid-segment fraction 0.125 ([5, 0])
+  const shifted125 = GPSArtOptimizer.shiftPatternStart(square, 0.125, true);
+  assert.ok(Math.hypot(shifted125[0][0] - 5, shifted125[0][1] - 0) < 0.5, 'Vertex 0 should shift to mid-segment');
+  assert.ok(Math.hypot(shifted125[shifted125.length - 1][0] - shifted125[0][0], shifted125[shifted125.length - 1][1] - shifted125[0][1]) < 1e-4, 'Loop should close at new start');
+}
+
+// 10. Iterative Calibration Constraints (calibrateConstraints)
+{
+  const baseConstraints = new RouteConstraints({
+    targetLengthM: 5000.0,
+    travelMode: 'walk',
+    rotationBoundsDeg: [0, 360],
+  });
+
+  // If actual mileage was 4000m (under by 20%), calibrated target should scale up
+  const calibrated = GPSArtOptimizer.calibrateConstraints(baseConstraints, 4000.0, 75, {
+    targetM: 5000.0,
+    bestAngleDeg: 45.0,
+  });
+
+  assert.ok(calibrated.targetLengthM > 5000.0, `Expected calibrated target > 5000m, got ${calibrated.targetLengthM}`);
+  assert.ok(calibrated.rotationBoundsDeg[0] >= 20 && calibrated.rotationBoundsDeg[1] <= 70, 'Angle bounds should narrow around best angle');
+  assert.equal(calibrated.startFractionBounds[0], 0.0);
+  assert.equal(calibrated.startFractionBounds[1], 1.0);
+}
+
 console.log('shapeRouteMatcher.js test passed successfully!');
 

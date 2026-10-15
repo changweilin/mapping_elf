@@ -301,9 +301,11 @@ test('shape generation completes with "匯出 GPX" button replacing generate but
     (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
   )).toBeGreaterThanOrEqual(3);
 
-  // After completion: generate button is hidden, export GPX button is visible
+  const iterateBtn = page.locator('#btn-shape-iterate');
+  // After completion: generate button is hidden, export GPX and iterate buttons are visible
   await expect(generateBtn).toHaveClass(/hidden/);
   await expect(exportGpxBtn).toBeVisible();
+  await expect(iterateBtn).toBeVisible();
 
   // Clicking export GPX downloads the gpx file
   const [download] = await Promise.all([
@@ -314,8 +316,38 @@ test('shape generation completes with "匯出 GPX" button replacing generate but
   const filename = download.suggestedFilename();
   expect(filename).toMatch(/^GPS_Art_star_\d+m\.gpx$/);
 
-  // Clearing resets export GPX button back to hidden, restoring generate button
+  // Clearing resets export GPX and iterate buttons back to hidden, restoring generate button
   await page.locator('#btn-shape-clear').click();
   await expect(exportGpxBtn).toHaveClass(/hidden/);
+  await expect(iterateBtn).toHaveClass(/hidden/);
   await expect(generateBtn).toBeVisible();
+});
+
+test('clicking iterate button performs additional calibration pass and updates readout metrics', async ({ page }) => {
+  await openApp(page);
+
+  const toolBtn = page.locator('#btn-shape-tool');
+  await toolBtn.click();
+
+  const presetSelect = page.locator('#shape-preset-select');
+  await presetSelect.selectOption('heart');
+  await page.locator('#shape-distance-input').fill('3');
+  await page.locator('#btn-shape-generate').click();
+
+  await expect.poll(async () => page.evaluate(() =>
+    (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
+  )).toBeGreaterThanOrEqual(3);
+
+  const iterateBtn = page.locator('#btn-shape-iterate');
+  await expect(iterateBtn).toBeVisible();
+
+  // Check readout contains iterations row (localized)
+  await expect(page.locator('#shape-readout')).toContainText(/Iterations|迭代次數/);
+
+  // Trigger continuous iteration
+  await iterateBtn.click();
+
+  // Readout remains populated and updated
+  await expect(page.locator('#shape-readout .mr-row').first()).toBeVisible();
+  await expect(page.locator('#shape-readout')).toContainText(/Iterations|迭代次數/);
 });
