@@ -644,6 +644,7 @@ const PHRASES = {
   '五芒星': { en: 'Pentagram', ja: '五芒星', ko: '오각별', fr: 'Pentagramme', de: 'Pentagramm', es: 'Pentagrama', it: 'Pentagramma' },
   '六芒星': { en: 'Hexagram', ja: '六芒星', ko: '육각별', fr: 'Hexagramme', de: 'Hexagramm', es: 'Hexagrama', it: 'Esagramma' },
   '七芒星': { en: 'Heptagram', ja: '七芒星', ko: '칠각별', fr: 'Heptagramme', de: 'Heptagramm', es: 'Heptagrama', it: 'Ettagramma' },
+  '八芒星': { en: 'Octagram', ja: '八芒星', ko: '팔각별', fr: 'Octagramme', de: 'Oktagramm', es: 'Octagrama', it: 'Ottagramma' },
   '十字星': { en: 'Cross star', ja: '十字星', ko: '십자별', fr: 'Étoile en croix', de: 'Kreuzstern', es: 'Estrella en cruz', it: 'Stella a croce' },
   '八卦圖': { en: 'Bagua', ja: '八卦図', ko: '팔괘도', fr: 'Bagua', de: 'Bagua', es: 'Bagua', it: 'Bagua' },
   '星芒': { en: 'Star rays', ja: '星芒', ko: '별빛', fr: 'Rayons d’étoile', de: 'Sternstrahlen', es: 'Rayos de estrella', it: 'Raggi di stella' },

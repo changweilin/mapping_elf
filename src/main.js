@@ -25,7 +25,7 @@ import { categoryById } from './modules/star/categories.js';
 import { fetchPoisDetailed } from './modules/star/overpass.js';
 import { searchPlaces } from './modules/star/placeSearch.js';
 import { solveStarFromPoisSteps } from './modules/star/solver.js';
-import { STAR_PATTERN_OPTIONS, maxAngleToleranceForMode, starLineSequencesForMode, starModeLabel } from './modules/star/starPatterns.js';
+import { maxAngleToleranceForMode, starLineSequencesForMode, starModeLabel } from './modules/star/starPatterns.js';
 import { MAGIC_DRAW_SHAPE_OPTIONS, getMagicDrawVariantOption, MAGIC_DRAW_VARIANT_OPTIONS } from './modules/star/magicDraw.js';
 import { MAGIC_SPEED_OPTIONS, ZODIAC_CONSTELLATIONS, getMagicAnimationOptions } from './modules/star/magicCircle.js';
 import { getCategoryGroups, loadStarSettings, loadStarToolState, normalizeStarSettings, saveStarSettings, saveStarToolState } from './modules/star/starSettings.js';
@@ -6038,7 +6038,6 @@ const starPlaceList = document.getElementById('star-place-list');
 const starCenterReadout = document.getElementById('star-center-readout');
 const starInnerInput = document.getElementById('star-inner-input');
 const starOuterInput = document.getElementById('star-outer-input');
-const starModeSelect = document.getElementById('star-mode-select');
 const starShapeSelect = document.getElementById('star-shape-select');
 const starVariantSelect = document.getElementById('star-variant-select');
 const starElementSelect = document.getElementById('star-element-select');
@@ -6103,11 +6102,6 @@ function starGeometry() {
 
 // --- Panel population -------------------------------------------------------
 function populateStarSelects() {
-  if (starModeSelect && !starModeSelect.options.length) {
-    STAR_PATTERN_OPTIONS.forEach(({ mode, label }) => {
-      starModeSelect.add(new Option(translatePhrase(label), String(mode)));
-    });
-  }
   if (starShapeSelect && !starShapeSelect.options.length) {
     MAGIC_DRAW_SHAPE_OPTIONS.forEach(({ id, label }) => {
       starShapeSelect.add(new Option(translatePhrase(label), id));
@@ -6163,6 +6157,17 @@ function starVariantLabel(shape, option) {
     const k = opts.rosePetalFactor;
     return k % 2 === 0 ? `k=${k} (${k * 2}${translatePhrase('瓣')})` : `k=${k}`;
   }
+  if (shape === 'star') {
+    const names = { '5': '五芒星', '6': '六芒星', '7': '七芒星', '8': '八芒星' };
+    const name = names[option.id];
+    return name ? `${option.id} (${translatePhrase(name)})` : translatePhrase(option.label);
+  }
+  if (shape === 'cross') {
+    return `${option.label} (${translatePhrase('十字星')})`;
+  }
+  if (shape === 'bagua') {
+    return `${option.label} (${translatePhrase('八卦圖')})`;
+  }
   return translatePhrase(option.label);
 }
 
@@ -6181,7 +6186,6 @@ function syncStarVariantSelect() {
 
 function syncStarControls() {
   populateStarSelects();
-  if (starModeSelect) starModeSelect.value = String(starSettings.mode);
   if (starInnerInput) starInnerInput.value = String(starSettings.innerRadiusKm);
   if (starOuterInput) starOuterInput.value = String(starSettings.outerRadiusKm);
   if (starShapeSelect) starShapeSelect.value = starSettings.magicShape;
@@ -6248,9 +6252,11 @@ function readStarSettingsFromControls() {
   if (starVariantSelect && starVariantSelect.dataset.shape === shape) {
     variants[shape] = starVariantSelect.value;
   }
+  const option = getMagicDrawVariantOption(shape, variants[shape]);
+  const mode = Number(option?.mode) || (shape === 'cross' ? 4 : shape === 'bagua' ? 8 : starSettings.mode || 5);
   starSettings = normalizeStarSettings({
     ...starSettings,
-    mode: Number(starModeSelect?.value),
+    mode,
     innerRadiusKm: Number(starInnerInput?.value),
     outerRadiusKm: Number(starOuterInput?.value),
     angleToleranceDeg: Number(starToleranceInput?.value),
@@ -6621,7 +6627,6 @@ function refreshStarToolLanguage() {
   // Nothing to re-translate until the panel has been opened once — the controls
   // do not exist yet, and building them here would undo that saving.
   if (!starPanel || starPanel.classList.contains('hidden')) return;
-  starModeSelect?.replaceChildren();
   starShapeSelect?.replaceChildren();
   starElementSelect?.replaceChildren();
   starCategoryList?.replaceChildren();
@@ -6666,7 +6671,7 @@ starCenterInput?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); void runStarPlaceSearch(); }
 });
 
-[starModeSelect, starShapeSelect, starVariantSelect, starElementSelect, starStrategySelect,
+[starShapeSelect, starVariantSelect, starElementSelect, starStrategySelect,
   starInnerInput, starOuterInput, starToleranceInput, starRotationInput, starCandidatesInput, starHexCellInput]
   .forEach((el) => el?.addEventListener('change', () => {
     readStarSettingsFromControls();

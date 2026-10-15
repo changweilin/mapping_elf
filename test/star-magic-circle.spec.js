@@ -325,8 +325,9 @@ test('changing the element or geometry restyles the same star; mode change prese
     { timeout: 30_000, intervals: [100, 250, 500] }).not.toContain('rose=0');
   await expect(page.locator('#star-result')).toBeVisible();
 
-  // Mode switch does NOT drop the drawn star; only clear or solving a new star does.
-  await setControl(page, '#star-mode-select', '6');
+  // Variant switch does NOT drop the drawn star; only clear or solving a new star does.
+  await setControl(page, '#star-shape-select', 'star');
+  await setControl(page, '#star-variant-select', '6');
   await expect(page.locator('#star-result')).toBeVisible();
   await expectCount(page, '.star-point', 5);
 
@@ -502,7 +503,8 @@ test('centre, settings and panel state survive a reload', async ({ page }) => {
   await page.locator('#btn-star-search-place').click();
   await expect(page.locator('#star-center-readout')).toContainText('測試中心');
 
-  await setControl(page, '#star-mode-select', '7');
+  await setControl(page, '#star-shape-select', 'star');
+  await setControl(page, '#star-variant-select', '7');
   await setControl(page, '#star-outer-input', '9');
   await setControl(page, '#star-element-select', '3');
 
@@ -512,7 +514,7 @@ test('centre, settings and panel state survive a reload', async ({ page }) => {
 
   // Panel reopens on the settings and centre the user left behind.
   await expect(page.locator('#star-panel')).toBeVisible();
-  await expect(page.locator('#star-mode-select')).toHaveValue('7');
+  await expect(page.locator('#star-variant-select')).toHaveValue('7');
   await expect(page.locator('#star-outer-input')).toHaveValue('9');
   await expect(page.locator('#star-element-select')).toHaveValue('3');
   await expect(page.locator('#star-center-readout')).toContainText('測試中心');

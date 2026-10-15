@@ -65,18 +65,6 @@ export function normalizeStarSettings(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const merged = { ...DEFAULT_STAR_SETTINGS, ...source };
 
-  const mode = isStarMode(merged.mode) ? merged.mode : DEFAULT_STAR_SETTINGS.mode;
-
-  // Radii: outer must stay strictly above inner, else the ring is empty and the
-  // Overpass difference query returns nothing at all.
-  let innerRadiusKm = clamp(merged.innerRadiusKm, 0, 49.5, DEFAULT_STAR_SETTINGS.innerRadiusKm);
-  let outerRadiusKm = clamp(merged.outerRadiusKm, 0.5, 50, DEFAULT_STAR_SETTINGS.outerRadiusKm);
-  if (outerRadiusKm <= innerRadiusKm) outerRadiusKm = Math.min(50, innerRadiusKm + 0.5);
-  if (innerRadiusKm >= outerRadiusKm) innerRadiusKm = Math.max(0, outerRadiusKm - 0.5);
-
-  const categoryIds = (Array.isArray(merged.categoryIds) ? merged.categoryIds : [])
-    .filter((id) => CATEGORY_IDS.has(id));
-
   const magicShape = isMagicDrawShape(merged.magicShape)
     ? merged.magicShape
     : DEFAULT_STAR_SETTINGS.magicShape;
@@ -87,6 +75,20 @@ export function normalizeStarSettings(raw) {
   Object.keys(DEFAULT_MAGIC_DRAW_VARIANTS).forEach((shape) => {
     magicVariants[shape] = getMagicDrawVariantOption(shape, rawVariants[shape]).id;
   });
+
+  const activeOption = getMagicDrawVariantOption(magicShape, magicVariants[magicShape]);
+  const derivedMode = Number(activeOption?.mode) || (magicShape === 'cross' ? 4 : magicShape === 'bagua' ? 8 : (isStarMode(merged.mode) ? merged.mode : DEFAULT_STAR_SETTINGS.mode));
+  const mode = isStarMode(derivedMode) ? derivedMode : DEFAULT_STAR_SETTINGS.mode;
+
+  // Radii: outer must stay strictly above inner, else the ring is empty and the
+  // Overpass difference query returns nothing at all.
+  let innerRadiusKm = clamp(merged.innerRadiusKm, 0, 49.5, DEFAULT_STAR_SETTINGS.innerRadiusKm);
+  let outerRadiusKm = clamp(merged.outerRadiusKm, 0.5, 50, DEFAULT_STAR_SETTINGS.outerRadiusKm);
+  if (outerRadiusKm <= innerRadiusKm) outerRadiusKm = Math.min(50, innerRadiusKm + 0.5);
+  if (innerRadiusKm >= outerRadiusKm) innerRadiusKm = Math.max(0, outerRadiusKm - 0.5);
+
+  const categoryIds = (Array.isArray(merged.categoryIds) ? merged.categoryIds : [])
+    .filter((id) => CATEGORY_IDS.has(id));
 
   return {
     mode,
