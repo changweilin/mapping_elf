@@ -242,24 +242,6 @@
       </button>
     </div>
     <p class="measure-hint">在下方畫出想跑的形狀，將在當前位置附近規劃最接近該形狀的 O繞跑步路線</p>
-    <div class="shape-distance-row">
-      <label class="mr-label" for="shape-preset-select" data-i18n="預設形狀">預設形狀</label>
-      <select id="shape-preset-select" class="shape-distance-input">
-        <option value="" data-i18n="自訂手繪">自訂手繪</option>
-        <option value="heart" data-i18n="愛心">愛心</option>
-        <option value="star" data-i18n="星星">星星</option>
-        <option value="moon" data-i18n="月亮">月亮</option>
-        <option value="sun" data-i18n="太陽">太陽</option>
-        <option value="diamond" data-i18n="鑽石">鑽石</option>
-        <option value="club" data-i18n="梅花">梅花</option>
-        <option value="cat" data-i18n="貓">貓</option>
-        <option value="dog" data-i18n="狗">狗</option>
-        <option value="bird" data-i18n="鳥">鳥</option>
-        <option value="fish" data-i18n="魚">魚</option>
-        <option value="horse" data-i18n="馬">馬</option>
-        <option value="butterfly" data-i18n="蝴蝶">蝴蝶</option>
-      </select>
-    </div>
     <div class="shape-preset-chips" id="shape-preset-chips" role="group" aria-label="預設形狀選項">
       <button type="button" class="shape-preset-chip" data-preset="heart" data-i18n-title="愛心" data-i18n-aria-label="愛心" title="愛心" aria-label="愛心">❤️ <span data-i18n="愛心">愛心</span></button>
       <button type="button" class="shape-preset-chip" data-preset="star" data-i18n-title="星星" data-i18n-aria-label="星星" title="星星" aria-label="星星">⭐ <span data-i18n="星星">星星</span></button>
@@ -275,6 +257,15 @@
       <button type="button" class="shape-preset-chip" data-preset="butterfly" data-i18n-title="蝴蝶" data-i18n-aria-label="蝴蝶" title="蝴蝶" aria-label="蝴蝶">🦋 <span data-i18n="蝴蝶">蝴蝶</span></button>
     </div>
     <canvas id="shape-canvas" class="shape-canvas" width="216" height="216"></canvas>
+    <div class="shape-distance-row">
+      <label class="mr-label" for="shape-mode-select" data-i18n="移動方式">移動方式</label>
+      <select id="shape-mode-select" class="shape-distance-input">
+        <option value="foot" selected data-i18n="跑步">跑步</option>
+        <option value="bike" data-i18n="單車">單車</option>
+        <option value="motorcycle" data-i18n="機車">機車</option>
+        <option value="car" data-i18n="汽車">汽車</option>
+      </select>
+    </div>
     <div class="shape-distance-row">
       <label class="mr-label" for="shape-distance-input">目標距離</label>
       <input type="number" id="shape-distance-input" class="shape-distance-input" min="1" max="50" step="0.5" value="5">

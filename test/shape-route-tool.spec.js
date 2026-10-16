@@ -187,8 +187,16 @@ test('drawing board provides 12 preset shapes (愛心, 星星, 月亮, 太陽, �
   const panel = page.locator('#shape-panel');
   await expect(panel).toBeVisible();
 
-  const presetSelect = page.locator('#shape-preset-select');
-  await expect(presetSelect).toBeVisible();
+  // Verify redundant preset select is removed
+  await expect(page.locator('#shape-preset-select')).toHaveCount(0);
+
+  // Verify travel mode options exist
+  const modeSelect = page.locator('#shape-mode-select');
+  await expect(modeSelect).toBeVisible();
+  await expect(modeSelect.locator('option[value="foot"]')).toHaveText(/跑步|Running/);
+  await expect(modeSelect.locator('option[value="bike"]')).toHaveText(/單車|Cycling/);
+  await expect(modeSelect.locator('option[value="motorcycle"]')).toHaveText(/機車|Motorcycle/);
+  await expect(modeSelect.locator('option[value="car"]')).toHaveText(/汽車|Car/);
 
   const presetChips = page.locator('#shape-preset-chips .shape-preset-chip');
   await expect(presetChips).toHaveCount(12);
@@ -198,15 +206,14 @@ test('drawing board provides 12 preset shapes (愛心, 星星, 月亮, 太陽, �
     'cat', 'dog', 'bird', 'fish', 'horse', 'butterfly'
   ];
 
-  // Verify all 12 options exist in select
   for (const presetId of expectedPresets) {
-    await expect(presetSelect.locator(`option[value="${presetId}"]`)).toHaveCount(1);
+    await expect(page.locator(`#shape-preset-chips .shape-preset-chip[data-preset="${presetId}"]`)).toHaveCount(1);
   }
 
-  // Select 'heart' preset via select
-  await presetSelect.selectOption('heart');
-  await expect(presetSelect).toHaveValue('heart');
-  await expect(page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]')).toHaveClass(/active/);
+  // Select 'heart' preset via chip
+  const heartChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]');
+  await heartChip.click();
+  await expect(heartChip).toHaveClass(/active/);
 
   // Generate route directly from preset shape without manual drawing
   await page.locator('#shape-distance-input').fill('4');
@@ -219,12 +226,11 @@ test('drawing board provides 12 preset shapes (愛心, 星星, 月亮, 太陽, �
   // Select 'horse' preset via chip
   const horseChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="horse"]');
   await horseChip.click();
-  await expect(presetSelect).toHaveValue('horse');
+  await expect(heartChip).not.toHaveClass(/active/);
   await expect(horseChip).toHaveClass(/active/);
 
   // Clear resets preset UI
   await page.locator('#btn-shape-clear').click();
-  await expect(presetSelect).toHaveValue('');
   await expect(horseChip).not.toHaveClass(/active/);
 });
 
@@ -247,8 +253,8 @@ test('drawing board anchors at most recently set waypoint without clearing exist
   await page.locator('#btn-shape-tool').click();
   await expect(panel).toBeVisible();
 
-  const presetSelect = page.locator('#shape-preset-select');
-  await presetSelect.selectOption('heart');
+  const heartChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]');
+  await heartChip.click();
   await page.locator('#shape-distance-input').fill('2');
   await page.locator('#btn-shape-generate').click();
 
@@ -288,9 +294,9 @@ test('shape generation completes with "匯出 GPX" button replacing generate but
   await expect(generateBtn).toBeVisible();
   await expect(exportGpxBtn).toHaveClass(/hidden/);
 
-  // Select preset and distance
-  const presetSelect = page.locator('#shape-preset-select');
-  await presetSelect.selectOption('star');
+  // Select preset and distance via chip
+  const starChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="star"]');
+  await starChip.click();
   await page.locator('#shape-distance-input').fill('3');
 
   // Click generate
@@ -329,8 +335,8 @@ test('clicking iterate button performs additional calibration pass and updates r
   const toolBtn = page.locator('#btn-shape-tool');
   await toolBtn.click();
 
-  const presetSelect = page.locator('#shape-preset-select');
-  await presetSelect.selectOption('heart');
+  const heartChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]');
+  await heartChip.click();
   await page.locator('#shape-distance-input').fill('3');
   await page.locator('#btn-shape-generate').click();
 
@@ -351,3 +357,42 @@ test('clicking iterate button performs additional calibration pass and updates r
   await expect(page.locator('#shape-readout .mr-row').first()).toBeVisible();
   await expect(page.locator('#shape-readout')).toContainText(/Iterations|迭代次數/);
 });
+
+test('drawing board allows selecting travel modes (跑步/單車/機車/汽車) and generates route with selected mode', async ({ page }) => {
+  await openApp(page);
+
+  const toolBtn = page.locator('#btn-shape-tool');
+  await toolBtn.click();
+  const panel = page.locator('#shape-panel');
+  await expect(panel).toBeVisible();
+
+  const modeSelect = page.locator('#shape-mode-select');
+  await expect(modeSelect).toBeVisible();
+
+  // Test selecting motorcycle
+  await modeSelect.selectOption('motorcycle');
+  await expect(modeSelect).toHaveValue('motorcycle');
+
+  // Verify stored in localStorage
+  const storedMode = await page.evaluate(() => localStorage.getItem('mappingElf_shapeRouteMode'));
+  expect(storedMode).toBe('motorcycle');
+
+  // Pick a preset shape and generate
+  const heartChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]');
+  await heartChip.click();
+  await page.locator('#shape-distance-input').fill('5');
+  await page.locator('#btn-shape-generate').click();
+
+  // Route generated event should carry travelMode
+  await expect.poll(async () => page.evaluate(() => {
+    const ev = (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated');
+    return ev ? ev.detail?.travelMode : null;
+  })).toBe('motorcycle');
+
+  // Switch to bike and test persistence
+  await modeSelect.selectOption('bike');
+  await expect(modeSelect).toHaveValue('bike');
+  const storedModeBike = await page.evaluate(() => localStorage.getItem('mappingElf_shapeRouteMode'));
+  expect(storedModeBike).toBe('bike');
+});
+

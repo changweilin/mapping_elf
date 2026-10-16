@@ -713,8 +713,11 @@ export class RoadNetworkGraph {
       // Skip impassable / private roads
       if (tags.area === 'yes') continue;
       if (tags.access === 'private' || tags.access === 'no') continue;
-      if (mode === 'walk' && (tags.foot === 'no' || tags.foot === 'private')) continue;
+      if ((mode === 'walk' || mode === 'foot') && (tags.foot === 'no' || tags.foot === 'private')) continue;
       if (mode === 'bike' && (tags.bicycle === 'no' || tags.bicycle === 'private')) continue;
+      if ((mode === 'motorcycle' || mode === 'car' || mode === 'drive') && (tags.motor_vehicle === 'no' || tags.motor_vehicle === 'private')) continue;
+      if (mode === 'motorcycle' && (tags.motorcycle === 'no' || tags.motorcycle === 'private')) continue;
+      if ((mode === 'car' || mode === 'drive') && (tags.motorcar === 'no' || tags.motorcar === 'private')) continue;
 
       const hasGeom = Array.isArray(el.geometry) && el.geometry.length >= 2;
       const hasNodes = Array.isArray(el.nodes) && el.nodes.length >= 2;
@@ -732,10 +735,11 @@ export class RoadNetworkGraph {
           nodeIds.push(nid);
         }
 
+        const isMotorVehicle = mode === 'drive' || mode === 'car' || mode === 'motorcycle';
         const isOneway =
-          mode === 'drive' &&
+          (isMotorVehicle || mode === 'bike') &&
           (tags.oneway === 'yes' || tags.oneway === '1' || tags.oneway === 'true' || tags.junction === 'roundabout');
-        const isReverseOneway = mode === 'drive' && (tags.oneway === '-1' || tags.oneway === 'reverse');
+        const isReverseOneway = (isMotorVehicle || mode === 'bike') && (tags.oneway === '-1' || tags.oneway === 'reverse');
 
         for (let i = 0; i < nodeIds.length - 1; i++) {
           const u = nodeIds[i];
@@ -798,9 +802,11 @@ export class RoadNetworkGraph {
     const highwayFilter =
       mode === 'bike'
         ? 'cycleway|path|pedestrian|living_street|residential|unclassified|tertiary|secondary|primary|trunk|service|track|tertiary_link|secondary_link|primary_link|trunk_link|road'
-        : mode === 'drive'
-          ? 'residential|unclassified|tertiary|secondary|primary|trunk|service|living_street|tertiary_link|secondary_link|primary_link|trunk_link|road'
-          : 'footway|path|pedestrian|living_street|residential|unclassified|tertiary|secondary|primary|trunk|service|cycleway|track|steps|tertiary_link|secondary_link|primary_link|trunk_link|road|bridleway|corridor|crossing';
+        : (mode === 'drive' || mode === 'car')
+          ? 'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified|living_street|service|road'
+          : mode === 'motorcycle'
+            ? 'trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified|living_street|service|road'
+            : 'footway|path|pedestrian|living_street|residential|unclassified|tertiary|secondary|primary|trunk|service|cycleway|track|steps|tertiary_link|secondary_link|primary_link|trunk_link|road|bridleway|corridor|crossing';
 
     // Use bounding box query for fast Overpass R-tree spatial index lookup
     const cosLat = Math.max(0.01, Math.cos((cLat * Math.PI) / 180));

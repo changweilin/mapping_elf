@@ -5118,7 +5118,7 @@ const shapeReadoutEl = document.getElementById('shape-readout');
 const shapeDistanceInput = document.getElementById('shape-distance-input');
 const shapeAngleSelect = document.getElementById('shape-angle-select');
 const shapeTrimSpursInput = document.getElementById('shape-trim-spurs');
-const shapePresetSelect = document.getElementById('shape-preset-select');
+const shapeModeSelect = document.getElementById('shape-mode-select');
 const shapePresetChips = document.getElementById('shape-preset-chips');
 const btnShapeTool = document.getElementById('btn-shape-tool');
 const btnShapeUndo = document.getElementById('btn-shape-undo');
@@ -5130,8 +5130,11 @@ const btnShapeIterate = document.getElementById('btn-shape-iterate');
 const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
 const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
 const LS_SHAPE_TRIM_KEY = 'mappingElf_shapeRouteTrimSpurs';
+const LS_SHAPE_MODE_KEY = 'mappingElf_shapeRouteMode';
 const LS_SHAPE_BOARD_KEY = 'mappingElf_shapeBoard';
 const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
+const SHAPE_MODE_CHOICES = ['foot', 'bike', 'motorcycle', 'car'];
+let currentShapePreset = '';
 let shapeStrokes = [];            // drawn strokes (筆畫), each an array of [x, y] CSS px
 let shapeUndoStack = [];          // history snapshots for undo
 let shapeRedoStack = [];          // history snapshots for redo
@@ -5143,6 +5146,11 @@ let shapeRouteRun = null;         // pending run: ring/anchor/scale context for 
                                   // distance-calibration + similarity pass on completion
 let shapeGenerating = false;      // guards re-entry across the async generate flow
 let lastShapeOptimizationResult = null; // cached solution for GPX export
+
+function readShapeTravelMode() {
+  const val = shapeModeSelect ? shapeModeSelect.value : 'foot';
+  return SHAPE_MODE_CHOICES.includes(val) ? val : 'foot';
+}
 
 function resetShapeGenerateButton() {
   lastShapeOptimizationResult = null;
@@ -5163,9 +5171,13 @@ function resetShapeGenerateButton() {
   if (shapeTrimSpursInput && localStorage.getItem(LS_SHAPE_TRIM_KEY) === '0') {
     shapeTrimSpursInput.checked = false;
   }
+  const savedMode = localStorage.getItem(LS_SHAPE_MODE_KEY);
+  if (shapeModeSelect && SHAPE_MODE_CHOICES.includes(savedMode)) {
+    shapeModeSelect.value = savedMode;
+  }
 }
 
-// Persist the three planner settings as soon as they are changed, not only when
+// Persist the planner settings as soon as they are changed, not only when
 // 產生路線 is pressed — a tweak the user never generated with still survives.
 function saveShapeSettings() {
   try {
@@ -5173,10 +5185,14 @@ function saveShapeSettings() {
     if (km >= 1 && km <= 50) localStorage.setItem(LS_SHAPE_DISTANCE_KEY, String(km));
     localStorage.setItem(LS_SHAPE_ANGLE_KEY, String(readShapeAngleTolDeg()));
     localStorage.setItem(LS_SHAPE_TRIM_KEY, (shapeTrimSpursInput ? shapeTrimSpursInput.checked : true) ? '1' : '0');
+    localStorage.setItem(LS_SHAPE_MODE_KEY, readShapeTravelMode());
   } catch (_) { }
 }
-[shapeDistanceInput, shapeAngleSelect, shapeTrimSpursInput].forEach((el) =>
-  el?.addEventListener('change', saveShapeSettings));
+[shapeDistanceInput, shapeAngleSelect, shapeTrimSpursInput, shapeModeSelect].forEach((el) =>
+  el?.addEventListener('change', () => {
+    saveShapeSettings();
+    resetShapeGenerateButton();
+  }));
 
 function shapeAllPoints() {
   return shapeStrokes.flat();
@@ -5272,9 +5288,7 @@ function pushShapeHistory() {
 }
 
 function syncShapePresetUI(presetId) {
-  if (shapePresetSelect && shapePresetSelect.value !== (presetId || '')) {
-    shapePresetSelect.value = presetId || '';
-  }
+  currentShapePreset = presetId || '';
   if (shapePresetChips) {
     shapePresetChips.querySelectorAll('.shape-preset-chip').forEach((btn) => {
       const active = btn.dataset.preset === presetId;
@@ -5451,7 +5465,7 @@ function saveShapeBoardState() {
   try {
     const open = !!shapePanel && !shapePanel.classList.contains('hidden');
     const strokes = normalizedShapeStrokes();
-    const preset = shapePresetSelect?.value || '';
+    const preset = currentShapePreset || '';
     if (!open && !strokes.length) {
       localStorage.removeItem(LS_SHAPE_BOARD_KEY);
       return;
@@ -5541,12 +5555,19 @@ function readShapeAngleTolDeg() {
   return SHAPE_ANGLE_CHOICES.includes(deg) ? deg : 0;
 }
 
-// Helper: detects if OSRM foot routing should be used (e.g., when Overpass is unavailable and OSRM is active/mocked).
-async function checkOsrmFootActive(anchor, graph) {
+function osrmProfileForTravelMode(mode) {
+  if (mode === 'bike') return 'bike';
+  if (mode === 'motorcycle' || mode === 'car' || mode === 'drive') return 'driving';
+  return 'foot';
+}
+
+// Helper: detects if OSRM routing should be used (e.g., when Overpass is unavailable and OSRM is active/mocked).
+async function checkOsrmActive(anchor, graph, travelMode = 'foot') {
   if (graph && graph.isRealOsm) return false; // Complete real OSM graph already in memory!
   try {
+    const profile = osrmProfileForTravelMode(travelMode);
     const resp = await fetch(
-      `https://router.project-osrm.org/nearest/v1/foot/${anchor[1]},${anchor[0]}?number=1`,
+      `https://router.project-osrm.org/nearest/v1/${profile}/${anchor[1]},${anchor[0]}?number=1`,
       { signal: AbortSignal.timeout(1200) }
     );
     if (!resp.ok) return false;
@@ -5563,19 +5584,20 @@ async function checkOsrmFootActive(anchor, graph) {
   }
 }
 
-// Helper: routes a closed waypoint loop on the local OSM graph (or OSRM foot network).
-async function routeFootLoopCoords(wps, graph = null, optimizer = null, useOsrmFoot = false, trimSpurs = true) {
+// Helper: routes a closed waypoint loop on the local OSM graph (or OSRM network).
+async function routeShapeLoopCoords(wps, graph = null, optimizer = null, useOsrm = false, trimSpurs = true, travelMode = 'foot') {
   if (!Array.isArray(wps) || wps.length < 2) return null;
   const loop = [...wps];
   if (loop[0][0] !== loop[loop.length - 1][0] || loop[0][1] !== loop[loop.length - 1][1]) {
     loop.push([loop[0][0], loop[0][1]]);
   }
 
-  if (useOsrmFoot) {
+  if (useOsrm) {
     try {
+      const profile = osrmProfileForTravelMode(travelMode);
       const coordStr = loop.map((w) => `${w[1]},${w[0]}`).join(';');
       const resp = await fetch(
-        `https://router.project-osrm.org/route/v1/foot/${coordStr}?overview=full&geometries=geojson&steps=false`
+        `https://router.project-osrm.org/route/v1/${profile}/${coordStr}?overview=full&geometries=geojson&steps=false`
       );
       if (resp.ok) {
         const data = await resp.json();
@@ -5600,16 +5622,17 @@ async function routeFootLoopCoords(wps, graph = null, optimizer = null, useOsrmF
   return loop;
 }
 
-// Helper: snaps arc-fraction waypoints onto the walkable road network and deduplicates within 30m.
-async function snapRingWaypoints(ring, ts, graph = null, optimizer = null, useOsrmFoot = false) {
+// Helper: snaps arc-fraction waypoints onto the road network and deduplicates within 30m.
+async function snapRingWaypoints(ring, ts, graph = null, optimizer = null, useOsrm = false, travelMode = 'foot') {
   const raw = waypointsFromTs(ring, ts);
   if (raw.length === 0) return { ts: [], wps: [] };
 
   let snappedPts = null;
 
-  if (useOsrmFoot) {
+  if (useOsrm) {
     try {
-      const snaps = await routeEngine.snapToFootNetwork(raw);
+      const profile = osrmProfileForTravelMode(travelMode);
+      const snaps = await routeEngine.snapToFootNetwork(raw, profile);
       if (Array.isArray(snaps) && snaps.length === raw.length && snaps.some((s) => s.snapped)) {
         snappedPts = snaps.map((s, i) => (s.snapped ? s.point : raw[i]));
       }
@@ -5656,8 +5679,9 @@ async function runHighFidelityShapePipeline({
   graph = null,
   optimizer = null,
   initialScaleM = null,
+  travelMode = 'foot',
 }) {
-  const useOsrmFoot = await checkOsrmFootActive(anchor, graph);
+  const useOsrm = await checkOsrmActive(anchor, graph, travelMode);
   const wpCount = suggestWaypointCount(targetM, {
     strokeCount: Math.max(1, shapeStrokes.length),
     corners: countShapeCorners(strokePts),
@@ -5675,10 +5699,10 @@ async function runHighFidelityShapePipeline({
     ring = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg });
     if (!ring) return false;
     const sel = selectWaypointTs(ring, wpCount);
-    const snapped = await snapRingWaypoints(ring, sel, graph, optimizer, useOsrmFoot);
+    const snapped = await snapRingWaypoints(ring, sel, graph, optimizer, useOsrm, travelMode);
     ts = snapped.ts;
     wps = snapped.wps;
-    coords = (await routeFootLoopCoords(wps, graph, optimizer, useOsrmFoot, trimSpurs)) || [...wps, wps[0]];
+    coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
     actual = totalDistance(coords);
     return wps.length >= 3 && coords.length >= 2;
   };
@@ -5709,11 +5733,11 @@ async function runHighFidelityShapePipeline({
       actual,
       dev: ringRouteDeviation(ring, coords),
     };
-    const snapped = await snapRingWaypoints(ring, next, graph, optimizer, useOsrmFoot);
+    const snapped = await snapRingWaypoints(ring, next, graph, optimizer, useOsrm, travelMode);
     if (snapped.wps.length < 3 || snapped.wps.length <= wps.length) break;
     ts = snapped.ts;
     wps = snapped.wps;
-    coords = (await routeFootLoopCoords(wps, graph, optimizer, useOsrmFoot, trimSpurs)) || [...wps, wps[0]];
+    coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
     actual = totalDistance(coords);
     iterations++;
 
@@ -5748,10 +5772,10 @@ async function runHighFidelityShapePipeline({
         ({ scaled, ring, ts, wps, coords, actual } = before);
         return false;
       }
-      const snapped = await snapRingWaypoints(ring, before.ts, graph, optimizer, useOsrmFoot);
+      const snapped = await snapRingWaypoints(ring, before.ts, graph, optimizer, useOsrm, travelMode);
       ts = snapped.ts;
       wps = snapped.wps;
-      coords = (await routeFootLoopCoords(wps, graph, optimizer, useOsrmFoot, trimSpurs)) || [...wps, wps[0]];
+      coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
       actual = totalDistance(coords);
       iterations++;
 
@@ -5778,12 +5802,12 @@ async function runHighFidelityShapePipeline({
         if (plan) {
           ts = plan.ts;
           wps = plan.wps;
-          coords = (await routeFootLoopCoords(wps, graph, optimizer, useOsrmFoot, trimSpurs)) || [...wps, wps[0]];
+          coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
           actual = totalDistance(coords);
           iterations++;
           const remainM = totalSpurLengthM(detectRouteSpurs(coords));
           const preserveShapeOk =
-            useOsrmFoot ||
+            useOsrm ||
             (wps.length >= Math.max(6, Math.floor(before.wps.length * 0.7)) &&
               shapeSimilarity(coords, ring) >= shapeSimilarity(before.coords, ring) - 0.03);
           if (remainM < spurLenBefore && preserveShapeOk) {
@@ -5846,6 +5870,7 @@ async function runHighFidelityShapePipeline({
     ts,
     ring,
     iteration: iterations,
+    travelMode,
   };
 }
 
@@ -5858,10 +5883,12 @@ async function generateShapeRoute() {
   if (!(km >= 1 && km <= 50)) { showNotification('目標距離需在 1 到 50 公里之間', 'warning'); return; }
   const angleTol = readShapeAngleTolDeg();
   const trimSpurs = shapeTrimSpursInput ? shapeTrimSpursInput.checked : true;
+  const travelMode = readShapeTravelMode();
   try {
     localStorage.setItem(LS_SHAPE_DISTANCE_KEY, String(km));
     localStorage.setItem(LS_SHAPE_ANGLE_KEY, String(angleTol));
     localStorage.setItem(LS_SHAPE_TRIM_KEY, trimSpurs ? '1' : '0');
+    localStorage.setItem(LS_SHAPE_MODE_KEY, travelMode);
   } catch (_) { }
 
   shapeGenerating = true;
@@ -5896,7 +5923,7 @@ async function generateShapeRoute() {
 
     const currentConstraints = new RouteConstraints({
       targetLengthM: targetM,
-      travelMode: 'walk',
+      travelMode,
       maxTurningPoints: 22,
       startPointGeo: anchor,
       closedLoop: true,
@@ -5933,7 +5960,7 @@ async function generateShapeRoute() {
       const halfDiagM = haversineDistance([minLat, minLng], [maxLat, maxLng]) * 0.5;
       osmRadiusM = Math.max(950, Math.min(4500, Math.round(halfDiagM * 1.38 + 300)));
     }
-    const graph = await RoadNetworkGraph.fromOsm(osmCenter, osmRadiusM, 'walk', { anchorGeo: anchor });
+    const graph = await RoadNetworkGraph.fromOsm(osmCenter, osmRadiusM, travelMode, { anchorGeo: anchor });
     const optimizer = new GPSArtOptimizer(graph);
 
     // Search for optimal orientation angle when rotation tolerance > 0
@@ -5966,6 +5993,7 @@ async function generateShapeRoute() {
       trimSpurs,
       graph,
       optimizer,
+      travelMode,
     });
 
     if (!solution || !solution.keyWaypoints || solution.keyWaypoints.length < 3) {
@@ -5980,6 +6008,7 @@ async function generateShapeRoute() {
     solution.strokePts = strokePts;
     solution.constraints = currentConstraints;
     solution.trimSpurs = trimSpurs;
+    solution.travelMode = travelMode;
     lastShapeOptimizationResult = solution;
 
     drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
@@ -6027,6 +6056,7 @@ async function generateShapeRoute() {
       rotationDeg: solution.optimalAngleDeg,
       anchor,
       firstWaypoint: wps[0],
+      travelMode,
     });
     emitTestEvent('shape-route-finished', {
       actualM: solution.actualLengthM,
@@ -6037,6 +6067,7 @@ async function generateShapeRoute() {
       trimSpurs: Boolean(trimSpurs),
       maxDevM: solution.maxDevM ?? 0,
       spurTrimmedM: solution.spurTrimmedM ?? 0,
+      travelMode,
     });
   } finally {
     shapeGenerating = false;
@@ -6056,8 +6087,9 @@ async function iterateShapeRoute() {
     const anchor = prev.anchor;
     const strokePts = prev.strokePts;
     const trimSpurs = prev.trimSpurs ?? (shapeTrimSpursInput ? shapeTrimSpursInput.checked : true);
+    const travelMode = prev.travelMode || readShapeTravelMode();
     const osmRadiusM = Math.max(1800, Math.min(12000, Math.round(targetM * 0.65)));
-    const graph = prev.graph || await RoadNetworkGraph.fromOsm(anchor, osmRadiusM, 'walk');
+    const graph = prev.graph || await RoadNetworkGraph.fromOsm(anchor, osmRadiusM, travelMode);
     const optimizer = new GPSArtOptimizer(graph);
 
     showNotification('正在依實測長度與相似度持續迭代最佳解...', 'info', 1800);
@@ -6077,6 +6109,7 @@ async function iterateShapeRoute() {
       graph,
       optimizer,
       initialScaleM: calibratedScale,
+      travelMode,
     });
 
     if (solution) {
@@ -6087,6 +6120,7 @@ async function iterateShapeRoute() {
       solution.strokePts = strokePts;
       solution.constraints = prev.constraints;
       solution.trimSpurs = trimSpurs;
+      solution.travelMode = travelMode;
 
       const simGain = solution.similarityPct - prev.similarityPct;
       const newLenDiff = Math.abs(solution.actualLengthM - targetM);
@@ -6154,7 +6188,7 @@ async function exportShapeRouteGpx() {
       isWaypoint: true,
       isReturn: false,
     }));
-    const presetName = shapePresetSelect?.value || 'art';
+    const presetName = currentShapePreset || 'art';
     const filename = `GPS_Art_${presetName}_${Math.round(lastShapeOptimizationResult.actualLengthM)}m`;
     const gpxXml = GpxExporter.generate(wpData, routeCoords, [], filename, { includeWeather: false });
     await platform.shareFile(GpxExporter.createDownloadPayload(gpxXml, `${filename}.gpx`));
@@ -6516,9 +6550,6 @@ btnShapeUndo?.addEventListener('click', shapeUndo);
 btnShapeRedo?.addEventListener('click', shapeRedo);
 btnShapeModeToggle?.addEventListener('click', () => {
   setShapeToolMode(shapeToolMode === 'pen' ? 'eraser' : 'pen');
-});
-shapePresetSelect?.addEventListener('change', () => {
-  applyShapePreset(shapePresetSelect.value);
 });
 shapePresetChips?.addEventListener('click', (e) => {
   const btn = e.target.closest('.shape-preset-chip');
