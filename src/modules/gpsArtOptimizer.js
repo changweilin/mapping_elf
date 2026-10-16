@@ -46,7 +46,7 @@ export class KDTree2D {
     };
   }
 
-  query(targetPt) {
+  query(targetPt, filterFn = null) {
     const qx = Array.isArray(targetPt) ? targetPt[0] : targetPt.x;
     const qy = Array.isArray(targetPt) ? targetPt[1] : targetPt.y;
     let best = { node: null, distSq: Infinity };
@@ -56,7 +56,7 @@ export class KDTree2D {
       const dx = qx - node.point.x;
       const dy = qy - node.point.y;
       const distSq = dx * dx + dy * dy;
-      if (distSq < best.distSq) {
+      if (distSq < best.distSq && (!filterFn || filterFn(node.point))) {
         best.distSq = distSq;
         best.node = node.point;
       }
@@ -73,6 +73,31 @@ export class KDTree2D {
     search(this.root);
     return best.node ? { node: best.node, distance: Math.sqrt(best.distSq) } : null;
   }
+}
+
+/**
+ * Detects if a routed navigation leg between two adjacent setting points is far
+ * greater than their Euclidean/straight-line distance (e.g. crossing an uncrossable
+ * barrier, river without bridge, or entering highway interchange detours).
+ */
+export function isExcessiveLegDetour(straightDistM, routeDistM, options = {}) {
+  if (!(routeDistM > 0) || !(straightDistM > 0)) return false;
+  const excess = routeDistM - straightDistM;
+  if (excess <= 0) return false;
+
+  // Normal short neighborhood street turns (< 250m route distance and < 180m excess)
+  // are standard city block walking paths, not excessive highway or physical barrier detours.
+  if (routeDistM < 250 && excess < 180) return false;
+
+  const maxRatio = options.maxRatio ?? 3.2;
+  const minExcessM = options.minExcessM ?? 250;
+  const ratio = routeDistM / straightDistM;
+
+  if (ratio > maxRatio && excess > minExcessM) return true;
+  if (ratio >= 5.0 && excess > 180) return true;
+  if (excess > 500 && ratio > 2.2) return true;
+
+  return false;
 }
 
 /**
@@ -181,7 +206,7 @@ export class RoadNetworkGraph {
     return node;
   }
 
-  addEdge(u, v, length = null) {
+  addEdge(u, v, length = null, tags = null) {
     if (u === v) return;
     const nU = this.nodes.get(u);
     const nV = this.nodes.get(v);
@@ -193,6 +218,64 @@ export class RoadNetworkGraph {
     if (prev == null || dist < prev) {
       m.set(v, dist);
     }
+    if (tags && typeof tags === 'object') {
+      if (tags.highway) {
+        if (!nU.highway) nU.highway = tags.highway;
+        if (!nV.highway) nV.highway = tags.highway;
+      }
+      if (tags.isExpressway != null) {
+        nU.isExpressway = tags.isExpressway;
+        nV.isExpressway = tags.isExpressway;
+      }
+      if (tags.isHighway != null) {
+        nU.isHighway = tags.isHighway;
+        nV.isHighway = tags.isHighway;
+      }
+      if (tags.allowedModes) {
+        nU.allowedModes = tags.allowedModes;
+        nV.allowedModes = tags.allowedModes;
+      }
+    }
+  }
+
+  /**
+   * Checks if a graph node is valid and allowed for the given travel mode.
+   * Ensures pedestrians/runners never snap or route onto motorways, expressways,
+   * or roads where foot traffic is forbidden.
+   */
+  isNodeAllowedForTravelMode(node, travelMode = 'foot') {
+    if (!node) return false;
+    const degree = this.adj.get(node.id)?.size || 0;
+    if (degree === 0) return false;
+    return RoadNetworkGraph.isNodeAllowedForTravelMode(node, travelMode);
+  }
+
+  static isNodeAllowedForTravelMode(node, travelMode = 'foot') {
+    if (!node) return false;
+    const mode = travelMode === 'walk' ? 'foot' : travelMode;
+
+    if (node.allowedModes && node.allowedModes.size > 0) {
+      if (!node.allowedModes.has(mode) && !node.allowedModes.has('any')) {
+        return false;
+      }
+    }
+
+    const hw = node.highway || '';
+    if (mode === 'foot') {
+      if (hw === 'motorway' || hw === 'motorway_link') return false;
+      if ((hw === 'trunk' || hw === 'trunk_link') && !node.hasExplicitFoot) return false;
+      if (node.isExpressway && !node.hasExplicitFoot) return false;
+      if (node.isHighway && !node.hasExplicitFoot) return false;
+    } else if (mode === 'bike') {
+      if (hw === 'motorway' || hw === 'motorway_link') return false;
+      if (node.isExpressway && !node.hasExplicitBike) return false;
+    } else if (mode === 'motorcycle') {
+      if (hw === 'motorway') return false;
+      if (hw === 'footway' || hw === 'steps' || hw === 'pedestrian' || hw === 'cycleway') return false;
+    } else if (mode === 'car' || mode === 'drive') {
+      if (hw === 'footway' || hw === 'steps' || hw === 'pedestrian' || hw === 'cycleway' || hw === 'path') return false;
+    }
+    return true;
   }
 
   /**
@@ -331,7 +414,15 @@ export class RoadNetworkGraph {
         const mx = nU.x + (nV.x - nU.x) * frac;
         const my = nU.y + (nV.y - nU.y) * frac;
         const midId = `sub_${Math.abs(this._nextSyntheticId--)}`;
-        this.addNode(midId, mx, my);
+        const midNode = this.addNode(midId, mx, my);
+        midNode.highway = nU.highway || nV.highway;
+        midNode.hasExplicitFoot = Boolean(nU.hasExplicitFoot || nV.hasExplicitFoot);
+        midNode.hasExplicitBike = Boolean(nU.hasExplicitBike || nV.hasExplicitBike);
+        midNode.isExpressway = Boolean(nU.isExpressway || nV.isExpressway);
+        midNode.isHighway = Boolean(nU.isHighway || nV.isHighway);
+        if (nU.allowedModes || nV.allowedModes) {
+          midNode.allowedModes = new Set([...(nU.allowedModes || []), ...(nV.allowedModes || [])]);
+        }
         this.addEdge(prevId, midId, segLen);
         if (bidirectional) this.addEdge(midId, prevId, segLen);
         prevId = midId;
@@ -391,6 +482,13 @@ export class RoadNetworkGraph {
   buildIndex(options = {}) {
     if (options.pruneComponents !== false && this.nodes.size >= 4) {
       this.pruneToMainComponent(options.anchorXY || [0, 0]);
+    }
+    // Remove isolated / degree-0 nodes that have no routable edges
+    for (const [id, node] of this.nodes.entries()) {
+      if (!this.adj.has(id) || this.adj.get(id).size === 0) {
+        this.nodes.delete(id);
+        this.adj.delete(id);
+      }
     }
     if (options.densify !== false && this.nodes.size >= 4 && this.nodes.size <= 25000) {
       this.densifyEdges(options.maxEdgeLengthM || 28);
@@ -750,8 +848,15 @@ export class RoadNetworkGraph {
         tags.foot === 'private' ||
         tags.foot === 'use_sidepath' ||
         tags.pedestrians === 'no' ||
+        tags.pedestrian === 'no' ||
         tags.access === 'no' ||
-        tags.access === 'private';
+        tags.access === 'private' ||
+        tags.sidewalk === 'no' ||
+        tags.sidewalk === 'none' ||
+        tags.footway === 'no' ||
+        tags.motorroad === 'yes' ||
+        tags.expressway === 'yes' ||
+        tags.toll === 'yes';
 
       // Check explicit bicycle infrastructure
       const hasExplicitBike =
@@ -781,7 +886,7 @@ export class RoadNetworkGraph {
       const isSlowOrFrontage = /慢車道|側車道|平面|機慢車|機車道|Frontage|Side\s*Road|Service/i.test(nameStr);
 
       // Detect expressway / viaduct / highway interchange keywords
-      const isExpresswayKeyword = /高架|快速道路|快速公路|高速公路|國道|交流道|匝道|引道|環快|台6\d|台7[2468]|台8[2468]|Freeway|Motorway|Expressway|Flyover|Viaduct/i.test(nameStr);
+      const isExpresswayKeyword = /高架|快速道路|快速公路|高速公路|國道|交流道|匝道|引道|環快|快速路|公路|專用道|快車道|主線|外環|台6\d|台7[2468]|台8[2468]|Freeway|Motorway|Expressway|Highway|Flyover|Viaduct|Parkway|Bypass|Tollway|Turnpike|Autobahn|Autopista|Slip\s*road|Ramp|Overpass|Underpass/i.test(nameStr);
       const isExpresswayTag = tags.motorroad === 'yes' || tags.expressway === 'yes';
       const isExpresswayMain = isExpresswayTag || (isExpresswayKeyword && !isSlowOrFrontage);
 
@@ -789,6 +894,7 @@ export class RoadNetworkGraph {
       const isTrunk = hw === 'trunk';
       const isLink = hw.endsWith('_link');
       const isElevated = tags.bridge === 'yes' || (Number(tags.layer) >= 1);
+      const isTunnel = tags.tunnel === 'yes' || (Number(tags.layer) <= -1);
       const speed = parseInt(tags.maxspeed, 10);
       const isHighSpeed = Number.isFinite(speed) && speed >= 70;
       const isModerateHighSpeed = Number.isFinite(speed) && speed >= 60;
@@ -820,8 +926,8 @@ export class RoadNetworkGraph {
         if (isMotorcycle && (isExpresswayTag || isExpresswayKeyword) && !isSlowOrFrontage && tags.motorcycle !== 'yes' && tags.motor_vehicle !== 'yes') continue;
       }
 
-      // 5. Elevated Viaducts & Bridges on primary/trunk/link (市區高架道如市民高架、建國高架、新生高架、跨河快車道橋)
-      if (isElevated && (isTrunk || hw === 'primary' || isLink) && !isSlowOrFrontage) {
+      // 5. Elevated Viaducts, Bridges & Tunnels on primary/trunk/secondary/link
+      if ((isElevated || isTunnel) && (isTrunk || hw === 'primary' || hw === 'secondary' || isLink) && !isSlowOrFrontage) {
         if (isPedestrian && !hasExplicitFoot) continue;
         if (isBike && !hasExplicitBike && (isExpresswayKeyword || isHighSpeed || tags.oneway === 'yes')) continue;
       }
@@ -831,7 +937,8 @@ export class RoadNetworkGraph {
         if (isPedestrian && !hasExplicitFoot) continue;
         if (isBike && !hasExplicitBike) continue;
       }
-      if (isModerateHighSpeed && isPedestrian && !hasExplicitFoot && (isElevated || isLink || isTrunk)) continue;
+      if (isModerateHighSpeed && isPedestrian && !hasExplicitFoot && (isElevated || isTunnel || isLink || isTrunk || hw === 'primary')) continue;
+      if (isPedestrian && hw === 'primary' && !hasExplicitFoot && (tags.oneway === 'yes' || tags.sidewalk === 'no' || tags.sidewalk === 'none')) continue;
 
       // 2. Footways, steps, cycleways: forbidden for motorized vehicles unless explicitly designated
       const isPedestrianOrCycleTrack =
@@ -933,10 +1040,18 @@ export class RoadNetworkGraph {
           const pt = el.geometry[i];
           if (!pt || typeof pt.lat !== 'number' || typeof pt.lon !== 'number') continue;
           const nid = hasNodes && el.nodes[i] != null ? el.nodes[i] : `w${el.id}_${i}`;
-          if (!graph.nodes.has(nid)) {
+          let n = graph.nodes.get(nid);
+          if (!n) {
             const [x, y] = graph.geoToXy(pt.lat, pt.lon);
-            graph.addNode(nid, x, y, pt.lat, pt.lon);
+            n = graph.addNode(nid, x, y, pt.lat, pt.lon);
           }
+          n.highway = hw;
+          n.hasExplicitFoot = Boolean(hasExplicitFoot);
+          n.hasExplicitBike = Boolean(hasExplicitBike);
+          n.isExpressway = Boolean(isExpresswayMain || isExpresswayKeyword);
+          n.isHighway = Boolean(isMotorway || isTrunk);
+          if (!n.allowedModes) n.allowedModes = new Set();
+          n.allowedModes.add(mode);
           nodeIds.push(nid);
         }
 
@@ -948,6 +1063,20 @@ export class RoadNetworkGraph {
           const u = el.nodes[i];
           const v = el.nodes[i + 1];
           if (graph.nodes.has(u) && graph.nodes.has(v)) {
+            const nU = graph.nodes.get(u);
+            const nV = graph.nodes.get(v);
+            nU.highway = hw;
+            nV.highway = hw;
+            nU.hasExplicitFoot = Boolean(hasExplicitFoot);
+            nV.hasExplicitFoot = Boolean(hasExplicitFoot);
+            nU.hasExplicitBike = Boolean(hasExplicitBike);
+            nV.hasExplicitBike = Boolean(hasExplicitBike);
+            nU.isExpressway = Boolean(isExpresswayMain || isExpresswayKeyword);
+            nV.isExpressway = Boolean(isExpresswayMain || isExpresswayKeyword);
+            if (!nU.allowedModes) nU.allowedModes = new Set();
+            if (!nV.allowedModes) nV.allowedModes = new Set();
+            nU.allowedModes.add(mode);
+            nV.allowedModes.add(mode);
             addEdgePair(u, v);
           }
         }
@@ -1076,6 +1205,7 @@ export class RoadNetworkGraph {
           maxEdgeLengthM: 25,
         });
         graph.isRealOsm = true;
+        graph.travelMode = mode;
 
         if (_osmGraphCache.size >= MAX_OSM_CACHE_ENTRIES) {
           const oldestKey = _osmGraphCache.keys().next().value;
@@ -1089,6 +1219,7 @@ export class RoadNetworkGraph {
     // Fallback to well-connected urban street graph centered at location
     const fallback = RoadNetworkGraph.buildFallbackUrbanGraph(safeDistM, centerLatLon);
     fallback.isRealOsm = false;
+    fallback.travelMode = mode;
     return fallback;
   }
 }
@@ -1461,12 +1592,17 @@ export class GPSArtOptimizer {
    * Snaps a planar target point to the road network, preferring 2-core (non-dead-end)
    * streets to avoid cul-de-sac spikes unless a dead-end node is much closer at a sharp corner.
    */
-  snapPointToRoad(pt, isCorner = false) {
-    const allHit = this.kdtree ? this.kdtree.query(pt) : null;
+  snapPointToRoad(pt, isCorner = false, options = {}) {
+    const travelMode = options.travelMode || null;
+    const filterFn = travelMode && this.G.isNodeAllowedForTravelMode
+      ? (node) => this.G.isNodeAllowedForTravelMode(node, travelMode)
+      : null;
+
+    const allHit = this.kdtree ? this.kdtree.query(pt, filterFn) : null;
     if (!allHit || !allHit.node) return null;
 
     if (this.coreKdTree && this.coreKdTree !== this.kdtree) {
-      const coreHit = this.coreKdTree.query(pt);
+      const coreHit = this.coreKdTree.query(pt, filterFn);
       if (coreHit && coreHit.node) {
         const toleranceM = isCorner ? 22 : 42;
         if (coreHit.distance <= allHit.distance + toleranceM) {
@@ -1485,17 +1621,27 @@ export class GPSArtOptimizer {
   matchAndRoute(transformedPattern, options = {}) {
     if (!transformedPattern || transformedPattern.length < 2) return null;
 
-    const nPts = transformedPattern.length;
+    const normPattern = transformedPattern.map((p) => {
+      if (Array.isArray(p)) return [Number(p[0]) || 0, Number(p[1]) || 0];
+      if (p && typeof p === 'object') {
+        const x = Number(p.x != null ? p.x : (p.lng != null ? p.lng : 0)) || 0;
+        const y = Number(p.y != null ? p.y : (p.lat != null ? p.lat : 0)) || 0;
+        return [x, y];
+      }
+      return [0, 0];
+    });
+
+    const nPts = normPattern.length;
     const snappedNodes = [];
     const snappedTargetPts = [];
 
     for (let i = 0; i < nPts; i++) {
-      const pt = transformedPattern[i];
+      const pt = normPattern[i];
       // Check if vertex i is a sharp corner
       let isCorner = i === 0 || i === nPts - 1;
       if (!isCorner && i > 0 && i < nPts - 1) {
-        const pPrev = transformedPattern[i - 1];
-        const pNext = transformedPattern[i + 1];
+        const pPrev = normPattern[i - 1];
+        const pNext = normPattern[i + 1];
         const v1x = pt[0] - pPrev[0], v1y = pt[1] - pPrev[1];
         const v2x = pNext[0] - pt[0], v2y = pNext[1] - pt[1];
         const l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
@@ -1505,7 +1651,7 @@ export class GPSArtOptimizer {
         }
       }
 
-      const node = this.snapPointToRoad(pt, isCorner);
+      const node = this.snapPointToRoad(pt, isCorner, { travelMode: options.travelMode });
       if (!node) return null;
       snappedNodes.push(node.id);
       snappedTargetPts.push(pt);
@@ -1555,6 +1701,21 @@ export class GPSArtOptimizer {
         recentEdgeSet
       );
       if (!res || !res.path || res.path.length === 0) return null;
+
+      // Reject leg if navigation route distance is far greater than straight-line distance
+      if (options.rejectExcessiveDetours !== false) {
+        const nodeU = this.G.nodes.get(u);
+        const nodeV = this.G.nodes.get(v);
+        const nodeStraightDist = (nodeU && nodeV) ? Math.hypot(nodeU.x - nodeV.x, nodeU.y - nodeV.y) : 0;
+        const targetStraightDist = (cleanedTargets[i] && cleanedTargets[i + 1])
+          ? Math.hypot(cleanedTargets[i + 1][0] - cleanedTargets[i][0], cleanedTargets[i + 1][1] - cleanedTargets[i][1])
+          : nodeStraightDist;
+        const straightDist = Math.max(nodeStraightDist, targetStraightDist);
+        const legRouteLen = res.length != null ? res.length : straightDist;
+        if (isExcessiveLegDetour(straightDist, legRouteLen, options.detourOptions)) {
+          return null; // Exclude route that detours excessively between adjacent setting points
+        }
+      }
 
       if (i === 0) {
         fullNodePath.push(...res.path);
@@ -1759,7 +1920,7 @@ export class GPSArtOptimizer {
 
     // If anchor is locked, snap anchor to nearest valid 2-core road node first
     if (anchorXY) {
-      const snappedNode = this.snapPointToRoad(anchorXY, false);
+      const snappedNode = this.snapPointToRoad(anchorXY, false, { travelMode: constraints.travelMode });
       if (snappedNode) {
         anchorXY = [snappedNode.x, snappedNode.y];
       }
@@ -1824,6 +1985,8 @@ export class GPSArtOptimizer {
 
       const res = this.matchAndRoute(candidateGeom, {
         pruneSpurs: constraints.trimSpurs !== false,
+        travelMode: constraints.travelMode,
+        rejectExcessiveDetours: true,
       });
 
       if (!res || res.totalLengthM === 0) {
@@ -2105,7 +2268,11 @@ export class GPSArtOptimizer {
 
     const routed = this.matchAndRoute(
       this.transformPattern(normPattern, scaleM, angleDeg, tx, ty, anchorXY, startFrac, constraints.closedLoop),
-      { pruneSpurs: constraints.trimSpurs !== false }
+      {
+        pruneSpurs: constraints.trimSpurs !== false,
+        travelMode: constraints.travelMode,
+        rejectExcessiveDetours: true,
+      }
     );
     if (!routed || !routed.routeCoordsXY || routed.routeCoordsXY.length < 2) return null;
 

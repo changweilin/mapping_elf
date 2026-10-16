@@ -19,6 +19,7 @@ import {
   RoadNetworkGraph,
   RouteConstraints,
   KDTree2D,
+  isExcessiveLegDetour,
 } from '../src/modules/shapeRouteMatcher.js';
 import { findOptimalViewportAnchor } from '../src/modules/shapeRoutePlanner.js';
 
@@ -390,6 +391,128 @@ console.log('Testing shapeRouteMatcher.js...');
   assert.ok(optRes.candidatesCount > 1, `Expected multiple candidates evaluated, got ${optRes.candidatesCount}`);
   assert.ok(optRes.anchor[0] >= viewportBounds.south - 0.01 && optRes.anchor[0] <= viewportBounds.north + 0.01, 'Anchor lat inside viewport');
   assert.ok(optRes.anchor[1] >= viewportBounds.west - 0.01 && optRes.anchor[1] <= viewportBounds.east + 0.01, 'Anchor lng inside viewport');
+}
+
+// 14. Detection of excessive navigation detour between adjacent setting points
+{
+  // Normal city street turns or slight bends should NOT be flagged as excessive detours
+  assert.equal(isExcessiveLegDetour(100, 135), false, 'Normal turn should be allowed');
+  assert.equal(isExcessiveLegDetour(25, 120), false, 'Short city block turn (<250m) should be allowed');
+  assert.equal(isExcessiveLegDetour(500, 900), false, 'Slightly winding road should be allowed');
+  assert.equal(isExcessiveLegDetour(1000, 1500), false, 'Long winding street should be allowed');
+
+  // Highway wall, river barrier, or interchange detours MUST be flagged
+  assert.equal(isExcessiveLegDetour(60, 360), true, 'Short distance with huge detour (ratio 6.0, excess 300m) must be rejected');
+  assert.equal(isExcessiveLegDetour(100, 550), true, 'Physical barrier crossing (ratio 5.5, excess 450m) must be rejected');
+  assert.equal(isExcessiveLegDetour(300, 950), true, 'Excessive leg detour (>500m excess and >2.0 ratio) must be rejected');
+}
+
+// 15. Travel mode filtering on road network: prohibit highways for running/foot
+{
+  const graph = new RoadNetworkGraph([25.03, 121.56]);
+  // Highway node: motorway (strictly disallowed for foot/running)
+  const nHwy1 = graph.addNode('hwy1', 100, 100);
+  const nHwy2 = graph.addNode('hwy2', 200, 100);
+  graph.addEdge('hwy1', 'hwy2', 100, { highway: 'motorway' });
+  graph.addEdge('hwy2', 'hwy1', 100, { highway: 'motorway' });
+
+  // Urban street node: residential (allowed for foot/running)
+  const nCity1 = graph.addNode('city1', 100, 105);
+  const nCity2 = graph.addNode('city2', 200, 105);
+  graph.addEdge('city1', 'city2', 100, { highway: 'residential' });
+  graph.addEdge('city2', 'city1', 100, { highway: 'residential' });
+
+  graph.buildIndex({ pruneComponents: false });
+
+  assert.equal(RoadNetworkGraph.isNodeAllowedForTravelMode(nHwy1, 'foot'), false, 'Motorway node must NOT be allowed for foot');
+  assert.equal(RoadNetworkGraph.isNodeAllowedForTravelMode(nHwy1, 'car'), true, 'Motorway node must be allowed for car');
+  assert.equal(RoadNetworkGraph.isNodeAllowedForTravelMode(nCity1, 'foot'), true, 'Residential node must be allowed for foot');
+
+  const optimizer = new GPSArtOptimizer(graph);
+  // Point closer to highway node (y=101 vs y=105)
+  const queryPt = { x: 100, y: 101 };
+
+  // For car, it can snap to the closer highway node
+  const snappedCar = optimizer.snapPointToRoad(queryPt, true, { travelMode: 'car' });
+  assert.equal(snappedCar?.id, 'hwy1', 'Car mode should snap to closer highway node');
+
+  // For foot/running, it MUST skip the illegal highway node and snap to the residential node
+  const snappedFoot = optimizer.snapPointToRoad(queryPt, true, { travelMode: 'foot' });
+  assert.equal(snappedFoot?.id, 'city1', 'Foot mode must snap to allowed residential street node');
+}
+
+// 16. Search and routing rejects excessive detours between adjacent setting points
+{
+  const graph = new RoadNetworkGraph([25.03, 121.56]);
+  // Create two points close to each other (dist = 10m) separated by a barrier
+  // Routing between them requires going around a 600m loop
+  graph.addNode('p1', 10, 0);
+  graph.addNode('far1', 0, 300);
+  graph.addNode('far2', 20, 300);
+  graph.addNode('p2', 10, 10);
+
+  graph.addEdge('p1', 'far1', 300, { highway: 'residential' });
+  graph.addEdge('far1', 'p1', 300, { highway: 'residential' });
+  graph.addEdge('far1', 'far2', 20, { highway: 'residential' });
+  graph.addEdge('far2', 'far1', 20, { highway: 'residential' });
+  graph.addEdge('far2', 'p2', 300, { highway: 'residential' });
+  graph.addEdge('p2', 'far2', 300, { highway: 'residential' });
+
+  graph.buildIndex({ pruneComponents: false });
+  const optimizer = new GPSArtOptimizer(graph);
+
+  // Directly routing between p1 and p2: straight distance is 10m, route distance is 620m
+  const resWithDetourCheck = optimizer.matchAndRoute([{ x: 10, y: 0 }, { x: 10, y: 10 }], {
+    rejectExcessiveDetours: true,
+  });
+  assert.equal(resWithDetourCheck, null, 'Leg with excessive detour (10m vs 620m) must be rejected');
+
+  // Without excessive detour rejection, route would be produced
+  const resWithoutCheck = optimizer.matchAndRoute([{ x: 10, y: 0 }, { x: 10, y: 10 }], {
+    rejectExcessiveDetours: false,
+  });
+  assert.ok(resWithoutCheck !== null, 'Route produced when detour rejection is disabled');
+}
+
+// 17. Search range expansion when initial candidates fail to route
+{
+  const city = RoadNetworkGraph.buildSyntheticCityGraph(26, 75.0, [25.034, 121.564]);
+  const optimizer = new GPSArtOptimizer(city);
+  const heart = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = (i / 48) * Math.PI * 2;
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+    heart.push([150 + x * 6, 150 + y * 6]);
+  }
+
+  const viewportBounds = {
+    south: 25.028,
+    west: 121.558,
+    north: 25.040,
+    east: 121.570,
+  };
+  const viewportCenter = [25.034, 121.564];
+
+  // Test expanded search mode
+  const expRes = findOptimalViewportAnchor({
+    viewportBounds,
+    viewportCenter,
+    strokePts: heart,
+    targetM: 3500,
+    graph: city,
+    optimizer,
+    options: {
+      angleTolDeg: 180,
+      expandedSearch: true,
+      travelMode: 'foot',
+    },
+  });
+
+  assert.ok(expRes.anchor, 'Expanded search must find viable anchor');
+  assert.ok(expRes.similarity > 0.5, `Expanded search similarity should be solid, got ${expRes.similarity}`);
+  assert.ok(Array.isArray(expRes.rankedCandidates), 'Must return rankedCandidates array');
+  assert.ok(expRes.rankedCandidates.length >= 1, 'Must have at least one ranked candidate');
 }
 
 console.log('shapeRouteMatcher.js test passed successfully!');

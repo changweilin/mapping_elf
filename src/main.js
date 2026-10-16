@@ -18,7 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
-import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, evaluateShapeSimilarity, computeGeoPathLength, countShapeCorners, detectRouteSpurs, findOptimalViewportAnchor, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
+import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, evaluateShapeSimilarity, computeGeoPathLength, countShapeCorners, detectRouteSpurs, findOptimalViewportAnchor, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs, isExcessiveLegDetour } from './modules/shapeRoutePlanner.js';
 import { getShapePresetPoints } from './modules/shapePresets.js';
 // 魔法陣 (star tool) — logic ported 1:1 from the mapping_star project.
 import { categoryById } from './modules/star/categories.js';
@@ -5633,6 +5633,16 @@ async function routeShapeLoopCoords(wps, graph = null, optimizer = null, useOsrm
         const data = await resp.json();
         const rawCoords = data?.routes?.[0]?.geometry?.coordinates;
         if (data?.code === 'Ok' && Array.isArray(rawCoords) && rawCoords.length >= 2) {
+          const legs = data?.routes?.[0]?.legs;
+          if (Array.isArray(legs) && legs.length === loop.length - 1) {
+            for (let i = 0; i < legs.length; i++) {
+              const legDistM = legs[i].distance || 0;
+              const straightDistM = haversineDistance(loop[i], loop[i + 1]);
+              if (isExcessiveLegDetour(straightDistM, legDistM)) {
+                return null;
+              }
+            }
+          }
           return rawCoords.map((c) => [c[1], c[0]]);
         }
       }
@@ -5643,10 +5653,11 @@ async function routeShapeLoopCoords(wps, graph = null, optimizer = null, useOsrm
 
   if (graph && optimizer) {
     const xyPts = loop.map((p) => graph.geoToXy(p[0], p[1]));
-    const res = optimizer.matchAndRoute(xyPts, { pruneSpurs: trimSpurs });
+    const res = optimizer.matchAndRoute(xyPts, { pruneSpurs: trimSpurs, rejectExcessiveDetours: true, travelMode });
     if (res && Array.isArray(res.routeCoordsXY) && res.routeCoordsXY.length >= 2) {
       return res.routeCoordsXY.map(([x, y]) => graph.xyToGeo(x, y));
     }
+    return null;
   }
 
   return loop;
@@ -5672,7 +5683,7 @@ async function snapRingWaypoints(ring, ts, graph = null, optimizer = null, useOs
   if (!snappedPts && graph && optimizer) {
     snappedPts = raw.map((pt) => {
       const xy = graph.geoToXy(pt[0], pt[1]);
-      const node = optimizer.snapPointToRoad(xy, true);
+      const node = optimizer.snapPointToRoad(xy, true, { travelMode });
       return node ? graph.xyToGeo(node.x, node.y) : pt;
     });
   }
@@ -5742,15 +5753,47 @@ async function runHighFidelityShapePipeline({
     if (checkCancel()) return false;
     ring = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg, direction });
     if (!ring) return false;
-    const sel = selectWaypointTs(ring, wpCount);
-    const snapped = await snapRingWaypoints(ring, sel, graph, optimizer, useOsrm, travelMode);
-    if (checkCancel()) return false;
-    ts = snapped.ts;
-    wps = snapped.wps;
-    coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
-    if (checkCancel()) return false;
-    actual = totalDistance(coords);
-    return wps.length >= 3 && coords.length >= 2;
+
+    const wpCountsToTry = [wpCount];
+    if (wpCount > 8) wpCountsToTry.push(Math.max(6, wpCount - 4));
+    if (wpCount < 22) wpCountsToTry.push(Math.min(26, wpCount + 4));
+
+    for (const count of wpCountsToTry) {
+      const sel = selectWaypointTs(ring, count);
+      const snapped = await snapRingWaypoints(ring, sel, graph, optimizer, useOsrm, travelMode);
+      if (checkCancel()) return false;
+      const routed = await routeShapeLoopCoords(snapped.wps, graph, optimizer, useOsrm, trimSpurs, travelMode);
+      if (routed && routed.length >= 2 && snapped.wps.length >= 3) {
+        ts = snapped.ts;
+        wps = snapped.wps;
+        coords = routed;
+        if (checkCancel()) return false;
+        actual = totalDistance(coords);
+        return true;
+      }
+    }
+
+    if (direction === 'any') {
+      const altRing = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg, direction: 'cw' });
+      if (altRing) {
+        for (const count of wpCountsToTry) {
+          const sel = selectWaypointTs(altRing, count);
+          const snapped = await snapRingWaypoints(altRing, sel, graph, optimizer, useOsrm, travelMode);
+          if (checkCancel()) return false;
+          const routed = await routeShapeLoopCoords(snapped.wps, graph, optimizer, useOsrm, trimSpurs, travelMode);
+          if (routed && routed.length >= 2 && snapped.wps.length >= 3) {
+            ring = altRing;
+            ts = snapped.ts;
+            wps = snapped.wps;
+            coords = routed;
+            if (checkCancel()) return false;
+            actual = totalDistance(coords);
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   };
 
   if (!(await yieldStep(translatePhrase('計算路網最佳解與校正...'), 0.1))) return null;
@@ -5761,8 +5804,8 @@ async function runHighFidelityShapePipeline({
   for (let a = 0; a < 2 && needsDistanceCalibration(actual, targetM); a++) {
     if (!(await yieldStep(`${translatePhrase('校正目標距離')} (${a + 1}/2)...`, 0.2 + (a + 1) * 0.15))) return null;
     scaled = nextCalibratedTarget(scaled, actual, targetM);
-    await planCurrent();
-    if (checkCancel()) return null;
+    const okStep = await planCurrent();
+    if (!okStep || checkCancel()) return null;
     iterations++;
   }
 
@@ -5786,9 +5829,17 @@ async function runHighFidelityShapePipeline({
     const snapped = await snapRingWaypoints(ring, next, graph, optimizer, useOsrm, travelMode);
     if (checkCancel()) return null;
     if (snapped.wps.length < 3 || snapped.wps.length <= wps.length) break;
+    const routed = await routeShapeLoopCoords(snapped.wps, graph, optimizer, useOsrm, trimSpurs, travelMode);
+    if (!routed) {
+      ts = before.ts;
+      wps = before.wps;
+      coords = before.coords;
+      actual = before.actual;
+      break;
+    }
     ts = snapped.ts;
     wps = snapped.wps;
-    coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
+    coords = routed;
     if (checkCancel()) return null;
     actual = totalDistance(coords);
     iterations++;
@@ -5827,9 +5878,14 @@ async function runHighFidelityShapePipeline({
       }
       const snapped = await snapRingWaypoints(ring, before.ts, graph, optimizer, useOsrm, travelMode);
       if (checkCancel()) return false;
+      const routed = await routeShapeLoopCoords(snapped.wps, graph, optimizer, useOsrm, trimSpurs, travelMode);
+      if (!routed) {
+        ({ scaled, ring, ts, wps, coords, actual } = before);
+        return false;
+      }
       ts = snapped.ts;
       wps = snapped.wps;
-      coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
+      coords = routed;
       if (checkCancel()) return false;
       actual = totalDistance(coords);
       iterations++;
@@ -5856,9 +5912,17 @@ async function runHighFidelityShapePipeline({
         };
         const plan = planSpurRetraction(coords, wps, ts, ring);
         if (plan) {
+          const routed = await routeShapeLoopCoords(plan.wps, graph, optimizer, useOsrm, trimSpurs, travelMode);
+          if (!routed) {
+            ts = before.ts;
+            wps = before.wps;
+            coords = before.coords;
+            actual = before.actual;
+            break;
+          }
           ts = plan.ts;
           wps = plan.wps;
-          coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
+          coords = routed;
           if (checkCancel()) return null;
           actual = totalDistance(coords);
           iterations++;
@@ -6027,7 +6091,7 @@ async function generateShapeRoute() {
           if (!ring) continue;
           const probeWps = pickShapeWaypoints(ring, 10);
           const xyPts = probeWps.concat([probeWps[0]]).map((p) => graph.geoToXy(p[0], p[1]));
-          const routed = optimizer.matchAndRoute(xyPts, { pruneSpurs: true });
+          const routed = optimizer.matchAndRoute(xyPts, { pruneSpurs: true, rejectExcessiveDetours: true, travelMode });
           if (!routed || !routed.routeCoordsXY?.length) continue;
           const routedGeo = routed.routeCoordsXY.map(([x, y]) => graph.xyToGeo(x, y));
           const sim = shapeSimilarity(routedGeo, ring);
@@ -6093,6 +6157,7 @@ async function generateShapeRoute() {
           angleTolDeg: angleTol,
           direction,
           hintPoints: cursor ? [cursor] : [],
+          travelMode,
         },
       });
 
@@ -6129,28 +6194,123 @@ async function generateShapeRoute() {
     await waitIfLoadPaused(run);
     if (run.cancelled) return;
 
-    const solution = await runHighFidelityShapePipeline({
-      strokePts,
-      anchor,
-      targetM,
-      rotationDeg: bestAngleDeg,
-      trimSpurs,
-      graph,
-      optimizer,
-      travelMode,
-      direction,
-      run,
-      onProgress: ({ detail, progress }) => {
-        busyTask.set({
-          detail,
-          progress: 48 + Math.round(progress * 47),
+    const tryPipelineWithCandidates = async (candidateList, currentGraph, currentOptimizer, progressBase = 48, progressSpan = 47) => {
+      for (let cIdx = 0; cIdx < candidateList.length; cIdx++) {
+        if (run.cancelled) return null;
+        const item = candidateList[cIdx];
+        const candAnchor = item.cand || item.anchor || item;
+        const candAngle = item.angleDeg != null ? item.angleDeg : bestAngleDeg;
+        const sol = await runHighFidelityShapePipeline({
+          strokePts,
+          anchor: candAnchor,
+          targetM,
+          rotationDeg: candAngle,
+          trimSpurs,
+          graph: currentGraph,
+          optimizer: currentOptimizer,
+          travelMode,
+          direction,
+          run,
+          onProgress: ({ detail, progress }) => {
+            busyTask.set({
+              detail,
+              progress: progressBase + Math.round(progress * progressSpan),
+            });
+          },
         });
-      },
-    });
+        if (sol && sol.keyWaypoints && sol.keyWaypoints.length >= 3) {
+          sol.anchor = candAnchor;
+          sol.optimalAngleDeg = candAngle;
+          return sol;
+        }
+      }
+      return null;
+    };
+
+    const initialCandidates = (!recentWp && typeof optRes !== 'undefined' && optRes?.rankedCandidates?.length)
+      ? optRes.rankedCandidates
+      : [{ cand: anchor, angleDeg: bestAngleDeg }];
+
+    let solution = await tryPipelineWithCandidates(initialCandidates, graph, optimizer);
+
+    // If initial search range could not produce a valid route, automatically expand search range
+    if (!solution) {
+      busyTask.set({ detail: translatePhrase('初始範圍無合適路線，擴大搜索範圍中...'), progress: 50 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitIfLoadPaused(run);
+      if (run.cancelled) return;
+
+      const bounds = mapManager.map.getBounds();
+      const c = mapManager.map.getCenter();
+      const viewportCenter = [c.lat, c.lng];
+      const searchCenter = recentWp ? recentWp : viewportCenter;
+      const sw = bounds.getSouthWest();
+      const ne = bounds.getNorthEast();
+      const viewHalfDiagM = haversineDistance([sw.lat, sw.lng], [ne.lat, ne.lng]) * 0.5;
+      const shapeRadiusM = (targetM / (2 * Math.PI)) * 1.35;
+      const baseRadiusM = Math.max(1400, Math.round(Math.max(viewHalfDiagM, shapeRadiusM + 500)));
+      const expandedRadiusM = Math.min(9500, Math.round(baseRadiusM * 1.75 + 600));
+
+      const dLat = bounds.getNorth() - bounds.getSouth();
+      const dLng = bounds.getEast() - bounds.getWest();
+      const expandedBounds = {
+        south: bounds.getSouth() - dLat * 0.45,
+        north: bounds.getNorth() + dLat * 0.45,
+        west: bounds.getWest() - dLng * 0.45,
+        east: bounds.getEast() + dLng * 0.45,
+      };
+
+      busyTask.set({ detail: translatePhrase('擴大取得周邊路網圖資...'), progress: 55 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitIfLoadPaused(run);
+      if (run.cancelled) return;
+
+      const expandedGraph = await RoadNetworkGraph.fromOsm(searchCenter, expandedRadiusM, travelMode, {
+        anchorGeo: searchCenter,
+        signal: controller.signal,
+      });
+      if (run.cancelled) return;
+      await waitIfLoadPaused(run);
+      const expandedOptimizer = new GPSArtOptimizer(expandedGraph);
+
+      busyTask.set({ detail: translatePhrase('於擴大範圍搜尋最佳起點與方位...'), progress: 68 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitIfLoadPaused(run);
+      if (run.cancelled) return;
+
+      const expandedOptRes = findOptimalViewportAnchor({
+        viewportBounds: expandedBounds,
+        viewportCenter: searchCenter,
+        strokePts,
+        targetM,
+        graph: expandedGraph,
+        optimizer: expandedOptimizer,
+        options: {
+          angleTolDeg: Math.max(angleTol, 180),
+          direction,
+          hintPoints: recentWp ? [recentWp] : (mapManager.getRecentCoordinate?.() ? [mapManager.getRecentCoordinate()] : []),
+          travelMode,
+          expandedSearch: true,
+        },
+      });
+
+      const expandedCandidates = expandedOptRes.rankedCandidates && expandedOptRes.rankedCandidates.length > 0
+        ? expandedOptRes.rankedCandidates
+        : [{ cand: expandedOptRes.anchor, angleDeg: expandedOptRes.angleDeg }];
+
+      solution = await tryPipelineWithCandidates(expandedCandidates, expandedGraph, expandedOptimizer, 75, 23);
+      if (solution) {
+        graph = expandedGraph;
+        optimizer = expandedOptimizer;
+        anchor = solution.anchor;
+        bestAngleDeg = solution.optimalAngleDeg;
+        solution.searchExpanded = true;
+      }
+    }
 
     if (run.cancelled) return;
     if (!solution || !solution.keyWaypoints || solution.keyWaypoints.length < 3) {
-      showNotification('無法辨識繪製的形狀，請重畫', 'warning');
+      showNotification('在周邊擴大搜索後仍無法形成可行路線，請嘗試調整目標距離或更換地圖位置', 'warning', 3500);
       return;
     }
 
@@ -6166,7 +6326,9 @@ async function generateShapeRoute() {
     solution.autoViewportAnchor = !recentWp;
     lastShapeOptimizationResult = solution;
 
-    if (!recentWp) {
+    if (solution.searchExpanded) {
+      showNotification(`已自動擴大搜索範圍完成最佳路線規劃 (相似度 ${solution.similarityPct}%)`, 'success', 3000);
+    } else if (!recentWp) {
       showNotification(`已自動選取畫面中最高相似度起點 (相似度 ${solution.similarityPct}%)`, 'info', 2500);
     }
 
@@ -6429,9 +6591,10 @@ async function exportShapeRouteGpx() {
 // each surviving waypoint paired with its arc fraction so refinement and
 // ring re-scaling stay aligned. Falls back to the raw points when snapping
 // thins the loop below 3 points.
-async function snapShapeWaypoints(ring, ts, anchor = null) {
+async function snapShapeWaypoints(ring, ts, anchor = null, travelMode = 'foot') {
   const raw = waypointsFromTs(ring, ts);
-  const snaps = await routeEngine.snapToFootNetwork(raw);
+  const profile = osrmProfileForTravelMode(travelMode);
+  const snaps = await routeEngine.snapToFootNetwork(raw, profile);
   const kept = [];
   snaps.forEach((s, i) => {
     const pt = (i === 0 && anchor) ? [anchor[0], anchor[1]] : s.point;
@@ -6654,7 +6817,8 @@ async function continueShapeCalibration(run, actualM) {
   const scaledTargetM = nextCalibratedTarget(run.scaledTargetM, actualM, run.targetM);
   const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaledTargetM, { rotationDeg: run.rotationDeg });
   if (!ring) return false;
-  const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, run.wpCount), run.anchor);
+  const mode = run.travelMode || currentTravelMode || 'foot';
+  const snapped = await snapShapeWaypoints(ring, selectWaypointTs(ring, run.wpCount), run.anchor, mode);
   if (shapeRunSuperseded(run)) return true;   // abandon quietly
   if (snapped.wps.length < 3) return false;
   drawShapePreview(ring);
@@ -6671,7 +6835,8 @@ async function continueShapeCalibration(run, actualM) {
 // the drawn arc. The result is verified on the next completion (pendingCheck)
 // and reverted if the added waypoints didn't move the route toward the shape.
 async function continueShapeRefinement(run, dev, nextTs, actualM) {
-  const snapped = await snapShapeWaypoints(run.ring, nextTs, run.anchor);
+  const mode = run.travelMode || currentTravelMode || 'foot';
+  const snapped = await snapShapeWaypoints(run.ring, nextTs, run.anchor, mode);
   if (shapeRunSuperseded(run)) return true;
   // Snap-dedupe ate every insertion — nothing new to route.
   if (snapped.wps.length < 3 || snapped.wps.length <= mapManager.waypoints.length) return false;
@@ -6701,7 +6866,8 @@ async function continueShapePostCalibration(run, actualM) {
     run.scaledTargetM * Math.sqrt(run.targetM / actualM)));
   const ring = strokeToLatLngRing(run.strokePts, run.anchor, scaled, { rotationDeg: run.rotationDeg });
   if (!ring) return false;
-  const snapped = await snapShapeWaypoints(ring, run.ts, run.anchor);
+  const mode = run.travelMode || currentTravelMode || 'foot';
+  const snapped = await snapShapeWaypoints(ring, run.ts, run.anchor, mode);
   if (shapeRunSuperseded(run)) return true;
   if (snapped.wps.length < 3) return false;
   run.pendingCheck = {

@@ -843,9 +843,9 @@ export function findOptimalViewportAnchor({
     return fallback;
   }
 
-  // Sample 3x3 grid across viewport (avoiding extreme edges where shapes clip off-screen)
-  const uSteps = [0.30, 0.50, 0.70];
-  const vSteps = [0.30, 0.50, 0.70];
+  const isExpanded = Boolean(options.expandedSearch);
+  const uSteps = isExpanded ? [0.15, 0.32, 0.50, 0.68, 0.85] : [0.30, 0.50, 0.70];
+  const vSteps = isExpanded ? [0.15, 0.32, 0.50, 0.68, 0.85] : [0.30, 0.50, 0.70];
   const rawPoints = [];
 
   if (viewportCenter && Number.isFinite(viewportCenter[0]) && Number.isFinite(viewportCenter[1])) {
@@ -868,24 +868,62 @@ export function findOptimalViewportAnchor({
     }
   }
 
-  // Snap candidates to road network and deduplicate within 80m
-  const uniqueCandidates = [];
-  const padLat = dLat * 0.1;
-  const padLng = dLng * 0.1;
+  const travelMode = options.travelMode || graph.travelMode || 'foot';
 
-  for (const [la, ln] of rawPoints) {
-    const xy = graph.geoToXy(la, ln);
-    const node = optimizer.snapPointToRoad(xy, false);
-    if (!node) continue;
-    const geo = graph.xyToGeo(node.x, node.y);
-    if (geo[0] < south - padLat || geo[0] > north + padLat || geo[1] < west - padLng || geo[1] > east + padLng) {
-      continue;
+  // In expanded search, also add radial concentric points around center
+  if (isExpanded && viewportCenter) {
+    const cLat = viewportCenter[0];
+    const cLng = viewportCenter[1];
+    const mPerDegLat = 111320;
+    const mPerDegLng = 111320 * Math.cos(cLat * (Math.PI / 180));
+    const viewHalfDiagM = haversineDistance([south, west], [north, east]) * 0.5;
+    const radialDistsM = [viewHalfDiagM * 0.4, viewHalfDiagM * 0.8, viewHalfDiagM * 1.25, viewHalfDiagM * 1.6];
+    const radialAnglesDeg = [0, 45, 90, 135, 180, 225, 270, 315];
+
+    for (const distM of radialDistsM) {
+      for (const ang of radialAnglesDeg) {
+        const rad = (ang * Math.PI) / 180;
+        const rLat = cLat + (distM * Math.cos(rad)) / mPerDegLat;
+        const rLng = cLng + (distM * Math.sin(rad)) / mPerDegLng;
+        rawPoints.push([rLat, rLng]);
+      }
     }
-    const dup = uniqueCandidates.some((c) => haversineDistance(c, geo) < 80);
-    if (!dup) {
-      uniqueCandidates.push(geo);
+
+    // Also pick prominent connected road network nodes from the graph
+    if (Array.isArray(graph.nodeList) && graph.nodeList.length > 0) {
+      const connected = graph.nodeList.filter(
+        (n) => graph.isNodeAllowedForTravelMode(n, travelMode) && (graph.adj.get(n.id)?.size || 0) >= 3
+      );
+      const step = Math.max(1, Math.floor(connected.length / 16));
+      for (let k = 0; k < connected.length && rawPoints.length < 80; k += step) {
+        rawPoints.push([connected[k].lat, connected[k].lng]);
+      }
     }
   }
+
+  // Snap candidates to road network and deduplicate within 75m
+  const snapRawPoints = (points) => {
+    const candidates = [];
+    const padLat = dLat * (isExpanded ? 0.35 : 0.1);
+    const padLng = dLng * (isExpanded ? 0.35 : 0.1);
+    for (const [la, ln] of points) {
+      const xy = graph.geoToXy(la, ln);
+      const node = optimizer.snapPointToRoad(xy, false, { travelMode });
+      if (!node) continue;
+      if (graph.isNodeAllowedForTravelMode && !graph.isNodeAllowedForTravelMode(node, travelMode)) {
+        continue;
+      }
+      const geo = graph.xyToGeo(node.x, node.y);
+      if (geo[0] < south - padLat || geo[0] > north + padLat || geo[1] < west - padLng || geo[1] > east + padLng) {
+        continue;
+      }
+      const dup = candidates.some((c) => haversineDistance(c, geo) < 75);
+      if (!dup) candidates.push(geo);
+    }
+    return candidates;
+  };
+
+  let uniqueCandidates = snapRawPoints(rawPoints);
 
   if (uniqueCandidates.length === 0) {
     if (viewportCenter) uniqueCandidates.push([viewportCenter[0], viewportCenter[1]]);
@@ -896,14 +934,18 @@ export function findOptimalViewportAnchor({
   const direction = options.direction || 'any';
   const probeAngles = angleTol > 0
     ? (angleTol >= 180 ? [0, 45, 90, 135, 180, 225, 270, 315] : rotationCandidates(angleTol))
-    : [0];
+    : (isExpanded ? [0, 45, 90, 135, 180, 225, 270, 315] : [0]);
 
   const evalCandidate = (cand, ang) => {
     const ring = strokeToLatLngRing(strokePts, cand, targetM / 1.22, { rotationDeg: ang, direction });
     if (!ring || ring.length < 3) return null;
     const probeWps = pickShapeWaypoints(ring, 10);
     const xyPts = probeWps.concat([probeWps[0]]).map((p) => graph.geoToXy(p[0], p[1]));
-    const routed = optimizer.matchAndRoute(xyPts, { pruneSpurs: true });
+    const routed = optimizer.matchAndRoute(xyPts, {
+      pruneSpurs: true,
+      rejectExcessiveDetours: true,
+      travelMode,
+    });
     if (!routed || !Array.isArray(routed.routeCoordsXY) || routed.routeCoordsXY.length < 2) return null;
     const routedGeo = routed.routeCoordsXY.map(([x, y]) => graph.xyToGeo(x, y));
     const sim = shapeSimilarity(routedGeo, ring);
@@ -911,28 +953,82 @@ export function findOptimalViewportAnchor({
     return { sim, score, ring, routedGeo };
   };
 
-  // Pass 1: Screen all candidate locations at 0° (or base orientation)
-  const scoredCandidates = [];
-  for (const cand of uniqueCandidates) {
-    const res = evalCandidate(cand, 0);
-    if (res) {
-      scoredCandidates.push({ cand, score: res.score, similarity: res.sim, angleDeg: 0 });
+  const evaluateCandidateList = (candidates) => {
+    const scored = [];
+    for (const cand of candidates) {
+      let bestForCand = null;
+      const res0 = evalCandidate(cand, 0);
+      if (res0) {
+        bestForCand = { cand, score: res0.score, similarity: res0.sim, angleDeg: 0 };
+      } else if (probeAngles.length > 1) {
+        for (const ang of probeAngles) {
+          if (ang === 0) continue;
+          const res = evalCandidate(cand, ang);
+          if (res && (!bestForCand || res.score > bestForCand.score)) {
+            bestForCand = { cand, score: res.score, similarity: res.sim, angleDeg: ang };
+          }
+        }
+      }
+      if (bestForCand) scored.push(bestForCand);
+    }
+    return scored;
+  };
+
+  let scoredCandidates = evaluateCandidateList(uniqueCandidates);
+
+  // If no initial candidate could route without excessive detours, trigger in-situ candidate expansion
+  if (scoredCandidates.length === 0 && !isExpanded && options.autoExpand !== false && viewportCenter) {
+    const fallbackRawPoints = [];
+    const cLat = viewportCenter[0];
+    const cLng = viewportCenter[1];
+    const mPerDegLat = 111320;
+    const mPerDegLng = 111320 * Math.cos(cLat * (Math.PI / 180));
+    const viewHalfDiagM = haversineDistance([south, west], [north, east]) * 0.5;
+    const radialDistsM = [viewHalfDiagM * 0.45, viewHalfDiagM * 0.9, viewHalfDiagM * 1.4];
+    const radialAnglesDeg = [0, 45, 90, 135, 180, 225, 270, 315];
+
+    for (const distM of radialDistsM) {
+      for (const ang of radialAnglesDeg) {
+        const rad = (ang * Math.PI) / 180;
+        fallbackRawPoints.push([
+          cLat + (distM * Math.cos(rad)) / mPerDegLat,
+          cLng + (distM * Math.sin(rad)) / mPerDegLng,
+        ]);
+      }
+    }
+    if (Array.isArray(graph.nodeList)) {
+      const connected = graph.nodeList.filter(
+        (n) => graph.isNodeAllowedForTravelMode(n, travelMode) && (graph.adj.get(n.id)?.size || 0) >= 3
+      );
+      const step = Math.max(1, Math.floor(connected.length / 14));
+      for (let k = 0; k < connected.length && fallbackRawPoints.length < 50; k += step) {
+        fallbackRawPoints.push([connected[k].lat, connected[k].lng]);
+      }
+    }
+
+    const fallbackCandidates = snapRawPoints(fallbackRawPoints);
+    if (fallbackCandidates.length > 0) {
+      const fallbackScored = evaluateCandidateList(fallbackCandidates);
+      if (fallbackScored.length > 0) {
+        scoredCandidates = fallbackScored;
+        uniqueCandidates = fallbackCandidates;
+      }
     }
   }
 
   scoredCandidates.sort((a, b) => b.score - a.score);
 
   let bestAnchor = scoredCandidates[0]?.cand || uniqueCandidates[0];
-  let bestAngleDeg = 0;
+  let bestAngleDeg = scoredCandidates[0]?.angleDeg || 0;
   let bestScore = scoredCandidates[0]?.score ?? -Infinity;
   let bestSimilarity = scoredCandidates[0]?.similarity ?? 0;
 
   // Pass 2: Refine angle tolerance for top candidate locations
-  if (angleTol > 0 && scoredCandidates.length > 0) {
-    const topPicks = scoredCandidates.slice(0, 2);
+  if (probeAngles.length > 1 && scoredCandidates.length > 0) {
+    const topPicks = scoredCandidates.slice(0, 3);
     for (const item of topPicks) {
       for (const ang of probeAngles) {
-        if (ang === 0) continue;
+        if (ang === item.angleDeg) continue;
         const res = evalCandidate(item.cand, ang);
         if (res && res.score > bestScore + 0.5) {
           bestScore = res.score;
@@ -950,6 +1046,8 @@ export function findOptimalViewportAnchor({
     similarity: bestSimilarity,
     score: bestScore,
     candidatesCount: uniqueCandidates.length,
+    rankedCandidates: scoredCandidates.slice(0, 6),
+    searchExpanded: isExpanded,
   };
 }
 
@@ -978,5 +1076,6 @@ export {
   RoadNetworkGraph,
   RouteConstraints,
   KDTree2D,
+  isExcessiveLegDetour,
 } from './gpsArtOptimizer.js';
 

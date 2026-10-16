@@ -904,5 +904,6 @@ export {
   RoadNetworkGraph,
   RouteConstraints,
   KDTree2D,
+  isExcessiveLegDetour,
 } from './gpsArtOptimizer.js';
 
