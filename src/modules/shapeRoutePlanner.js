@@ -395,16 +395,28 @@ export function detectRouteSpurs(coords, options = {}) {
   let lastSpurEnd = -1;   // spans must not overlap — lengths would double-count
   let i = 1;
   while (i < coords.length - 1) {
-    if (haversineDistance(coords[i - 1], coords[i + 1]) < corridorM) {
+    const prev = coords[i - 1];
+    const curr = coords[i];
+    const next = coords[i + 1];
+    // At a genuine spur tip, the step into `i` and step out of `i` fold back (dot <= 0)
+    const v1Lat = curr[0] - prev[0];
+    const v1Lng = curr[1] - prev[1];
+    const v2Lat = next[0] - curr[0];
+    const v2Lng = next[1] - curr[1];
+    const isReversal = (v1Lat * v2Lat + v1Lng * v2Lng) <= 0;
+
+    if (isReversal && haversineDistance(prev, next) < corridorM) {
       let k = 1;
       while (i - 1 - k > lastSpurEnd && i + 1 + k < coords.length
         && haversineDistance(coords[i - 1 - k], coords[i + 1 + k]) < corridorM) k++;
       const start = i - k;
       const end = Math.min(coords.length - 1, i + k);
+      const junction = Math.max(0, start - 1);
       let lengthM = 0;
-      for (let j = Math.max(0, start - 1); j < i; j++) lengthM += haversineDistance(coords[j], coords[j + 1]);
-      if (lengthM >= minLengthM) {
-        spurs.push({ start, end, tip: i, junction: Math.max(0, start - 1), lengthM });
+      for (let j = junction; j < i; j++) lengthM += haversineDistance(coords[j], coords[j + 1]);
+      const tipDisplacementM = haversineDistance(coords[junction], curr);
+      if (lengthM >= minLengthM && tipDisplacementM >= minLengthM * 0.5) {
+        spurs.push({ start, end, tip: i, junction, lengthM });
         lastSpurEnd = end;
         i = end + 1;
         continue;

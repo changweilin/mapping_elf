@@ -18,7 +18,7 @@ test('live: heart stroke end-to-end against real routing APIs', async ({ page })
   await page.route('**://api.open-meteo.com/v1/forecast**', (route) => route.abort());
   await page.route('**://nominatim.openstreetmap.org/**', (route) => route.fulfill({ json: [] }));
 
-  await page.addInitScript(() => { window.__mappingElfTestHooks = { events: [] }; });
+  await page.addInitScript(() => { window.__mappingElfTestHooks = { events: [], forceLiveOsm: true }; });
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });

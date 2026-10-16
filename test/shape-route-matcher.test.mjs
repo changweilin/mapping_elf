@@ -259,5 +259,101 @@ console.log('Testing shapeRouteMatcher.js...');
   assert.equal(calibrated.startFractionBounds[1], 1.0);
 }
 
+// 11. Complete OSM Overpass `out geom qt` Parsing, LCC Pruning, 2-Core Dead-End Detection & Edge Densification
+{
+  const g = new RoadNetworkGraph([25.034, 121.564]);
+  const mockOverpassGeom = {
+    elements: [
+      // Main connected city block loop (4 corners, ~110m per side)
+      {
+        type: 'way',
+        id: 1001,
+        tags: { highway: 'primary' },
+        nodes: [1, 2, 3, 4, 1],
+        geometry: [
+          { lat: 25.034, lon: 121.564 },
+          { lat: 25.034, lon: 121.565 },
+          { lat: 25.035, lon: 121.565 },
+          { lat: 25.035, lon: 121.564 },
+          { lat: 25.034, lon: 121.564 },
+        ],
+      },
+      // Attached dead-end cul-de-sac alley at node 2
+      {
+        type: 'way',
+        id: 1002,
+        tags: { highway: 'service' },
+        nodes: [2, 5],
+        geometry: [
+          { lat: 25.034, lon: 121.565 },
+          { lat: 25.034, lon: 121.5654 },
+        ],
+      },
+      // Disconnected private/island footpath far away
+      {
+        type: 'way',
+        id: 1003,
+        tags: { highway: 'footway' },
+        nodes: [90, 91],
+        geometry: [
+          { lat: 25.045, lon: 121.580 },
+          { lat: 25.0452, lon: 121.5802 },
+        ],
+      },
+      // Private road that must be ignored
+      {
+        type: 'way',
+        id: 1004,
+        tags: { highway: 'service', access: 'private' },
+        nodes: [1, 99],
+        geometry: [
+          { lat: 25.034, lon: 121.564 },
+          { lat: 25.033, lon: 121.564 },
+        ],
+      },
+    ],
+  };
+
+  const addedEdges = RoadNetworkGraph.populateFromOverpassData(g, mockOverpassGeom, 'walk');
+  assert.ok(addedEdges >= 5, 'Should parse embedded way geometry from out geom qt');
+  assert.ok(!g.nodes.has(99), 'Private access ways must be excluded');
+
+  g.buildIndex({ pruneComponents: true, anchorXY: [0, 0], densify: true, maxEdgeLengthM: 25 });
+  assert.ok(!g.nodes.has(90) && !g.nodes.has(91), 'Disconnected island component must be pruned by LCC');
+  assert.ok(g.nodes.size > 12, `Long edges should be densified into intermediate nodes, got ${g.nodes.size}`);
+  assert.ok(g.nodes.get(5)?.isDeadEnd === true, 'Cul-de-sac leaf node must be marked as dead-end by 2-core peeling');
+  assert.ok(g.nodes.get(1)?.isDeadEnd === false, 'Main block loop node must be in 2-core (not dead-end)');
+
+  const opt = new GPSArtOptimizer(g);
+  const nearCulDeSac = g.geoToXy(25.034, 121.5653);
+  const snapped = opt.snapPointToRoad(nearCulDeSac, false);
+  assert.ok(snapped && !snapped.isDeadEnd, 'Smart 2-core snapping should avoid snapping to cul-de-sac dead-end');
+}
+
+// 12. High-Similarity Heart Optimization on Dense Urban Graph with Corridor-Guided A*
+{
+  const city = RoadNetworkGraph.buildSyntheticCityGraph(26, 75.0);
+  const optimizer = new GPSArtOptimizer(city);
+  const heart = [];
+  for (let i = 0; i <= 64; i++) {
+    const t = (i / 64) * Math.PI * 2;
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+    heart.push([150 + x * 7, 150 + y * 7]);
+  }
+  const constraints = new RouteConstraints({
+    targetLengthM: 4500.0,
+    travelMode: 'walk',
+    maxTurningPoints: 22,
+    closedLoop: true,
+    flipY: true,
+    rotationBoundsDeg: [0, 0],
+  });
+  const sol = optimizer.optimize(heart, constraints);
+  assert.ok(sol.similarityPct >= 85, `Expected heart similarity >= 85% on urban graph, got ${sol.similarityPct}%`);
+  assert.ok(Math.abs(sol.actualLengthM - 4500) / 4500 <= 0.12, `Expected calibrated length near 4500m, got ${sol.actualLengthM}`);
+}
+
 console.log('shapeRouteMatcher.js test passed successfully!');
+
 

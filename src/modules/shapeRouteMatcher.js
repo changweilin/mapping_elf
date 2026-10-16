@@ -618,12 +618,35 @@ export function evaluateShapeSimilarity(targetPattern, routedPath) {
   const frechet = discreteFrechetDistance(normTarget, normRouted);
   const dirSim = averageTangentSimilarity(normTarget, normRouted);
 
-  const distanceScore = Math.max(0, 100 * Math.exp(-3.2 * frechet));
+  // Compute symmetric Chamfer distance (point-to-polyline) in normalized space,
+  // which is invariant to local detour-ratio phase shifts and grid stair-stepping.
+  const meanPolyDist = (fromPts, toPoly) => {
+    let sum = 0;
+    for (const p of fromPts) {
+      let best = Infinity;
+      for (let i = 0; i < toPoly.length - 1; i++) {
+        const d = perpendicularDistance2D(p, toPoly[i], toPoly[i + 1]);
+        if (d < best) best = d;
+      }
+      sum += best;
+    }
+    return sum / fromPts.length;
+  };
+
+  let meanRadius = 0;
+  for (const p of normTarget) {
+    meanRadius += Math.hypot(p.x, p.y);
+  }
+  meanRadius = Math.max(0.18, meanRadius / normTarget.length);
+
+  const chamfer = 0.5 * (meanPolyDist(normTarget, normRouted) + meanPolyDist(normRouted, normTarget));
+  const chamferScore = Math.max(0, Math.min(100, (1 - chamfer / meanRadius) * 100));
+  const frechetScore = Math.max(0, 100 * Math.exp(-2.2 * frechet));
   const directionScore = Math.max(0, ((dirSim + 1) / 2) * 100);
 
   const compositeScore = Math.min(
     100,
-    Math.max(0, Math.round(0.65 * distanceScore + 0.35 * directionScore))
+    Math.max(0, Math.round(0.65 * chamferScore + 0.20 * frechetScore + 0.15 * directionScore))
   );
 
   return {
