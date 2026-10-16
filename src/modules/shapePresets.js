@@ -150,8 +150,10 @@ function generatePlumBlossom(n = 100) {
   const pts = [];
   for (let i = 0; i <= n; i++) {
     const t = (i / n) * Math.PI * 2;
-    const r = 0.7 + 0.3 * Math.cos(5 * t);
-    pts.push([r * Math.cos(t), r * Math.sin(t)]);
+    const phi = 5 * t;
+    const r = 0.65 + 0.35 * Math.cos(phi) - 0.11 * Math.cos(2 * phi) + 0.02 * Math.cos(3 * phi);
+    const angle = t - Math.PI / 2;
+    pts.push([r * Math.cos(angle), r * Math.sin(angle)]);
   }
   return normalizePoints(pts);
 }
@@ -177,48 +179,62 @@ function generateCat(n = 90) {
 
 function generateDog(n = 100) {
   const verts = [
-    [0.22, 0.48],
-    [0.24, 0.56],
-    [0.32, 0.58],
-    [0.32, 0.78],
-    [0.38, 0.78],
-    [0.40, 0.66],
-    [0.55, 0.66],
-    [0.62, 0.78],
-    [0.68, 0.78],
-    [0.70, 0.62],
-    [0.76, 0.55],
-    [0.86, 0.42],
-    [0.80, 0.48],
-    [0.66, 0.50],
-    [0.52, 0.46],
-    [0.48, 0.30],
-    [0.42, 0.24],
-    [0.36, 0.32],
-    [0.38, 0.42],
-    [0.22, 0.48],
+    [0.12, 0.36], // nose tip
+    [0.16, 0.42], // lower jaw / chin
+    [0.23, 0.43], // throat
+    [0.26, 0.54], // broad chest
+    [0.26, 0.72], // foreleg front
+    [0.27, 0.88], // front paw front
+    [0.34, 0.88], // front paw pad
+    [0.36, 0.70], // foreleg back
+    [0.48, 0.65], // belly underline
+    [0.61, 0.66], // flank
+    [0.62, 0.78], // hind leg front
+    [0.63, 0.88], // rear paw front
+    [0.70, 0.88], // rear paw pad
+    [0.71, 0.72], // hock
+    [0.76, 0.56], // rear thigh / buttocks
+    [0.82, 0.46], // tail base lower
+    [0.89, 0.32], // tail curve up
+    [0.88, 0.18], // tail tip
+    [0.82, 0.22], // tail inner curve
+    [0.75, 0.36], // tail base upper
+    [0.65, 0.42], // croup / hip
+    [0.50, 0.43], // back
+    [0.38, 0.38], // withers
+    [0.35, 0.26], // back of neck
+    [0.36, 0.14], // back of ear base
+    [0.30, 0.08], // ear tip
+    [0.25, 0.18], // front ear base
+    [0.22, 0.26], // stop / forehead
+    [0.16, 0.31], // muzzle top
+    [0.12, 0.36], // nose tip
   ];
   return interpolateSmoothRing(verts, n);
 }
 
 function generateBird(n = 90) {
-  const verts = [
-    [0.50, 0.20],
-    [0.53, 0.25],
-    [0.62, 0.30],
-    [0.86, 0.26],
-    [0.78, 0.46],
-    [0.62, 0.52],
-    [0.56, 0.78],
-    [0.50, 0.74],
-    [0.44, 0.78],
-    [0.38, 0.52],
-    [0.22, 0.46],
-    [0.14, 0.26],
-    [0.38, 0.30],
-    [0.47, 0.25],
-    [0.50, 0.20],
+  const rightWing = [
+    [0.50, 0.10], // beak tip
+    [0.52, 0.15], // head side
+    [0.53, 0.20], // neck
+    [0.60, 0.22], // shoulder
+    [0.72, 0.17], // wing leading edge arching outwards
+    [0.86, 0.15], // wing outer leading edge
+    [0.93, 0.18], // primary wingtip feather 1
+    [0.87, 0.26], // feather notch 1
+    [0.89, 0.33], // primary feather 2
+    [0.81, 0.39], // feather notch 2
+    [0.78, 0.46], // secondary feathers
+    [0.67, 0.50], // trailing wing inner
+    [0.57, 0.53], // body waist
+    [0.58, 0.68], // tail base
+    [0.66, 0.85], // fanned outer tail tip
+    [0.58, 0.87], // mid tail feather
+    [0.50, 0.84], // central tail tip
   ];
+  const leftWing = rightWing.slice(1, -1).reverse().map(([x, y]) => [1 - x, y]);
+  const verts = [...rightWing, ...leftWing, rightWing[0]];
   return interpolateSmoothRing(verts, n);
 }
 
@@ -302,7 +318,7 @@ export const SHAPE_PRESETS = [
   { id: 'moon', name: '月亮', emoji: '🌙', points: generateMoon() },
   { id: 'sun', name: '太陽', emoji: '☀️', points: generateSun() },
   { id: 'diamond', name: '鑽石', emoji: '💎', points: generateDiamond() },
-  { id: 'club', name: '梅花', emoji: '♣️', points: generatePlumBlossom() },
+  { id: 'club', name: '梅花', emoji: '🌸', points: generatePlumBlossom() },
   { id: 'cat', name: '貓', emoji: '🐱', points: generateCat() },
   { id: 'dog', name: '狗', emoji: '🐶', points: generateDog() },
   { id: 'bird', name: '鳥', emoji: '🐦', points: generateBird() },
