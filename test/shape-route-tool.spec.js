@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { RoadNetworkGraph } from '../src/modules/gpsArtOptimizer.js';
+import { shapeSimilarity, strokeToLatLngRing, ringRouteDeviation, selectWaypointTs, waypointsFromTs } from '../src/modules/shapeRoutePlanner.js';
+import { shapeStroke } from './helpers/testShapes.mjs';
+import { makeGridWorld } from './helpers/gridWorld.mjs';
 
 // Drawing board (繪圖板): sketch a shape → O繞 running loop near the current
 // location. Routing APIs are unreachable in CI, so the route falls back to
@@ -478,6 +481,22 @@ test('road network strictly excludes motorway/expressway for non-car modes and e
       { type: 'node', id: 6, lat: 25.039, lon: 121.564 },
       { type: 'node', id: 7, lat: 25.040, lon: 121.564 },
       { type: 'node', id: 8, lat: 25.041, lon: 121.564 },
+      { type: 'node', id: 9, lat: 25.042, lon: 121.564 },
+      { type: 'node', id: 10, lat: 25.043, lon: 121.564 },
+      { type: 'node', id: 11, lat: 25.044, lon: 121.564 },
+      { type: 'node', id: 12, lat: 25.045, lon: 121.564 },
+      { type: 'node', id: 13, lat: 25.046, lon: 121.564 },
+      { type: 'node', id: 14, lat: 25.047, lon: 121.564 },
+      { type: 'node', id: 15, lat: 25.048, lon: 121.564 },
+      { type: 'node', id: 16, lat: 25.049, lon: 121.564 },
+      { type: 'node', id: 17, lat: 25.050, lon: 121.564 },
+      { type: 'node', id: 18, lat: 25.051, lon: 121.564 },
+      { type: 'node', id: 19, lat: 25.052, lon: 121.564 },
+      { type: 'node', id: 20, lat: 25.053, lon: 121.564 },
+      { type: 'node', id: 21, lat: 25.054, lon: 121.564 },
+      { type: 'node', id: 22, lat: 25.055, lon: 121.564 },
+      { type: 'node', id: 23, lat: 25.056, lon: 121.564 },
+      { type: 'node', id: 24, lat: 25.057, lon: 121.564 },
       // Motorway: nodes 1 -> 2
       {
         type: 'way',
@@ -505,6 +524,62 @@ test('road network strictly excludes motorway/expressway for non-car modes and e
         id: 104,
         nodes: [7, 8],
         tags: { highway: 'residential', oneway: 'yes', 'oneway:bicycle': 'no' },
+      },
+      // Plain interchange ramp (trunk_link without sidewalk/bike): nodes 9 -> 10
+      {
+        type: 'way',
+        id: 105,
+        nodes: [9, 10],
+        tags: { highway: 'trunk_link' },
+      },
+      // Closed expressway mainline (trunk with expressway=yes): nodes 11 -> 12
+      {
+        type: 'way',
+        id: 106,
+        nodes: [11, 12],
+        tags: { highway: 'trunk', expressway: 'yes' },
+      },
+      // Provincial trunk road slow lane / frontage road with sidewalk: nodes 13 -> 14
+      {
+        type: 'way',
+        id: 107,
+        nodes: [13, 14],
+        tags: { highway: 'trunk', sidewalk: 'yes', bicycle: 'yes' },
+      },
+      // Slow lane connector ramp with foot=yes / bicycle=yes: nodes 15 -> 16
+      {
+        type: 'way',
+        id: 108,
+        nodes: [15, 16],
+        tags: { highway: 'trunk_link', foot: 'yes', bicycle: 'yes' },
+      },
+      // Elevated expressway viaduct without motorroad/foot tag (common in Taiwan OSM): nodes 17 -> 18
+      {
+        type: 'way',
+        id: 109,
+        nodes: [17, 18],
+        tags: { highway: 'trunk', name: '市民高架道路', bridge: 'yes', layer: '1', maxspeed: '80' },
+      },
+      // Highway on/off ramp tagged primary_link: nodes 19 -> 20
+      {
+        type: 'way',
+        id: 110,
+        nodes: [19, 20],
+        tags: { highway: 'primary_link', name: '光復南路匝道', oneway: 'yes' },
+      },
+      // Elevated river bridge viaduct on primary without sidewalk: nodes 21 -> 22
+      {
+        type: 'way',
+        id: 111,
+        nodes: [21, 22],
+        tags: { highway: 'primary', bridge: 'yes', layer: '1', maxspeed: '70' },
+      },
+      // Surface street under viaduct: nodes 23 -> 24
+      {
+        type: 'way',
+        id: 112,
+        nodes: [23, 24],
+        tags: { highway: 'primary', name: '市民大道三段' },
       },
     ],
   };
@@ -536,6 +611,45 @@ test('road network strictly excludes motorway/expressway for non-car modes and e
     bikeHasMotorroad: bikeGraph.adj.get(3)?.has(4) ?? false,
     footHasMotorroad: footGraph.adj.get(3)?.has(4) ?? false,
 
+    carHasTrunkLink: carGraph.adj.get(9)?.has(10) ?? false,
+    motoHasTrunkLink: motoGraph.adj.get(9)?.has(10) ?? false,
+    bikeHasTrunkLink: bikeGraph.adj.get(9)?.has(10) ?? false,
+    footHasTrunkLink: footGraph.adj.get(9)?.has(10) ?? false,
+
+    carHasExpressway: carGraph.adj.get(11)?.has(12) ?? false,
+    motoHasExpressway: motoGraph.adj.get(11)?.has(12) ?? false,
+    bikeHasExpressway: bikeGraph.adj.get(11)?.has(12) ?? false,
+    footHasExpressway: footGraph.adj.get(11)?.has(12) ?? false,
+
+    // Slow lane / surface trunk road:
+    carHasSlowLane: carGraph.adj.get(13)?.has(14) ?? false,
+    motoHasSlowLane: motoGraph.adj.get(13)?.has(14) ?? false,
+    bikeHasSlowLane: bikeGraph.adj.get(13)?.has(14) ?? false,
+    footHasSlowLane: footGraph.adj.get(13)?.has(14) ?? false,
+
+    // Connector with designated sidewalk/bike:
+    bikeHasSlowLink: bikeGraph.adj.get(15)?.has(16) ?? false,
+    footHasSlowLink: footGraph.adj.get(15)?.has(16) ?? false,
+
+    // Elevated expressway (市民高架道路)
+    carHasElevatedExpressway: carGraph.adj.get(17)?.has(18) ?? false,
+    footHasElevatedExpressway: footGraph.adj.get(17)?.has(18) ?? false,
+    bikeHasElevatedExpressway: bikeGraph.adj.get(17)?.has(18) ?? false,
+
+    // Primary link ramp (光復南路匝道)
+    carHasPrimaryLinkRamp: carGraph.adj.get(19)?.has(20) ?? false,
+    footHasPrimaryLinkRamp: footGraph.adj.get(19)?.has(20) ?? false,
+    bikeHasPrimaryLinkRamp: bikeGraph.adj.get(19)?.has(20) ?? false,
+
+    // Bridge viaduct without sidewalk (70km/h)
+    carHasBridgeViaduct: carGraph.adj.get(21)?.has(22) ?? false,
+    footHasBridgeViaduct: footGraph.adj.get(21)?.has(22) ?? false,
+
+    // Surface street under viaduct (市民大道三段)
+    carHasSurfaceStreet: carGraph.adj.get(23)?.has(24) ?? false,
+    footHasSurfaceStreet: footGraph.adj.get(23)?.has(24) ?? false,
+    bikeHasSurfaceStreet: bikeGraph.adj.get(23)?.has(24) ?? false,
+
     carOnewayForward: carGraph.adj.get(5)?.has(6) ?? false,
     carOnewayReverse: carGraph.adj.get(6)?.has(5) ?? false,
 
@@ -545,17 +659,46 @@ test('road network strictly excludes motorway/expressway for non-car modes and e
     footIsBidirectional: (footGraph.adj.get(5)?.has(6) ?? false) && (footGraph.adj.get(6)?.has(5) ?? false),
   };
 
-  // Car CAN access motorways
+  // Car CAN access motorways, trunk links, expressways, ramps, and viaducts
   expect(testResults.carHasMotorway).toBe(true);
   expect(testResults.carHasMotorroad).toBe(true);
+  expect(testResults.carHasTrunkLink).toBe(true);
+  expect(testResults.carHasExpressway).toBe(true);
+  expect(testResults.carHasSlowLane).toBe(true);
+  expect(testResults.carHasElevatedExpressway).toBe(true);
+  expect(testResults.carHasPrimaryLinkRamp).toBe(true);
+  expect(testResults.carHasBridgeViaduct).toBe(true);
+  expect(testResults.carHasSurfaceStreet).toBe(true);
 
-  // Non-cars CANNOT access motorways
+  // Non-cars CANNOT access motorways or expressways
   expect(testResults.motoHasMotorway).toBe(false);
   expect(testResults.motoHasMotorroad).toBe(false);
   expect(testResults.bikeHasMotorway).toBe(false);
   expect(testResults.bikeHasMotorroad).toBe(false);
   expect(testResults.footHasMotorway).toBe(false);
   expect(testResults.footHasMotorroad).toBe(false);
+
+  // Foot and bike CANNOT access closed expressway mainlines or plain car ramps
+  expect(testResults.footHasTrunkLink).toBe(false);
+  expect(testResults.footHasExpressway).toBe(false);
+  expect(testResults.bikeHasTrunkLink).toBe(false);
+  expect(testResults.bikeHasExpressway).toBe(false);
+
+  // Elevated expressways and interchange ramps without sidewalks MUST be rejected for foot & bike
+  expect(testResults.footHasElevatedExpressway).toBe(false);
+  expect(testResults.bikeHasElevatedExpressway).toBe(false);
+  expect(testResults.footHasPrimaryLinkRamp).toBe(false);
+  expect(testResults.bikeHasPrimaryLinkRamp).toBe(false);
+  expect(testResults.footHasBridgeViaduct).toBe(false);
+
+  // BUT slow lanes (慢車道 / 側車道), designated connectors, and surface streets ARE accessible (no over-kill)
+  expect(testResults.footHasSlowLane).toBe(true);
+  expect(testResults.bikeHasSlowLane).toBe(true);
+  expect(testResults.motoHasSlowLane).toBe(true);
+  expect(testResults.footHasSlowLink).toBe(true);
+  expect(testResults.bikeHasSlowLink).toBe(true);
+  expect(testResults.footHasSurfaceStreet).toBe(true);
+  expect(testResults.bikeHasSurfaceStreet).toBe(true);
 
   // Oneway restrictions
   expect(testResults.carOnewayForward).toBe(true);
@@ -568,4 +711,33 @@ test('road network strictly excludes motorway/expressway for non-car modes and e
   // Foot pedestrians not blocked by vehicle oneway
   expect(testResults.footIsBidirectional).toBe(true);
 });
+
+test('shape similarity severely drops and max deviation increases when route takes a highway interchange detour', async () => {
+  const world = makeGridWorld({ anchor: [25.034, 121.564], spacingM: 80, tieBreak: 'lshape' });
+  const stroke = shapeStroke('heart');
+  const ring = strokeToLatLngRing(stroke, [25.034, 121.564], 5000);
+  const wps = waypointsFromTs(ring, selectWaypointTs(ring, 14));
+  const normalCoords = world.routeLoop(wps);
+
+  // A route with a 1.6 km highway interchange excursion
+  const detourPt = [normalCoords[10][0] + 0.015, normalCoords[10][1]];
+  const detourCoords = [
+    ...normalCoords.slice(0, 11),
+    detourPt,
+    normalCoords[10],
+    ...normalCoords.slice(11),
+  ];
+
+  const normalSim = shapeSimilarity(normalCoords, ring);
+  const detourSim = shapeSimilarity(detourCoords, ring);
+  const detourDev = ringRouteDeviation(ring, detourCoords, { bidirectional: true });
+
+  // Normal route has high similarity (> 85%)
+  expect(normalSim).toBeGreaterThan(0.85);
+  // Route with highway interchange excursion has collapsed similarity (< 35%)
+  expect(detourSim).toBeLessThan(0.35);
+  // Max deviation catches the 1.6 km highway detour
+  expect(detourDev.maxM).toBeGreaterThan(1000);
+});
+
 

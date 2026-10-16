@@ -12,7 +12,7 @@
  * in strokeToLatLngRing (the only pixel→geo boundary, mirroring the routeEngine
  * coordinate-order rule).
  */
-import { haversineDistance } from './utils.js';
+import { haversineDistance, totalDistance } from './utils.js';
 
 const M_PER_DEG_LAT = 111320;
 
@@ -291,23 +291,42 @@ export function waypointsFromTs(ring, ts) {
  * each ring vertex sits from the route (in metres). Catches cut-off
  * features that the mean-based shapeSimilarity barely registers.
  */
-export function ringRouteDeviation(ring, routeCoords) {
-  if (!Array.isArray(ring) || ring.length < 3) return { maxM: 0, meanM: 0 };
-  if (!Array.isArray(routeCoords) || routeCoords.length < 2) return { maxM: Infinity, meanM: Infinity };
+export function ringRouteDeviation(ring, routeCoords, options = {}) {
+  if (!Array.isArray(ring) || ring.length < 3) return { maxM: 0, meanM: 0, ringToRouteMaxM: 0, routeToRingMaxM: 0 };
+  if (!Array.isArray(routeCoords) || routeCoords.length < 2) return { maxM: Infinity, meanM: Infinity, ringToRouteMaxM: Infinity, routeToRingMaxM: Infinity };
   const proj = ringProjector(ring);
+  const ringXY = ring.map(proj);
   const routeXY = routeCoords.map(proj);
-  let maxM = 0, sum = 0;
-  for (const p of ring) {
-    const q = proj(p);
+
+  let ringToRouteMaxM = 0, sumRing = 0;
+  for (const q of ringXY) {
     let best = Infinity;
     for (let i = 0; i < routeXY.length - 1; i++) {
       const d = pointSegDistXY(q, routeXY[i], routeXY[i + 1]);
       if (d < best) best = d;
     }
-    if (best > maxM) maxM = best;
-    sum += best;
+    if (best > ringToRouteMaxM) ringToRouteMaxM = best;
+    sumRing += best;
   }
-  return { maxM, meanM: sum / ring.length };
+
+  let routeToRingMaxM = 0, sumRoute = 0;
+  if (options.bidirectional) {
+    for (const q of routeXY) {
+      let best = Infinity;
+      for (let i = 0; i < ringXY.length; i++) {
+        const a = ringXY[i];
+        const b = ringXY[(i + 1) % ringXY.length];
+        const d = pointSegDistXY(q, a, b);
+        if (d < best) best = d;
+      }
+      if (best > routeToRingMaxM) routeToRingMaxM = best;
+      sumRoute += best;
+    }
+  }
+
+  const maxM = options.bidirectional ? Math.max(ringToRouteMaxM, routeToRingMaxM) : ringToRouteMaxM;
+  const meanM = options.bidirectional ? (sumRing / ringXY.length + sumRoute / routeXY.length) / 2 : sumRing / ring.length;
+  return { maxM, meanM, ringToRouteMaxM, routeToRingMaxM };
 }
 
 /**
@@ -729,21 +748,58 @@ export function shapeSimilarity(routeCoords, ring) {
   const a = sample(routeCoords, 120);
   const b = sample(ring, 120);
 
-  const meanNearest = (from, to) => {
-    let sum = 0;
-    for (const p of from) {
-      let best = Infinity;
-      for (const q of to) {
-        const d = haversineDistance(p, q);
-        if (d < best) best = d;
-      }
-      sum += best;
+  const distsAtoB = [];
+  let maxAtoB = 0;
+  for (const p of a) {
+    let best = Infinity;
+    for (const q of b) {
+      const d = haversineDistance(p, q);
+      if (d < best) best = d;
     }
-    return sum / from.length;
-  };
+    distsAtoB.push(best);
+    if (best > maxAtoB) maxAtoB = best;
+  }
 
-  const d = (meanNearest(a, b) + meanNearest(b, a)) / 2;
-  return Math.max(0, Math.min(1, 1 - d / meanRadius));
+  const distsBtoA = [];
+  let maxBtoA = 0;
+  for (const p of b) {
+    let best = Infinity;
+    for (const q of a) {
+      const d = haversineDistance(p, q);
+      if (d < best) best = d;
+    }
+    distsBtoA.push(best);
+    if (best > maxBtoA) maxBtoA = best;
+  }
+
+  const meanAtoB = distsAtoB.reduce((s, d) => s + d, 0) / a.length;
+  const meanBtoA = distsBtoA.reduce((s, d) => s + d, 0) / b.length;
+  const rmsAtoB = Math.sqrt(distsAtoB.reduce((s, d) => s + d * d, 0) / a.length);
+  const rmsBtoA = Math.sqrt(distsBtoA.reduce((s, d) => s + d * d, 0) / b.length);
+
+  // Blend linear mean and RMS: punishes large highway excursions / detours while staying smooth for street grids
+  const effectiveAtoB = 0.5 * meanAtoB + 0.5 * rmsAtoB;
+  const effectiveBtoA = 0.5 * meanBtoA + 0.5 * rmsBtoA;
+  const d = (effectiveAtoB + effectiveBtoA) / 2;
+  let sim = Math.max(0, Math.min(1, 1 - d / meanRadius));
+
+  // Severe penalty for off-shape spurs (interchange ramps / unwanted out-and-back whiskers)
+  const spurs = offShapeRouteSpurs(routeCoords, ring);
+  const spurM = totalSpurLengthM(spurs) * 2;
+  const routeLen = totalDistance(routeCoords);
+  if (routeLen > 0 && spurM > 0) {
+    const spurRatio = Math.min(1, spurM / routeLen);
+    sim *= (1 - spurRatio * 0.8);
+  }
+
+  // Severe penalty for excessive max deviation (spikes far beyond normal grid error)
+  const maxDev = Math.max(maxAtoB, maxBtoA);
+  if (maxDev > 0.4 * meanRadius) {
+    const excessRatio = maxDev / meanRadius - 0.4;
+    sim *= Math.max(0.05, 1 - Math.min(0.85, excessRatio * 0.6));
+  }
+
+  return Math.max(0, Math.min(1, sim));
 }
 
 // Re-export 5-stage shape-constrained routing engine functions from shapeRouteMatcher

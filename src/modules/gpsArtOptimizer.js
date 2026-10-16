@@ -713,20 +713,125 @@ export class RoadNetworkGraph {
       // Skip impassable / private roads
       if (tags.area === 'yes') continue;
       if (tags.access === 'private' || tags.access === 'no') continue;
-      if ((mode === 'walk' || mode === 'foot') && (tags.foot === 'no' || tags.foot === 'private')) continue;
-      if (mode === 'bike' && (tags.bicycle === 'no' || tags.bicycle === 'private')) continue;
-      if ((mode === 'motorcycle' || mode === 'car' || mode === 'drive') && (tags.motor_vehicle === 'no' || tags.motor_vehicle === 'private')) continue;
-      if (mode === 'motorcycle' && (tags.motorcycle === 'no' || tags.motorcycle === 'private')) continue;
-      if ((mode === 'car' || mode === 'drive') && (tags.motorcar === 'no' || tags.motorcar === 'private')) continue;
 
       const isCar = mode === 'car' || mode === 'drive';
       const isMotorcycle = mode === 'motorcycle';
       const isMotorVehicle = isCar || isMotorcycle;
       const isPedestrian = mode === 'walk' || mode === 'foot';
+      const isBike = mode === 'bike';
 
-      // 1. Motorway / Expressway access: STRICTLY car/drive only. Foot, bike, motorcycle forbidden.
-      const isMotorway = tags.highway === 'motorway' || tags.highway === 'motorway_link' || tags.motorroad === 'yes';
+      const hw = tags.highway || '';
+      const nameStr = [
+        tags.name,
+        tags['name:zh'],
+        tags['name:en'],
+        tags.ref,
+        tags.destination,
+        tags['destination:ref'],
+        tags.description,
+      ].filter(Boolean).join(' ');
+
+      // Check explicit pedestrian infrastructure
+      const hasExplicitFoot =
+        tags.foot === 'yes' ||
+        tags.foot === 'designated' ||
+        tags.foot === 'permissive' ||
+        tags.sidewalk === 'yes' ||
+        tags.sidewalk === 'both' ||
+        tags.sidewalk === 'left' ||
+        tags.sidewalk === 'right' ||
+        tags.sidewalk === 'separate' ||
+        tags['sidewalk:left'] === 'yes' ||
+        tags['sidewalk:right'] === 'yes' ||
+        tags['sidewalk:both'] === 'yes';
+
+      const isBannedFoot =
+        tags.foot === 'no' ||
+        tags.foot === 'private' ||
+        tags.foot === 'use_sidepath' ||
+        tags.pedestrians === 'no' ||
+        tags.access === 'no' ||
+        tags.access === 'private';
+
+      // Check explicit bicycle infrastructure
+      const hasExplicitBike =
+        tags.bicycle === 'yes' ||
+        tags.bicycle === 'designated' ||
+        tags.bicycle === 'permissive' ||
+        Boolean(tags.cycleway) ||
+        Boolean(tags['cycleway:left']) ||
+        Boolean(tags['cycleway:right']) ||
+        Boolean(tags['cycleway:both']);
+
+      const isBannedBike =
+        tags.bicycle === 'no' ||
+        tags.bicycle === 'private' ||
+        tags.bicycle === 'use_sidepath' ||
+        tags.access === 'no' ||
+        tags.access === 'private';
+
+      // Mode-specific negative access tags
+      if (isPedestrian && isBannedFoot) continue;
+      if (isBike && isBannedBike) continue;
+      if (isMotorVehicle && (tags.motor_vehicle === 'no' || tags.motor_vehicle === 'private')) continue;
+      if (isMotorcycle && (tags.motorcycle === 'no' || tags.motorcycle === 'private')) continue;
+      if (isCar && (tags.motorcar === 'no' || tags.motorcar === 'private')) continue;
+
+      // Distinguish slow lane / frontage road / surface road from expressway mainlines
+      const isSlowOrFrontage = /慢車道|側車道|平面|機慢車|機車道|Frontage|Side\s*Road|Service/i.test(nameStr);
+
+      // Detect expressway / viaduct / highway interchange keywords
+      const isExpresswayKeyword = /高架|快速道路|快速公路|高速公路|國道|交流道|匝道|引道|環快|台6\d|台7[2468]|台8[2468]|Freeway|Motorway|Expressway|Flyover|Viaduct/i.test(nameStr);
+      const isExpresswayTag = tags.motorroad === 'yes' || tags.expressway === 'yes';
+      const isExpresswayMain = isExpresswayTag || (isExpresswayKeyword && !isSlowOrFrontage);
+
+      const isMotorway = hw === 'motorway' || hw === 'motorway_link';
+      const isTrunk = hw === 'trunk';
+      const isLink = hw.endsWith('_link');
+      const isElevated = tags.bridge === 'yes' || (Number(tags.layer) >= 1);
+      const speed = parseInt(tags.maxspeed, 10);
+      const isHighSpeed = Number.isFinite(speed) && speed >= 70;
+      const isModerateHighSpeed = Number.isFinite(speed) && speed >= 60;
+
+      // 1. Motorway / Freeway: STRICTLY car/drive only. Foot, bike, motorcycle forbidden.
       if (isMotorway && !isCar) continue;
+
+      // 2. Expressway main carriage / viaducts (快速道路主線快車道 / 高架橋快車道)
+      if (isExpresswayMain) {
+        if (isPedestrian && !hasExplicitFoot) continue;
+        if (isBike && !hasExplicitBike) continue;
+        if (isMotorcycle && (tags.motorcycle !== 'yes' && tags.motor_vehicle !== 'yes')) continue;
+        if (!isCar && !isMotorcycle && !hasExplicitFoot && !hasExplicitBike) continue;
+      }
+
+      // 3. Highway Interchange Ramps & Connectors (_link: trunk_link, primary_link, etc.)
+      if (isLink) {
+        if (isPedestrian && !hasExplicitFoot) continue;
+        if (isBike && !hasExplicitBike && (hw === 'motorway_link' || hw === 'trunk_link' || isExpresswayKeyword || isElevated)) continue;
+        if (isMotorcycle && (tags.motorcycle === 'no' || tags.motor_vehicle === 'no')) continue;
+      }
+
+      // 4. Trunk Roads (省道主線 / 快速公路主線)
+      if (isTrunk) {
+        // Pedestrians strictly forbidden unless sidewalk, explicit foot tag, or slow lane
+        if (isPedestrian && !hasExplicitFoot && !isSlowOrFrontage) continue;
+        // Bicycles forbidden if expressway, elevated, high-speed, or trunk without bike infrastructure
+        if (isBike && !hasExplicitBike && !isSlowOrFrontage && (isExpresswayKeyword || isElevated || isHighSpeed || isExpresswayTag)) continue;
+        if (isMotorcycle && (isExpresswayTag || isExpresswayKeyword) && !isSlowOrFrontage && tags.motorcycle !== 'yes' && tags.motor_vehicle !== 'yes') continue;
+      }
+
+      // 5. Elevated Viaducts & Bridges on primary/trunk/link (市區高架道如市民高架、建國高架、新生高架、跨河快車道橋)
+      if (isElevated && (isTrunk || hw === 'primary' || isLink) && !isSlowOrFrontage) {
+        if (isPedestrian && !hasExplicitFoot) continue;
+        if (isBike && !hasExplicitBike && (isExpresswayKeyword || isHighSpeed || tags.oneway === 'yes')) continue;
+      }
+
+      // 6. High Speed Roads (maxspeed >= 70 km/h, or >= 60 km/h on elevated/link/trunk)
+      if (isHighSpeed) {
+        if (isPedestrian && !hasExplicitFoot) continue;
+        if (isBike && !hasExplicitBike) continue;
+      }
+      if (isModerateHighSpeed && isPedestrian && !hasExplicitFoot && (isElevated || isLink || isTrunk)) continue;
 
       // 2. Footways, steps, cycleways: forbidden for motorized vehicles unless explicitly designated
       const isPedestrianOrCycleTrack =

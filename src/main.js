@@ -5839,13 +5839,8 @@ async function runHighFidelityShapePipeline({
   }
 
   // Stage 4: Compute final similarity, max deviation, and overlap ratio
-  const residualSpurs = trimSpurs ? detectRouteSpurs(coords) : [];
-  const metricCoords = residualSpurs.length
-    ? trimRouteSpurs(coords, residualSpurs)
-    : coords;
-
-  const similarityPct = Math.round(shapeSimilarity(metricCoords, ring) * 100);
-  const maxDevM = Math.round(ringRouteDeviation(ring, metricCoords).maxM);
+  const similarityPct = Math.round(shapeSimilarity(coords, ring) * 100);
+  const maxDevM = Math.round(ringRouteDeviation(ring, coords, { bidirectional: true }).maxM);
 
   // Compute overlap ratio across route segments
   const segSet = new Set();
@@ -6530,17 +6525,9 @@ async function continueShapePostCalibration(run, actualM) {
 
 function finishShapeRun(run, actualM) {
   shapeRouteRun = null;
-  // With trimming on, residual whiskers (ones no waypoint retraction could
-  // remove) are excluded from the SHAPE verdict — the runner still runs
-  // them, so 實際距離 stays the physical mileage.
-  const residualSpurs = run.trimSpurs ? detectRouteSpurs(currentRouteCoords) : [];
-  const metricCoords = residualSpurs.length
-    ? trimRouteSpurs(currentRouteCoords, residualSpurs)
-    : currentRouteCoords;
-  const pct = Math.round(shapeSimilarity(metricCoords, run.ring) * 100);
-  // Worst drawn-point-to-route distance — the mean-based similarity barely
-  // reacts to a cut-off star tip, this number does.
-  const maxDevM = Math.round(ringRouteDeviation(run.ring, metricCoords).maxM);
+  const pct = Math.round(shapeSimilarity(currentRouteCoords, run.ring) * 100);
+  // Worst deviation between drawn ring and routed geometry (bidirectional)
+  const maxDevM = Math.round(ringRouteDeviation(run.ring, currentRouteCoords, { bidirectional: true }).maxM);
   if (shapeReadoutEl && !shapePanel?.classList.contains('hidden')) {
     const rows = [
       ['航點', String(mapManager.waypoints.length)],
