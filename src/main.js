@@ -5119,6 +5119,7 @@ const shapeDistanceInput = document.getElementById('shape-distance-input');
 const shapeAngleSelect = document.getElementById('shape-angle-select');
 const shapeTrimSpursInput = document.getElementById('shape-trim-spurs');
 const shapeModeSelect = document.getElementById('shape-mode-select');
+const shapeDirectionSelect = document.getElementById('shape-direction-select');
 const shapePresetChips = document.getElementById('shape-preset-chips');
 const btnShapeTool = document.getElementById('btn-shape-tool');
 const btnShapeUndo = document.getElementById('btn-shape-undo');
@@ -5131,9 +5132,11 @@ const LS_SHAPE_DISTANCE_KEY = 'mappingElf_shapeRouteDistanceKm';
 const LS_SHAPE_ANGLE_KEY = 'mappingElf_shapeRouteAngleTolDeg';
 const LS_SHAPE_TRIM_KEY = 'mappingElf_shapeRouteTrimSpurs';
 const LS_SHAPE_MODE_KEY = 'mappingElf_shapeRouteMode';
+const LS_SHAPE_DIRECTION_KEY = 'mappingElf_shapeRouteDirection';
 const LS_SHAPE_BOARD_KEY = 'mappingElf_shapeBoard';
 const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
 const SHAPE_MODE_CHOICES = ['foot', 'bike', 'motorcycle', 'car'];
+const SHAPE_DIRECTION_CHOICES = ['any', 'cw', 'ccw'];
 let currentShapePreset = '';
 let shapeStrokes = [];            // drawn strokes (筆畫), each an array of [x, y] CSS px
 let shapeUndoStack = [];          // history snapshots for undo
@@ -5150,6 +5153,11 @@ let lastShapeOptimizationResult = null; // cached solution for GPX export
 function readShapeTravelMode() {
   const val = shapeModeSelect ? shapeModeSelect.value : 'foot';
   return SHAPE_MODE_CHOICES.includes(val) ? val : 'foot';
+}
+
+function readShapeDirection() {
+  const val = shapeDirectionSelect ? shapeDirectionSelect.value : 'any';
+  return SHAPE_DIRECTION_CHOICES.includes(val) ? val : 'any';
 }
 
 function resetShapeGenerateButton() {
@@ -5175,6 +5183,10 @@ function resetShapeGenerateButton() {
   if (shapeModeSelect && SHAPE_MODE_CHOICES.includes(savedMode)) {
     shapeModeSelect.value = savedMode;
   }
+  const savedDir = localStorage.getItem(LS_SHAPE_DIRECTION_KEY);
+  if (shapeDirectionSelect && SHAPE_DIRECTION_CHOICES.includes(savedDir)) {
+    shapeDirectionSelect.value = savedDir;
+  }
 }
 
 // Persist the planner settings as soon as they are changed, not only when
@@ -5186,9 +5198,10 @@ function saveShapeSettings() {
     localStorage.setItem(LS_SHAPE_ANGLE_KEY, String(readShapeAngleTolDeg()));
     localStorage.setItem(LS_SHAPE_TRIM_KEY, (shapeTrimSpursInput ? shapeTrimSpursInput.checked : true) ? '1' : '0');
     localStorage.setItem(LS_SHAPE_MODE_KEY, readShapeTravelMode());
+    localStorage.setItem(LS_SHAPE_DIRECTION_KEY, readShapeDirection());
   } catch (_) { }
 }
-[shapeDistanceInput, shapeAngleSelect, shapeTrimSpursInput, shapeModeSelect].forEach((el) =>
+[shapeDistanceInput, shapeAngleSelect, shapeTrimSpursInput, shapeModeSelect, shapeDirectionSelect].forEach((el) =>
   el?.addEventListener('change', () => {
     saveShapeSettings();
     resetShapeGenerateButton();
@@ -5680,6 +5693,7 @@ async function runHighFidelityShapePipeline({
   optimizer = null,
   initialScaleM = null,
   travelMode = 'foot',
+  direction = 'any',
 }) {
   const useOsrm = await checkOsrmActive(anchor, graph, travelMode);
   const wpCount = suggestWaypointCount(targetM, {
@@ -5696,7 +5710,7 @@ async function runHighFidelityShapePipeline({
   let iterations = 1;
 
   const planCurrent = async () => {
-    ring = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg });
+    ring = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg, direction });
     if (!ring) return false;
     const sel = selectWaypointTs(ring, wpCount);
     const snapped = await snapRingWaypoints(ring, sel, graph, optimizer, useOsrm, travelMode);
@@ -5767,7 +5781,7 @@ async function runHighFidelityShapePipeline({
         actual,
       };
       scaled = Math.max(targetM * 0.4, Math.min(targetM * 2.5, scaled * Math.sqrt(targetM / actual)));
-      ring = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg });
+      ring = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg, direction });
       if (!ring) {
         ({ scaled, ring, ts, wps, coords, actual } = before);
         return false;
@@ -5871,6 +5885,7 @@ async function runHighFidelityShapePipeline({
     ring,
     iteration: iterations,
     travelMode,
+    direction,
   };
 }
 
@@ -5884,11 +5899,13 @@ async function generateShapeRoute() {
   const angleTol = readShapeAngleTolDeg();
   const trimSpurs = shapeTrimSpursInput ? shapeTrimSpursInput.checked : true;
   const travelMode = readShapeTravelMode();
+  const direction = readShapeDirection();
   try {
     localStorage.setItem(LS_SHAPE_DISTANCE_KEY, String(km));
     localStorage.setItem(LS_SHAPE_ANGLE_KEY, String(angleTol));
     localStorage.setItem(LS_SHAPE_TRIM_KEY, trimSpurs ? '1' : '0');
     localStorage.setItem(LS_SHAPE_MODE_KEY, travelMode);
+    localStorage.setItem(LS_SHAPE_DIRECTION_KEY, direction);
   } catch (_) { }
 
   shapeGenerating = true;
@@ -5945,7 +5962,7 @@ async function generateShapeRoute() {
     let minLat = anchor[0], maxLat = anchor[0], minLng = anchor[1], maxLng = anchor[1];
     let hasRingBounds = false;
     for (const ang of probeAngles) {
-      const r = strokeToLatLngRing(strokePts, anchor, targetM / 1.15, { rotationDeg: ang });
+      const r = strokeToLatLngRing(strokePts, anchor, targetM / 1.15, { rotationDeg: ang, direction });
       if (!r || r.length < 3) continue;
       hasRingBounds = true;
       for (const [la, ln] of r) {
@@ -5969,7 +5986,7 @@ async function generateShapeRoute() {
       const candidates = rotationCandidates(angleTol);
       let bestProbeScore = -Infinity;
       for (const candAngle of candidates) {
-        const ring = strokeToLatLngRing(strokePts, anchor, targetM / 1.22, { rotationDeg: candAngle });
+        const ring = strokeToLatLngRing(strokePts, anchor, targetM / 1.22, { rotationDeg: candAngle, direction });
         if (!ring) continue;
         const probeWps = pickShapeWaypoints(ring, 10);
         const xyPts = probeWps.concat([probeWps[0]]).map((p) => graph.geoToXy(p[0], p[1]));
@@ -5994,6 +6011,7 @@ async function generateShapeRoute() {
       graph,
       optimizer,
       travelMode,
+      direction,
     });
 
     if (!solution || !solution.keyWaypoints || solution.keyWaypoints.length < 3) {
@@ -6009,6 +6027,7 @@ async function generateShapeRoute() {
     solution.constraints = currentConstraints;
     solution.trimSpurs = trimSpurs;
     solution.travelMode = travelMode;
+    solution.direction = direction;
     lastShapeOptimizationResult = solution;
 
     drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
@@ -6031,6 +6050,9 @@ async function generateShapeRoute() {
         ['實際距離', formatDistance(solution.actualLengthM)],
         ['形狀相似度', `${solution.similarityPct}%`],
       ];
+      if (solution.direction && solution.direction !== 'any') {
+        rows.push(['前進方向', solution.direction === 'cw' ? '順' : '逆']);
+      }
       if (Number.isFinite(solution.maxDevM)) {
         rows.push(['最大偏差', formatDistance(solution.maxDevM)]);
       }
@@ -6057,6 +6079,7 @@ async function generateShapeRoute() {
       anchor,
       firstWaypoint: wps[0],
       travelMode,
+      direction: solution.direction || direction,
     });
     emitTestEvent('shape-route-finished', {
       actualM: solution.actualLengthM,
@@ -6068,6 +6091,7 @@ async function generateShapeRoute() {
       maxDevM: solution.maxDevM ?? 0,
       spurTrimmedM: solution.spurTrimmedM ?? 0,
       travelMode,
+      direction: solution.direction || direction,
     });
   } finally {
     shapeGenerating = false;
@@ -6088,6 +6112,7 @@ async function iterateShapeRoute() {
     const strokePts = prev.strokePts;
     const trimSpurs = prev.trimSpurs ?? (shapeTrimSpursInput ? shapeTrimSpursInput.checked : true);
     const travelMode = prev.travelMode || readShapeTravelMode();
+    const direction = prev.direction || readShapeDirection();
     const osmRadiusM = Math.max(1800, Math.min(12000, Math.round(targetM * 0.65)));
     const graph = prev.graph || await RoadNetworkGraph.fromOsm(anchor, osmRadiusM, travelMode);
     const optimizer = new GPSArtOptimizer(graph);
@@ -6110,6 +6135,7 @@ async function iterateShapeRoute() {
       optimizer,
       initialScaleM: calibratedScale,
       travelMode,
+      direction,
     });
 
     if (solution) {
@@ -6121,6 +6147,7 @@ async function iterateShapeRoute() {
       solution.constraints = prev.constraints;
       solution.trimSpurs = trimSpurs;
       solution.travelMode = travelMode;
+      solution.direction = direction;
 
       const simGain = solution.similarityPct - prev.similarityPct;
       const newLenDiff = Math.abs(solution.actualLengthM - targetM);
@@ -6147,6 +6174,9 @@ async function iterateShapeRoute() {
         ['實際距離', formatDistance(active.actualLengthM)],
         ['形狀相似度', `${active.similarityPct}%`],
       ];
+      if (active.direction && active.direction !== 'any') {
+        rows.push(['前進方向', active.direction === 'cw' ? '順' : '逆']);
+      }
       if (Number.isFinite(active.maxDevM)) {
         rows.push(['最大偏差', formatDistance(active.maxDevM)]);
       }

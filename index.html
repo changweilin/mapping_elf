@@ -257,30 +257,44 @@
       <button type="button" class="shape-preset-chip" data-preset="butterfly" data-i18n-title="蝴蝶" data-i18n-aria-label="蝴蝶" title="蝴蝶" aria-label="蝴蝶">🦋 <span data-i18n="蝴蝶">蝴蝶</span></button>
     </div>
     <canvas id="shape-canvas" class="shape-canvas" width="216" height="216"></canvas>
-    <div class="shape-distance-row">
-      <label class="mr-label" for="shape-mode-select" data-i18n="移動方式">移動方式</label>
-      <select id="shape-mode-select" class="shape-distance-input">
-        <option value="foot" selected data-i18n="跑步">跑步</option>
-        <option value="bike" data-i18n="單車">單車</option>
-        <option value="motorcycle" data-i18n="機車">機車</option>
-        <option value="car" data-i18n="汽車">汽車</option>
-      </select>
+    <div class="shape-distance-row shape-grid-row">
+      <div class="shape-field-col">
+        <label class="mr-label" for="shape-mode-select" data-i18n="移動方式">移動方式</label>
+        <select id="shape-mode-select" class="shape-distance-input">
+          <option value="foot" selected data-i18n="跑步">跑步</option>
+          <option value="bike" data-i18n="單車">單車</option>
+          <option value="motorcycle" data-i18n="機車">機車</option>
+          <option value="car" data-i18n="汽車">汽車</option>
+        </select>
+      </div>
+      <div class="shape-field-col">
+        <label class="mr-label" for="shape-direction-select" data-i18n="前進方向">前進方向</label>
+        <select id="shape-direction-select" class="shape-distance-input">
+          <option value="any" selected data-i18n="不限">不限</option>
+          <option value="cw" data-i18n="順">順</option>
+          <option value="ccw" data-i18n="逆">逆</option>
+        </select>
+      </div>
     </div>
-    <div class="shape-distance-row">
-      <label class="mr-label" for="shape-distance-input">目標距離</label>
-      <input type="number" id="shape-distance-input" class="shape-distance-input" min="1" max="50" step="0.5" value="5">
-      <span class="mr-label">km</span>
-    </div>
-    <div class="shape-distance-row">
-      <label class="mr-label" for="shape-angle-select">角度誤差</label>
-      <select id="shape-angle-select" class="shape-distance-input">
-        <option value="0">維持原方向</option>
-        <option value="15">±15°</option>
-        <option value="30">±30°</option>
-        <option value="45">±45°</option>
-        <option value="90">±90°</option>
-        <option value="360">任意角度</option>
-      </select>
+    <div class="shape-distance-row shape-grid-row">
+      <div class="shape-field-col">
+        <label class="mr-label" for="shape-distance-input" data-i18n="目標距離">目標距離</label>
+        <div class="shape-input-with-unit">
+          <input type="number" id="shape-distance-input" class="shape-distance-input" min="1" max="50" step="0.5" value="5">
+          <span class="mr-label">km</span>
+        </div>
+      </div>
+      <div class="shape-field-col">
+        <label class="mr-label" for="shape-angle-select" data-i18n="角度誤差">角度誤差</label>
+        <select id="shape-angle-select" class="shape-distance-input">
+          <option value="0" data-i18n="維持原方向">維持原方向</option>
+          <option value="15">±15°</option>
+          <option value="30">±30°</option>
+          <option value="45">±45°</option>
+          <option value="90">±90°</option>
+          <option value="360" data-i18n="任意角度">任意角度</option>
+        </select>
+      </div>
     </div>
     <div class="shape-distance-row">
       <label class="mr-label shape-trim-label" for="shape-trim-spurs">

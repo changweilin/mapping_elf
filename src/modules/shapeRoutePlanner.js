@@ -66,6 +66,19 @@ export function ringPerimeter(ring) {
   return d;
 }
 
+/** Computes winding order of a [lat, lng] closed ring: 'cw', 'ccw', or 'any'. */
+export function computeGeoRingWinding(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return 'any';
+  let signedArea = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    // In equirectangular planar projection, x is lng, y is lat
+    signedArea += (a[1] * b[0] - b[1] * a[0]);
+  }
+  return signedArea > 0 ? 'ccw' : signedArea < 0 ? 'cw' : 'any';
+}
+
 /**
  * Convert a freehand canvas stroke into a closed [lat,lng] ring whose
  * perimeter is `targetDistanceM`, placed so the ring passes through `anchor`
@@ -91,6 +104,20 @@ export function strokeToLatLngRing(rawPoints, anchor, targetDistanceM, options =
   if (rot) {
     const cosR = Math.cos(rot), sinR = Math.sin(rot);
     local = local.map(([x, y]) => [x * cosR - y * sinR, x * sinR + y * cosR]);
+  }
+
+  // Enforce forward winding direction: 'cw' (clockwise), 'ccw' (counter-clockwise), or 'any' (as drawn)
+  if (options.direction === 'cw' || options.direction === 'ccw') {
+    let signedArea = 0;
+    for (let i = 0; i < local.length; i++) {
+      const a = local[i];
+      const b = local[(i + 1) % local.length];
+      signedArea += (a[0] * b[1] - b[0] * a[1]);
+    }
+    const isCcw = signedArea > 0;
+    if ((options.direction === 'cw' && isCcw) || (options.direction === 'ccw' && !isCcw)) {
+      local.reverse();
+    }
   }
 
   // Uniform scale so the pixel perimeter (with closing leg) matches the target.

@@ -719,6 +719,106 @@ export class RoadNetworkGraph {
       if (mode === 'motorcycle' && (tags.motorcycle === 'no' || tags.motorcycle === 'private')) continue;
       if ((mode === 'car' || mode === 'drive') && (tags.motorcar === 'no' || tags.motorcar === 'private')) continue;
 
+      const isCar = mode === 'car' || mode === 'drive';
+      const isMotorcycle = mode === 'motorcycle';
+      const isMotorVehicle = isCar || isMotorcycle;
+      const isPedestrian = mode === 'walk' || mode === 'foot';
+
+      // 1. Motorway / Expressway access: STRICTLY car/drive only. Foot, bike, motorcycle forbidden.
+      const isMotorway = tags.highway === 'motorway' || tags.highway === 'motorway_link' || tags.motorroad === 'yes';
+      if (isMotorway && !isCar) continue;
+
+      // 2. Footways, steps, cycleways: forbidden for motorized vehicles unless explicitly designated
+      const isPedestrianOrCycleTrack =
+        tags.highway === 'footway' ||
+        tags.highway === 'steps' ||
+        tags.highway === 'pedestrian' ||
+        tags.highway === 'cycleway' ||
+        tags.highway === 'bridleway' ||
+        tags.highway === 'path';
+      if (isMotorVehicle && isPedestrianOrCycleTrack) {
+        if (isMotorcycle) {
+          if (tags.motorcycle !== 'yes' && tags.motor_vehicle !== 'yes') continue;
+        } else {
+          if (tags.motorcar !== 'yes' && tags.motor_vehicle !== 'yes') continue;
+        }
+      }
+      if (mode === 'bike' && tags.highway === 'steps' && tags.bicycle !== 'yes') continue;
+
+      // 3. Directional oneway constraints by travel mode
+      let isOneway = false;
+      let isReverseOneway = false;
+
+      if (isPedestrian) {
+        // Pedestrians can walk in both directions unless specifically signed oneway:foot
+        if (tags['oneway:foot'] === 'yes') isOneway = true;
+        else if (tags['oneway:foot'] === '-1' || tags['oneway:foot'] === 'reverse') isReverseOneway = true;
+      } else if (mode === 'bike') {
+        const contraflowCycle =
+          tags.cycleway === 'opposite' ||
+          tags.cycleway === 'opposite_lane' ||
+          tags.cycleway === 'opposite_track' ||
+          tags['cycleway:left'] === 'opposite' ||
+          tags['cycleway:right'] === 'opposite';
+        if (tags['oneway:bicycle'] === 'no' || contraflowCycle) {
+          isOneway = false;
+          isReverseOneway = false;
+        } else if (tags['oneway:bicycle'] === 'yes' || tags['oneway:bicycle'] === '1') {
+          isOneway = true;
+        } else if (tags['oneway:bicycle'] === '-1' || tags['oneway:bicycle'] === 'reverse') {
+          isReverseOneway = true;
+        } else {
+          if (tags.oneway === 'yes' || tags.oneway === '1' || tags.oneway === 'true' || tags.junction === 'roundabout' || tags.junction === 'circular') {
+            isOneway = true;
+          } else if (tags.oneway === '-1' || tags.oneway === 'reverse') {
+            isReverseOneway = true;
+          }
+        }
+      } else if (isMotorcycle) {
+        if (tags['oneway:motorcycle'] === 'no') {
+          isOneway = false;
+          isReverseOneway = false;
+        } else if (tags['oneway:motorcycle'] === 'yes' || tags['oneway:motorcycle'] === '1') {
+          isOneway = true;
+        } else if (tags['oneway:motorcycle'] === '-1' || tags['oneway:motorcycle'] === 'reverse') {
+          isReverseOneway = true;
+        } else {
+          if (tags.oneway === 'yes' || tags.oneway === '1' || tags.oneway === 'true' || tags.junction === 'roundabout' || tags.junction === 'circular') {
+            isOneway = true;
+          } else if (tags.oneway === '-1' || tags.oneway === 'reverse') {
+            isReverseOneway = true;
+          }
+        }
+      } else {
+        // Car / driving
+        if (tags['oneway:motorcar'] === 'no') {
+          isOneway = false;
+          isReverseOneway = false;
+        } else if (tags['oneway:motorcar'] === 'yes' || tags['oneway:motorcar'] === '1') {
+          isOneway = true;
+        } else if (tags['oneway:motorcar'] === '-1' || tags['oneway:motorcar'] === 'reverse') {
+          isReverseOneway = true;
+        } else {
+          if (tags.oneway === 'yes' || tags.oneway === '1' || tags.oneway === 'true' || tags.junction === 'roundabout' || tags.junction === 'circular' || isMotorway) {
+            isOneway = true;
+          } else if (tags.oneway === '-1' || tags.oneway === 'reverse') {
+            isReverseOneway = true;
+          }
+        }
+      }
+
+      const addEdgePair = (u, v) => {
+        if (isReverseOneway) {
+          graph.addEdge(v, u);
+        } else if (isOneway) {
+          graph.addEdge(u, v);
+        } else {
+          graph.addEdge(u, v);
+          graph.addEdge(v, u);
+        }
+        edgeCount++;
+      };
+
       const hasGeom = Array.isArray(el.geometry) && el.geometry.length >= 2;
       const hasNodes = Array.isArray(el.nodes) && el.nodes.length >= 2;
 
@@ -735,33 +835,15 @@ export class RoadNetworkGraph {
           nodeIds.push(nid);
         }
 
-        const isMotorVehicle = mode === 'drive' || mode === 'car' || mode === 'motorcycle';
-        const isOneway =
-          (isMotorVehicle || mode === 'bike') &&
-          (tags.oneway === 'yes' || tags.oneway === '1' || tags.oneway === 'true' || tags.junction === 'roundabout');
-        const isReverseOneway = (isMotorVehicle || mode === 'bike') && (tags.oneway === '-1' || tags.oneway === 'reverse');
-
         for (let i = 0; i < nodeIds.length - 1; i++) {
-          const u = nodeIds[i];
-          const v = nodeIds[i + 1];
-          if (isReverseOneway) {
-            graph.addEdge(v, u);
-          } else if (isOneway) {
-            graph.addEdge(u, v);
-          } else {
-            graph.addEdge(u, v);
-            graph.addEdge(v, u);
-          }
-          edgeCount++;
+          addEdgePair(nodeIds[i], nodeIds[i + 1]);
         }
       } else if (hasNodes) {
         for (let i = 0; i < el.nodes.length - 1; i++) {
           const u = el.nodes[i];
           const v = el.nodes[i + 1];
           if (graph.nodes.has(u) && graph.nodes.has(v)) {
-            graph.addEdge(u, v);
-            graph.addEdge(v, u);
-            edgeCount++;
+            addEdgePair(u, v);
           }
         }
       }

@@ -1516,6 +1516,16 @@ body.weather-card-busy .weather-edit-control:disabled {
 }
 
 /* Drawing board (shape → running loop). Shares the measure-panel shell. */
+.shape-panel {
+  width: 260px;
+}
+
+@media (max-width: 768px) {
+  .shape-panel {
+    width: min(280px, calc(100vw - 68px));
+  }
+}
+
 .shape-panel-title {
   flex: 1;
   font-size: 13px;
@@ -1572,6 +1582,43 @@ body.weather-card-busy .weather-edit-control:disabled {
   align-items: center;
   gap: 6px;
   font-size: 12px;
+}
+
+.shape-grid-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: end;
+}
+
+.shape-field-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.shape-field-col > label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.shape-input-with-unit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.shape-input-with-unit input {
+  flex: 1;
+  min-width: 0;
+}
+
+.shape-input-with-unit .mr-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
 }
 
 .shape-distance-input {

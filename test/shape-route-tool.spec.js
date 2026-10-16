@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { RoadNetworkGraph } from '../src/modules/gpsArtOptimizer.js';
 
 // Drawing board (繪圖板): sketch a shape → O繞 running loop near the current
 // location. Routing APIs are unreachable in CI, so the route falls back to
@@ -18,6 +19,7 @@ async function openApp(page) {
 
 async function drawSquare(page) {
   const canvas = page.locator('#shape-canvas');
+  await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   const pad = 30;
   const x0 = box.x + pad, y0 = box.y + pad;
@@ -44,9 +46,12 @@ test('drawing board opens, generates an O繞 waypoint loop and closes', async ({
   await page.locator('#btn-shape-generate').click();
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(0);
 
+  await page.locator('#shape-panel').evaluate((el) => { el.scrollTop = 0; });
   await drawSquare(page);
   // A second stroke (筆畫) appends to the shape instead of replacing it.
-  const box = await page.locator('#shape-canvas').boundingBox();
+  const canvas = page.locator('#shape-canvas');
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + 10);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 20, box.y + 20, { steps: 6 });
@@ -394,5 +399,173 @@ test('drawing board allows selecting travel modes (跑步/單車/機車/汽車) 
   await expect(modeSelect).toHaveValue('bike');
   const storedModeBike = await page.evaluate(() => localStorage.getItem('mappingElf_shapeRouteMode'));
   expect(storedModeBike).toBe('bike');
+});
+
+test('drawing board displays mode + direction and distance + angle side-by-side, and supports direction options (順/逆/不限)', async ({ page }) => {
+  await openApp(page);
+
+  const toolBtn = page.locator('#btn-shape-tool');
+  await toolBtn.click();
+
+  const modeSelect = page.locator('#shape-mode-select');
+  const dirSelect = page.locator('#shape-direction-select');
+  const distInput = page.locator('#shape-distance-input');
+  const angleSelect = page.locator('#shape-angle-select');
+
+  await expect(modeSelect).toBeVisible();
+  await expect(dirSelect).toBeVisible();
+  await expect(distInput).toBeVisible();
+  await expect(angleSelect).toBeVisible();
+
+  // Verify side-by-side layout: mode and direction share roughly the same vertical band
+  const modeBox = await modeSelect.boundingBox();
+  const dirBox = await dirSelect.boundingBox();
+  expect(modeBox).not.toBeNull();
+  expect(dirBox).not.toBeNull();
+  expect(Math.abs(modeBox.y - dirBox.y)).toBeLessThan(15);
+  expect(dirBox.x).toBeGreaterThan(modeBox.x);
+
+  // Distance and angle share roughly the same vertical band
+  const distBox = await distInput.boundingBox();
+  const angleBox = await angleSelect.boundingBox();
+  expect(distBox).not.toBeNull();
+  expect(angleBox).not.toBeNull();
+  expect(Math.abs(distBox.y - angleBox.y)).toBeLessThan(15);
+  expect(angleBox.x).toBeGreaterThan(distBox.x);
+
+  // Verify direction options
+  const dirOptions = await dirSelect.locator('option').allTextContents();
+  expect(dirOptions.some((t) => /不限|Any/i.test(t))).toBe(true);
+  expect(dirOptions.some((t) => /順|CW/i.test(t))).toBe(true);
+  expect(dirOptions.some((t) => /逆|CCW/i.test(t))).toBe(true);
+
+  // Test selecting cw (順) and check persistence
+  await dirSelect.selectOption('cw');
+  await expect(dirSelect).toHaveValue('cw');
+  let storedDir = await page.evaluate(() => localStorage.getItem('mappingElf_shapeRouteDirection'));
+  expect(storedDir).toBe('cw');
+
+  // Generate route and verify direction in test event
+  const heartChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]');
+  await heartChip.click();
+  await distInput.fill('4');
+  await page.locator('#btn-shape-generate').click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    const ev = (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated');
+    return ev ? ev.detail?.direction : null;
+  })).toBe('cw');
+
+  // Verify readout displays direction
+  const readout = page.locator('#shape-readout');
+  await expect(readout).toContainText(/前進方向|Direction/);
+  await expect(readout).toContainText(/順|CW/);
+});
+
+test('road network strictly excludes motorway/expressway for non-car modes and enforces oneway rules', async () => {
+  // Synthetic Overpass response containing:
+  // 1. Motorway (highway=motorway)
+  // 2. Motorroad expressway (highway=trunk, motorroad=yes)
+  // 3. Oneway street (highway=residential, oneway=yes)
+  // 4. Contraflow cycleway street (highway=residential, oneway=yes, oneway:bicycle=no)
+  const overpassData = {
+    elements: [
+      { type: 'node', id: 1, lat: 25.034, lon: 121.564 },
+      { type: 'node', id: 2, lat: 25.035, lon: 121.564 },
+      { type: 'node', id: 3, lat: 25.036, lon: 121.564 },
+      { type: 'node', id: 4, lat: 25.037, lon: 121.564 },
+      { type: 'node', id: 5, lat: 25.038, lon: 121.564 },
+      { type: 'node', id: 6, lat: 25.039, lon: 121.564 },
+      { type: 'node', id: 7, lat: 25.040, lon: 121.564 },
+      { type: 'node', id: 8, lat: 25.041, lon: 121.564 },
+      // Motorway: nodes 1 -> 2
+      {
+        type: 'way',
+        id: 101,
+        nodes: [1, 2],
+        tags: { highway: 'motorway' },
+      },
+      // Trunk with motorroad=yes: nodes 3 -> 4
+      {
+        type: 'way',
+        id: 102,
+        nodes: [3, 4],
+        tags: { highway: 'trunk', motorroad: 'yes' },
+      },
+      // Oneway residential street: nodes 5 -> 6
+      {
+        type: 'way',
+        id: 103,
+        nodes: [5, 6],
+        tags: { highway: 'residential', oneway: 'yes' },
+      },
+      // Contraflow cycleway: nodes 7 -> 8
+      {
+        type: 'way',
+        id: 104,
+        nodes: [7, 8],
+        tags: { highway: 'residential', oneway: 'yes', 'oneway:bicycle': 'no' },
+      },
+    ],
+  };
+
+  // Test for car
+  const carGraph = new RoadNetworkGraph([25.034, 121.564]);
+  RoadNetworkGraph.populateFromOverpassData(carGraph, overpassData, 'car');
+
+  // Test for motorcycle
+  const motoGraph = new RoadNetworkGraph([25.034, 121.564]);
+  RoadNetworkGraph.populateFromOverpassData(motoGraph, overpassData, 'motorcycle');
+
+  // Test for bike
+  const bikeGraph = new RoadNetworkGraph([25.034, 121.564]);
+  RoadNetworkGraph.populateFromOverpassData(bikeGraph, overpassData, 'bike');
+
+  // Test for foot
+  const footGraph = new RoadNetworkGraph([25.034, 121.564]);
+  RoadNetworkGraph.populateFromOverpassData(footGraph, overpassData, 'foot');
+
+  const testResults = {
+    carHasMotorway: carGraph.adj.get(1)?.has(2) ?? false,
+    motoHasMotorway: motoGraph.adj.get(1)?.has(2) ?? false,
+    bikeHasMotorway: bikeGraph.adj.get(1)?.has(2) ?? false,
+    footHasMotorway: footGraph.adj.get(1)?.has(2) ?? false,
+
+    carHasMotorroad: carGraph.adj.get(3)?.has(4) ?? false,
+    motoHasMotorroad: motoGraph.adj.get(3)?.has(4) ?? false,
+    bikeHasMotorroad: bikeGraph.adj.get(3)?.has(4) ?? false,
+    footHasMotorroad: footGraph.adj.get(3)?.has(4) ?? false,
+
+    carOnewayForward: carGraph.adj.get(5)?.has(6) ?? false,
+    carOnewayReverse: carGraph.adj.get(6)?.has(5) ?? false,
+
+    bikeContraflowForward: bikeGraph.adj.get(7)?.has(8) ?? false,
+    bikeContraflowReverse: bikeGraph.adj.get(8)?.has(7) ?? false,
+
+    footIsBidirectional: (footGraph.adj.get(5)?.has(6) ?? false) && (footGraph.adj.get(6)?.has(5) ?? false),
+  };
+
+  // Car CAN access motorways
+  expect(testResults.carHasMotorway).toBe(true);
+  expect(testResults.carHasMotorroad).toBe(true);
+
+  // Non-cars CANNOT access motorways
+  expect(testResults.motoHasMotorway).toBe(false);
+  expect(testResults.motoHasMotorroad).toBe(false);
+  expect(testResults.bikeHasMotorway).toBe(false);
+  expect(testResults.bikeHasMotorroad).toBe(false);
+  expect(testResults.footHasMotorway).toBe(false);
+  expect(testResults.footHasMotorroad).toBe(false);
+
+  // Oneway restrictions
+  expect(testResults.carOnewayForward).toBe(true);
+  expect(testResults.carOnewayReverse).toBe(false);
+
+  // Contraflow bike override
+  expect(testResults.bikeContraflowForward).toBe(true);
+  expect(testResults.bikeContraflowReverse).toBe(true);
+
+  // Foot pedestrians not blocked by vehicle oneway
+  expect(testResults.footIsBidirectional).toBe(true);
 });
 
