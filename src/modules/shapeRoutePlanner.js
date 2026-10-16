@@ -802,6 +802,157 @@ export function shapeSimilarity(routeCoords, ring) {
   return Math.max(0, Math.min(1, sim));
 }
 
+/**
+ * Searches the visible map viewport for the anchor point (and rotation) that
+ * maximizes shape similarity after routing onto the road network.
+ * Used when no waypoints exist on the map.
+ *
+ * @param {Object} params
+ * @param {{ south: number, west: number, north: number, east: number }} params.viewportBounds
+ * @param {Array<number>} params.viewportCenter [lat, lng]
+ * @param {Array<Array<number>>} params.strokePts raw canvas drawing points
+ * @param {number} params.targetM target route distance in meters
+ * @param {RoadNetworkGraph} params.graph
+ * @param {GPSArtOptimizer} params.optimizer
+ * @param {Object} [params.options]
+ * @returns {{ anchor: [number, number], angleDeg: number, similarity: number, score: number }}
+ */
+export function findOptimalViewportAnchor({
+  viewportBounds,
+  viewportCenter,
+  strokePts,
+  targetM,
+  graph,
+  optimizer,
+  options = {},
+}) {
+  const fallback = {
+    anchor: viewportCenter || [25.034, 121.564],
+    angleDeg: 0,
+    similarity: 0,
+    score: -Infinity,
+  };
+  if (!viewportBounds || !graph || !optimizer || !Array.isArray(strokePts) || strokePts.length < 3 || !(targetM > 0)) {
+    return fallback;
+  }
+
+  const { south, west, north, east } = viewportBounds;
+  const dLat = north - south;
+  const dLng = east - west;
+  if (!(dLat > 0) || !(dLng > 0)) {
+    return fallback;
+  }
+
+  // Sample 3x3 grid across viewport (avoiding extreme edges where shapes clip off-screen)
+  const uSteps = [0.30, 0.50, 0.70];
+  const vSteps = [0.30, 0.50, 0.70];
+  const rawPoints = [];
+
+  if (viewportCenter && Number.isFinite(viewportCenter[0]) && Number.isFinite(viewportCenter[1])) {
+    rawPoints.push([viewportCenter[0], viewportCenter[1]]);
+  }
+
+  if (Array.isArray(options.hintPoints)) {
+    for (const hp of options.hintPoints) {
+      if (Array.isArray(hp) && Number.isFinite(hp[0]) && Number.isFinite(hp[1])) {
+        rawPoints.push([hp[0], hp[1]]);
+      }
+    }
+  }
+
+  for (const v of vSteps) {
+    const lat = south + dLat * v;
+    for (const u of uSteps) {
+      const lng = west + dLng * u;
+      rawPoints.push([lat, lng]);
+    }
+  }
+
+  // Snap candidates to road network and deduplicate within 80m
+  const uniqueCandidates = [];
+  const padLat = dLat * 0.1;
+  const padLng = dLng * 0.1;
+
+  for (const [la, ln] of rawPoints) {
+    const xy = graph.geoToXy(la, ln);
+    const node = optimizer.snapPointToRoad(xy, false);
+    if (!node) continue;
+    const geo = graph.xyToGeo(node.x, node.y);
+    if (geo[0] < south - padLat || geo[0] > north + padLat || geo[1] < west - padLng || geo[1] > east + padLng) {
+      continue;
+    }
+    const dup = uniqueCandidates.some((c) => haversineDistance(c, geo) < 80);
+    if (!dup) {
+      uniqueCandidates.push(geo);
+    }
+  }
+
+  if (uniqueCandidates.length === 0) {
+    if (viewportCenter) uniqueCandidates.push([viewportCenter[0], viewportCenter[1]]);
+    else return fallback;
+  }
+
+  const angleTol = Number(options.angleTolDeg) || 0;
+  const direction = options.direction || 'any';
+  const probeAngles = angleTol > 0
+    ? (angleTol >= 180 ? [0, 45, 90, 135, 180, 225, 270, 315] : rotationCandidates(angleTol))
+    : [0];
+
+  const evalCandidate = (cand, ang) => {
+    const ring = strokeToLatLngRing(strokePts, cand, targetM / 1.22, { rotationDeg: ang, direction });
+    if (!ring || ring.length < 3) return null;
+    const probeWps = pickShapeWaypoints(ring, 10);
+    const xyPts = probeWps.concat([probeWps[0]]).map((p) => graph.geoToXy(p[0], p[1]));
+    const routed = optimizer.matchAndRoute(xyPts, { pruneSpurs: true });
+    if (!routed || !Array.isArray(routed.routeCoordsXY) || routed.routeCoordsXY.length < 2) return null;
+    const routedGeo = routed.routeCoordsXY.map(([x, y]) => graph.xyToGeo(x, y));
+    const sim = shapeSimilarity(routedGeo, ring);
+    const score = sim * 100 - (routed.overlapRatio || 0) * 25;
+    return { sim, score, ring, routedGeo };
+  };
+
+  // Pass 1: Screen all candidate locations at 0° (or base orientation)
+  const scoredCandidates = [];
+  for (const cand of uniqueCandidates) {
+    const res = evalCandidate(cand, 0);
+    if (res) {
+      scoredCandidates.push({ cand, score: res.score, similarity: res.sim, angleDeg: 0 });
+    }
+  }
+
+  scoredCandidates.sort((a, b) => b.score - a.score);
+
+  let bestAnchor = scoredCandidates[0]?.cand || uniqueCandidates[0];
+  let bestAngleDeg = 0;
+  let bestScore = scoredCandidates[0]?.score ?? -Infinity;
+  let bestSimilarity = scoredCandidates[0]?.similarity ?? 0;
+
+  // Pass 2: Refine angle tolerance for top candidate locations
+  if (angleTol > 0 && scoredCandidates.length > 0) {
+    const topPicks = scoredCandidates.slice(0, 2);
+    for (const item of topPicks) {
+      for (const ang of probeAngles) {
+        if (ang === 0) continue;
+        const res = evalCandidate(item.cand, ang);
+        if (res && res.score > bestScore + 0.5) {
+          bestScore = res.score;
+          bestSimilarity = res.sim;
+          bestAngleDeg = ang;
+          bestAnchor = item.cand;
+        }
+      }
+    }
+  }
+
+  return {
+    anchor: bestAnchor,
+    angleDeg: bestAngleDeg,
+    similarity: bestSimilarity,
+    score: bestScore,
+    candidatesCount: uniqueCandidates.length,
+  };
+}
+
 // Re-export 5-stage shape-constrained routing engine functions from shapeRouteMatcher
 export {
   generateShapeMatchedRoute,

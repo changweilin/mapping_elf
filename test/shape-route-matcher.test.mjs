@@ -20,6 +20,7 @@ import {
   RouteConstraints,
   KDTree2D,
 } from '../src/modules/shapeRouteMatcher.js';
+import { findOptimalViewportAnchor } from '../src/modules/shapeRoutePlanner.js';
 
 console.log('Testing shapeRouteMatcher.js...');
 
@@ -352,6 +353,43 @@ console.log('Testing shapeRouteMatcher.js...');
   const sol = optimizer.optimize(heart, constraints);
   assert.ok(sol.similarityPct >= 85, `Expected heart similarity >= 85% on urban graph, got ${sol.similarityPct}%`);
   assert.ok(Math.abs(sol.actualLengthM - 4500) / 4500 <= 0.12, `Expected calibrated length near 4500m, got ${sol.actualLengthM}`);
+}
+
+// 13. Viewport Optimal Anchor Search when no waypoints on map
+{
+  const city = RoadNetworkGraph.buildSyntheticCityGraph(26, 75.0, [25.034, 121.564]);
+  const optimizer = new GPSArtOptimizer(city);
+  const heart = [];
+  for (let i = 0; i <= 64; i++) {
+    const t = (i / 64) * Math.PI * 2;
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+    heart.push([150 + x * 7, 150 + y * 7]);
+  }
+
+  const viewportBounds = {
+    south: 25.025,
+    west: 121.554,
+    north: 25.043,
+    east: 121.574,
+  };
+  const viewportCenter = [25.034, 121.564];
+
+  const optRes = findOptimalViewportAnchor({
+    viewportBounds,
+    viewportCenter,
+    strokePts: heart,
+    targetM: 4000,
+    graph: city,
+    optimizer,
+    options: { angleTolDeg: 30 },
+  });
+
+  assert.ok(optRes.anchor, 'Optimal anchor must be found');
+  assert.ok(optRes.similarity > 0.6, `Expected high similarity for optimal anchor, got ${optRes.similarity}`);
+  assert.ok(optRes.candidatesCount > 1, `Expected multiple candidates evaluated, got ${optRes.candidatesCount}`);
+  assert.ok(optRes.anchor[0] >= viewportBounds.south - 0.01 && optRes.anchor[0] <= viewportBounds.north + 0.01, 'Anchor lat inside viewport');
+  assert.ok(optRes.anchor[1] >= viewportBounds.west - 0.01 && optRes.anchor[1] <= viewportBounds.east + 0.01, 'Anchor lng inside viewport');
 }
 
 console.log('shapeRouteMatcher.js test passed successfully!');

@@ -103,12 +103,12 @@ test('measure tool and drawing board never overlap', async ({ page }) => {
   await expect(page.locator('#measure-panel')).toBeHidden();
 });
 
-test('drawing board anchors at most recently placed map cursor or waypoint', async ({ page }) => {
+test('when no waypoints on map, automatically finds the anchor with highest similarity in current viewport', async ({ page }) => {
   await openApp(page);
 
-  // 1. Place a map cursor far from default geolocation (25.034, 121.564)
+  // 1. Pan map view to (24.800, 120.900), far from default geolocation (25.034, 121.564)
   await page.evaluate(() => {
-    window.__mappingElfTestHooks.mapManager.setMapCursor(24.800, 120.900);
+    window.__mappingElfTestHooks.mapManager.map.setView([24.800, 120.900], 14, { animate: false });
   });
 
   const panel = page.locator('#shape-panel');
@@ -124,14 +124,19 @@ test('drawing board anchors at most recently placed map cursor or waypoint', asy
     (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.waypointCount ?? 0
   )).toBeGreaterThanOrEqual(3);
 
-  // Check the first waypoint is anchored near 24.800, 120.900 (not default GPS 25.034, 121.564)
+  // Check the first waypoint is anchored within current viewport near (24.800, 120.900), not default GPS (25.034, 121.564)
   const firstWp = await page.evaluate(() =>
     window.__mappingElfTestHooks.lastShapeOptimizationResult?.keyWaypoints?.[0] ||
     (window.__mappingElfTestHooks?.events || []).find((e) => e.type === 'shape-route-generated')?.detail?.firstWaypoint
   );
-  expect(Math.abs(firstWp[0] - 24.800)).toBeLessThan(0.03);
-  expect(Math.abs(firstWp[1] - 120.900)).toBeLessThan(0.03);
+  expect(Math.abs(firstWp[0] - 24.800)).toBeLessThan(0.04);
+  expect(Math.abs(firstWp[1] - 120.900)).toBeLessThan(0.04);
   expect(Math.abs(firstWp[0] - 25.034)).toBeGreaterThan(0.1);
+
+  const autoViewport = await page.evaluate(() =>
+    window.__mappingElfTestHooks.lastShapeOptimizationResult?.autoViewportAnchor
+  );
+  expect(autoViewport).toBe(true);
 });
 
 test('drawing board supports undo/redo, pen/eraser mode, and clear/generate icon buttons', async ({ page }) => {

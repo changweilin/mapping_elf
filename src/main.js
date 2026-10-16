@@ -18,7 +18,7 @@ import { platform } from './platform/index.js';
 import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
-import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, evaluateShapeSimilarity, computeGeoPathLength, countShapeCorners, detectRouteSpurs, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
+import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, evaluateShapeSimilarity, computeGeoPathLength, countShapeCorners, detectRouteSpurs, findOptimalViewportAnchor, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs } from './modules/shapeRoutePlanner.js';
 import { getShapePresetPoints } from './modules/shapePresets.js';
 // 魔法陣 (star tool) — logic ported 1:1 from the mapping_star project.
 import { categoryById } from './modules/star/categories.js';
@@ -5906,29 +5906,100 @@ async function generateShapeRoute() {
   shapeGenerating = true;
   shapeRouteRun = null;          // supersede any pending calibration pass
   try {
-    // Anchor at the most recently set waypoint on the map if present;
-    // otherwise cursor/coordinate, GPS fix, and then map centre.
+    const targetM = km * 1000;
     let anchor = null;
+    let bestAngleDeg = 0;
+    let graph = null;
+    let optimizer = null;
     const recentWp = mapManager.getRecentWaypoint?.();
+
     if (recentWp) {
       anchor = recentWp;
-    } else {
-      anchor = mapManager.getRecentCoordinate?.();
-    }
-    if (!anchor) {
-      try {
-        showNotification('正在定位...', 'info', 1500);
-        const pos = await platform.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
-        anchor = [pos.coords.latitude, pos.coords.longitude];
-      } catch (err) {
-        console.warn('Shape route: geolocation failed, using map centre:', err);
-        const c = mapManager.map.getCenter();
-        anchor = [c.lat, c.lng];
-        showNotification('無法取得目前位置，改以地圖中心規劃', 'info', 2000);
+      showNotification('正在取得完整 OSM 路網圖資並最佳化幾何形狀...', 'info', 2000);
+      let osmCenter = anchor;
+      let osmRadiusM = Math.max(1200, Math.min(4500, Math.round(targetM * 0.36)));
+      const probeAngles = angleTol > 0 ? rotationCandidates(angleTol) : [0];
+      let minLat = anchor[0], maxLat = anchor[0], minLng = anchor[1], maxLng = anchor[1];
+      let hasRingBounds = false;
+      for (const ang of probeAngles) {
+        const r = strokeToLatLngRing(strokePts, anchor, targetM / 1.15, { rotationDeg: ang, direction });
+        if (!r || r.length < 3) continue;
+        hasRingBounds = true;
+        for (const [la, ln] of r) {
+          if (la < minLat) minLat = la;
+          if (la > maxLat) maxLat = la;
+          if (ln < minLng) minLng = ln;
+          if (ln > maxLng) maxLng = ln;
+        }
       }
+      if (hasRingBounds) {
+        osmCenter = [(minLat + maxLat) / 2, (minLng + maxLng) / 2];
+        const halfDiagM = haversineDistance([minLat, minLng], [maxLat, maxLng]) * 0.5;
+        osmRadiusM = Math.max(950, Math.min(4500, Math.round(halfDiagM * 1.38 + 300)));
+      }
+      graph = await RoadNetworkGraph.fromOsm(osmCenter, osmRadiusM, travelMode, { anchorGeo: anchor });
+      optimizer = new GPSArtOptimizer(graph);
+
+      // Search for optimal orientation angle when rotation tolerance > 0
+      if (angleTol > 0) {
+        const candidates = rotationCandidates(angleTol);
+        let bestProbeScore = -Infinity;
+        for (const candAngle of candidates) {
+          const ring = strokeToLatLngRing(strokePts, anchor, targetM / 1.22, { rotationDeg: candAngle, direction });
+          if (!ring) continue;
+          const probeWps = pickShapeWaypoints(ring, 10);
+          const xyPts = probeWps.concat([probeWps[0]]).map((p) => graph.geoToXy(p[0], p[1]));
+          const routed = optimizer.matchAndRoute(xyPts, { pruneSpurs: true });
+          if (!routed || !routed.routeCoordsXY?.length) continue;
+          const routedGeo = routed.routeCoordsXY.map(([x, y]) => graph.xyToGeo(x, y));
+          const sim = shapeSimilarity(routedGeo, ring);
+          const score = sim * 100 - routed.overlapRatio * 25;
+          if (score > bestProbeScore + 0.5) {
+            bestProbeScore = score;
+            bestAngleDeg = candAngle;
+          }
+        }
+      }
+    } else {
+      // No waypoints on map: automatically search visible viewport for anchor with highest shape similarity
+      const bounds = mapManager.map.getBounds();
+      const c = mapManager.map.getCenter();
+      const viewportCenter = [c.lat, c.lng];
+      const viewportBounds = {
+        south: bounds.getSouth(),
+        west: bounds.getWest(),
+        north: bounds.getNorth(),
+        east: bounds.getEast(),
+      };
+      const sw = bounds.getSouthWest();
+      const ne = bounds.getNorthEast();
+      const viewHalfDiagM = haversineDistance([sw.lat, sw.lng], [ne.lat, ne.lng]) * 0.5;
+      const shapeRadiusM = (targetM / (2 * Math.PI)) * 1.35;
+      const osmRadiusM = Math.max(1200, Math.min(6500, Math.round(Math.max(viewHalfDiagM, shapeRadiusM + 400))));
+
+      showNotification('正在取得畫面路網並搜尋最高相似度起點...', 'info', 2000);
+      graph = await RoadNetworkGraph.fromOsm(viewportCenter, osmRadiusM, travelMode, { anchorGeo: viewportCenter });
+      optimizer = new GPSArtOptimizer(graph);
+
+      const cursor = mapManager.getRecentCoordinate?.();
+      const optRes = findOptimalViewportAnchor({
+        viewportBounds,
+        viewportCenter,
+        strokePts,
+        targetM,
+        graph,
+        optimizer,
+        options: {
+          angleTolDeg: angleTol,
+          direction,
+          hintPoints: cursor ? [cursor] : [],
+        },
+      });
+
+      anchor = optRes.anchor;
+      bestAngleDeg = optRes.angleDeg;
     }
 
-    const targetM = km * 1000;
     let rotBounds = [0, 360];
     if (angleTol === 0) rotBounds = [0, 0];
     else if (angleTol < 360) rotBounds = [-angleTol, angleTol];
@@ -5948,54 +6019,6 @@ async function generateShapeRoute() {
       weightLength: 220.0,
       weightOverlap: 260.0,
     });
-
-    showNotification('正在取得完整 OSM 路網圖資並最佳化幾何形狀...', 'info', 2000);
-    // Compute tight bounding box of the candidate ring(s) around anchor so Overpass fetches fast and accurately
-    let osmCenter = anchor;
-    let osmRadiusM = Math.max(1200, Math.min(4500, Math.round(targetM * 0.36)));
-    const probeAngles = angleTol > 0 ? rotationCandidates(angleTol) : [0];
-    let minLat = anchor[0], maxLat = anchor[0], minLng = anchor[1], maxLng = anchor[1];
-    let hasRingBounds = false;
-    for (const ang of probeAngles) {
-      const r = strokeToLatLngRing(strokePts, anchor, targetM / 1.15, { rotationDeg: ang, direction });
-      if (!r || r.length < 3) continue;
-      hasRingBounds = true;
-      for (const [la, ln] of r) {
-        if (la < minLat) minLat = la;
-        if (la > maxLat) maxLat = la;
-        if (ln < minLng) minLng = ln;
-        if (ln > maxLng) maxLng = ln;
-      }
-    }
-    if (hasRingBounds) {
-      osmCenter = [(minLat + maxLat) / 2, (minLng + maxLng) / 2];
-      const halfDiagM = haversineDistance([minLat, minLng], [maxLat, maxLng]) * 0.5;
-      osmRadiusM = Math.max(950, Math.min(4500, Math.round(halfDiagM * 1.38 + 300)));
-    }
-    const graph = await RoadNetworkGraph.fromOsm(osmCenter, osmRadiusM, travelMode, { anchorGeo: anchor });
-    const optimizer = new GPSArtOptimizer(graph);
-
-    // Search for optimal orientation angle when rotation tolerance > 0
-    let bestAngleDeg = 0;
-    if (angleTol > 0) {
-      const candidates = rotationCandidates(angleTol);
-      let bestProbeScore = -Infinity;
-      for (const candAngle of candidates) {
-        const ring = strokeToLatLngRing(strokePts, anchor, targetM / 1.22, { rotationDeg: candAngle, direction });
-        if (!ring) continue;
-        const probeWps = pickShapeWaypoints(ring, 10);
-        const xyPts = probeWps.concat([probeWps[0]]).map((p) => graph.geoToXy(p[0], p[1]));
-        const routed = optimizer.matchAndRoute(xyPts, { pruneSpurs: true });
-        if (!routed || !routed.routeCoordsXY?.length) continue;
-        const routedGeo = routed.routeCoordsXY.map(([x, y]) => graph.xyToGeo(x, y));
-        const sim = shapeSimilarity(routedGeo, ring);
-        const score = sim * 100 - routed.overlapRatio * 25;
-        if (score > bestProbeScore + 0.5) {
-          bestProbeScore = score;
-          bestAngleDeg = candAngle;
-        }
-      }
-    }
 
     const solution = await runHighFidelityShapePipeline({
       strokePts,
@@ -6023,7 +6046,12 @@ async function generateShapeRoute() {
     solution.trimSpurs = trimSpurs;
     solution.travelMode = travelMode;
     solution.direction = direction;
+    solution.autoViewportAnchor = !recentWp;
     lastShapeOptimizationResult = solution;
+
+    if (!recentWp) {
+      showNotification(`已自動選取畫面中最高相似度起點 (相似度 ${solution.similarityPct}%)`, 'info', 2500);
+    }
 
     drawShapePreview(solution.targetGeometryGeo, solution.routedGeometryGeo);
     const previewTrack = (solution.routedGeometryGeo && solution.routedGeometryGeo.length > 0)
