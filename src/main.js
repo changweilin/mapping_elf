@@ -499,6 +499,7 @@ function cancelActivePausableLoads() {
   cancelCatchmentFetchForRouteReplan();
   cancelTerrain3DCatchments();
   cancelCardCatchmentComputes();
+  cancelShapeGenerate();
   runs.forEach((run) => {
     run.cancelled = true;
     run.controller?.abort();
@@ -5147,8 +5148,22 @@ let shapeDrawing = false;
 let shapePreviewLayer = null;     // dashed target-shape outline on the map
 let shapeRouteRun = null;         // pending run: ring/anchor/scale context for the
                                   // distance-calibration + similarity pass on completion
+let shapeGenerateRun = null;      // active pausable load run for drawing board route generation
 let shapeGenerating = false;      // guards re-entry across the async generate flow
 let lastShapeOptimizationResult = null; // cached solution for GPX export
+
+function cancelShapeGenerate() {
+  if (shapeGenerateRun) {
+    const run = shapeGenerateRun;
+    shapeGenerateRun = null;
+    shapeGenerating = false;
+    run.cancelled = true;
+    run.controller?.abort();
+    unparkLoadRun(run);
+    pausableLoadRuns.delete(run);
+    run.busyTask?.end();
+  }
+}
 
 function readShapeTravelMode() {
   const val = shapeModeSelect ? shapeModeSelect.value : 'foot';
@@ -5525,6 +5540,7 @@ function ensureShapePreviewLayer() {
 }
 
 function clearShapeBoard() {
+  cancelShapeGenerate();
   if (shapeStrokes.length > 0) {
     pushShapeHistory();
   }
@@ -5553,6 +5569,7 @@ function setShapeActive(active) {
     redrawShapeCanvas();
     updateShapeToolButtons();
   } else {
+    cancelShapeGenerate();
     shapePreviewLayer?.clearLayers();
   }
   saveShapeBoardState();
@@ -5694,8 +5711,20 @@ async function runHighFidelityShapePipeline({
   initialScaleM = null,
   travelMode = 'foot',
   direction = 'any',
+  run = null,
+  onProgress = null,
 }) {
+  const checkCancel = () => run && run.cancelled;
+  const yieldStep = async (detail, progressFrac) => {
+    if (checkCancel()) return false;
+    if (onProgress) onProgress({ detail, progress: progressFrac });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (run) await waitIfLoadPaused(run);
+    return !checkCancel();
+  };
+
   const useOsrm = await checkOsrmActive(anchor, graph, travelMode);
+  if (checkCancel()) return null;
   const wpCount = suggestWaypointCount(targetM, {
     strokeCount: Math.max(1, shapeStrokes.length),
     corners: countShapeCorners(strokePts),
@@ -5710,30 +5739,37 @@ async function runHighFidelityShapePipeline({
   let iterations = 1;
 
   const planCurrent = async () => {
+    if (checkCancel()) return false;
     ring = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg, direction });
     if (!ring) return false;
     const sel = selectWaypointTs(ring, wpCount);
     const snapped = await snapRingWaypoints(ring, sel, graph, optimizer, useOsrm, travelMode);
+    if (checkCancel()) return false;
     ts = snapped.ts;
     wps = snapped.wps;
     coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
+    if (checkCancel()) return false;
     actual = totalDistance(coords);
     return wps.length >= 3 && coords.length >= 2;
   };
 
+  if (!(await yieldStep(translatePhrase('計算路網最佳解與校正...'), 0.1))) return null;
   const okInit = await planCurrent();
-  if (!okInit) return null;
+  if (!okInit || checkCancel()) return null;
 
   // Stage 1: Initial distance calibration (up to 2 full-step rounds)
   for (let a = 0; a < 2 && needsDistanceCalibration(actual, targetM); a++) {
+    if (!(await yieldStep(`${translatePhrase('校正目標距離')} (${a + 1}/2)...`, 0.2 + (a + 1) * 0.15))) return null;
     scaled = nextCalibratedTarget(scaled, actual, targetM);
     await planCurrent();
+    if (checkCancel()) return null;
     iterations++;
   }
 
   // Stage 2: Deviation-driven sub-arc refinement (up to 3 rounds)
   const minDevM = Math.max(45, Math.min(120, targetM * 0.01));
   for (let r = 0; r < 3; r++) {
+    if (!(await yieldStep(`${translatePhrase('優化折角與貼合度')} (${r + 1}/3)...`, 0.5 + (r + 1) * 0.1))) return null;
     const next = planRefinementTs(ring, ts, coords, wps, {
       minDevM,
       maxInsert: 4,
@@ -5748,10 +5784,12 @@ async function runHighFidelityShapePipeline({
       dev: ringRouteDeviation(ring, coords),
     };
     const snapped = await snapRingWaypoints(ring, next, graph, optimizer, useOsrm, travelMode);
+    if (checkCancel()) return null;
     if (snapped.wps.length < 3 || snapped.wps.length <= wps.length) break;
     ts = snapped.ts;
     wps = snapped.wps;
     coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
+    if (checkCancel()) return null;
     actual = totalDistance(coords);
     iterations++;
 
@@ -5771,6 +5809,7 @@ async function runHighFidelityShapePipeline({
 
   const dampedCalib = async () => {
     while (calibBudget > 0 && needsDistanceCalibration(actual, targetM, 0.08)) {
+      if (checkCancel()) return false;
       calibBudget--;
       const before = {
         scaled,
@@ -5787,9 +5826,11 @@ async function runHighFidelityShapePipeline({
         return false;
       }
       const snapped = await snapRingWaypoints(ring, before.ts, graph, optimizer, useOsrm, travelMode);
+      if (checkCancel()) return false;
       ts = snapped.ts;
       wps = snapped.wps;
       coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
+      if (checkCancel()) return false;
       actual = totalDistance(coords);
       iterations++;
 
@@ -5803,6 +5844,7 @@ async function runHighFidelityShapePipeline({
 
   if (trimSpurs) {
     for (let s = 0; s < 3; s++) {
+      if (!(await yieldStep(`${translatePhrase('修剪折返路徑')} (${s + 1}/3)...`, 0.82 + s * 0.04))) return null;
       const spursBefore = detectRouteSpurs(coords);
       const spurLenBefore = totalSpurLengthM(spursBefore);
       if (spurLenBefore > 0) {
@@ -5817,6 +5859,7 @@ async function runHighFidelityShapePipeline({
           ts = plan.ts;
           wps = plan.wps;
           coords = (await routeShapeLoopCoords(wps, graph, optimizer, useOsrm, trimSpurs, travelMode)) || [...wps, wps[0]];
+          if (checkCancel()) return null;
           actual = totalDistance(coords);
           iterations++;
           const remainM = totalSpurLengthM(detectRouteSpurs(coords));
@@ -5832,11 +5875,15 @@ async function runHighFidelityShapePipeline({
         }
       }
       const cont = await dampedCalib();
-      if (!cont) break;
+      if (!cont || checkCancel()) break;
     }
   } else {
+    if (!(await yieldStep(translatePhrase('微調目標里程...'), 0.85))) return null;
     await dampedCalib();
+    if (checkCancel()) return null;
   }
+
+  if (!(await yieldStep(translatePhrase('計算幾何相似度與偏差指標...'), 0.95))) return null;
 
   // Stage 4: Compute final similarity, max deviation, and overlap ratio
   const similarityPct = Math.round(shapeSimilarity(coords, ring) * 100);
@@ -5903,8 +5950,27 @@ async function generateShapeRoute() {
     localStorage.setItem(LS_SHAPE_DIRECTION_KEY, direction);
   } catch (_) { }
 
+  const controller = new AbortController();
+  const busyTask = beginRouteWeatherBusyTask({
+    title: translatePhrase('繪圖板路線生成中'),
+    detail: translatePhrase('取得周邊路網圖資...'),
+    progress: 0,
+    lockScope: 'none',
+  });
+  const run = {
+    id: `shape_${Date.now()}`,
+    cancelled: false,
+    paused: false,
+    lockScope: 'none',
+    _resume: null,
+    busyTask,
+    controller,
+  };
+  shapeGenerateRun = run;
   shapeGenerating = true;
   shapeRouteRun = null;          // supersede any pending calibration pass
+  registerPausableLoad(run);
+
   try {
     const targetM = km * 1000;
     let anchor = null;
@@ -5913,9 +5979,13 @@ async function generateShapeRoute() {
     let optimizer = null;
     const recentWp = mapManager.getRecentWaypoint?.();
 
+    busyTask.set({ detail: translatePhrase('取得周邊路網圖資...'), progress: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitIfLoadPaused(run);
+    if (run.cancelled) return;
+
     if (recentWp) {
       anchor = recentWp;
-      showNotification('正在取得完整 OSM 路網圖資並最佳化幾何形狀...', 'info', 2000);
       let osmCenter = anchor;
       let osmRadiusM = Math.max(1200, Math.min(4500, Math.round(targetM * 0.36)));
       const probeAngles = angleTol > 0 ? rotationCandidates(angleTol) : [0];
@@ -5937,14 +6007,22 @@ async function generateShapeRoute() {
         const halfDiagM = haversineDistance([minLat, minLng], [maxLat, maxLng]) * 0.5;
         osmRadiusM = Math.max(950, Math.min(4500, Math.round(halfDiagM * 1.38 + 300)));
       }
-      graph = await RoadNetworkGraph.fromOsm(osmCenter, osmRadiusM, travelMode, { anchorGeo: anchor });
+      graph = await RoadNetworkGraph.fromOsm(osmCenter, osmRadiusM, travelMode, { anchorGeo: anchor, signal: controller.signal });
+      if (run.cancelled) return;
+      await waitIfLoadPaused(run);
       optimizer = new GPSArtOptimizer(graph);
+
+      busyTask.set({ detail: translatePhrase('最佳化幾何形狀與方位...'), progress: 25 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitIfLoadPaused(run);
+      if (run.cancelled) return;
 
       // Search for optimal orientation angle when rotation tolerance > 0
       if (angleTol > 0) {
         const candidates = rotationCandidates(angleTol);
         let bestProbeScore = -Infinity;
-        for (const candAngle of candidates) {
+        for (let i = 0; i < candidates.length; i++) {
+          const candAngle = candidates[i];
           const ring = strokeToLatLngRing(strokePts, anchor, targetM / 1.22, { rotationDeg: candAngle, direction });
           if (!ring) continue;
           const probeWps = pickShapeWaypoints(ring, 10);
@@ -5958,7 +6036,18 @@ async function generateShapeRoute() {
             bestProbeScore = score;
             bestAngleDeg = candAngle;
           }
+          if (i % 3 === 0 || i === candidates.length - 1) {
+            busyTask.set({
+              detail: `${translatePhrase('最佳化旋轉方位')} (${i + 1}/${candidates.length})...`,
+              progress: 25 + Math.round(((i + 1) / candidates.length) * 20),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            await waitIfLoadPaused(run);
+            if (run.cancelled) return;
+          }
         }
+      } else {
+        busyTask.set({ progress: 45 });
       }
     } else {
       // No waypoints on map: automatically search visible viewport for anchor with highest shape similarity
@@ -5977,9 +6066,20 @@ async function generateShapeRoute() {
       const shapeRadiusM = (targetM / (2 * Math.PI)) * 1.35;
       const osmRadiusM = Math.max(1200, Math.min(6500, Math.round(Math.max(viewHalfDiagM, shapeRadiusM + 400))));
 
-      showNotification('正在取得畫面路網並搜尋最高相似度起點...', 'info', 2000);
-      graph = await RoadNetworkGraph.fromOsm(viewportCenter, osmRadiusM, travelMode, { anchorGeo: viewportCenter });
+      busyTask.set({ detail: translatePhrase('取得周邊路網圖資...'), progress: 10 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitIfLoadPaused(run);
+      if (run.cancelled) return;
+
+      graph = await RoadNetworkGraph.fromOsm(viewportCenter, osmRadiusM, travelMode, { anchorGeo: viewportCenter, signal: controller.signal });
+      if (run.cancelled) return;
+      await waitIfLoadPaused(run);
       optimizer = new GPSArtOptimizer(graph);
+
+      busyTask.set({ detail: translatePhrase('搜尋畫面最高相似度起點...'), progress: 35 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitIfLoadPaused(run);
+      if (run.cancelled) return;
 
       const cursor = mapManager.getRecentCoordinate?.();
       const optRes = findOptimalViewportAnchor({
@@ -5998,7 +6098,11 @@ async function generateShapeRoute() {
 
       anchor = optRes.anchor;
       bestAngleDeg = optRes.angleDeg;
+      busyTask.set({ progress: 45 });
     }
+
+    if (run.cancelled) return;
+    await waitIfLoadPaused(run);
 
     let rotBounds = [0, 360];
     if (angleTol === 0) rotBounds = [0, 0];
@@ -6020,6 +6124,11 @@ async function generateShapeRoute() {
       weightOverlap: 260.0,
     });
 
+    busyTask.set({ detail: translatePhrase('計算路網最佳解與校正...'), progress: 48 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitIfLoadPaused(run);
+    if (run.cancelled) return;
+
     const solution = await runHighFidelityShapePipeline({
       strokePts,
       anchor,
@@ -6030,8 +6139,16 @@ async function generateShapeRoute() {
       optimizer,
       travelMode,
       direction,
+      run,
+      onProgress: ({ detail, progress }) => {
+        busyTask.set({
+          detail,
+          progress: 48 + Math.round(progress * 47),
+        });
+      },
     });
 
+    if (run.cancelled) return;
     if (!solution || !solution.keyWaypoints || solution.keyWaypoints.length < 3) {
       showNotification('無法辨識繪製的形狀，請重畫', 'warning');
       return;
@@ -6094,6 +6211,7 @@ async function generateShapeRoute() {
         `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
       ).join('');
     }
+    busyTask.set({ detail: translatePhrase('完成路線規劃'), progress: 100 });
     showNotification(`已依路網拓撲持續迭代完成最佳解 (相似度 ${solution.similarityPct}%)`, 'success', 2500);
     emitTestEvent('shape-route-generated', {
       waypointCount: wps.length,
@@ -6116,8 +6234,15 @@ async function generateShapeRoute() {
       travelMode,
       direction: solution.direction || direction,
     });
+  } catch (err) {
+    if (isAbortError(err) || run.cancelled) return;
+    console.warn('Shape route generate failed:', err);
+    showNotification(err.message || translatePhrase('繪圖板路線生成失敗'), 'error', 3200);
   } finally {
     shapeGenerating = false;
+    pausableLoadRuns.delete(run);
+    if (shapeGenerateRun === run) shapeGenerateRun = null;
+    busyTask.end();
   }
 }
 
@@ -6127,7 +6252,26 @@ async function iterateShapeRoute() {
     showNotification('請先在繪圖板產生路線', 'warning');
     return;
   }
+  const controller = new AbortController();
+  const busyTask = beginRouteWeatherBusyTask({
+    title: translatePhrase('繪圖板路線生成中'),
+    detail: translatePhrase('取得周邊路網圖資...'),
+    progress: 0,
+    lockScope: 'none',
+  });
+  const run = {
+    id: `shape_iter_${Date.now()}`,
+    cancelled: false,
+    paused: false,
+    lockScope: 'none',
+    _resume: null,
+    busyTask,
+    controller,
+  };
+  shapeGenerateRun = run;
   shapeGenerating = true;
+  registerPausableLoad(run);
+
   try {
     const prev = lastShapeOptimizationResult;
     const targetM = prev.targetM;
@@ -6137,10 +6281,21 @@ async function iterateShapeRoute() {
     const travelMode = prev.travelMode || readShapeTravelMode();
     const direction = prev.direction || readShapeDirection();
     const osmRadiusM = Math.max(1800, Math.min(12000, Math.round(targetM * 0.65)));
-    const graph = prev.graph || await RoadNetworkGraph.fromOsm(anchor, osmRadiusM, travelMode);
+
+    busyTask.set({ detail: translatePhrase('取得周邊路網圖資...'), progress: 15 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitIfLoadPaused(run);
+    if (run.cancelled) return;
+
+    const graph = prev.graph || await RoadNetworkGraph.fromOsm(anchor, osmRadiusM, travelMode, { signal: controller.signal });
+    if (run.cancelled) return;
+    await waitIfLoadPaused(run);
     const optimizer = new GPSArtOptimizer(graph);
 
-    showNotification('正在依實測長度與相似度持續迭代最佳解...', 'info', 1800);
+    busyTask.set({ detail: translatePhrase('校正目標距離...'), progress: 30 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitIfLoadPaused(run);
+    if (run.cancelled) return;
 
     const calibratedScale = nextCalibratedTarget(
       prev.optimalScaleM || targetM,
@@ -6159,8 +6314,16 @@ async function iterateShapeRoute() {
       initialScaleM: calibratedScale,
       travelMode,
       direction,
+      run,
+      onProgress: ({ detail, progress }) => {
+        busyTask.set({
+          detail,
+          progress: 30 + Math.round(progress * 65),
+        });
+      },
     });
 
+    if (run.cancelled) return;
     if (solution) {
       solution.iteration = (prev.iteration || 1) + 1;
       solution.graph = graph;
@@ -6218,8 +6381,16 @@ async function iterateShapeRoute() {
         `<div class="mr-row"><span class="mr-label">${translatePhrase(label)}</span><span class="mr-value">${value}</span></div>`
       ).join('');
     }
+    busyTask.set({ detail: translatePhrase('完成路線規劃'), progress: 100 });
+  } catch (err) {
+    if (isAbortError(err) || run.cancelled) return;
+    console.warn('Shape route iterate failed:', err);
+    showNotification(err.message || translatePhrase('繪圖板路線生成失敗'), 'error', 3200);
   } finally {
     shapeGenerating = false;
+    pausableLoadRuns.delete(run);
+    if (shapeGenerateRun === run) shapeGenerateRun = null;
+    busyTask.end();
   }
 }
 

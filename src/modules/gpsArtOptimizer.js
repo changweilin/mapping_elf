@@ -1017,14 +1017,19 @@ export class RoadNetworkGraph {
 
     let data = null;
     const timeoutMs = options.timeoutMs || 14000;
+    const externalSignal = options.signal;
 
     const fetchFromEndpoint = async (ep) => {
       try {
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
+        const combinedSignal = externalSignal
+          ? (typeof AbortSignal.any === 'function' ? AbortSignal.any([externalSignal, timeoutSignal]) : timeoutSignal)
+          : timeoutSignal;
         const res = await fetch(ep, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
           body: new URLSearchParams({ data: query }),
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: combinedSignal,
         });
         if (res.ok) {
           const parsed = await res.json();
@@ -1033,8 +1038,13 @@ export class RoadNetworkGraph {
           }
         }
       } catch (_postErr) {
+        if (externalSignal?.aborted) throw _postErr;
+        const timeoutSignal = AbortSignal.timeout(Math.min(10000, timeoutMs));
+        const combinedSignal = externalSignal
+          ? (typeof AbortSignal.any === 'function' ? AbortSignal.any([externalSignal, timeoutSignal]) : timeoutSignal)
+          : timeoutSignal;
         const resGet = await fetch(`${ep}?data=${encodeURIComponent(query)}`, {
-          signal: AbortSignal.timeout(Math.min(10000, timeoutMs)),
+          signal: combinedSignal,
         });
         if (resGet.ok) {
           const parsed = await resGet.json();

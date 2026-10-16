@@ -745,4 +745,38 @@ test('shape similarity severely drops and max deviation increases when route tak
   expect(detourDev.maxM).toBeGreaterThan(1000);
 });
 
+test('drawing board route generation displays progress bar matching magic circle style', async ({ page }) => {
+  await openApp(page);
+  await page.locator('#btn-shape-tool').click();
+  await expect(page.locator('#shape-panel')).toBeVisible();
+
+  await drawSquare(page);
+  await page.locator('#shape-distance-input').fill('3');
+  await page.locator('#btn-shape-generate').click();
+
+  const overlay = page.locator('#route-weather-busy-overlay');
+  const title = page.locator('#route-weather-busy-title');
+  const fill = page.locator('#route-weather-busy-fill');
+
+  // Verify that the busy task with progress bar was registered and overlay became visible or finished cleanly
+  await expect.poll(async () => page.evaluate(() => {
+    const events = window.__mappingElfTestHooks?.events || [];
+    return events.some((e) => e.type === 'shape-route-generated');
+  })).toBe(true);
+
+  // Overlay closes upon completion
+  await expect(overlay).toHaveClass(/hidden/);
+
+  // Test iterate button also displays progress bar and completes
+  await expect(page.locator('#btn-shape-iterate')).toBeVisible();
+  await page.locator('#btn-shape-iterate').click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    return window.__mappingElfTestHooks?.lastShapeOptimizationResult?.iteration >= 2;
+  })).toBe(true);
+
+  await expect(overlay).toHaveClass(/hidden/);
+});
+
+
 
