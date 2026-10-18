@@ -15861,7 +15861,7 @@ function resolveCardWeatherValue(colIdx, info, key) {
 // superseded fill (time change or a newer card) never lands stale (INC race
 // rule). weatherVal(key) resolves the card's already-shown weather value (same
 // fallback chain as the weather view), so no extra weather fetch is issued here.
-async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weatherVal, container, detailed = true }) {
+async function renderCardCatchment({ key, semKey, lat, lng, dateStr, hour, weatherVal, container, detailed = true, pt = null }) {
   if (!container) return;
   const token = (_cardPanelToken.get(key) || 0) + 1;
   _cardPanelToken.set(key, token);
@@ -16580,6 +16580,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
         weatherVal: (k) => resolveCardWeatherValue(colIdx, info, k),
         container,
         detailed: catchmentDetailEnabledFor(info.pt),
+        pt: info.pt,
       });
     }
   }
