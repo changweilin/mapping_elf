@@ -370,6 +370,35 @@ test('view toggle applies to the whole collective set', async ({ page }) => {
   await expect(page.locator('.weather-card.full .wc-catchment')).toHaveCount(0);
 });
 
+test('expanding waypoint card from compact to full shows detailed weather and catchment', async ({ page }) => {
+  await setupRoute(page, { collective: false });
+
+  // Open first card and ensure it starts in compact mode
+  const badge = page.locator('.custom-waypoint-icon .wp-weather-badge.is-loaded').first();
+  await badge.click();
+  await page.locator('.weather-card').first().waitFor({ timeout: 10000 });
+  if ((await page.locator('.weather-card.full').count()) > 0) {
+    await clickCardControl(page.locator('.weather-card .q-toggle').first());
+    await expect(page.locator('.weather-card.compact').first()).toBeVisible();
+  }
+
+  // Expand to full card
+  await clickCardControl(page.locator('.weather-card .q-toggle').first());
+  const card = page.locator('.weather-card.full').first();
+  await expect(card).toBeVisible();
+
+  // Weather view: detailed weather info rows present
+  await expect(card.locator('.wc-windy-btn')).toHaveCount(1);
+  await expect(card.locator('.wc-bottom-facts')).toHaveCount(1);
+
+  // Catchment view: detailed catchment terrain and hydrology present
+  await clickCardControl(card.locator('.wc-view-btn[data-wc-view="catchment"]'));
+  const catchPanel = card.locator('.wc-catchment');
+  await expect(catchPanel).toContainText('集水區面積', { timeout: 20000 });
+  await expect(catchPanel).toContainText('土壤含水量', { timeout: 20000 });
+  await expect(page.locator('#map .leaflet-overlay-pane path.wc-catchment-poly')).toHaveCount(1, { timeout: 20000 });
+});
+
 test.describe('GPS cursor', () => {
   test.use({ permissions: ['geolocation'], geolocation: { latitude: ANCHOR[0], longitude: ANCHOR[1] } });
 
