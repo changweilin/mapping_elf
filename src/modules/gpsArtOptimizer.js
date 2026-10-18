@@ -73,6 +73,43 @@ export class KDTree2D {
     search(this.root);
     return best.node ? { node: best.node, distance: Math.sqrt(best.distSq) } : null;
   }
+
+  queryK(targetPt, k = 5, filterFn = null) {
+    if (k <= 0) return [];
+    const qx = Array.isArray(targetPt) ? targetPt[0] : targetPt.x;
+    const qy = Array.isArray(targetPt) ? targetPt[1] : targetPt.y;
+    const results = [];
+
+    const search = (node) => {
+      if (!node) return;
+      const dx = qx - node.point.x;
+      const dy = qy - node.point.y;
+      const distSq = dx * dx + dy * dy;
+
+      if (!filterFn || filterFn(node.point)) {
+        if (results.length < k) {
+          results.push({ node: node.point, distSq, distance: Math.sqrt(distSq) });
+          results.sort((a, b) => a.distSq - b.distSq);
+        } else if (distSq < results[results.length - 1].distSq) {
+          results[results.length - 1] = { node: node.point, distSq, distance: Math.sqrt(distSq) };
+          results.sort((a, b) => a.distSq - b.distSq);
+        }
+      }
+
+      const worstDistSq = results.length < k ? Infinity : results[results.length - 1].distSq;
+      const axisVal = node.axis === 0 ? dx : dy;
+      const first = axisVal <= 0 ? node.left : node.right;
+      const second = axisVal <= 0 ? node.right : node.left;
+
+      search(first);
+      if (axisVal * axisVal < worstDistSq) {
+        search(second);
+      }
+    };
+
+    search(this.root);
+    return results;
+  }
 }
 
 /**
@@ -231,6 +268,18 @@ export class RoadNetworkGraph {
         nU.isHighway = tags.isHighway;
         nV.isHighway = tags.isHighway;
       }
+      if (tags.isElevated != null) {
+        nU.isElevated = tags.isElevated;
+        nV.isElevated = tags.isElevated;
+      }
+      if (tags.hasExplicitFoot != null) {
+        nU.hasExplicitFoot = tags.hasExplicitFoot;
+        nV.hasExplicitFoot = tags.hasExplicitFoot;
+      }
+      if (tags.hasExplicitBike != null) {
+        nU.hasExplicitBike = tags.hasExplicitBike;
+        nV.hasExplicitBike = tags.hasExplicitBike;
+      }
       if (tags.allowedModes) {
         nU.allowedModes = tags.allowedModes;
         nV.allowedModes = tags.allowedModes;
@@ -266,14 +315,26 @@ export class RoadNetworkGraph {
       if ((hw === 'trunk' || hw === 'trunk_link') && !node.hasExplicitFoot) return false;
       if (node.isExpressway && !node.hasExplicitFoot) return false;
       if (node.isHighway && !node.hasExplicitFoot) return false;
+      if (hw.endsWith('_link') && (hw === 'primary_link' || node.isElevated) && !node.hasExplicitFoot) return false;
+      if (node.isElevated && (hw === 'primary' || hw === 'trunk') && !node.hasExplicitFoot) return false;
+      if (node.tags && (node.tags.foot === 'no' || node.tags.pedestrian === 'no' || node.tags.access === 'no' || node.tags.access === 'private' || node.tags.motorroad === 'yes')) return false;
     } else if (mode === 'bike') {
       if (hw === 'motorway' || hw === 'motorway_link') return false;
+      if ((hw === 'trunk' || hw === 'trunk_link') && !node.hasExplicitBike) return false;
       if (node.isExpressway && !node.hasExplicitBike) return false;
+      if (node.isHighway && !node.hasExplicitBike) return false;
+      if (hw.endsWith('_link') && (node.isElevated || node.isExpressway || node.isHighway) && !node.hasExplicitBike) return false;
+      if (node.isElevated && (hw === 'primary' || hw === 'trunk') && !node.hasExplicitBike) return false;
+      if (hw === 'steps' && !node.hasExplicitBike) return false;
+      if (node.tags && (node.tags.bicycle === 'no' || node.tags.access === 'no' || node.tags.access === 'private' || node.tags.motorroad === 'yes')) return false;
     } else if (mode === 'motorcycle') {
-      if (hw === 'motorway') return false;
-      if (hw === 'footway' || hw === 'steps' || hw === 'pedestrian' || hw === 'cycleway') return false;
+      if (hw === 'motorway' || hw === 'motorway_link') return false;
+      if (node.isExpressway && node.tags?.motorcycle !== 'yes') return false;
+      if (hw === 'footway' || hw === 'steps' || hw === 'pedestrian' || hw === 'cycleway' || hw === 'path' || hw === 'bridleway') return false;
+      if (node.tags && (node.tags.motorcycle === 'no' || node.tags.motor_vehicle === 'no' || node.tags.access === 'no' || node.tags.access === 'private')) return false;
     } else if (mode === 'car' || mode === 'drive') {
-      if (hw === 'footway' || hw === 'steps' || hw === 'pedestrian' || hw === 'cycleway' || hw === 'path') return false;
+      if (hw === 'footway' || hw === 'steps' || hw === 'pedestrian' || hw === 'cycleway' || hw === 'path' || hw === 'bridleway' || hw === 'track') return false;
+      if (node.tags && (node.tags.motorcar === 'no' || node.tags.motor_vehicle === 'no' || node.tags.access === 'no' || node.tags.access === 'private')) return false;
     }
     return true;
   }
@@ -420,6 +481,7 @@ export class RoadNetworkGraph {
         midNode.hasExplicitBike = Boolean(nU.hasExplicitBike || nV.hasExplicitBike);
         midNode.isExpressway = Boolean(nU.isExpressway || nV.isExpressway);
         midNode.isHighway = Boolean(nU.isHighway || nV.isHighway);
+        midNode.isElevated = Boolean(nU.isElevated || nV.isElevated);
         if (nU.allowedModes || nV.allowedModes) {
           midNode.allowedModes = new Set([...(nU.allowedModes || []), ...(nV.allowedModes || [])]);
         }
@@ -1050,6 +1112,7 @@ export class RoadNetworkGraph {
           n.hasExplicitBike = Boolean(hasExplicitBike);
           n.isExpressway = Boolean(isExpresswayMain || isExpresswayKeyword);
           n.isHighway = Boolean(isMotorway || isTrunk);
+          n.isElevated = Boolean(isElevated);
           if (!n.allowedModes) n.allowedModes = new Set();
           n.allowedModes.add(mode);
           nodeIds.push(nid);
@@ -1073,6 +1136,8 @@ export class RoadNetworkGraph {
             nV.hasExplicitBike = Boolean(hasExplicitBike);
             nU.isExpressway = Boolean(isExpresswayMain || isExpresswayKeyword);
             nV.isExpressway = Boolean(isExpresswayMain || isExpresswayKeyword);
+            nU.isElevated = Boolean(isElevated);
+            nV.isElevated = Boolean(isElevated);
             if (!nU.allowedModes) nU.allowedModes = new Set();
             if (!nV.allowedModes) nV.allowedModes = new Set();
             nU.allowedModes.add(mode);
@@ -1593,7 +1658,7 @@ export class GPSArtOptimizer {
    * streets to avoid cul-de-sac spikes unless a dead-end node is much closer at a sharp corner.
    */
   snapPointToRoad(pt, isCorner = false, options = {}) {
-    const travelMode = options.travelMode || null;
+    const travelMode = options.travelMode || this.G?.travelMode || null;
     const filterFn = travelMode && this.G.isNodeAllowedForTravelMode
       ? (node) => this.G.isNodeAllowedForTravelMode(node, travelMode)
       : null;
@@ -1604,13 +1669,49 @@ export class GPSArtOptimizer {
     if (this.coreKdTree && this.coreKdTree !== this.kdtree) {
       const coreHit = this.coreKdTree.query(pt, filterFn);
       if (coreHit && coreHit.node) {
-        const toleranceM = isCorner ? 22 : 42;
+        const toleranceM = allHit.node.isDeadEnd ? 160 : (isCorner ? 40 : 120);
         if (coreHit.distance <= allHit.distance + toleranceM) {
           return coreHit.node;
         }
       }
     }
     return allHit.node;
+  }
+
+  /**
+   * Finds the top-k candidate allowed road network nodes near a target point.
+   * Prioritizes 2-core through-streets over cul-de-sacs.
+   */
+  snapPointCandidates(pt, count = 6, options = {}) {
+    const travelMode = options.travelMode || this.G?.travelMode || null;
+    const filterFn = travelMode && this.G.isNodeAllowedForTravelMode
+      ? (node) => this.G.isNodeAllowedForTravelMode(node, travelMode)
+      : null;
+
+    if (!this.kdtree) return [];
+    const hits = this.kdtree.queryK(pt, count * 3, filterFn);
+    if (!hits || hits.length === 0) return [];
+
+    const candidates = [];
+    const seen = new Set();
+    const coreHits = hits.filter((h) => !h.node.isDeadEnd);
+    const otherHits = hits.filter((h) => h.node.isDeadEnd);
+
+    for (const h of coreHits) {
+      if (!seen.has(h.node.id)) {
+        seen.add(h.node.id);
+        candidates.push(h.node);
+        if (candidates.length >= count) break;
+      }
+    }
+    for (const h of otherHits) {
+      if (candidates.length >= count) break;
+      if (!seen.has(h.node.id)) {
+        seen.add(h.node.id);
+        candidates.push(h.node);
+      }
+    }
+    return candidates;
   }
 
   /**
@@ -1621,6 +1722,7 @@ export class GPSArtOptimizer {
   matchAndRoute(transformedPattern, options = {}) {
     if (!transformedPattern || transformedPattern.length < 2) return null;
 
+    const travelMode = options.travelMode || this.G?.travelMode || null;
     const normPattern = transformedPattern.map((p) => {
       if (Array.isArray(p)) return [Number(p[0]) || 0, Number(p[1]) || 0];
       if (p && typeof p === 'object') {
@@ -1651,7 +1753,7 @@ export class GPSArtOptimizer {
         }
       }
 
-      const node = this.snapPointToRoad(pt, isCorner, { travelMode: options.travelMode });
+      const node = this.snapPointToRoad(pt, isCorner, { travelMode });
       if (!node) return null;
       snappedNodes.push(node.id);
       snappedTargetPts.push(pt);
@@ -1675,9 +1777,23 @@ export class GPSArtOptimizer {
     const corridorWeight = options.corridorWeight ?? 0.022;
     const allowHairpinTrim = options.pruneSpurs !== false;
 
+    const checkDetour = (fromId, toId, fromTarget, toTarget, routeRes) => {
+      if (!routeRes || !routeRes.path || routeRes.path.length === 0) return true;
+      if (options.rejectExcessiveDetours === false) return false;
+      const nFrom = this.G.nodes.get(fromId);
+      const nTo = this.G.nodes.get(toId);
+      const nodeStraightDist = (nFrom && nTo) ? Math.hypot(nFrom.x - nTo.x, nFrom.y - nTo.y) : 0;
+      const targetStraightDist = (fromTarget && toTarget)
+        ? Math.hypot(toTarget[0] - fromTarget[0], toTarget[1] - fromTarget[1])
+        : nodeStraightDist;
+      const straightDist = Math.max(nodeStraightDist, targetStraightDist);
+      const legRouteLen = routeRes.length != null ? routeRes.length : straightDist;
+      return isExcessiveLegDetour(straightDist, legRouteLen, options.detourOptions);
+    };
+
     for (let i = 0; i < cleanedNodes.length - 1; i++) {
-      const u = cleanedNodes[i];
-      const v = cleanedNodes[i + 1];
+      let u = cleanedNodes[i];
+      let v = cleanedNodes[i + 1];
       const prevNodeId = fullNodePath.length >= 2 ? fullNodePath[fullNodePath.length - 2] : null;
       let recentEdgeSet = null;
       if (allowHairpinTrim && fullNodePath.length >= 2) {
@@ -1690,7 +1806,7 @@ export class GPSArtOptimizer {
         }
       }
 
-      const res = this.G.routeCorridor(
+      let res = this.G.routeCorridor(
         u,
         v,
         cleanedTargets[i],
@@ -1700,21 +1816,123 @@ export class GPSArtOptimizer {
         corridorWeight,
         recentEdgeSet
       );
-      if (!res || !res.path || res.path.length === 0) return null;
 
-      // Reject leg if navigation route distance is far greater than straight-line distance
-      if (options.rejectExcessiveDetours !== false) {
-        const nodeU = this.G.nodes.get(u);
-        const nodeV = this.G.nodes.get(v);
-        const nodeStraightDist = (nodeU && nodeV) ? Math.hypot(nodeU.x - nodeV.x, nodeU.y - nodeV.y) : 0;
-        const targetStraightDist = (cleanedTargets[i] && cleanedTargets[i + 1])
-          ? Math.hypot(cleanedTargets[i + 1][0] - cleanedTargets[i][0], cleanedTargets[i + 1][1] - cleanedTargets[i][1])
-          : nodeStraightDist;
-        const straightDist = Math.max(nodeStraightDist, targetStraightDist);
-        const legRouteLen = res.length != null ? res.length : straightDist;
-        if (isExcessiveLegDetour(straightDist, legRouteLen, options.detourOptions)) {
-          return null; // Exclude route that detours excessively between adjacent setting points
+      let isDetour = checkDetour(u, v, cleanedTargets[i], cleanedTargets[i + 1], res);
+
+      // If routing failed or detoured excessively (e.g. across an uncrossable highway or barrier),
+      // evaluate alternative setting points on allowed roads when we have a multi-point shape.
+      // "只要導航沒有偏掉(導航長度遠大於直線長度),設置點距離遠一點也沒關係"
+      if (isDetour && cleanedNodes.length > 2) {
+        // 1. Try alternative allowed candidate setting points for target v
+        const vCandidates = this.snapPointCandidates(cleanedTargets[i + 1], 8, { travelMode });
+        for (const cand of vCandidates) {
+          if (cand.id === v || cand.id === u) continue;
+          const distToTarget = Math.hypot(cand.x - cleanedTargets[i + 1][0], cand.y - cleanedTargets[i + 1][1]);
+          if (distToTarget > 180) continue;
+
+          const candRes = this.G.routeCorridor(
+            u,
+            cand.id,
+            cleanedTargets[i],
+            [cand.x, cand.y],
+            usedEdgeCounts,
+            prevNodeId,
+            corridorWeight,
+            recentEdgeSet
+          );
+          if (!checkDetour(u, cand.id, cleanedTargets[i], [cand.x, cand.y], candRes)) {
+            v = cand.id;
+            cleanedNodes[i + 1] = cand.id;
+            res = candRes;
+            waypointNodeSet.add(cand.id);
+            isDetour = false;
+            break;
+          }
         }
+
+        // 2. If candidates for v still detour (e.g. waypoint placed in an unreachable pocket across the barrier),
+        // and we have a subsequent waypoint i + 2, check if bypassing i + 1 directly to i + 2 routes cleanly.
+        if (isDetour && i + 2 < cleanedNodes.length) {
+          const bypassRes = this.G.routeCorridor(
+            u,
+            cleanedNodes[i + 2],
+            cleanedTargets[i],
+            cleanedTargets[i + 2],
+            usedEdgeCounts,
+            prevNodeId,
+            corridorWeight,
+            recentEdgeSet
+          );
+          if (!checkDetour(u, cleanedNodes[i + 2], cleanedTargets[i], cleanedTargets[i + 2], bypassRes)) {
+            cleanedNodes.splice(i + 1, 1);
+            cleanedTargets.splice(i + 1, 1);
+            v = cleanedNodes[i + 1];
+            res = bypassRes;
+            isDetour = false;
+          }
+        }
+
+        // 3. If i === 0 and still detouring, try alternative allowed candidate setting points for start node u
+        if (isDetour && i === 0) {
+          const uCandidates = this.snapPointCandidates(cleanedTargets[0], 6, { travelMode });
+          for (const candU of uCandidates) {
+            if (candU.id === u || candU.id === v) continue;
+            const distToTarget = Math.hypot(candU.x - cleanedTargets[0][0], candU.y - cleanedTargets[0][1]);
+            if (distToTarget > 180) continue;
+
+            const candRes = this.G.routeCorridor(
+              candU.id,
+              v,
+              [candU.x, candU.y],
+              cleanedTargets[1],
+              usedEdgeCounts,
+              prevNodeId,
+              corridorWeight,
+              recentEdgeSet
+            );
+            if (!checkDetour(candU.id, v, [candU.x, candU.y], cleanedTargets[1], candRes)) {
+              cleanedNodes[0] = candU.id;
+              u = candU.id;
+              res = candRes;
+              waypointNodeSet.add(candU.id);
+              isDetour = false;
+              break;
+            }
+          }
+        }
+
+        // 4. If closing leg to start point (i === cleanedNodes.length - 2), try alternative candidates for penultimate node u
+        if (isDetour && i === cleanedNodes.length - 2 && i > 0) {
+          const uCandidates = this.snapPointCandidates(cleanedTargets[i], 6, { travelMode });
+          for (const candU of uCandidates) {
+            if (candU.id === u || candU.id === v) continue;
+            const distToTarget = Math.hypot(candU.x - cleanedTargets[i][0], candU.y - cleanedTargets[i][1]);
+            if (distToTarget > 180) continue;
+
+            const candRes = this.G.routeCorridor(
+              candU.id,
+              v,
+              [candU.x, candU.y],
+              cleanedTargets[i + 1],
+              usedEdgeCounts,
+              prevNodeId,
+              corridorWeight,
+              recentEdgeSet
+            );
+            if (!checkDetour(candU.id, v, [candU.x, candU.y], cleanedTargets[i + 1], candRes)) {
+              cleanedNodes[i] = candU.id;
+              u = candU.id;
+              res = candRes;
+              waypointNodeSet.add(candU.id);
+              isDetour = false;
+              break;
+            }
+          }
+        }
+      }
+
+      if (isDetour || !res || !res.path || res.path.length === 0) {
+        return null; // Exclude route that detours excessively or is impassable
       }
 
       if (i === 0) {

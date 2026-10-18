@@ -515,6 +515,101 @@ console.log('Testing shapeRouteMatcher.js...');
   assert.ok(expRes.rankedCandidates.length >= 1, 'Must have at least one ranked candidate');
 }
 
+// 18. Highway avoidance and candidate recovery near highway barriers
+{
+  const graph = new RoadNetworkGraph([25.034, 121.564]);
+
+  // West side walkable local street network
+  graph.addNode('w0', 0, 0);
+  graph.addNode('w1', 0, 50);
+  graph.addNode('w2', 0, 100);
+  graph.addNode('w3', 50, 100);
+  graph.addNode('w4', 50, 50);
+  graph.addNode('w5', 50, 0);
+
+  const localEdges = [
+    ['w0', 'w1'], ['w1', 'w2'], ['w2', 'w3'],
+    ['w3', 'w4'], ['w4', 'w5'], ['w5', 'w0'],
+    ['w1', 'w4'], ['w0', 'w5']
+  ];
+  for (const [u, v] of localEdges) {
+    const dist = Math.hypot(graph.nodes.get(u).x - graph.nodes.get(v).x, graph.nodes.get(u).y - graph.nodes.get(v).y);
+    graph.addEdge(u, v, dist, { highway: 'residential' });
+    graph.addEdge(v, u, dist, { highway: 'residential' });
+  }
+
+  // Freeway running north-south, forbidden for pedestrians
+  graph.addNode('hw1', 60, 0);
+  graph.addNode('hw2', 60, 50);
+  graph.addNode('hw3', 60, 100);
+  graph.addNode('ramp1', 58, 25);
+  graph.addEdge('hw1', 'hw2', 50, { highway: 'motorway', isHighway: true });
+  graph.addEdge('hw2', 'hw3', 50, { highway: 'motorway', isHighway: true });
+  graph.addEdge('ramp1', 'hw2', 30, { highway: 'motorway_link', isHighway: true });
+
+  // East side across the freeway, only reachable via far underpass at y=1200
+  graph.addNode('e1', 75, 0);
+  graph.addNode('e2', 75, 50);
+  graph.addNode('e3', 75, 100);
+  graph.addEdge('e1', 'e2', 50, { highway: 'residential' });
+  graph.addEdge('e2', 'e3', 50, { highway: 'residential' });
+  graph.addEdge('e3', 'e2', 50, { highway: 'residential' });
+  graph.addEdge('e2', 'e1', 50, { highway: 'residential' });
+
+  // Distant crossing at y=1200
+  graph.addNode('cross_w', 50, 1200);
+  graph.addNode('cross_e', 75, 1200);
+  graph.addEdge('w3', 'cross_w', 1100, { highway: 'residential' });
+  graph.addEdge('cross_w', 'w3', 1100, { highway: 'residential' });
+  graph.addEdge('cross_w', 'cross_e', 25, { highway: 'footway' });
+  graph.addEdge('cross_e', 'cross_w', 25, { highway: 'footway' });
+  graph.addEdge('cross_e', 'e3', 1100, { highway: 'residential' });
+  graph.addEdge('e3', 'cross_e', 1100, { highway: 'residential' });
+
+  graph.buildIndex({ pruneComponents: false });
+  const optimizer = new GPSArtOptimizer(graph);
+
+  // 1. Verify candidate query for foot mode steers away from highway and ramps
+  const candidates = optimizer.snapPointCandidates({ x: 59, y: 50 }, 4, { travelMode: 'foot' });
+  assert.ok(candidates.length > 0, 'Should find candidates on allowed roads');
+  for (const cand of candidates) {
+    assert.ok(
+      cand.id !== 'hw1' && cand.id !== 'hw2' && cand.id !== 'hw3' && cand.id !== 'ramp1',
+      `Candidate ${cand.id} must NOT be on disallowed highway or ramp`
+    );
+  }
+
+  // 2. Drawing board route drawn near highway fence with one point at { x: 62, y: 100 }
+  const drawnStroke = [
+    { x: 0, y: 0 },
+    { x: 0, y: 100 },
+    { x: 62, y: 100 }, // Drawn over the highway corridor
+    { x: 50, y: 0 },
+    { x: 0, y: 0 }
+  ];
+
+  const routeRes = optimizer.matchAndRoute(drawnStroke, {
+    travelMode: 'foot',
+    rejectExcessiveDetours: true,
+  });
+
+  assert.ok(routeRes !== null, 'Route generation near highway must succeed by adjusting setting points');
+  assert.ok(Array.isArray(routeRes.routeCoordsXY) && routeRes.routeCoordsXY.length >= 4, 'Route should contain coordinates');
+  assert.ok(
+    !routeRes.snappedNodes.includes('hw1') &&
+    !routeRes.snappedNodes.includes('hw2') &&
+    !routeRes.snappedNodes.includes('hw3') &&
+    !routeRes.snappedNodes.includes('ramp1'),
+    'Setting points must steer away from disallowed highway roads'
+  );
+  // Route distance should remain reasonable (local loop ~200-350m) instead of detouring 2400m to distant bridge
+  assert.ok(
+    routeRes.totalLengthM < 600,
+    `Route should not detour wildly across barrier, got ${routeRes.totalLengthM}m`
+  );
+}
+
 console.log('shapeRouteMatcher.js test passed successfully!');
+
 
 

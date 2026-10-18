@@ -5634,16 +5634,23 @@ async function routeShapeLoopCoords(wps, graph = null, optimizer = null, useOsrm
         const rawCoords = data?.routes?.[0]?.geometry?.coordinates;
         if (data?.code === 'Ok' && Array.isArray(rawCoords) && rawCoords.length >= 2) {
           const legs = data?.routes?.[0]?.legs;
+          let detourDetected = false;
           if (Array.isArray(legs) && legs.length === loop.length - 1) {
             for (let i = 0; i < legs.length; i++) {
               const legDistM = legs[i].distance || 0;
               const straightDistM = haversineDistance(loop[i], loop[i + 1]);
               if (isExcessiveLegDetour(straightDistM, legDistM)) {
-                return null;
+                detourDetected = true;
+                break;
               }
             }
           }
-          return rawCoords.map((c) => [c[1], c[0]]);
+          if (!detourDetected) {
+            return rawCoords.map((c) => [c[1], c[0]]);
+          } else if (!graph || !optimizer) {
+            return null;
+          }
+          // If detour was detected on OSRM but local graph/optimizer is available, fall through below
         }
       }
     } catch (_err) {
@@ -5680,8 +5687,8 @@ async function snapRingWaypoints(ring, ts, graph = null, optimizer = null, useOs
     } catch (_err) { }
   }
 
-  if (!snappedPts && graph && optimizer) {
-    snappedPts = raw.map((pt) => {
+  if (graph && optimizer) {
+    snappedPts = (snappedPts || raw).map((pt) => {
       const xy = graph.geoToXy(pt[0], pt[1]);
       const node = optimizer.snapPointToRoad(xy, true, { travelMode });
       return node ? graph.xyToGeo(node.x, node.y) : pt;
@@ -6594,10 +6601,33 @@ async function exportShapeRouteGpx() {
 async function snapShapeWaypoints(ring, ts, anchor = null, travelMode = 'foot') {
   const raw = waypointsFromTs(ring, ts);
   const profile = osrmProfileForTravelMode(travelMode);
-  const snaps = await routeEngine.snapToFootNetwork(raw, profile);
+  let snaps = null;
+  try {
+    snaps = await routeEngine.snapToFootNetwork(raw, profile);
+  } catch (_e) { }
+
+  let snappedPts = null;
+  if (Array.isArray(snaps) && snaps.length === raw.length && snaps.some((s) => s.snapped)) {
+    snappedPts = snaps.map((s, i) => (s.snapped ? s.point : raw[i]));
+  }
+
+  const graph = lastShapeOptimizationResult?.graph || null;
+  if (graph) {
+    const optimizer = new GPSArtOptimizer(graph);
+    snappedPts = (snappedPts || raw).map((pt, i) => {
+      const basePt = (i === 0 && anchor) ? [anchor[0], anchor[1]] : pt;
+      const xy = graph.geoToXy(basePt[0], basePt[1]);
+      const node = optimizer.snapPointToRoad(xy, true, { travelMode });
+      return node ? graph.xyToGeo(node.x, node.y) : basePt;
+    });
+  }
+
+  if (!snappedPts) {
+    snappedPts = raw.map((pt, i) => (i === 0 && anchor ? [anchor[0], anchor[1]] : pt));
+  }
+
   const kept = [];
-  snaps.forEach((s, i) => {
-    const pt = (i === 0 && anchor) ? [anchor[0], anchor[1]] : s.point;
+  snappedPts.forEach((pt, i) => {
     const prev = kept[kept.length - 1];
     if (prev && haversineDistance(prev.wp, pt) < 30) return;
     kept.push({ t: ts[i], wp: pt });

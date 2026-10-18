@@ -1427,9 +1427,11 @@ export class TerrainViewer {
     this._pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     if (!this._raycaster) this._raycaster = new THREE.Raycaster();
     this._raycaster.setFromCamera(this._pointer, this.camera);
-    const hits = this._raycaster.intersectObjects(this._pickables, false);
+    const hits = this._raycaster.intersectObjects(this._pickables, true);
     for (const h of hits) {
-      const detail = h.object?.userData?.detail;
+      let cur = h.object;
+      while (cur && !cur.userData?.detail) cur = cur.parent;
+      const detail = cur?.userData?.detail;
       if (detail) { this._onMarkerClick(detail); return; }
     }
   }
@@ -3034,23 +3036,20 @@ export class TerrainViewer {
       // Return-leg waypoints ride the same ground point as their outbound twin, so
       // they deal a playback card/stop but plant no duplicate flag or signboard.
       if (!wp.isReturn) {
-        // Colour-matched flag-on-pole planted at the waypoint itself (旗幟標示),
-        // echoing the 2D map's pin colour so the ground point reads clearly even
-        // when the floating name plaque is scrolled/zoomed out of legibility.
-        const flag = this._buildWaypointFlag(colorCss, ms);
+        const role = detail.isStart ? 'start' : (detail.isEnd ? 'end' : 'mid');
+        const flag = this._buildWaypointFlag(colorCss, ms, role);
         flag.position.set(p.x, p.y, p.z);
         flag.userData.detail = detail;
         this.scene.add(flag);
         this.waypointMarkers.push(flag);
         this._pickables.push(flag);
 
-        // Signboard billboard whose downward pin points at the waypoint — no ground
-        // sphere. Half the previous size. Click → detail.
+        // Signboard billboard perched above the 3D waypoint structure. Click → detail.
         const sign = this._createBillboard(name, colorCss);
         const signH = 13 * ms;
         sign.scale.set(signH * (256 / 96), signH, 1);
         this._registerLabel(sign);
-        sign.position.set(p.x, p.y, p.z);
+        sign.position.set(p.x, p.y + 12.2 * ms, p.z);
         sign.userData.detail = detail;
         this.scene.add(sign);
         this.waypointMarkers.push(sign);
@@ -3074,30 +3073,156 @@ export class TerrainViewer {
     this._pauseUntil = 0;
   }
 
-  // A small flag-on-pole marker (旗幟標示) planted at a route waypoint's ground
-  // point, coloured to match the 2D map's per-waypoint pin. Feet sit at y = 0;
-  // the caller positions the group at the waypoint's world coordinate.
-  _buildWaypointFlag(colorCss, ms) {
+  // Stylized low-poly diorama 3D waypoint markers differentiated by role:
+  //   • 'start' — Trailhead timber & stone welcome arch gate with pitched shingle
+  //               rooflet, colour-keyed lintel plaque and glowing trail lantern
+  //   • 'end'   — Two-tier granite summit/finish podium with golden bezel, tall
+  //               flagstaff, golden star finial and 3D multi-wave victory banner
+  //   • 'mid'   — Stacked stone cairn collar, timber/steel survey post with
+  //               cross-arm brace and sculpted 3D waving trail pennant
+  _buildWaypointFlag(colorCss, ms, role = 'mid') {
     const g = new THREE.Group();
-    const poleH = 11 * ms;
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.32 * ms, 0.38 * ms, poleH, 6),
-      new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.5 })
-    );
-    pole.position.y = poleH / 2;
-    pole.castShadow = true;
-    g.add(pole);
+    const add = (mesh, x = 0, y = 0, z = 0) => {
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+      return mesh;
+    };
 
-    const flagW = 5 * ms;
-    const flagH = 3.2 * ms;
-    const flagMat = new THREE.MeshStandardMaterial({
-      color: colorCss, side: THREE.DoubleSide, roughness: 0.7,
-      emissive: colorCss, emissiveIntensity: 0.18,
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8b857c, roughness: 0.9, flatShading: true });
+    const stoneDarkMat = new THREE.MeshStandardMaterial({ color: 0x625d56, roughness: 0.92, flatShading: true });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x8c5830, roughness: 0.82, flatShading: true });
+    const woodDarkMat = new THREE.MeshStandardMaterial({ color: 0x54331a, roughness: 0.86, flatShading: true });
+    const metalMat = new THREE.MeshStandardMaterial({ color: 0xd8dee6, roughness: 0.4, metalness: 0.45 });
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xffcf40, roughness: 0.32, metalness: 0.65,
+      emissive: 0x996600, emissiveIntensity: 0.35, flatShading: true,
     });
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(flagW, flagH), flagMat);
-    flag.position.set(flagW / 2, poleH - flagH / 2, 0);
-    flag.castShadow = true;
-    g.add(flag);
+    const accentMat = new THREE.MeshStandardMaterial({
+      color: colorCss, side: THREE.DoubleSide, roughness: 0.55,
+      emissive: colorCss, emissiveIntensity: 0.24, flatShading: true,
+    });
+    const trimMat = new THREE.MeshStandardMaterial({
+      color: 0xfff8eb, side: THREE.DoubleSide, roughness: 0.5,
+      emissive: 0x332b20, emissiveIntensity: 0.15,
+    });
+
+    // Helper: build a 3D multi-segment waving banner extending from (0, topY, 0).
+    const addWavingFlag = (topY, flagW, flagH, withTail = false) => {
+      const segs = 3;
+      const segW = flagW / segs;
+      for (let s = 0; s < segs; s++) {
+        const yaw = (s === 1 ? -0.22 : 0.18);
+        const zOff = (s === 1 ? 0.28 : (s === 2 ? -0.08 : 0.1)) * ms;
+        const panel = add(
+          new THREE.Mesh(new THREE.BoxGeometry(segW * 1.04, flagH, 0.28 * ms), accentMat),
+          (s + 0.5) * segW,
+          topY - flagH / 2,
+          zOff
+        );
+        panel.rotation.y = yaw;
+      }
+      // Top sleeve bar along the cross-arm/flaghead.
+      add(
+        new THREE.Mesh(new THREE.CylinderGeometry(0.18 * ms, 0.18 * ms, flagW * 1.02, 6), goldMat),
+        flagW / 2,
+        topY + 0.1 * ms,
+        0
+      ).rotation.z = Math.PI / 2;
+      // Crisp horizontal emblem stripe across the middle of the banner.
+      add(
+        new THREE.Mesh(new THREE.BoxGeometry(flagW * 0.86, flagH * 0.22, 0.34 * ms), trimMat),
+        flagW * 0.46,
+        topY - flagH * 0.5,
+        0.1 * ms
+      );
+      if (withTail) {
+        const tail = add(
+          new THREE.Mesh(new THREE.ConeGeometry(flagH * 0.45, 1.8 * ms, 4), goldMat),
+          flagW + 0.7 * ms,
+          topY - flagH * 0.5,
+          0
+        );
+        tail.rotation.z = -Math.PI / 2;
+      }
+    };
+
+    if (role === 'start') {
+      // --- Trailhead Diorama Welcome Arch Gate (起點登山口拱門) ---
+      const spanX = 3.6 * ms;
+      const postH = 10.6 * ms;
+      for (const sx of [-1, 1]) {
+        // Stepped masonry foundation plinths.
+        add(new THREE.Mesh(new THREE.CylinderGeometry(1.35 * ms, 1.65 * ms, 1.6 * ms, 6), stoneMat), sx * spanX, 0.8 * ms, 0);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.95 * ms, 1.15 * ms, 0.7 * ms, 6), stoneDarkMat), sx * spanX, 1.85 * ms, 0);
+        // Main timber pillar.
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.58 * ms, 0.68 * ms, postH, 8), woodMat), sx * spanX, 1.6 * ms + postH / 2, 0);
+        // Upper diagonal brace corbel.
+        const brace = add(new THREE.Mesh(new THREE.BoxGeometry(1.6 * ms, 0.48 * ms, 0.52 * ms), woodDarkMat), sx * (spanX - 0.9 * ms), postH - 0.2 * ms, 0);
+        brace.rotation.z = sx * 0.55;
+      }
+      // Lower tie-beam & main upper lintel beam.
+      const beamW = spanX * 2 + 2.8 * ms;
+      add(new THREE.Mesh(new THREE.BoxGeometry(beamW * 0.92, 0.65 * ms, 0.75 * ms), woodDarkMat), 0, postH - 1.1 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(beamW, 0.95 * ms, 1.1 * ms), woodMat), 0, postH + 0.5 * ms, 0);
+      // Pitched cedar-shingle gable rooflet capping the arch.
+      const roofW = beamW + 1.8 * ms;
+      for (const sx of [-1, 1]) {
+        const slope = add(
+          new THREE.Mesh(new THREE.BoxGeometry(roofW * 0.55, 0.45 * ms, 2.6 * ms), woodDarkMat),
+          sx * roofW * 0.24,
+          postH + 1.65 * ms,
+          0
+        );
+        slope.rotation.z = -sx * 0.28;
+      }
+      // Ridge beam with golden end caps.
+      add(new THREE.Mesh(new THREE.BoxGeometry(roofW * 0.96, 0.48 * ms, 0.55 * ms), goldMat), 0, postH + 2.35 * ms, 0);
+      // Colour-keyed trailhead crest plaque mounted in the arch centre.
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.8 * ms, 1.7 * ms, 0.5 * ms), woodDarkMat), 0, postH + 0.3 * ms, 0.45 * ms);
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.2 * ms, 1.2 * ms, 0.56 * ms), accentMat), 0, postH + 0.3 * ms, 0.48 * ms);
+      // Warm glowing trail lantern hanging inside the arch.
+      const lanternX = spanX - 1.35 * ms;
+      const lanternY = postH - 2.3 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.08 * ms, 0.08 * ms, 0.9 * ms, 6), woodDarkMat), lanternX, lanternY + 0.7 * ms, 0.3 * ms);
+      const lanternMat = new THREE.MeshStandardMaterial({
+        color: 0xffe49e, emissive: 0xffaa22, emissiveIntensity: 0.95, roughness: 0.3,
+      });
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.45 * ms, 0.38 * ms, 0.85 * ms, 6), lanternMat), lanternX, lanternY, 0.3 * ms);
+      add(new THREE.Mesh(new THREE.ConeGeometry(0.65 * ms, 0.45 * ms, 6), woodDarkMat), lanternX, lanternY + 0.55 * ms, 0.3 * ms);
+      return g;
+    }
+
+    if (role === 'end') {
+      // --- Summit / Finish Victory Podium & Flag (終點榮耀旗座) ---
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.8 * ms, 3.3 * ms, 1.3 * ms, 8), stoneDarkMat), 0, 0.65 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.0 * ms, 2.4 * ms, 1.2 * ms, 8), stoneMat), 0, 1.9 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.55 * ms, 1.65 * ms, 0.45 * ms, 12), goldMat), 0, 2.7 * ms, 0);
+
+      const poleH = 11.2 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.48 * ms, poleH, 10), metalMat), 0, 2.7 * ms + poleH / 2, 0);
+
+      // Golden octahedron/star finial crowning the flagpole.
+      const finialY = 2.7 * ms + poleH + 0.95 * ms;
+      const star = add(new THREE.Mesh(new THREE.OctahedronGeometry(1.15 * ms, 0), goldMat), 0, finialY, 0);
+      star.rotation.y = Math.PI / 4;
+
+      // Sculpted 3D waving victory banner with golden swallowtail tip.
+      addWavingFlag(2.7 * ms + poleH - 0.3 * ms, 6.2 * ms, 3.6 * ms, true);
+      return g;
+    }
+
+    // --- Intermediate Waypoint Survey Beacon & Flagpost (中繼航點立體旗幟) ---
+    add(new THREE.Mesh(new THREE.CylinderGeometry(1.7 * ms, 2.3 * ms, 1.3 * ms, 7), stoneDarkMat), 0, 0.65 * ms, 0);
+    add(new THREE.Mesh(new THREE.CylinderGeometry(1.15 * ms, 1.55 * ms, 1.0 * ms, 7), stoneMat), 0, 1.75 * ms, 0);
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.68 * ms, 0.85 * ms, 0.7 * ms, 8), woodDarkMat), 0, 2.55 * ms, 0);
+
+    const poleH = 10.2 * ms;
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.42 * ms, poleH, 8), metalMat), 0, 2.5 * ms + poleH / 2, 0);
+    add(new THREE.Mesh(new THREE.SphereGeometry(0.62 * ms, 10, 8), goldMat), 0, 2.5 * ms + poleH + 0.35 * ms, 0);
+
+    addWavingFlag(2.5 * ms + poleH - 0.25 * ms, 5.2 * ms, 3.1 * ms, false);
     return g;
   }
 
@@ -3115,8 +3240,8 @@ export class TerrainViewer {
     ctx.closePath();
   }
 
-  // A signboard-style billboard (rounded plaque with a colour-keyed border and a
-  // downward pin) showing a name; always faces the camera.
+  // A diorama-framed signboard billboard (bevelled plaque with metallic rivets,
+  // colour-keyed bezel and downward pointer pin) showing a waypoint name.
   _createBillboard(text, colorCss) {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -3124,39 +3249,63 @@ export class TerrainViewer {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, 256, 96);
 
-    ctx.font = 'bold 30px Inter, "Noto Sans TC", sans-serif';
+    ctx.font = 'bold 29px Inter, "Noto Sans TC", sans-serif';
     const tw = ctx.measureText(text).width;
-    const bw = Math.min(244, Math.max(80, tw + 60));
-    const bh = 52;
+    const bw = Math.min(244, Math.max(88, tw + 64));
+    const bh = 54;
     const bx = (256 - bw) / 2;
     const by = 5;
 
-    // Pin tail pointing down toward the marker.
+    // Pin tail pointing down toward the 3D marker below.
     ctx.beginPath();
-    ctx.moveTo(128 - 11, by + bh - 2);
-    ctx.lineTo(128 + 11, by + bh - 2);
+    ctx.moveTo(128 - 12, by + bh - 2);
+    ctx.lineTo(128 + 12, by + bh - 2);
     ctx.lineTo(128, by + bh + 18);
     ctx.closePath();
     ctx.fillStyle = colorCss;
     ctx.fill();
 
-    // Plaque.
+    // Outer plaque body with subtle vertical gradient.
     this._roundRectPath(ctx, bx, by, bw, bh, 12);
-    ctx.fillStyle = 'rgba(12,14,20,0.92)';
+    const grad = ctx.createLinearGradient(0, by, 0, by + bh);
+    grad.addColorStop(0, 'rgba(26, 30, 42, 0.95)');
+    grad.addColorStop(1, 'rgba(12, 15, 22, 0.95)');
+    ctx.fillStyle = grad;
     ctx.fill();
     ctx.lineWidth = 4;
     ctx.strokeStyle = colorCss;
     ctx.stroke();
 
-    // Colour dot + name.
+    // Inner diorama frame line.
+    this._roundRectPath(ctx, bx + 4, by + 4, bw - 8, bh - 8, 8);
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.stroke();
+
+    // Corner rivet dots.
+    ctx.fillStyle = 'rgba(255, 230, 170, 0.55)';
+    for (const [rx, ry] of [
+      [bx + 9, by + 9], [bx + bw - 9, by + 9],
+      [bx + 9, by + bh - 9], [bx + bw - 9, by + bh - 9],
+    ]) {
+      ctx.beginPath();
+      ctx.arc(rx, ry, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Glowing colour badge + crisp white title.
     ctx.fillStyle = colorCss;
     ctx.beginPath();
-    ctx.arc(bx + 18, by + bh / 2, 6, 0, Math.PI * 2);
+    ctx.arc(bx + 20, by + bh / 2, 7, 0, Math.PI * 2);
     ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, bx + 32, by + bh / 2 + 1, bw - 44);
+    ctx.fillText(text, bx + 35, by + bh / 2 + 1, bw - 48);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
@@ -3591,18 +3740,16 @@ export class TerrainViewer {
   // capping a footprint's wall top (springY) with a pitched roof up to apexY,
   // specialised by roof shape:
   //   • gabled/gambrel → a ridge along the footprint's long axis (PCA), so the
-  //     long sides slope up to the ridge and the ends form triangular gables — a
-  //     simplified straight-skeleton for the common rectangular case.
+  //     long sides slope up to the ridge and the ends form triangular gables.
   //   • skillion       → a single mono-pitch plane sloping along the long axis.
-  //   • hipped / pyramidal / dome / conical / mansard / (default) → a hip apex
-  //     fan to a single peak over the centroid (never self-intersects).
+  //   • dome/round     → a two-tier faceted dome cap (steep lower ring + crown).
+  //   • mansard/half-hipped → a steep lower curb ring + flatter upper hipped deck.
+  //   • hipped / pyramidal / conical / (default) → a hip apex fan to a peak.
   static _roofPositions(shape, worldXZ, springY, apexY, cx, cz) {
     const n = worldXZ.length;
     const pos = [];
     const roofH = apexY - springY;
 
-    // Footprint principal axis (direction of maximum spread) via the 2×2
-    // covariance eigen-angle — the ridge/slope runs along this long axis.
     const principalAxis = () => {
       let sxx = 0, szz = 0, sxz = 0;
       for (const [x, z] of worldXZ) { const dx = x - cx, dz = z - cz; sxx += dx * dx; szz += dz * dz; sxz += dx * dz; }
@@ -3623,7 +3770,7 @@ export class TerrainViewer {
         const [bx, bz] = worldXZ[(i + 1) % n];
         const mx = (ax + bx) / 2, mz = (az + bz) / 2;
         let t = (mx - cx) * dx + (mz - cz) * dz;
-        t = Math.max(tMin, Math.min(tMax, t));       // ridge point above the edge
+        t = Math.max(tMin, Math.min(tMax, t));
         pos.push(ax, springY, az, bx, springY, bz, cx + dx * t, apexY, cz + dz * t);
       }
       return pos;
@@ -3643,7 +3790,25 @@ export class TerrainViewer {
       return pos;
     }
 
-    // Hip / pyramidal / dome / conical / mansard / default: apex fan to one peak.
+    if (shape === 'dome' || shape === 'round' || shape === 'mansard' || shape === 'half-hipped') {
+      const isDome = shape === 'dome' || shape === 'round';
+      const inset = isDome ? 0.52 : 0.42;
+      const midY = springY + roofH * (isDome ? 0.68 : 0.72);
+      for (let i = 0; i < n; i++) {
+        const [ax, az] = worldXZ[i];
+        const [bx, bz] = worldXZ[(i + 1) % n];
+        const aix = ax + (cx - ax) * inset, aiz = az + (cz - az) * inset;
+        const bix = bx + (cx - bx) * inset, biz = bz + (cz - bz) * inset;
+        // Lower sloped tier (quad split into 2 triangles).
+        pos.push(ax, springY, az, bx, springY, bz, bix, midY, biz);
+        pos.push(ax, springY, az, bix, midY, biz, aix, midY, aiz);
+        // Upper crown fan to apex.
+        pos.push(aix, midY, aiz, bix, midY, biz, cx, apexY, cz);
+      }
+      return pos;
+    }
+
+    // Hip / pyramidal / conical / default: apex fan to one peak.
     for (let i = 0; i < n; i++) {
       const [ax, az] = worldXZ[i];
       const [bx, bz] = worldXZ[(i + 1) % n];
@@ -3872,82 +4037,326 @@ export class TerrainViewer {
     return names[cls] || null;
   }
 
-  // Build a small procedural 3D model for an OSM point landmark (Plan §III-1).
-  // Feet sit at the group origin (y = 0) and the model grows upward; the caller
-  // drapes it onto the terrain. Symbolic (marker-scale, ms) rather than physically
-  // sized, matching the viewer's other markers so it stays visible at any zoom.
-  _buildPointModel(cls, ms, realH) {
+  // Build a stylized low-poly diorama 3D model for an OSM point landmark:
+  //   • tree       — Conifer pine (4 scalloped tiers) or broadleaf (multi-crown)
+  //   • peak       — Stacked stone cairn (瑪尼堆) + triangulation pillar (三角點基石)
+  //                  + banded survey pole with waving summit pennant
+  //   • saddle     — Twin pass rock cairns + timber directional trail signpost
+  //   • tower      — 3-stage steel truss tower with observation deck & dish antennas
+  //   • lighthouse — Coastal bastion base + keeper's cottage + striped tower + beacon
+  //   • chimney    — Brick powerhouse base + banded flue stack + low-poly steam puffs
+  //   • viewpoint  — Elevated timber viewing deck with railings, lectern & telescope
+  //   • monument   — Stepped granite plinth + corner bollards + obelisk & bronze plaque
+  _buildPointModel(cls, ms, realH, lat = 0, lon = 0) {
     const g = new THREE.Group();
-    const add = (mesh, y) => { mesh.castShadow = true; if (y != null) mesh.position.y = y; g.add(mesh); return mesh; };
+    const add = (mesh, x = 0, y = 0, z = 0) => {
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+      return mesh;
+    };
+    const seed = Math.abs(Math.sin(lat * 127.1 + lon * 311.7) * 43758.5453) % 1;
 
     if (cls === 'tree') {
-      const trunkH = 5 * ms;
-      add(new THREE.Mesh(
-        new THREE.CylinderGeometry(0.8 * ms, 1.1 * ms, trunkH, 8),
-        new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 0.9 })
-      ), trunkH / 2);
-      const foliMat = new THREE.MeshStandardMaterial({ color: 0x3f7d34, roughness: 0.85, flatShading: true });
-      add(new THREE.Mesh(new THREE.ConeGeometry(4 * ms, 7 * ms, 9), foliMat), trunkH + 2.5 * ms);
-      add(new THREE.Mesh(new THREE.ConeGeometry(2.8 * ms, 5 * ms, 9), foliMat), trunkH + 6 * ms);
-      return g;
-    }
-
-    if (cls === 'peak' || cls === 'saddle') {
-      const cairnH = (cls === 'peak' ? 7 : 4) * ms;
-      add(new THREE.Mesh(
-        new THREE.ConeGeometry(4 * ms, cairnH, 6),
-        new THREE.MeshStandardMaterial({ color: 0x8a8079, roughness: 0.95, flatShading: true })
-      ), cairnH / 2);
-      const poleH = 6 * ms;
-      add(new THREE.Mesh(
-        new THREE.CylinderGeometry(0.35 * ms, 0.35 * ms, poleH, 6),
-        new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.5 })
-      ), cairnH + poleH / 2);
-      // Triangular red pennant near the pole top.
-      const flag = new THREE.Mesh(
-        new THREE.ConeGeometry(2 * ms, 3.4 * ms, 3),
-        new THREE.MeshStandardMaterial({ color: 0xe23b3b, emissive: 0x3a0000, emissiveIntensity: 0.3, side: THREE.DoubleSide })
-      );
-      flag.rotation.z = -Math.PI / 2;
-      flag.position.set(1.6 * ms, cairnH + poleH - 1.4 * ms, 0);
-      flag.castShadow = true;
-      g.add(flag);
-      return g;
-    }
-
-    if (cls === 'tower' || cls === 'lighthouse' || cls === 'chimney') {
-      // Height nudged by a tagged real height but kept in a visible symbolic band.
-      const h = Math.max(12 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.3 : 16 * ms, 30 * ms));
-      const isLh = cls === 'lighthouse';
-      add(new THREE.Mesh(
-        new THREE.CylinderGeometry(1.4 * ms, 2.2 * ms, h, 12),
-        new THREE.MeshStandardMaterial({ color: isLh ? 0xf2f2f2 : 0x9aa0a8, roughness: 0.7, flatShading: true })
-      ), h / 2);
-      if (isLh) {
-        // Red band + an emissive lamp on top.
-        add(new THREE.Mesh(
-          new THREE.CylinderGeometry(1.55 * ms, 1.7 * ms, h * 0.18, 12),
-          new THREE.MeshStandardMaterial({ color: 0xd63b3b, roughness: 0.6 })
-        ), h * 0.6);
-        add(new THREE.Mesh(
-          new THREE.SphereGeometry(1.5 * ms, 12, 8),
-          new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffcc44, emissiveIntensity: 0.9 })
-        ), h + 1.2 * ms);
+      const barkMat = new THREE.MeshStandardMaterial({ color: 0x6b4728, roughness: 0.9, flatShading: true });
+      const rootMat = new THREE.MeshStandardMaterial({ color: 0x56381e, roughness: 0.92, flatShading: true });
+      if (seed < 0.58) {
+        // --- Alpine Conifer / Pine (針葉樹) ---
+        const trunkH = 4.6 * ms;
+        add(new THREE.Mesh(new THREE.ConeGeometry(1.55 * ms, 1.4 * ms, 6), rootMat), 0, 0.7 * ms, 0);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.62 * ms, 1.05 * ms, trunkH, 7), barkMat), 0, trunkH / 2, 0);
+        const tierColors = [0x2a5e24, 0x35722d, 0x418536, 0x529b42];
+        const tiers = [
+          { r: 4.3 * ms, h: 4.5 * ms, y: trunkH + 1.1 * ms },
+          { r: 3.5 * ms, h: 4.0 * ms, y: trunkH + 3.4 * ms },
+          { r: 2.6 * ms, h: 3.5 * ms, y: trunkH + 5.5 * ms },
+          { r: 1.65 * ms, h: 2.8 * ms, y: trunkH + 7.4 * ms },
+        ];
+        tiers.forEach((t, idx) => {
+          const mat = new THREE.MeshStandardMaterial({ color: tierColors[idx], roughness: 0.84, flatShading: true });
+          const cone = add(new THREE.Mesh(new THREE.ConeGeometry(t.r, t.h, 7), mat), 0, t.y, 0);
+          cone.rotation.y = idx * 0.45 + seed * 3;
+        });
+      } else {
+        // --- Lush Broadleaf / Deciduous Tree (闊葉樹) ---
+        const trunkH = 5.2 * ms;
+        add(new THREE.Mesh(new THREE.ConeGeometry(1.6 * ms, 1.3 * ms, 6), rootMat), 0, 0.65 * ms, 0);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.7 * ms, 1.15 * ms, trunkH, 7), barkMat), 0, trunkH / 2, 0);
+        for (const sx of [-1, 1]) {
+          const b = add(new THREE.Mesh(new THREE.CylinderGeometry(0.35 * ms, 0.55 * ms, 2.8 * ms, 6), barkMat), sx * 0.9 * ms, trunkH - 0.2 * ms, 0);
+          b.rotation.z = -sx * 0.52;
+        }
+        const crownCols = [0x38762d, 0x488c38, 0x589e44, 0x2f6626];
+        const lobes = [
+          { x: 0, y: trunkH + 3.8 * ms, z: 0, s: 3.4 * ms, c: crownCols[0] },
+          { x: -1.9 * ms, y: trunkH + 2.4 * ms, z: 0.8 * ms, s: 2.5 * ms, c: crownCols[1] },
+          { x: 1.8 * ms, y: trunkH + 2.6 * ms, z: -0.7 * ms, s: 2.6 * ms, c: crownCols[2] },
+          { x: 0.2 * ms, y: trunkH + 2.2 * ms, z: -1.7 * ms, s: 2.3 * ms, c: crownCols[3] },
+        ];
+        for (const lb of lobes) {
+          const mat = new THREE.MeshStandardMaterial({ color: lb.c, roughness: 0.85, flatShading: true });
+          const cr = add(new THREE.Mesh(new THREE.DodecahedronGeometry(lb.s, 0), mat), lb.x, lb.y, lb.z);
+          cr.scale.set(1.12, 0.88, 1.05);
+          cr.rotation.set(seed * 2, lb.x, 0);
+        }
       }
       return g;
     }
 
-    // Generic signpost (viewpoint / attraction / artwork / monument).
-    const poleH = 8 * ms;
-    add(new THREE.Mesh(
-      new THREE.CylinderGeometry(0.4 * ms, 0.4 * ms, poleH, 6),
-      new THREE.MeshStandardMaterial({ color: 0xb08a5a, roughness: 0.8 })
-    ), poleH / 2);
-    const sign = add(new THREE.Mesh(
-      new THREE.BoxGeometry(6 * ms, 3.2 * ms, 0.5 * ms),
-      new THREE.MeshStandardMaterial({ color: 0x3f6f8f, emissive: 0x0a1a26, emissiveIntensity: 0.25, roughness: 0.6 })
-    ), poleH + 1.2 * ms);
-    sign.position.z = 0; // faces +z (travel/view direction)
+    if (cls === 'peak') {
+      // --- Diorama Summit Cairn (瑪尼堆) + Triangulation Pillar (三角點基石) ---
+      const rockCols = [0x756e67, 0x8a8279, 0x999188, 0xaba39a, 0xbdb5ac];
+      const cairnLayers = [
+        { rx: 3.8 * ms, ry: 1.5 * ms, y: 0.75 * ms, ox: 0, oz: 0 },
+        { rx: 3.0 * ms, ry: 1.35 * ms, y: 2.0 * ms, ox: 0.18 * ms, oz: -0.12 * ms },
+        { rx: 2.3 * ms, ry: 1.2 * ms, y: 3.1 * ms, ox: -0.15 * ms, oz: 0.14 * ms },
+        { rx: 1.65 * ms, ry: 1.05 * ms, y: 4.05 * ms, ox: 0.1 * ms, oz: 0.08 * ms },
+        { rx: 1.1 * ms, ry: 0.9 * ms, y: 4.85 * ms, ox: 0, oz: 0 },
+      ];
+      cairnLayers.forEach((st, idx) => {
+        const mat = new THREE.MeshStandardMaterial({ color: rockCols[idx], roughness: 0.92, flatShading: true });
+        const stone = add(new THREE.Mesh(new THREE.DodecahedronGeometry(st.rx, 0), mat), st.ox, st.y, st.oz);
+        stone.scale.set(1.0, st.ry / st.rx, 0.92);
+        stone.rotation.y = idx * 1.1;
+      });
+
+      // Squared granite triangulation pillar (三角點基石) beside the cairn.
+      const pillarMat = new THREE.MeshStandardMaterial({ color: 0xd8d2c7, roughness: 0.82, flatShading: true });
+      const pillarBaseMat = new THREE.MeshStandardMaterial({ color: 0x5c5751, roughness: 0.9, flatShading: true });
+      const crossMat = new THREE.MeshStandardMaterial({ color: 0xc93434, emissive: 0x3a0808, emissiveIntensity: 0.25 });
+      const px = -3.4 * ms, pz = 1.6 * ms;
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.9 * ms, 0.8 * ms, 1.9 * ms), pillarBaseMat), px, 0.4 * ms, pz);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.35 * ms, 2.5 * ms, 1.35 * ms), pillarMat), px, 2.05 * ms, pz);
+      // Engraved "+" survey cross on top of the pillar.
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.95 * ms, 0.14 * ms, 0.22 * ms), crossMat), px, 3.35 * ms, pz);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.22 * ms, 0.14 * ms, 0.95 * ms), crossMat), px, 3.35 * ms, pz);
+
+      // Red-and-white banded survey staff + waving crimson summit pennant.
+      const baseTop = 5.3 * ms;
+      const segH = 1.6 * ms;
+      const redMat = new THREE.MeshStandardMaterial({ color: 0xe03a3a, roughness: 0.5, emissive: 0x380808, emissiveIntensity: 0.25 });
+      const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.45 });
+      for (let b = 0; b < 4; b++) {
+        add(
+          new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.36 * ms, segH, 8), (b % 2 === 0) ? redMat : whiteMat),
+          0, baseTop + (b + 0.5) * segH, 0
+        );
+      }
+      const staffTop = baseTop + 4 * segH;
+      const goldMat = new THREE.MeshStandardMaterial({ color: 0xffcf40, roughness: 0.35, metalness: 0.6, emissive: 0x664400, emissiveIntensity: 0.3 });
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.55 * ms, 8, 6), goldMat), 0, staffTop + 0.3 * ms, 0);
+
+      const flagMat = new THREE.MeshStandardMaterial({
+        color: 0xe63939, emissive: 0x420808, emissiveIntensity: 0.3, side: THREE.DoubleSide, flatShading: true,
+      });
+      const flag = add(new THREE.Mesh(new THREE.ConeGeometry(1.85 * ms, 4.2 * ms, 4), flagMat), 2.1 * ms, staffTop - 1.3 * ms, 0);
+      flag.rotation.z = -Math.PI / 2;
+      return g;
+    }
+
+    if (cls === 'saddle') {
+      // --- Mountain Pass Twin Cairns & Timber Directional Signpost (鞍部埡口) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x867e75, roughness: 0.92, flatShading: true });
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0x8f5b32, roughness: 0.82, flatShading: true });
+      const woodLight = new THREE.MeshStandardMaterial({ color: 0xc99b68, roughness: 0.78, flatShading: true });
+      for (const sx of [-1, 1]) {
+        const c1 = add(new THREE.Mesh(new THREE.DodecahedronGeometry(1.9 * ms, 0), stoneMat), sx * 2.4 * ms, 0.85 * ms, 0);
+        c1.scale.set(1.1, 0.55, 1.0);
+        const c2 = add(new THREE.Mesh(new THREE.DodecahedronGeometry(1.3 * ms, 0), stoneMat), sx * 2.3 * ms, 1.85 * ms, 0);
+        c2.scale.set(1.0, 0.6, 0.95);
+      }
+      const postH = 7.8 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.45 * ms, 0.55 * ms, postH, 7), woodMat), 0, postH / 2, 0);
+      add(new THREE.Mesh(new THREE.ConeGeometry(0.75 * ms, 0.7 * ms, 7), woodMat), 0, postH + 0.35 * ms, 0);
+      // Twin directional arrow boards angled across the saddle pass.
+      const b1 = add(new THREE.Mesh(new THREE.BoxGeometry(3.8 * ms, 1.15 * ms, 0.38 * ms), woodLight), 1.6 * ms, postH - 1.1 * ms, 0);
+      b1.rotation.y = 0.25;
+      const b2 = add(new THREE.Mesh(new THREE.BoxGeometry(3.5 * ms, 1.1 * ms, 0.38 * ms), woodLight), -1.5 * ms, postH - 2.4 * ms, 0);
+      b2.rotation.y = -0.35;
+      return g;
+    }
+
+    if (cls === 'tower') {
+      // --- Steel Lattice / Truss Communications & Observation Tower (高塔／電塔) ---
+      const h = Math.max(13 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.3 : 17 * ms, 30 * ms));
+      const concreteMat = new THREE.MeshStandardMaterial({ color: 0x99958e, roughness: 0.9, flatShading: true });
+      const steelMat = new THREE.MeshStandardMaterial({ color: 0x8c96a3, roughness: 0.55, metalness: 0.35, flatShading: true });
+      const steelDark = new THREE.MeshStandardMaterial({ color: 0x59626e, roughness: 0.6, metalness: 0.4, flatShading: true });
+      const dishMat = new THREE.MeshStandardMaterial({ color: 0xe8edf2, roughness: 0.4, metalness: 0.25 });
+      const redBeaconMat = new THREE.MeshStandardMaterial({ color: 0xff3b3b, emissive: 0xff2222, emissiveIntensity: 0.95 });
+
+      // Concrete foundation pad.
+      add(new THREE.Mesh(new THREE.BoxGeometry(5.6 * ms, 1.2 * ms, 5.6 * ms), concreteMat), 0, 0.6 * ms, 0);
+      // 3 tapered lattice-style frustum tiers with structural collar beams.
+      const bodyH = h * 0.72;
+      const tierH = bodyH / 3;
+      const radii = [2.4 * ms, 1.85 * ms, 1.38 * ms, 1.0 * ms];
+      for (let t = 0; t < 3; t++) {
+        const y0 = 1.2 * ms + t * tierH;
+        const frustum = add(
+          new THREE.Mesh(new THREE.CylinderGeometry(radii[t + 1], radii[t], tierH, 4), steelMat),
+          0, y0 + tierH / 2, 0
+        );
+        frustum.rotation.y = Math.PI / 4;
+        const collar = add(
+          new THREE.Mesh(new THREE.BoxGeometry(radii[t + 1] * 2.2, 0.42 * ms, radii[t + 1] * 2.2), steelDark),
+          0, y0 + tierH, 0
+        );
+        collar.rotation.y = Math.PI / 4;
+      }
+      // Cantilevered observation / microwave gallery deck.
+      const deckY = 1.2 * ms + bodyH;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.2 * ms, 1.8 * ms, 0.9 * ms, 8), steelDark), 0, deckY + 0.45 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.35 * ms, 1.35 * ms, 1.6 * ms, 8), steelMat), 0, deckY + 1.6 * ms, 0);
+      // Side microwave dish drums.
+      for (const sx of [-1, 1]) {
+        const dish = add(new THREE.Mesh(new THREE.CylinderGeometry(0.95 * ms, 0.6 * ms, 0.55 * ms, 10), dishMat), sx * 1.95 * ms, deckY + 1.5 * ms, 0);
+        dish.rotation.z = sx * Math.PI / 2;
+      }
+      // Upper red/white aviation mast + glowing red warning beacon.
+      const mastH = h * 0.26;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.22 * ms, 0.42 * ms, mastH, 8), dishMat), 0, deckY + 2.4 * ms + mastH / 2, 0);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.65 * ms, 10, 8), redBeaconMat), 0, deckY + 2.4 * ms + mastH + 0.35 * ms, 0);
+      return g;
+    }
+
+    if (cls === 'lighthouse') {
+      // --- Coastal Diorama Lighthouse & Keeper's Cottage (海岸燈塔) ---
+      const h = Math.max(14 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.32 : 18 * ms, 30 * ms));
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x706c66, roughness: 0.92, flatShading: true });
+      const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f2, roughness: 0.65, flatShading: true });
+      const redMat = new THREE.MeshStandardMaterial({ color: 0xd43737, roughness: 0.62, flatShading: true });
+      const ironMat = new THREE.MeshStandardMaterial({ color: 0x2c323b, roughness: 0.55, metalness: 0.4 });
+      const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff5b8, emissive: 0xffc83b, emissiveIntensity: 1.05, roughness: 0.2 });
+
+      // Octagonal coastal bastion base.
+      const baseH = 2.0 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.8 * ms, 3.4 * ms, baseH, 8), rockMat), 0, baseH / 2, 0);
+
+      // Small keeper's cottage annex nestled against the base.
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.2 * ms, 2.2 * ms, 2.6 * ms), whiteMat), 2.6 * ms, baseH + 1.0 * ms, 0);
+      const roof = add(new THREE.Mesh(new THREE.ConeGeometry(2.4 * ms, 1.5 * ms, 4), redMat), 2.6 * ms, baseH + 2.85 * ms, 0);
+      roof.rotation.y = Math.PI / 4;
+
+      // 4-band alternating white/red tapered lighthouse shaft.
+      const shaftH = h - baseH - 3.2 * ms;
+      const bandH = shaftH / 4;
+      for (let b = 0; b < 4; b++) {
+        const rBot = (2.35 - b * 0.22) * ms;
+        const rTop = (2.35 - (b + 1) * 0.22) * ms;
+        add(
+          new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, bandH, 12), (b % 2 === 0) ? whiteMat : redMat),
+          0, baseH + (b + 0.5) * bandH, 0
+        );
+      }
+      const galleryY = baseH + shaftH;
+      // Corbelled dark-iron gallery deck + lantern room + cupola dome.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.05 * ms, 1.5 * ms, 0.75 * ms, 12), ironMat), 0, galleryY + 0.35 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.35 * ms, 1.35 * ms, 1.8 * ms, 12), lampMat), 0, galleryY + 1.6 * ms, 0);
+      add(new THREE.Mesh(new THREE.ConeGeometry(1.7 * ms, 1.6 * ms, 12), redMat), 0, galleryY + 3.2 * ms, 0);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.35 * ms, 8, 6), ironMat), 0, galleryY + 4.1 * ms, 0);
+      return g;
+    }
+
+    if (cls === 'chimney') {
+      // --- Industrial Brick Smokestack with Iron Bands & Steam Puffs (煙囪) ---
+      const h = Math.max(13 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.3 : 16 * ms, 28 * ms));
+      const brickMat = new THREE.MeshStandardMaterial({ color: 0xa8523b, roughness: 0.88, flatShading: true });
+      const brickDark = new THREE.MeshStandardMaterial({ color: 0x753828, roughness: 0.9, flatShading: true });
+      const ironMat = new THREE.MeshStandardMaterial({ color: 0x363a40, roughness: 0.6, metalness: 0.4 });
+      const smokeMat = new THREE.MeshStandardMaterial({
+        color: 0xe6ebf0, emissive: 0x3a4048, emissiveIntensity: 0.22,
+        roughness: 0.95, transparent: true, opacity: 0.78, flatShading: true,
+      });
+
+      const plinthH = 2.4 * ms;
+      add(new THREE.Mesh(new THREE.BoxGeometry(4.2 * ms, plinthH, 4.2 * ms), brickDark), 0, plinthH / 2, 0);
+      const stackH = h - plinthH;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.25 * ms, 2.0 * ms, stackH, 10), brickMat), 0, plinthH + stackH / 2, 0);
+      // Iron tension rings & corbelled crown rim.
+      for (const frac of [0.35, 0.68, 0.94]) {
+        const r = (2.0 - frac * 0.72) * ms;
+        add(new THREE.Mesh(new THREE.CylinderGeometry(r * 1.06, r * 1.06, 0.35 * ms, 10), ironMat), 0, plinthH + stackH * frac, 0);
+      }
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.52 * ms, 1.32 * ms, 0.7 * ms, 10), brickDark), 0, h - 0.1 * ms, 0);
+      // Rising low-poly steam puffs.
+      const puffs = [
+        { x: 0.3 * ms, y: h + 1.4 * ms, z: 0, s: 1.15 * ms },
+        { x: 1.1 * ms, y: h + 3.0 * ms, z: 0.4 * ms, s: 1.55 * ms },
+        { x: 2.2 * ms, y: h + 4.8 * ms, z: -0.3 * ms, s: 1.95 * ms },
+      ];
+      for (const pf of puffs) {
+        add(new THREE.Mesh(new THREE.DodecahedronGeometry(pf.s, 0), smokeMat), pf.x, pf.y, pf.z);
+      }
+      return g;
+    }
+
+    if (cls === 'monument') {
+      // --- Stepped Stone Plinth + Obelisk + Bronze Plaque (紀念碑) ---
+      const stoneLight = new THREE.MeshStandardMaterial({ color: 0xd6d0c4, roughness: 0.78, flatShading: true });
+      const stoneMid = new THREE.MeshStandardMaterial({ color: 0xa8a196, roughness: 0.85, flatShading: true });
+      const bronzeMat = new THREE.MeshStandardMaterial({
+        color: 0xb88644, roughness: 0.4, metalness: 0.55,
+        emissive: 0x3b280c, emissiveIntensity: 0.25, flatShading: true,
+      });
+
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.4 * ms, 0.9 * ms, 6.4 * ms), stoneMid), 0, 0.45 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(4.8 * ms, 1.0 * ms, 4.8 * ms), stoneLight), 0, 1.4 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.4 * ms, 1.4 * ms, 3.4 * ms), stoneMid), 0, 2.6 * ms, 0);
+      // Four corner stone bollards on the lower terrace.
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.38 * ms, 1.2 * ms, 6), stoneLight), sx * 2.6 * ms, 1.5 * ms, sz * 2.6 * ms);
+        }
+      }
+      // Tapered 4-sided obelisk shaft + golden pyramidion cap.
+      const shaftH = 8.5 * ms;
+      const shaft = add(new THREE.Mesh(new THREE.CylinderGeometry(0.95 * ms, 1.65 * ms, shaftH, 4), stoneLight), 0, 3.3 * ms + shaftH / 2, 0);
+      shaft.rotation.y = Math.PI / 4;
+      const cap = add(new THREE.Mesh(new THREE.ConeGeometry(0.95 * ms, 1.7 * ms, 4), bronzeMat), 0, 3.3 * ms + shaftH + 0.85 * ms, 0);
+      cap.rotation.y = Math.PI / 4;
+      // Inlaid bronze memorial plaque on the front (+z) of the pedestal.
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.9 * ms, 0.9 * ms, 0.2 * ms), bronzeMat), 0, 2.6 * ms, 1.72 * ms);
+      return g;
+    }
+
+    // --- Viewpoint / Attraction: Timber Observation Deck + Binocular Telescope (觀景點) ---
+    const woodDeckMat = new THREE.MeshStandardMaterial({ color: 0xa67244, roughness: 0.82, flatShading: true });
+    const woodPostMat = new THREE.MeshStandardMaterial({ color: 0x6e4726, roughness: 0.86, flatShading: true });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: 0xd9a84e, roughness: 0.32, metalness: 0.65,
+      emissive: 0x4a3208, emissiveIntensity: 0.25,
+    });
+    const plaqueMat = new THREE.MeshStandardMaterial({
+      color: 0x356888, emissive: 0x0a1c28, emissiveIntensity: 0.28, roughness: 0.55,
+    });
+
+    const deckW = 6.4 * ms, deckD = 4.8 * ms, deckY = 1.6 * ms;
+    // 4 timber pilings supporting the deck.
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.36 * ms, 0.42 * ms, deckY + 2.4 * ms, 6), woodPostMat), sx * (deckW * 0.44), (deckY + 2.4 * ms) / 2, sz * (deckD * 0.42));
+      }
+    }
+    // Timber deck platform.
+    add(new THREE.Mesh(new THREE.BoxGeometry(deckW, 0.55 * ms, deckD), woodDeckMat), 0, deckY, 0);
+    // Front & side wooden safety railings.
+    const railY = deckY + 2.2 * ms;
+    add(new THREE.Mesh(new THREE.BoxGeometry(deckW * 0.94, 0.34 * ms, 0.34 * ms), woodPostMat), 0, railY, deckD * 0.42);
+    for (const sx of [-1, 1]) {
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.34 * ms, 0.34 * ms, deckD * 0.88), woodPostMat), sx * deckW * 0.44, railY, 0);
+    }
+    // Slanted interpretive trail-map lectern on the left side.
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.24 * ms, 0.28 * ms, 2.2 * ms, 6), woodPostMat), -1.6 * ms, deckY + 1.1 * ms, 0.8 * ms);
+    const lectern = add(new THREE.Mesh(new THREE.BoxGeometry(2.1 * ms, 0.24 * ms, 1.4 * ms), plaqueMat), -1.6 * ms, deckY + 2.25 * ms, 0.8 * ms);
+    lectern.rotation.x = 0.48;
+    // Miniature coin-operated binocular telescope on a pedestal stand on the right.
+    const tx = 1.3 * ms, tz = 0.5 * ms;
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.55 * ms, 0.75 * ms, 0.45 * ms, 8), woodPostMat), tx, deckY + 0.45 * ms, tz);
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.25 * ms, 0.32 * ms, 2.8 * ms, 8), brassMat), tx, deckY + 1.85 * ms, tz);
+    const scope = add(new THREE.Mesh(new THREE.CylinderGeometry(0.58 * ms, 0.42 * ms, 2.2 * ms, 8), brassMat), tx, deckY + 3.45 * ms, tz + 0.2 * ms);
+    scope.rotation.x = Math.PI / 2 - 0.18;
     return g;
   }
 
@@ -3976,15 +4385,16 @@ export class TerrainViewer {
       return new THREE.Vector3(p.x, p.y, p.z);
     };
 
-    // ----- Lines (roads + waterways), batched per style for few draw calls -----
+    // ----- Lines (roads + waterways), batched with diorama curb/bank casings -----
     const LINE_STYLE = {
-      major:  { color: 0xf2b134, width: 3.0, opacity: 0.95, lift: baseLift * 1.6 },
-      minor:  { color: 0xe9e3d4, width: 2.0, opacity: 0.9,  lift: baseLift * 1.4 },
-      trail:  { color: 0xcf8a4a, width: 1.6, opacity: 0.85, lift: baseLift * 1.3 },
-      river:  { color: 0x35a3ff, width: 2.8, opacity: 0.92, lift: baseLift * 0.9 },
-      stream: { color: 0x73c2ff, width: 1.7, opacity: 0.85, lift: baseLift * 0.9 },
+      major:  { color: 0xf4b942, width: 3.1, opacity: 0.96, lift: baseLift * 1.65, casingColor: 0x4a4035, casingWidth: 4.8, casingOpacity: 0.78 },
+      minor:  { color: 0xf0eadc, width: 2.1, opacity: 0.92, lift: baseLift * 1.45, casingColor: 0x5c5346, casingWidth: 3.4, casingOpacity: 0.72 },
+      trail:  { color: 0xd9924c, width: 1.65, opacity: 0.88, lift: baseLift * 1.32, casingColor: 0x6b4423, casingWidth: 2.7, casingOpacity: 0.65 },
+      river:  { color: 0x3db5ff, width: 2.9, opacity: 0.94, lift: baseLift * 0.95, casingColor: 0x1b5c8f, casingWidth: 4.5, casingOpacity: 0.78 },
+      stream: { color: 0x7dd0ff, width: 1.75, opacity: 0.88, lift: baseLift * 0.92, casingColor: 0x266da1, casingWidth: 2.7, casingOpacity: 0.68 },
     };
     const buckets = {};
+    const casingBuckets = {};
     const drapeLine = (pts, lift) => {
       const out = [];
       for (let i = 0; i < pts.length - 1; i++) {
@@ -4000,10 +4410,6 @@ export class TerrainViewer {
       return out;
     };
     const labelCands = [];
-    // `key` (optional) is the dedupe identity: named features dedupe on the name
-    // (so the same road/peak name appearing twice yields one label), but generic
-    // fallback names ("山峰", "觀景點", …) pass a position-based key so several
-    // unnamed landmarks don't all collapse into a single shared label.
     const pushLabelCand = (name, pos, color, pri, key) => {
       if (name) labelCands.push({ name, pos, color, pri, key: key || name });
     };
@@ -4013,17 +4419,17 @@ export class TerrainViewer {
       const key = ln.cls;
       let labelMid = null;
       let labelLen = -1;
-      // Clip to the terrain box so a road/river only partly inside the area
-      // doesn't shoot a long segment off the edge of the model, then break the
-      // clipped run at any terrain holes so nothing drapes across blank tiles.
       const clippedRuns = this._clipPolylineToBbox(ln.pts, bbox)
         .flatMap((run) => this._splitPolylineAtHoles(run));
       for (const run of clippedRuns) {
         const w = drapeLine(run, style.lift);
         if (w.length < 2) continue;
         const verts = (buckets[key] = buckets[key] || []);
+        const cVerts = (casingBuckets[key] = casingBuckets[key] || []);
+        const cDrop = baseLift * 0.12;
         for (let i = 0; i < w.length - 1; i++) {
           verts.push(w[i].x, w[i].y, w[i].z, w[i + 1].x, w[i + 1].y, w[i + 1].z);
+          cVerts.push(w[i].x, w[i].y - cDrop, w[i].z, w[i + 1].x, w[i + 1].y - cDrop, w[i + 1].z);
         }
         if (w.length > labelLen) { labelLen = w.length; labelMid = w[Math.floor(w.length / 2)]; }
       }
@@ -4036,6 +4442,19 @@ export class TerrainViewer {
       const verts = buckets[key];
       if (!verts.length) continue;
       const style = LINE_STYLE[key];
+      const cVerts = casingBuckets[key];
+      if (cVerts && cVerts.length && style.casingColor != null) {
+        const cGeo = new LineSegmentsGeometry();
+        cGeo.setPositions(cVerts);
+        const cMat = new LineMaterial({
+          color: style.casingColor, linewidth: style.casingWidth,
+          transparent: true, opacity: style.casingOpacity,
+        });
+        const cSeg = new LineSegments2(cGeo, cMat);
+        cSeg.computeLineDistances();
+        this.featureGroup.add(cSeg);
+        this._lineMaterials.push(cMat);
+      }
       const geo = new LineSegmentsGeometry();
       geo.setPositions(verts);
       const mat = new LineMaterial({ color: style.color, linewidth: style.width, transparent: true, opacity: style.opacity });
@@ -4046,17 +4465,11 @@ export class TerrainViewer {
     }
 
     // ----- Land cover -----
-    // Green (山林) / soil (土黃) / urban (灰) cover is painted directly INTO the
-    // terrain surface (per-vertex, gradiented by altitude) by _applyLandCoverColors
-    // — not as a translucent sheet over it — so the relief reads as coloured
-    // ground. Only water/wetland keep a draped translucent surface (they aren't
-    // terrain). Building footprints feed the urban-density classification too.
     this._applyLandCoverColors(data.areas, data.buildings, bbox);
 
     const AREA_STYLE = {
-      water:   { color: 0x2b86d9, opacity: 0.62, outline: 0x6fc0ff, lift: baseLift * 0.6,  labelColor: 0x9fd8ff, pri: 0 },
-      // 濕地 (潮間帶 / 沼澤) — a muddy teal-green, distinct from open blue water.
-      wetland: { color: 0x4f8f78, opacity: 0.5,  outline: 0x8fd6bb, lift: baseLift * 0.55, labelColor: 0xade8cf, pri: 1 },
+      water:   { color: 0x2482d6, opacity: 0.76, roughness: 0.25, metalness: 0.15, outline: 0x8ad4ff, outlineW: 1.9, lift: baseLift * 0.65, labelColor: 0x9fd8ff, pri: 0 },
+      wetland: { color: 0x468972, opacity: 0.58, roughness: 0.68, metalness: 0.04, outline: 0x9be2c8, outlineW: 1.5, lift: baseLift * 0.58, labelColor: 0xade8cf, pri: 1 },
       forest:  { labelColor: 0x9be07a, pri: 2 },
       grass:   { labelColor: 0xc7f29a, pri: 2 },
       waste:   { labelColor: 0xe6d3a0, pri: 4 },
@@ -4064,17 +4477,14 @@ export class TerrainViewer {
     };
     const localXZ = (lat, lng) => {
       const p = this._latLngToLocal(lat, lng, 0, bbox);
-      return new THREE.Vector2(p.x, p.z); // ground-plane (x, z) for triangulation
+      return new THREE.Vector2(p.x, p.z);
     };
     for (const ar of (data.areas || [])) {
       const style = AREA_STYLE[ar.cls] || AREA_STYLE.grass;
-      // Families baked into the terrain skip the overlay fill + outline; they only
-      // contribute a name label. Water (and anything unbaked) draws a surface.
       const baked = !!TerrainViewer._landCoverFamily(ar.cls);
       const rings = ar.rings || [];
       if (!rings.length || rings[0].length < 3) continue;
 
-      // Build the 2D contour + holes (deduping a closed ring's repeated last pt).
       const toShape2D = (ring) => {
         const r = ring.slice();
         if (r.length > 1) {
@@ -4083,8 +4493,6 @@ export class TerrainViewer {
         }
         return r;
       };
-      // Clip the outer contour and any holes to the terrain box so the fill
-      // doesn't spill past the model onto clamped edge elevations.
       const outer = this._clipRingToBbox(toShape2D(rings[0]), bbox);
       if (outer.length < 3) continue;
       const holes = rings.slice(1)
@@ -4097,13 +4505,8 @@ export class TerrainViewer {
         let faces;
         try { faces = THREE.ShapeUtils.triangulateShape(contour2D, holes2D); } catch { faces = null; }
         if (faces && faces.length) {
-          // Combined vertex list (contour then holes), draped per-vertex so the
-          // fill hugs the terrain; translucent so any interior bump reads.
           const combinedLL = [...outer, ...holes.flat()];
           const verts3D = combinedLL.map(([la, lo]) => world(la, lo, style.lift));
-          // Per-vertex hole flags: any triangle touching a terrain hole is dropped
-          // so the fill stops at the real terrain edge instead of sheeting down to
-          // the basin floor across blank tiles.
           const combinedHole = combinedLL.map(([la, lo]) => this._isOverHole(la, lo));
           const positions = [];
           for (const f of faces) {
@@ -4119,7 +4522,7 @@ export class TerrainViewer {
             geo.computeVertexNormals();
             const mat = new THREE.MeshStandardMaterial({
               color: style.color, transparent: true, opacity: style.opacity,
-              roughness: 0.95, metalness: 0, side: THREE.DoubleSide,
+              roughness: style.roughness ?? 0.9, metalness: style.metalness ?? 0, side: THREE.DoubleSide,
               depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
             });
             const mesh = new THREE.Mesh(geo, mat);
@@ -4128,7 +4531,7 @@ export class TerrainViewer {
           }
         }
 
-        // Outline — split at holes so it traces only the on-terrain part of the ring.
+        // Shoreline / bank outline.
         const ov = [];
         for (const seg of this._splitPolylineAtHoles([...outer, outer[0]])) {
           const ow = drapeLine(seg, style.lift + baseLift * 0.4);
@@ -4137,7 +4540,7 @@ export class TerrainViewer {
         if (ov.length >= 6) {
           const geo = new LineSegmentsGeometry();
           geo.setPositions(ov);
-          const mat = new LineMaterial({ color: style.outline, linewidth: 1.4, transparent: true, opacity: 0.65 });
+          const mat = new LineMaterial({ color: style.outline, linewidth: style.outlineW || 1.5, transparent: true, opacity: 0.78 });
           const seg = new LineSegments2(geo, mat);
           seg.computeLineDistances();
           this.featureGroup.add(seg);
@@ -4145,7 +4548,6 @@ export class TerrainViewer {
         }
       }
 
-      // Label at the ring centroid (skipped if that point is over a hole).
       let cla = 0, clo = 0;
       for (const [la, lo] of outer) { cla += la; clo += lo; }
       cla /= outer.length; clo /= outer.length;
@@ -4155,7 +4557,7 @@ export class TerrainViewer {
       }
     }
 
-    // ----- Buildings: extruded footprints, largest first, capped -----
+    // ----- Buildings: diorama massing with foundation plinth, wall palette & roofs -----
     const ringArea = (ring) => {
       let a = 0;
       for (let i = 0; i < ring.length - 1; i++) a += ring[i][1] * ring[i + 1][0] - ring[i + 1][1] * ring[i][0];
@@ -4165,11 +4567,6 @@ export class TerrainViewer {
       .map((b) => ({ ...b, _a: ringArea(b.ring) }))
       .sort((a, b) => b._a - a._a)
       .slice(0, 350);
-    // OSM "Simple 3D Buildings" rule: when a footprint is broken into building:part
-    // volumes, the parent building=* outline must NOT be extruded too (the parts
-    // define the 3D mass), otherwise the full-height parent box double-renders
-    // behind them and z-fights. Collect part centroids once; a parent whose
-    // footprint contains any part is rendered as a label only.
     const ringCentroidLL = (ring) => {
       let la = 0, lo = 0;
       for (const [a, o] of ring) { la += a; lo += o; }
@@ -4177,10 +4574,20 @@ export class TerrainViewer {
     };
     const partCentroids = blds.filter((b) => b.part).map((b) => ringCentroidLL(b.ring));
     const hasSubParts = (ring) => partCentroids.length > 0 && partCentroids.some(([la, lo]) => this._pointInRing(la, lo, ring));
-    const bldMat = new THREE.MeshStandardMaterial({ color: 0x9a948a, roughness: 0.9, metalness: 0, flatShading: true, side: THREE.DoubleSide });
-    // Default roof material for tagged pitched roofs (Plan §III) — a muted clay
-    // that reads distinctly from the grey walls. Coloured roofs get their own.
-    const roofMatDefault = new THREE.MeshStandardMaterial({ color: 0x8f6b57, roughness: 0.85, metalness: 0, flatShading: true, side: THREE.DoubleSide });
+
+    // Diorama architectural wall & roof material palettes.
+    const wallPalette = [
+      new THREE.MeshStandardMaterial({ color: 0xd6cec2, roughness: 0.86, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0xcfc0aa, roughness: 0.86, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0xa4acb8, roughness: 0.82, metalness: 0.06, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0xc2b5a3, roughness: 0.88, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+    ];
+    const plinthMat = new THREE.MeshStandardMaterial({ color: 0x6b665f, roughness: 0.92, metalness: 0, flatShading: true, side: THREE.DoubleSide });
+    const roofPalette = [
+      new THREE.MeshStandardMaterial({ color: 0xa45a42, roughness: 0.82, metalness: 0.04, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0x566370, roughness: 0.8, metalness: 0.08, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0x7d5c49, roughness: 0.84, metalness: 0.03, flatShading: true, side: THREE.DoubleSide }),
+    ];
     const elevScale = this._elevScale || 1;
     for (const b of blds) {
       let ring = b.ring.slice();
@@ -4188,22 +4595,15 @@ export class TerrainViewer {
         const a = ring[0], z = ring[ring.length - 1];
         if (a[0] === z[0] && a[1] === z[1]) ring.pop();
       }
-      // Drop / clip footprints that fall outside the terrain box.
       ring = this._clipRingToBbox(ring, bbox);
       if (ring.length < 3) continue;
-      // Drop footprints over a terrain hole — there's no ground to stand on, so
-      // they'd otherwise float at the basin floor in blank space.
       if (ring.some(([la, lo]) => this._isOverHole(la, lo))) continue;
 
-      // Parent shell that is subdivided into building:parts → render only its
-      // label; the parts (looped separately) carry the 3D mass.
       const shellOnly = !b.part && hasSubParts(ring);
 
-      // Precompute footprint world (x, z), the shape (in x,-z), the ground datum
-      // and the footprint's smallest plan dimension (for a default roof pitch).
       const shape = new THREE.Shape();
       const worldXZ = [];
-      let baseY = Infinity;
+      let baseY = Infinity, maxBaseY = -Infinity;
       let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
       let cx = 0, cz = 0;
       ring.forEach(([la, lo], i) => {
@@ -4213,47 +4613,61 @@ export class TerrainViewer {
         cx += p.x; cz += p.z;
         if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
         if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
-        // Elevation datum uses TRUE metres; the ground the building stands on is
-        // that datum lifted by the vertical render scale (so normalised terrain
-        // doesn't bury the footprint), while the building keeps its true height.
         const e = this._sampleGridElevation(la, lo) - (this._elevBase || 0);
         if (e < baseY) baseY = e;
+        if (e > maxBaseY) maxBaseY = e;
       });
       if (!Number.isFinite(baseY)) continue;
       cx /= worldXZ.length; cz /= worldXZ.length;
       const groundY = baseY * elevScale;
+      const hash = Math.abs(Math.floor(cx * 13 + cz * 31));
+      const wallMat = wallPalette[hash % wallPalette.length];
+      const defaultRoofMat = roofPalette[hash % roofPalette.length];
 
-      // Stepped massing: a raised part / upper floor starts at min_height and the
-      // walls rise to the roof spring line (or the full height when flat-topped).
       const totalH = Math.max(2, b.h);
       const minH = Math.max(0, Math.min(b.minH || 0, totalH - 1));
-      const roof = b.roof || null;
       const planDim = Math.max(1, Math.min(maxX - minX, maxZ - minZ));
+      // Diorama roof rule: explicit roof:shape always wins; otherwise small/medium
+      // standalone buildings get a subtle pitched roof so townscapes read like a
+      // miniature village rather than flat grey blocks.
+      const autoPitch = !b.roof && !b.part && planDim < 22 && totalH <= 14;
+      const roof = b.roof || (autoPitch ? { shape: (hash % 2 === 0) ? 'gabled' : 'hipped', height: null, colour: null } : null);
       let roofH = 0;
       if (roof) {
         roofH = Number.isFinite(roof.height) && roof.height > 0
           ? roof.height
-          : Math.max(2, Math.min(planDim * 0.35, 8));   // default pitch from footprint
-        roofH = Math.min(roofH, (totalH - minH) * 0.6);  // never eat the whole wall
+          : Math.max(1.8, Math.min(planDim * (b.roof ? 0.35 : 0.24), b.roof ? 8 : 4.2));
+        roofH = Math.min(roofH, (totalH - minH) * 0.55);
       }
-      const wallTopM = totalH - roofH;                   // spring line (metres above ground)
+      const wallTopM = totalH - roofH;
       const wallDepth = Math.max(0.5, wallTopM - minH);
 
       if (!shellOnly) {
+        // Foundation plinth course at ground level for ground-seated buildings.
+        const plinthH = minH === 0 ? Math.min(1.4, wallDepth * 0.24) : 0;
+        if (plinthH > 0.25) {
+          let pGeo = null;
+          try { pGeo = new THREE.ExtrudeGeometry(shape, { depth: plinthH, bevelEnabled: false }); } catch { pGeo = null; }
+          if (pGeo) {
+            pGeo.rotateX(-Math.PI / 2);
+            pGeo.translate(0, groundY, 0);
+            const pMesh = new THREE.Mesh(pGeo, plinthMat);
+            pMesh.castShadow = true;
+            pMesh.receiveShadow = true;
+            this.featureGroup.add(pMesh);
+          }
+        }
+
         let geo = null;
-        try { geo = new THREE.ExtrudeGeometry(shape, { depth: wallDepth, bevelEnabled: false }); } catch { geo = null; }
+        try { geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(0.4, wallDepth - plinthH), bevelEnabled: false }); } catch { geo = null; }
         if (geo) {
           geo.rotateX(-Math.PI / 2);
-          geo.translate(0, groundY + minH, 0);
-          const mesh = new THREE.Mesh(geo, bldMat);
+          geo.translate(0, groundY + minH + plinthH, 0);
+          const mesh = new THREE.Mesh(geo, wallMat);
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           this.featureGroup.add(mesh);
 
-          // Pitched roof (Plan §III-4): shape-specialised cap — a ridge for
-          // gabled roofs, a mono-pitch plane for skillion, else a hip/pyramidal
-          // apex fan. All are built from the wall-top ring so they stay valid on
-          // messy OSM footprints without a full straight-skeleton's artefacts.
           if (roofH > 0.5 && worldXZ.length >= 3) {
             const springY = groundY + wallTopM;
             const apexY = groundY + totalH;
@@ -4262,12 +4676,24 @@ export class TerrainViewer {
             rgeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             rgeo.computeVertexNormals();
             const rmat = roof.colour != null
-              ? new THREE.MeshStandardMaterial({ color: roof.colour, roughness: 0.85, metalness: 0, flatShading: true, side: THREE.DoubleSide })
-              : roofMatDefault;
+              ? new THREE.MeshStandardMaterial({ color: roof.colour, roughness: 0.82, metalness: 0.04, flatShading: true, side: THREE.DoubleSide })
+              : defaultRoofMat;
             const rmesh = new THREE.Mesh(rgeo, rmat);
             rmesh.castShadow = true;
             rmesh.receiveShadow = true;
             this.featureGroup.add(rmesh);
+          } else if (worldXZ.length >= 3) {
+            // Flat-roofed larger block: add a dark cornice/parapet collar band at the top.
+            const capH = Math.min(0.85, wallDepth * 0.12);
+            let cGeo = null;
+            try { cGeo = new THREE.ExtrudeGeometry(shape, { depth: capH, bevelEnabled: false }); } catch { cGeo = null; }
+            if (cGeo) {
+              cGeo.rotateX(-Math.PI / 2);
+              cGeo.translate(0, groundY + totalH, 0);
+              const cMesh = new THREE.Mesh(cGeo, plinthMat);
+              cMesh.castShadow = true;
+              this.featureGroup.add(cMesh);
+            }
           }
         }
       }
@@ -4278,9 +4704,6 @@ export class TerrainViewer {
     }
 
     // ----- Point landmarks: peaks / trees / towers / viewpoints (Plan §III-1) -----
-    // Each mapped node becomes a small directional 3D model draped on the terrain.
-    // Totals are capped (and trees capped harder) so a park full of individually
-    // mapped trees can't spawn thousands of meshes.
     const allPoints = data.points || [];
     const nonTree = allPoints.filter((p) => p.cls !== 'tree');
     const trees = allPoints.filter((p) => p.cls === 'tree');
@@ -4289,21 +4712,12 @@ export class TerrainViewer {
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
       if (lat < bbox.minLat || lat > bbox.maxLat || lon < bbox.minLng || lon > bbox.maxLng) continue;
       if (this._isOverHole(lat, lon)) continue;
-      const model = this._buildPointModel(p.cls, ms, p.h);
+      const model = this._buildPointModel(p.cls, ms, p.h, lat, lon);
       if (!model) continue;
       model.position.copy(world(lat, lon, baseLift));
       this.landmarkGroup.add(model);
-      // Label landmarks (skip trees — they'd flood the label layer). Named nodes
-      // use their OSM name; unnamed peaks/towers/viewpoints/… fall back to a
-      // category label (peaks carry their elevation) so no 3D indicator is left
-      // nameless. Fallback labels sort after named ones (pri + 3) so the label
-      // cap fills real place names first, and use a position-based dedupe key so
-      // multiple generic labels survive instead of collapsing into one.
       if (p.cls !== 'tree') {
         const color = (p.cls === 'peak' || p.cls === 'saddle') ? 0xffd9a0 : 0xd8e0ea;
-        // Landmarks always carry a rendered 3D model, so a label they lose to the
-        // shared cap reads as a nameless indicator — keep their priority ahead of
-        // buildings/areas (pri 4-6) so they reliably keep a label.
         const pri = (p.cls === 'peak') ? 2 : 4;
         const labelPos = model.position.clone().setY(model.position.y + 16 * ms);
         if (p.name && p.name.trim()) {
@@ -4323,10 +4737,6 @@ export class TerrainViewer {
       if (made >= 70) break;
       const name = (c.name || '').trim();
       if (!name) continue;
-      // `key` is only the dedupe identity (a position-based string for generic
-      // fallback labels); the sprite must always show the human-readable `name`,
-      // not the dedupe key, or unnamed landmarks render literal text like
-      // "peak@23.1234,120.5678" instead of their fallback name.
       const key = (c.key || c.name).trim();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -4348,8 +4758,7 @@ export class TerrainViewer {
     const ms = this._markerScale || 1;
 
     // Ride the hiker on the same draped surface as the track (see
-    // _createRoutePath) so the cursor cone stays seated on the trail instead of
-    // floating at the raw GPS elevation.
+    // _createRoutePath) so the cursor beacon stays seated on the trail.
     const drapeLift = this._routeDrapeLift();
     const pts = coords.map(([lat, lng]) => {
       const surf = this._sampleGridElevation(lat, lng);
@@ -4358,27 +4767,63 @@ export class TerrainViewer {
     });
 
     this.playerPath = new THREE.CatmullRomCurve3(pts);
-    this.playerMarker = null;   // no sphere — the inverted-cone cursor marks the spot
+    this.playerMarker = null;
 
-    // 3D position cursor: a single inverted cone (tip pointing down at the route
-    // point) sitting just below the hiker. Shrunk to 1/3 of the previous size;
-    // the figure's standing height derives from coneH below, so it drops to sit
-    // just above the point automatically.
+    // 3D position cursor: a sculpted faceted beacon pointer with a metallic top
+    // pedestal collar and a ground-hugging compass halo ring.
     this._cursorGroup = new THREE.Group();
     const coneH = (13 / 3) * ms;
     this._cursorHeight = coneH;
-    const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(2 * ms, coneH, 16),
-      new THREE.MeshStandardMaterial({ color: 0xff6600, emissive: 0xff5500, emissiveIntensity: 0.9 })
+
+    const conePivot = new THREE.Group();
+    const outerCone = new THREE.Mesh(
+      new THREE.ConeGeometry(2.15 * ms, coneH * 0.88, 8),
+      new THREE.MeshStandardMaterial({
+        color: 0xff6b1a, emissive: 0xff4800, emissiveIntensity: 0.85,
+        roughness: 0.35, metalness: 0.2, flatShading: true,
+      })
     );
-    cone.rotation.x = Math.PI;        // apex points straight down at the point
-    cone.position.y = coneH / 2;      // tip at the cursor-group origin (the point)
-    this._cursorGroup.add(cone);
-    this._cursorCone = cone;
+    outerCone.rotation.x = Math.PI;
+    outerCone.position.y = coneH * 0.44;
+    conePivot.add(outerCone);
+
+    // Top golden pedestal collar where the cute figurine stands.
+    const collar = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.25 * ms, 1.95 * ms, coneH * 0.2, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0xffd24d, emissive: 0xb36b00, emissiveIntensity: 0.55,
+        roughness: 0.3, metalness: 0.6,
+      })
+    );
+    collar.position.y = coneH * 0.9;
+    conePivot.add(collar);
+    this._cursorGroup.add(conePivot);
+    this._cursorCone = conePivot;
+
+    // Ground compass ring with 4 cardinal pips around the pointer tip.
+    const ringGroup = new THREE.Group();
+    ringGroup.position.y = 0.25 * ms;
+    const ringMesh = new THREE.Mesh(
+      new THREE.RingGeometry(2.5 * ms, 3.35 * ms, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0xffae42, transparent: true, opacity: 0.78, side: THREE.DoubleSide,
+      })
+    );
+    ringMesh.rotation.x = -Math.PI / 2;
+    ringGroup.add(ringMesh);
+    const pipMat = new THREE.MeshBasicMaterial({ color: 0xfff0b8 });
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      const pip = new THREE.Mesh(new THREE.BoxGeometry(0.65 * ms, 0.25 * ms, 1.15 * ms), pipMat);
+      pip.position.set(Math.cos(a) * 3.4 * ms, 0.05 * ms, Math.sin(a) * 3.4 * ms);
+      pip.rotation.y = -a;
+      ringGroup.add(pip);
+    }
+    this._cursorGroup.add(ringGroup);
+    this._cursorRing = ringGroup;
     this.scene.add(this._cursorGroup);
 
-    // Animated gingerbread/clay figure standing on the cursor cone. Built from
-    // primitives with pivoting limbs so it can actually run.
+    // Cute toy / chibi figurine hiker standing on the cursor pedestal.
     this._person = this._createPersonFigure(ms);
     this.scene.add(this._person);
 
@@ -4391,7 +4836,6 @@ export class TerrainViewer {
     this._progress = 0;
     this._updatePlayerPosition();
 
-    // Remove existing player light if any
     if (this._playerLight) {
       this.scene.remove(this._playerLight);
     }
@@ -4399,109 +4843,246 @@ export class TerrainViewer {
     this.scene.add(this._playerLight);
   }
 
-  // A small gingerbread/clay figure built from primitives, with shoulder/hip
-  // pivots so the arms and legs can swing for a real running gait. Feet sit at
-  // the group origin (y=0) and the body grows upward; the group is placed on top
-  // of the cursor cone and yawed to face the direction of travel. Dimensions are
-  // in world units, scaled by the terrain's marker scale (ms).
+  // Cute toy / chibi miniature hiker figurine (可愛公仔風):
+  //   • Oversized expressive vinyl-toy head with rosy cheeks, glossy eyes + white
+  //     catchlights, button nose, smile, and a wide-brimmed outdoor explorer hat
+  //   • Vibrant teal mountain-parka jacket with cream fleece scarf/collar & zipper
+  //   • Detailed hiking backpack with top flap, side water bottle, and rolled sleeping pad
+  //   • Chunky two-tone hiking boots with dark lug soles & coral ankle cuffs
+  //   • Trekking pole held in the right hand that swings with the stride
   _createPersonFigure(ms) {
     const group = new THREE.Group();
     group.rotation.order = 'YXZ'; // yaw (face travel) before forward lean
 
-    // Warm clay/gingerbread body with a touch of emissive so it stays readable
-    // at night, plus white "icing" trims and small face/button details.
-    const dough = new THREE.MeshStandardMaterial({ color: 0xb5742f, roughness: 0.85, metalness: 0.0, emissive: 0x4a2c10, emissiveIntensity: 0.3 });
-    const icing = new THREE.MeshStandardMaterial({ color: 0xfff3e0, roughness: 0.55, emissive: 0x4a3a2a, emissiveIntensity: 0.2 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, roughness: 0.6 });
-    const candy = new THREE.MeshStandardMaterial({ color: 0xd64545, roughness: 0.5, emissive: 0x3a0e0e, emissiveIntensity: 0.2 });
+    // Toy-vinyl materials with smooth sheen and gentle emissive for night readability.
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xffdfc4, roughness: 0.48, metalness: 0.02, emissive: 0x4a2c18, emissiveIntensity: 0.22 });
+    const jacketMat = new THREE.MeshStandardMaterial({ color: 0x2299aa, roughness: 0.45, metalness: 0.05, emissive: 0x0a353d, emissiveIntensity: 0.28 });
+    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x5c6b48, roughness: 0.6, metalness: 0.02, emissive: 0x1a2014, emissiveIntensity: 0.2 });
+    const fleeceMat = new THREE.MeshStandardMaterial({ color: 0xfff5e4, roughness: 0.65, emissive: 0x3d3529, emissiveIntensity: 0.2 });
+    const bootMat = new THREE.MeshStandardMaterial({ color: 0x7a4824, roughness: 0.55, emissive: 0x261408, emissiveIntensity: 0.2 });
+    const soleMat = new THREE.MeshStandardMaterial({ color: 0x241d18, roughness: 0.75 });
+    const coralMat = new THREE.MeshStandardMaterial({ color: 0xf25c54, roughness: 0.45, emissive: 0x4a1210, emissiveIntensity: 0.25 });
+    const packMat = new THREE.MeshStandardMaterial({ color: 0xe09f3e, roughness: 0.52, emissive: 0x3d2808, emissiveIntensity: 0.22 });
+    const packFlapMat = new THREE.MeshStandardMaterial({ color: 0x4a6b3b, roughness: 0.58, emissive: 0x142210, emissiveIntensity: 0.2 });
+    const hatMat = new THREE.MeshStandardMaterial({ color: 0xd9b27c, roughness: 0.55, emissive: 0x382a16, emissiveIntensity: 0.22 });
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x221814, roughness: 0.3, metalness: 0.1 });
+    const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.2 });
+    const blushMat = new THREE.MeshStandardMaterial({ color: 0xff8fa3, roughness: 0.5, emissive: 0x4d1924, emissiveIntensity: 0.25 });
+    const metalMat = new THREE.MeshStandardMaterial({ color: 0xdce4ec, roughness: 0.3, metalness: 0.7 });
+    const bottleMat = new THREE.MeshStandardMaterial({ color: 0x38b6ff, roughness: 0.25, metalness: 0.15, emissive: 0x0c344d, emissiveIntensity: 0.25 });
 
     const add = (mesh) => { mesh.castShadow = true; return mesh; };
 
-    // Dimensions.
-    const legR = 1.5 * ms, legLen = 6 * ms, legFull = legLen + legR * 2;
-    const armR = 1.2 * ms, armLen = 5.5 * ms, armFull = armLen + armR * 2;
-    // Shorter torso so the body no longer towers over the legs (was 7).
-    const torsoR = 2.6 * ms, torsoLen = 3.6 * ms, torsoFull = torsoLen + torsoR * 2;
-    const headR = 3.2 * ms;
+    // Toy chibi proportions: compact sturdy legs, rounded parka torso, cute big head.
+    const legR = 1.45 * ms, legLen = 5.2 * ms, legFull = legLen + legR * 2;
+    const armR = 1.15 * ms, armLen = 4.8 * ms, armFull = armLen + armR * 2;
+    const torsoR = 2.75 * ms, torsoLen = 3.6 * ms, torsoFull = torsoLen + torsoR * 2;
+    const headR = 3.45 * ms;
 
-    const hipY = legFull;                       // hips sit one leg-length up
-    const shoulderY = hipY + torsoFull;         // top of torso
-    const headY = shoulderY + headR * 0.75;
+    const hipY = legFull;
+    const shoulderY = hipY + torsoFull;
+    const headY = shoulderY + headR * 0.78;
 
-    // A limb that hangs from a pivot group placed at the joint, so rotating the
-    // pivot about X swings the limb fore/aft.
     const makeLimb = (rad, len, mat) => {
       const pivot = new THREE.Group();
       const full = len + rad * 2;
-      const mesh = add(new THREE.Mesh(new THREE.CapsuleGeometry(rad, len, 4, 10), mat));
-      mesh.position.y = -full / 2; // top of capsule at the pivot
+      const mesh = add(new THREE.Mesh(new THREE.CapsuleGeometry(rad, len, 5, 12), mat));
+      mesh.position.y = -full / 2;
       pivot.add(mesh);
       return pivot;
     };
 
-    // Legs. Tucked in a little closer together so their rounded tops sit under
-    // the pelvis below and there's no air gap at the hip.
+    // --- Legs + Chunky Two-Tone Hiking Boots ---
     const legX = 1.45 * ms;
-    const legL = makeLimb(legR, legLen, dough);
-    const legR2 = makeLimb(legR, legLen, dough);
+    const legL = makeLimb(legR, legLen, pantsMat);
+    const legR2 = makeLimb(legR, legLen, pantsMat);
     legL.position.set(-legX, hipY, 0);
     legR2.position.set(legX, hipY, 0);
-    // White icing cuffs at the feet.
-    const footL = add(new THREE.Mesh(new THREE.SphereGeometry(legR * 1.15, 10, 8), icing));
-    footL.position.y = -(legFull) + legR * 0.6; legL.add(footL);
-    const footR = add(new THREE.Mesh(new THREE.SphereGeometry(legR * 1.15, 10, 8), icing));
-    footR.position.y = -(legFull) + legR * 0.6; legR2.add(footR);
+
+    for (const leg of [legL, legR2]) {
+      const bootY = -legFull + legR * 0.75;
+      // Coral sock/ankle cuff.
+      const cuff = add(new THREE.Mesh(new THREE.CylinderGeometry(legR * 1.06, legR * 1.08, 1.1 * ms, 12), coralMat));
+      cuff.position.y = bootY + 1.05 * ms;
+      leg.add(cuff);
+      // Rounded toy boot upper (projected slightly forward +z).
+      const boot = add(new THREE.Mesh(new THREE.SphereGeometry(legR * 1.22, 12, 10), bootMat));
+      boot.scale.set(1.0, 0.82, 1.32);
+      boot.position.set(0, bootY + 0.15 * ms, 0.42 * ms);
+      leg.add(boot);
+      // Dark lug sole at the bottom.
+      const sole = add(new THREE.Mesh(new THREE.CylinderGeometry(legR * 1.18, legR * 1.22, 0.55 * ms, 12), soleMat));
+      sole.scale.set(1.0, 1.0, 1.32);
+      sole.position.set(0, bootY - 0.55 * ms, 0.42 * ms);
+      leg.add(sole);
+    }
     group.add(legL, legR2);
 
-    // Pelvis/hip bridging the torso bottom and the leg tops. Kept the SAME width
-    // as the torso (never wider) and pushed low with a strong vertical overlap of
-    // the torso's lower hemisphere, so the body→hip line reads as one continuous
-    // dough form instead of a protruding "butt" with a hard seam. A gentle
-    // vertical squash rounds the hips without bulging them out sideways.
-    const pelvis = add(new THREE.Mesh(new THREE.SphereGeometry(torsoR, 16, 12), dough));
-    pelvis.position.set(0, hipY + torsoR * 0.4, 0);
-    pelvis.scale.set(1.0, 0.82, 1.0);
+    // --- Pelvis & Parka Torso ---
+    const pelvis = add(new THREE.Mesh(new THREE.SphereGeometry(torsoR * 0.98, 16, 12), pantsMat));
+    pelvis.position.set(0, hipY + torsoR * 0.36, 0);
+    pelvis.scale.set(1.0, 0.8, 1.0);
     group.add(pelvis);
 
-    // Torso. Its lower hemisphere overlaps the pelvis above for a seamless join.
-    const torso = add(new THREE.Mesh(new THREE.CapsuleGeometry(torsoR, torsoLen, 6, 14), dough));
-    torso.position.y = hipY + torsoFull / 2;
+    const torso = add(new THREE.Mesh(new THREE.CapsuleGeometry(torsoR, torsoLen, 6, 16), jacketMat));
+    torso.position.y = hipY + torsoFull * 0.54;
     group.add(torso);
 
-    // Buttons down the front (+z faces travel direction).
-    for (let b = 0; b < 2; b++) {
-      const btn = add(new THREE.Mesh(new THREE.SphereGeometry(0.7 * ms, 8, 6), candy));
-      btn.position.set(0, hipY + torsoFull * (0.4 + b * 0.3), torsoR * 0.85);
-      group.add(btn);
-    }
+    // Parka belt + golden buckle + front zipper stripe + puffy fleece collar.
+    const belt = add(new THREE.Mesh(new THREE.CylinderGeometry(torsoR * 1.03, torsoR * 1.03, 0.85 * ms, 16), soleMat));
+    belt.position.y = hipY + torsoFull * 0.25;
+    group.add(belt);
+    const buckle = add(new THREE.Mesh(new THREE.BoxGeometry(1.3 * ms, 1.05 * ms, 0.45 * ms), packMat));
+    buckle.position.set(0, hipY + torsoFull * 0.25, torsoR * 1.02);
+    group.add(buckle);
 
-    // Arms hanging from the shoulders.
-    const armL = makeLimb(armR, armLen, dough);
-    const armR3 = makeLimb(armR, armLen, dough);
-    const shoX = torsoR + armR * 0.4;
+    const zipper = add(new THREE.Mesh(new THREE.BoxGeometry(0.48 * ms, torsoFull * 0.62, 0.35 * ms), fleeceMat));
+    zipper.position.set(0, hipY + torsoFull * 0.58, torsoR * 0.96);
+    group.add(zipper);
+
+    const collar = add(new THREE.Mesh(new THREE.TorusGeometry(torsoR * 0.78, 0.82 * ms, 10, 18), fleeceMat));
+    collar.rotation.x = Math.PI / 2;
+    collar.position.y = shoulderY - 0.55 * ms;
+    group.add(collar);
+
+    // --- Cute 3D Hiking Backpack (mounted on back -z) ---
+    const packGroup = new THREE.Group();
+    const packY = hipY + torsoFull * 0.55;
+    const packZ = -(torsoR + 1.55 * ms);
+    packGroup.position.set(0, packY, packZ);
+    // Main rounded pack body.
+    const packBody = add(new THREE.Mesh(new THREE.BoxGeometry(4.4 * ms, 5.2 * ms, 2.8 * ms), packMat));
+    packGroup.add(packBody);
+    // Olive top weather flap.
+    const packFlap = add(new THREE.Mesh(new THREE.SphereGeometry(2.35 * ms, 12, 10), packFlapMat));
+    packFlap.scale.set(1.0, 0.55, 0.72);
+    packFlap.position.set(0, 2.5 * ms, 0);
+    packGroup.add(packFlap);
+    // Rear outer pocket + buckle straps.
+    const rearPocket = add(new THREE.Mesh(new THREE.BoxGeometry(3.2 * ms, 2.6 * ms, 0.8 * ms), coralMat));
+    rearPocket.position.set(0, -0.7 * ms, -1.5 * ms);
+    packGroup.add(rearPocket);
+    for (const sx of [-1, 1]) {
+      const strap = add(new THREE.Mesh(new THREE.BoxGeometry(0.45 * ms, 3.4 * ms, 0.35 * ms), soleMat));
+      strap.position.set(sx * 1.15 * ms, 0.8 * ms, -1.55 * ms);
+      packGroup.add(strap);
+    }
+    // Rolled sleeping pad strapped across the top of the backpack.
+    const padRoll = add(new THREE.Mesh(new THREE.CylinderGeometry(0.95 * ms, 0.95 * ms, 4.8 * ms, 12), coralMat));
+    padRoll.rotation.z = Math.PI / 2;
+    padRoll.position.set(0, 3.55 * ms, -0.2 * ms);
+    packGroup.add(padRoll);
+    const padCore = add(new THREE.Mesh(new THREE.CylinderGeometry(0.55 * ms, 0.55 * ms, 4.95 * ms, 10), fleeceMat));
+    padCore.rotation.z = Math.PI / 2;
+    padCore.position.copy(padRoll.position);
+    packGroup.add(padCore);
+    // Side water bottle tucked on the left side of the pack.
+    const bottle = add(new THREE.Mesh(new THREE.CylinderGeometry(0.65 * ms, 0.65 * ms, 2.3 * ms, 10), bottleMat));
+    bottle.position.set(-2.55 * ms, -0.5 * ms, 0);
+    packGroup.add(bottle);
+    const bottleCap = add(new THREE.Mesh(new THREE.CylinderGeometry(0.42 * ms, 0.48 * ms, 0.5 * ms, 8), darkMat));
+    bottleCap.position.set(-2.55 * ms, 0.85 * ms, 0);
+    packGroup.add(bottleCap);
+    group.add(packGroup);
+
+    // --- Arms + Mittens + Trekking Pole ---
+    const armL = makeLimb(armR, armLen, jacketMat);
+    const armR3 = makeLimb(armR, armLen, jacketMat);
+    const shoX = torsoR + armR * 0.45;
     armL.position.set(-shoX, shoulderY - armR, 0);
     armR3.position.set(shoX, shoulderY - armR, 0);
-    const handL = add(new THREE.Mesh(new THREE.SphereGeometry(armR * 1.1, 10, 8), icing));
-    handL.position.y = -(armFull) + armR * 0.6; armL.add(handL);
-    const handR = add(new THREE.Mesh(new THREE.SphereGeometry(armR * 1.1, 10, 8), icing));
-    handR.position.y = -(armFull) + armR * 0.6; armR3.add(handR);
+
+    const handY = -armFull + armR * 0.65;
+    const handL = add(new THREE.Mesh(new THREE.SphereGeometry(armR * 1.15, 10, 8), skinMat));
+    handL.position.y = handY;
+    armL.add(handL);
+    const handR = add(new THREE.Mesh(new THREE.SphereGeometry(armR * 1.15, 10, 8), skinMat));
+    handR.position.y = handY;
+    armR3.add(handR);
+
+    // Trekking pole held in the right hand, angled slightly forward to plant on the trail.
+    const poleGroup = new THREE.Group();
+    poleGroup.position.set(0, handY, 0.3 * ms);
+    poleGroup.rotation.x = 0.22;
+    const poleLen = 11.5 * ms;
+    const shaft = add(new THREE.Mesh(new THREE.CylinderGeometry(0.18 * ms, 0.13 * ms, poleLen, 8), metalMat));
+    shaft.position.y = -poleLen * 0.32;
+    poleGroup.add(shaft);
+    const grip = add(new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.28 * ms, 2.2 * ms, 8), coralMat));
+    grip.position.y = 0.5 * ms;
+    poleGroup.add(grip);
+    const basket = add(new THREE.Mesh(new THREE.CylinderGeometry(0.65 * ms, 0.65 * ms, 0.22 * ms, 8), darkMat));
+    basket.position.y = -poleLen * 0.72;
+    poleGroup.add(basket);
+    armR3.add(poleGroup);
     group.add(armL, armR3);
 
-    // Head + face (eyes look toward +z, the travel direction).
-    const head = add(new THREE.Mesh(new THREE.SphereGeometry(headR, 16, 14), dough));
-    head.position.y = headY;
-    group.add(head);
-    for (const sx of [-1, 1]) {
-      const eye = add(new THREE.Mesh(new THREE.SphereGeometry(0.5 * ms, 8, 6), dark));
-      eye.position.set(sx * headR * 0.42, headY + headR * 0.12, headR * 0.82);
-      group.add(eye);
-    }
-    const smile = add(new THREE.Mesh(new THREE.TorusGeometry(headR * 0.4, 0.28 * ms, 6, 12, Math.PI), dark));
-    smile.rotation.x = Math.PI;            // open side up → a smile
-    smile.position.set(0, headY - headR * 0.28, headR * 0.78);
-    group.add(smile);
+    // --- Cute Chibi Head + Expressive Face + Explorer Safari Hat ---
+    const headGroup = new THREE.Group();
+    headGroup.position.y = headY;
+    const head = add(new THREE.Mesh(new THREE.SphereGeometry(headR, 20, 16), skinMat));
+    head.scale.set(1.04, 0.96, 1.0);
+    headGroup.add(head);
 
-    this._personParts = { group, legL, legR: legR2, armL, armR: armR3 };
+    // Cute ears on the sides.
+    for (const sx of [-1, 1]) {
+      const ear = add(new THREE.Mesh(new THREE.SphereGeometry(0.72 * ms, 10, 8), skinMat));
+      ear.position.set(sx * headR * 0.98, -0.15 * ms, 0);
+      headGroup.add(ear);
+    }
+
+    // Glossy dark eyes + sparkling white catchlight dots + rosy blush cheeks.
+    for (const sx of [-1, 1]) {
+      const eye = add(new THREE.Mesh(new THREE.SphereGeometry(0.58 * ms, 10, 8), darkMat));
+      eye.scale.set(1.0, 1.18, 0.7);
+      eye.position.set(sx * headR * 0.38, headR * 0.06, headR * 0.88);
+      headGroup.add(eye);
+
+      const glint = new THREE.Mesh(new THREE.SphereGeometry(0.22 * ms, 8, 6), whiteMat);
+      glint.position.set((sx * headR * 0.38) + 0.18 * ms, headR * 0.22, headR * 0.98);
+      headGroup.add(glint);
+
+      const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.62 * ms, 10, 8), blushMat);
+      cheek.scale.set(1.25, 0.75, 0.5);
+      cheek.position.set(sx * headR * 0.58, -headR * 0.16, headR * 0.8);
+      headGroup.add(cheek);
+    }
+
+    // Cute button nose + cheerful smile.
+    const nose = add(new THREE.Mesh(new THREE.SphereGeometry(0.38 * ms, 8, 6), blushMat));
+    nose.position.set(0, -headR * 0.04, headR * 0.98);
+    headGroup.add(nose);
+
+    const smile = add(new THREE.Mesh(new THREE.TorusGeometry(headR * 0.28, 0.22 * ms, 6, 12, Math.PI), darkMat));
+    smile.rotation.x = Math.PI;
+    smile.position.set(0, -headR * 0.22, headR * 0.86);
+    headGroup.add(smile);
+
+    // Outdoor Explorer Safari / Sun Hat tilted slightly back.
+    const hatGroup = new THREE.Group();
+    hatGroup.position.set(0, headR * 0.62, -0.25 * ms);
+    hatGroup.rotation.x = -0.16;
+    // Wide curved brim.
+    const brim = add(new THREE.Mesh(new THREE.CylinderGeometry(headR * 1.52, headR * 1.58, 0.42 * ms, 20), hatMat));
+    hatGroup.add(brim);
+    // Rounded hat crown.
+    const crown = add(new THREE.Mesh(new THREE.SphereGeometry(headR * 0.96, 16, 12), hatMat));
+    crown.scale.set(1.0, 0.78, 1.05);
+    crown.position.y = 0.65 * ms;
+    hatGroup.add(crown);
+    // Coral terracotta hatband + green leaf/feather badge on the side.
+    const band = add(new THREE.Mesh(new THREE.CylinderGeometry(headR * 0.97, headR * 0.99, 0.65 * ms, 18), coralMat));
+    band.position.y = 0.42 * ms;
+    hatGroup.add(band);
+    const leafBadge = add(new THREE.Mesh(new THREE.ConeGeometry(0.55 * ms, 1.8 * ms, 5), packFlapMat));
+    leafBadge.position.set(headR * 0.98, 1.05 * ms, 0.3 * ms);
+    leafBadge.rotation.z = -0.35;
+    hatGroup.add(leafBadge);
+
+    headGroup.add(hatGroup);
+    group.add(headGroup);
+
+    this._personParts = { group, legL, legR: legR2, armL, armR: armR3, headGroup };
     return group;
   }
 
@@ -4515,31 +5096,24 @@ export class TerrainViewer {
     const pt = this.playerPath.getPointAt(this._clampU(this._progress));
 
     if (this._cursorGroup) {
-      const bob = Math.sin(this._personPhase * 4) * 3 * ms;
+      const bob = Math.sin(this._personPhase * 4) * 2.4 * ms;
       this._cursorGroup.position.set(pt.x, pt.y + bob, pt.z);
-      if (this._cursorCone) this._cursorCone.rotation.y += 0.04;
+      if (this._cursorCone) this._cursorCone.rotation.y += 0.035;
+      if (this._cursorRing) this._cursorRing.rotation.y -= 0.02;
     }
 
     if (this._person) {
       const parts = this._personParts;
       const phase = this._personPhase;
       const moving = this._playing;
-      // Stride cadence rises with movement speed (personPhase advances by
-      // dt*speed in _animate), and amplitude grows from a gentle idle sway to a
-      // full run, so a faster route plays a faster gait.
       const cadence = 11;
-      const amp = moving ? 0.95 : 0.06;
+      const amp = moving ? 0.92 : 0.06;
       const swing = Math.sin(phase * cadence);
       const bob = Math.abs(swing) * (moving ? 1.8 : 0.3) * ms;
 
-      // Stand on top of the cursor cone.
+      // Stand on top of the cursor pedestal.
       this._person.position.set(pt.x, pt.y + coneH + bob, pt.z);
 
-      // Face the direction of travel. The raw Catmull-Rom tangent kinks at every
-      // GPS wiggle and made the figure snap-turn constantly; instead aim it at a
-      // look-ahead chord (same window the chase cam uses) and low-pass the result
-      // so heading changes are gradual and the walked path reads as smooth. Snap
-      // instantly while scrubbing (not playing) so it faces right at rest.
       const pA = this.playerPath.getPointAt(this._clampU(this._progress + 0.05));
       const pB = this.playerPath.getPointAt(this._clampU(this._progress - 0.03));
       if (pA && pB) {
@@ -4547,20 +5121,24 @@ export class TerrainViewer {
         const len = Math.hypot(vx, vz);
         if (len > 1e-6) {
           const tx = vx / len, tz = vz / len;
-          const k = moving ? 0.1 : 1;   // per-frame turn rate; instant at rest
+          const k = moving ? 0.1 : 1;
           this._personDir.x += (tx - this._personDir.x) * k;
           this._personDir.z += (tz - this._personDir.z) * k;
           const dl = Math.hypot(this._personDir.x, this._personDir.z) || 1;
           this._person.rotation.y = Math.atan2(this._personDir.x / dl, this._personDir.z / dl);
         }
       }
-      this._person.rotation.x = moving ? 0.2 : 0.0; // lean forward when running
+      this._person.rotation.x = moving ? 0.18 : 0.0;
 
       if (parts) {
         parts.legL.rotation.x = swing * amp;
         parts.legR.rotation.x = -swing * amp;
-        parts.armL.rotation.x = -swing * amp * 0.9;
-        parts.armR.rotation.x = swing * amp * 0.9;
+        parts.armL.rotation.x = -swing * amp * 0.88;
+        parts.armR.rotation.x = swing * amp * 0.88;
+        if (parts.headGroup) {
+          parts.headGroup.rotation.z = Math.cos(phase * cadence) * (moving ? 0.08 : 0.015);
+          parts.headGroup.rotation.y = -swing * (moving ? 0.1 : 0.02);
+        }
       }
     }
 
@@ -4906,17 +5484,39 @@ export class TerrainViewer {
       }
     }
 
-    // Outlet (pour point) marker: a small downward cone tip at the outlet.
+    // Outlet (pour point) marker: a diorama hydrology gauge beacon (concentric
+    // water-ripple base rings + faceted diamond water-drop crystal + pointer tip).
     if (Array.isArray(basin.outlet) && basin.outlet.length === 2 && !this._isOverHole(basin.outlet[0], basin.outlet[1])) {
       const coneH = Math.max(baseLift * 6, range * 0.02);
+      const outPos = world(basin.outlet[0], basin.outlet[1], lift);
+      const outletGrp = new THREE.Group();
+      outletGrp.position.copy(outPos);
+
+      const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, side: THREE.DoubleSide });
+      const innerRing = new THREE.Mesh(new THREE.RingGeometry(coneH * 0.35, coneH * 0.55, 16), ringMat);
+      innerRing.rotation.x = -Math.PI / 2;
+      innerRing.position.y = coneH * 0.06;
+      innerRing.renderOrder = 4;
+      outletGrp.add(innerRing);
+
       const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(coneH * 0.5, coneH, 12),
+        new THREE.ConeGeometry(coneH * 0.42, coneH * 0.75, 8),
         new THREE.MeshBasicMaterial({ color })
       );
-      cone.position.copy(world(basin.outlet[0], basin.outlet[1], lift + coneH * 0.6));
-      cone.rotation.x = Math.PI;   // tip points down onto the pour point
+      cone.position.y = coneH * 0.48;
+      cone.rotation.x = Math.PI;
       cone.renderOrder = 4;
-      grp.add(cone);
+      outletGrp.add(cone);
+
+      const gem = new THREE.Mesh(
+        new THREE.OctahedronGeometry(coneH * 0.38, 0),
+        new THREE.MeshBasicMaterial({ color: color.clone().lerp(new THREE.Color(0xffffff), 0.35) })
+      );
+      gem.position.y = coneH * 1.05;
+      gem.renderOrder = 4;
+      outletGrp.add(gem);
+
+      grp.add(outletGrp);
     }
 
     if (grp.children.length) parentGroup.add(grp);
@@ -4933,8 +5533,12 @@ export class TerrainViewer {
       this.scene.remove(child);
       if (child.geometry) child.geometry.dispose();
       if (child.material) {
-        if (child.material.map) child.material.map.dispose();
-        child.material.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach((m) => { if (m?.map) m.map.dispose(); m?.dispose?.(); });
+        } else {
+          if (child.material.map) child.material.map.dispose();
+          child.material.dispose();
+        }
       }
     });
     this.waypointMarkers = [];
@@ -4973,6 +5577,7 @@ export class TerrainViewer {
     this._personParts = null;
     this._cursorGroup = null;
     this._cursorCone = null;
+    this._cursorRing = null;
     this._cursorHeight = 0;
     this._pickables = [];
     this._lineMaterials = [];
