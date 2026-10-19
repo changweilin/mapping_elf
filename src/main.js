@@ -2199,8 +2199,14 @@ function initWaypointSettings() {
       }
       apply(el.checked);
       localStorage.setItem(storageKey, el.checked ? '1' : '0');
+      renderWeatherPanel();
+      renderCatchmentPanel();
       refreshOpenWeatherCards();
       syncCatchmentBasins();
+      if (el.checked) {
+        if (id.includes('catchment')) autoFetchCatchment();
+        else autoFetchWeather();
+      }
     });
   };
   bindDetailToggle('wp-detail-weather', LS_WP_DETAIL_WEATHER_KEY, wpDetailWeather, (v) => { wpDetailWeather = v; });
@@ -11646,6 +11652,8 @@ function getSavedWeatherCellValue(cells, key) {
 
 const WEATHER_CONTENT_KEYS = [...WEATHER_TOP_ROWS, ...WEATHER_MIDDLE_ROWS].map(row => row.key);
 const WEATHER_DETAIL_KEYS = WEATHER_CONTENT_KEYS.filter(key => key !== 'weather');
+const WEATHER_BASIC_KEYS = ['precipitation', 'precipProb', 'humidity', 'windSpeed', 'temperature'];
+const WEATHER_FULL_DETAIL_KEYS = WEATHER_DETAIL_KEYS.filter(key => !WEATHER_BASIC_KEYS.includes(key));
 
 function isMeaningfulWeatherValue(value) {
   const text = String(value ?? '').trim();
@@ -11658,16 +11666,44 @@ function hasSavedWeatherCellField(cells, key) {
     || (key === 'weather' && (cells._weatherCode != null || isMeaningfulWeatherValue(cells._icon)));
 }
 
-function hasSavedWeatherDetailInfo(cells) {
+function hasSavedWeatherBasicInfo(cells) {
   if (!cells) return false;
-  return WEATHER_DETAIL_KEYS.some(key =>
+  return WEATHER_BASIC_KEYS.some(key =>
     hasSavedWeatherCellField(cells, key) && isMeaningfulWeatherValue(getSavedWeatherCellValue(cells, key))
   );
 }
 
+function hasSavedWeatherFullDetailInfo(cells) {
+  if (!cells) return false;
+  return WEATHER_FULL_DETAIL_KEYS.some(key =>
+    hasSavedWeatherCellField(cells, key) && isMeaningfulWeatherValue(getSavedWeatherCellValue(cells, key))
+  );
+}
+
+function hasWeatherDataBasicInfo(data, pt = null) {
+  if (!data) return false;
+  return WEATHER_BASIC_KEYS.some(key => isMeaningfulWeatherValue(getCellValue(data, key, pt)));
+}
+
+function hasWeatherDataFullDetailInfo(data, pt = null) {
+  if (!data) return false;
+  return WEATHER_FULL_DETAIL_KEYS.some(key => isMeaningfulWeatherValue(getCellValue(data, key, pt)));
+}
+
+function hasSavedWeatherDetailInfo(cells, pt = null) {
+  if (!cells) return false;
+  if (pt && !weatherDetailEnabledFor(pt)) {
+    return hasSavedWeatherBasicInfo(cells);
+  }
+  return hasSavedWeatherFullDetailInfo(cells);
+}
+
 function hasWeatherDataDetailInfo(data, pt = null) {
   if (!data) return false;
-  return WEATHER_DETAIL_KEYS.some(key => isMeaningfulWeatherValue(getCellValue(data, key, pt)));
+  if (pt && !weatherDetailEnabledFor(pt)) {
+    return hasWeatherDataBasicInfo(data, pt);
+  }
+  return hasWeatherDataFullDetailInfo(data, pt);
 }
 
 function getWeatherTableCellDisplayValue(colIdx, key) {
@@ -11678,7 +11714,9 @@ function getWeatherTableCellDisplayValue(colIdx, key) {
 }
 
 function hasWeatherTableDetailInfo(colIdx) {
-  return WEATHER_DETAIL_KEYS.some(key => getWeatherTableCellDisplayValue(colIdx, key) !== null);
+  const pt = weatherPoints[colIdx];
+  const keys = (pt && !weatherDetailEnabledFor(pt)) ? WEATHER_BASIC_KEYS : WEATHER_DETAIL_KEYS;
+  return keys.some(key => getWeatherTableCellDisplayValue(colIdx, key) !== null);
 }
 
 function weatherCellsMatchSchedule(cells, dateStr, hour) {
@@ -11691,9 +11729,9 @@ function weatherCellsMatchSchedule(cells, dateStr, hour) {
   return true;
 }
 
-function hasCompletedWeatherLoad(cells, dateStr, hour) {
+function hasCompletedWeatherLoad(cells, dateStr, hour, pt = null) {
   if (!cells || !weatherCellsMatchSchedule(cells, dateStr, hour)) return false;
-  return hasSavedWeatherDetailInfo(cells);
+  return hasSavedWeatherDetailInfo(cells, pt);
 }
 
 function markWeatherCellsLoaded(cells, dateStr, hour) {
@@ -11847,10 +11885,11 @@ function showWaypointNamePeek(anchor, pt, fallbackIdx = 0) {
 }
 
 function getWeatherTableVisibleIndices() {
-  const indices = weatherPoints.map((_, i) => i);
-  if (!weatherTableCollapsed) return indices;
-  const main = indices.filter(i => weatherPoints[i]?.isWaypoint && !weatherPoints[i]?.isReturn);
-  return main.length > 0 ? main : indices;
+  if (!weatherTableCollapsed) return weatherPoints.map((_, i) => i);
+  const main = weatherPoints
+    .map((pt, i) => (pt.isWaypoint && !pt.isReturn ? i : -1))
+    .filter(i => i >= 0);
+  return main.length > 0 ? main : weatherPoints.map((_, i) => i);
 }
 
 function setWeatherTableCollapsed(collapsed) {
@@ -14446,7 +14485,11 @@ function orderByLoadPriority(items, ptOf, tierOf = null) {
 // forced refresh should fill the empty columns before redoing the complete ones.
 function weatherDataTier(pt, colIdx, dateStr, hour) {
   const stored = getSavedWeatherCells(pt);
-  if (hasCompletedWeatherLoad(stored, dateStr, hour) || hasWeatherTableDetailInfo(colIdx)) return DATA_TIER_COMPLETE;
+  const wantsDetail = weatherDetailEnabledFor(pt);
+  const hasComplete = wantsDetail
+    ? (hasCompletedWeatherLoad(stored, dateStr, hour, pt) || hasWeatherTableDetailInfo(colIdx))
+    : hasCompletedWeatherLoad(stored, dateStr, hour, pt);
+  if (hasComplete) return DATA_TIER_COMPLETE;
   const partial = !!stored && WEATHER_ROWS.some((row) => hasSavedWeatherCellField(stored, row.key));
   return partial ? DATA_TIER_PARTIAL : DATA_TIER_NONE;
 }
@@ -14507,7 +14550,7 @@ async function fetchAllWeatherData(options = {}) {
       const cached = hasWeatherDataDetailInfo(cacheHit?.data, pt) ? cacheHit.data : null;
       const saved = !force ? getSavedWeatherCells(pt) : null;
       const tableLoaded = !force && hasWeatherTableDetailInfo(i);
-      const savedLoaded = !force && (hasCompletedWeatherLoad(saved, dateStr, hour) || tableLoaded);
+      const savedLoaded = !force && (hasCompletedWeatherLoad(saved, dateStr, hour, pt) || tableLoaded);
       return {
         pt,
         i,
@@ -14521,16 +14564,25 @@ async function fetchAllWeatherData(options = {}) {
         needsFetch: !!dateStr && (force || (!cached && !savedLoaded)),
       };
     });
+  if (targetStates.length === 0) {
+    if (isInitialWeatherLoad) initialWeatherLoadPending = false;
+    return;
+  }
   const needsNetworkFetch = targetStates.some(state => state.needsFetch);
   minimizeWeatherCardsForLoading(targetStates);
   if (!needsNetworkFetch) {
     targetStates.forEach(({ pt, i, cached, cacheHit, saved, savedLoaded, dateStr, hour }) => {
       if (cached) {
+        const wantsDetail = weatherDetailEnabledFor(pt);
         rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
         const cells = markWeatherCellsLoaded({ _icon: cached.weatherIcon, _weatherCode: cached.weatherCode }, dateStr, hour);
         WEATHER_ROWS.forEach(row => {
-          const val = getCellValue(cached, row.key, pt);
-          cells[row.key] = val;
+          if (!wantsDetail && !WEATHER_BASIC_KEYS.includes(row.key) && row.key !== 'weather') {
+            cells[row.key] = '—';
+          } else {
+            const val = getCellValue(cached, row.key, pt);
+            cells[row.key] = val;
+          }
         });
         saveWeatherCells(getSemanticKey(pt), cells);
         applySavedWeatherCellsToColumn(pt, i, cells);
@@ -14605,16 +14657,24 @@ async function fetchAllWeatherData(options = {}) {
       }
     });
     try {
-      const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, { signal: fetchRun.signal });
+      const wantsDetail = weatherDetailEnabledFor(pt);
+      const data = await weatherService.getWeatherAtPoint(pt.lat, pt.lng, dateStr, hour, {
+        basicOnly: !wantsDetail,
+        signal: fetchRun.signal,
+      });
       if (isWeatherFetchRunCancelled(fetchRun)) return 'cancel';
       setWeatherCacheData(pt, dateStr, hour, data, { cacheKey });
       const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
       WEATHER_ROWS.forEach(row => {
-        const val = getCellValue(data, row.key, pt);
-        cells[row.key] = val;
+        if (!wantsDetail && !WEATHER_BASIC_KEYS.includes(row.key) && row.key !== 'weather') {
+          cells[row.key] = '—';
+        } else {
+          const val = getCellValue(data, row.key, pt);
+          cells[row.key] = val;
+        }
         const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
         if (cell) {
-          updateWeatherTableCell(cell, row.key, val);
+          updateWeatherTableCell(cell, row.key, cells[row.key]);
           cell.classList.remove('loading', 'error');
         }
       });
@@ -14680,14 +14740,19 @@ async function fetchAllWeatherData(options = {}) {
           data = hasWeatherDataDetailInfo(cacheHit?.data, pt) ? cacheHit.data : null;
         }
         if (data) {
+          const wantsDetail = weatherDetailEnabledFor(pt);
           rememberWeatherCacheHitForPoint(cacheHit, pt, dateStr, hour);
           const cells = markWeatherCellsLoaded({ _icon: data.weatherIcon, _weatherCode: data.weatherCode }, dateStr, hour);
           WEATHER_ROWS.forEach(row => {
-            const val = getCellValue(data, row.key, pt);
-            cells[row.key] = val;
+            if (!wantsDetail && !WEATHER_BASIC_KEYS.includes(row.key) && row.key !== 'weather') {
+              cells[row.key] = '—';
+            } else {
+              const val = getCellValue(data, row.key, pt);
+              cells[row.key] = val;
+            }
             const cell = container.querySelector(`[data-col="${i}"][data-key="${row.key}"]`);
             if (cell) {
-              updateWeatherTableCell(cell, row.key, val);
+              updateWeatherTableCell(cell, row.key, cells[row.key]);
               cell.classList.remove('loading', 'error');
             }
           });
@@ -14806,7 +14871,13 @@ const CATCHMENT_TABLE_ROWS = [
 // waypoints only). Each column is still a cache-first per-point DEM read, so the
 // batch loader's progress bar + 300 ms spacing carry a long 副航點-heavy load.
 function getCatchmentColumnIndices() {
-  return getWeatherTableVisibleIndices();
+  const indices = weatherPoints
+    .map((_, i) => i)
+    .filter((i) => catchmentDetailEnabledFor(weatherPoints[i]));
+  const activeIndices = indices.length > 0 ? indices : weatherPoints.map((_, i) => i);
+  if (!weatherTableCollapsed) return activeIndices;
+  const main = activeIndices.filter(i => weatherPoints[i]?.isWaypoint && !weatherPoints[i]?.isReturn);
+  return main.length > 0 ? main : activeIndices;
 }
 
 // Column layout matching the weather table's look (voronoi widths over the chosen
@@ -15039,6 +15110,7 @@ function premarkFlatCatchmentPoints() {
 // check: the terrain is time-independent, so changing a column's date/hour must
 // never cost a second DEM read. Flat ground settles immediately with no fetch.
 function catchmentBlockNeedsFetch(pt, force = false) {
+  if (!pt || !catchmentDetailEnabledFor(pt)) return false;
   if (isPointFlat(pt)) {
     const semKey = getSemanticKey(pt);
     if (!isSettledCatchmentReadout(getSavedCatchmentCells(semKey))) {
@@ -15055,6 +15127,7 @@ function catchmentBlockNeedsFetch(pt, force = false) {
 // missing or were computed for a different schedule than the column shows now —
 // parity with weather's hasCompletedWeatherLoad gating.
 function catchmentInfoNeedsFetch(pt, colIdx, force = false) {
+  if (!pt || !catchmentDetailEnabledFor(pt)) return false;
   if (isPointFlat(pt)) return false;
   const saved = getSavedCatchmentCells(getSemanticKey(pt));
   if (!isSettledCatchmentReadout(saved)) return true;   // 區域 pass settles it first
@@ -15066,6 +15139,7 @@ function catchmentInfoNeedsFetch(pt, colIdx, force = false) {
 
 // Does this column still owe EITHER half of the work? Drives the auto-fetch.
 function catchmentColumnNeedsFetch(pt, colIdx) {
+  if (!pt || !catchmentDetailEnabledFor(pt)) return false;
   return catchmentBlockNeedsFetch(pt)
     || (catchmentHydroEnabled() && catchmentInfoNeedsFetch(pt, colIdx));
 }
@@ -15073,6 +15147,7 @@ function catchmentColumnNeedsFetch(pt, colIdx) {
 // Load-priority tier of a 集水區 column: nothing stored → an unsettled/partial
 // readout → a settled readout for the schedule the column currently shows.
 function catchmentDataTier(pt, colIdx) {
+  if (!pt || !catchmentDetailEnabledFor(pt)) return DATA_TIER_COMPLETE;
   const saved = getSavedCatchmentCells(getSemanticKey(pt));
   if (!saved) return DATA_TIER_NONE;
   if (!isSettledCatchmentReadout(saved)) return DATA_TIER_PARTIAL;
@@ -15116,6 +15191,7 @@ function autoFetchCatchment({ notify = false } = {}) {
 // Remembered hydrology is preserved so a re-run never blanks rows already on screen.
 // Returns { status, terrain[], hydro[]|null }. Aborts propagate to the caller.
 async function computeCatchmentBlock(pt, signal) {
+  if (!pt || !catchmentDetailEnabledFor(pt)) return null;
   const semKey = getSemanticKey(pt);
   const prev = getSavedCatchmentCells(semKey);
   if (isPointFlat(pt)) {
@@ -15159,6 +15235,7 @@ async function computeCatchmentBlock(pt, signal) {
 // getCatchmentFor below is a cache hit — no second DEM read. Returns the merged
 // readout, or null when the environment read gave nothing (cells keep what they had).
 async function computeCatchmentInfo(pt, colIdx, signal) {
+  if (!pt || !catchmentDetailEnabledFor(pt)) return null;
   const semKey = getSemanticKey(pt);
   const saved = getSavedCatchmentCells(semKey);
   if (!isSettledCatchmentReadout(saved) || saved.status === 'flat') return saved;
@@ -15233,13 +15310,15 @@ async function fetchAllCatchmentData(options = {}) {
   const allTargets = visibleIndices
     .filter((colIdx) => onlyColIndex === null || colIdx === onlyColIndex)   // single-column retry
     .map((colIdx) => ({ colIdx, pt: weatherPoints[colIdx] }))
-    .filter(({ pt }) => pt)
+    .filter(({ pt }) => pt && (onlyColIndex !== null || catchmentDetailEnabledFor(pt)))
     .map((t) => ({
       ...t,
       needsBlock: catchmentBlockNeedsFetch(t.pt, force),
       needsInfo: hydroOn && catchmentInfoNeedsFetch(t.pt, t.colIdx, force),
       tier: catchmentDataTier(t.pt, t.colIdx),   // captured before this pass rewrites the readouts
     }));
+
+  if (allTargets.length === 0) return;
 
   // Nothing needs a fetch → apply saved readouts synchronously, no progress bar
   // (mirrors weather's !needsNetworkFetch fast path).
@@ -15283,6 +15362,7 @@ async function fetchAllCatchmentData(options = {}) {
   // per-point setWaypointWeather so 已算完的航點先顯示集水區.
   const loadOneBlock = async ({ colIdx, pt }) => {
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    if (!catchmentDetailEnabledFor(pt)) return 'skip';
     await waitIfLoadPaused(run);                        // park here while 停止 is active
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
     setCatchmentColumnCells(colIdx, () => '…', 'terrain');
@@ -15312,6 +15392,7 @@ async function fetchAllCatchmentData(options = {}) {
   // here rather than being tallied (and retried) a second time.
   const loadOneInfo = async ({ colIdx, pt }) => {
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
+    if (!catchmentDetailEnabledFor(pt)) return 'skip';
     await waitIfLoadPaused(run);                        // park here while 停止 is active
     if (isCatchmentFetchRunCancelled(run)) return 'cancel';
     if (!isSettledCatchmentReadout(getSavedCatchmentCells(getSemanticKey(pt)))) return 'skip';
@@ -15540,7 +15621,7 @@ function getLoadedWeatherCardInfo(colIdx) {
   if (cached && hasWeatherDataDetailInfo(cached, pt)) return { data: cached, pt, dateStr, hour, colIdx };
 
   const saved = getSavedWeatherCells(pt);
-  if (hasCompletedWeatherLoad(saved, dateStr, hour)) {
+  if (hasCompletedWeatherLoad(saved, dateStr, hour, pt)) {
     return { cells: saved, pt, dateStr, hour, colIdx };
   }
   if (hasWeatherTableDetailInfo(colIdx)) {
@@ -15584,7 +15665,11 @@ function fetchWeatherForUnloadedCard(colIdx) {
   showNotification('開始載入此點天氣資訊...', 'info', 1600);
   // force:true guarantees a real re-fetch of this one column (bypasses any stale
   // partial state); it does NOT clear the whole temp cache (onlyColIndex is set).
-  fetchAllWeatherData({ onlyColIndex: colIdx, force: true });
+  fetchAllWeatherData({ onlyColIndex: colIdx, force: true }).then(() => {
+    if (hasLoadedWeatherCardInfo(colIdx) && !_wcStates.has(colIdx)) {
+      openWeatherCard(colIdx);
+    }
+  });
   return true;
 }
 

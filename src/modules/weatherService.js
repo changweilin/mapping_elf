@@ -212,16 +212,23 @@ export class WeatherService {
   }
 
   async _fetchForecastFull(lat, lng, dateStr, hour, options = {}) {
-    const hourly = [
-      'temperature_2m', 'apparent_temperature', 'relative_humidity_2m', 'dewpoint_2m',
-      'precipitation', 'precipitation_probability', 'weathercode',
-      'windspeed_10m', 'windgusts_10m', 'uv_index', 'visibility', 'cloudcover',
-    ].join(',');
-    const daily = [
-      'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'weathercode',
-      'windspeed_10m_max', 'windgusts_10m_max', 'sunrise', 'sunset',
-      'sunshine_duration', 'precipitation_probability_max', 'uv_index_max', 'shortwave_radiation_sum',
-    ].join(',');
+    const isBasic = !!options.basicOnly;
+    const hourly = (isBasic
+      ? ['temperature_2m', 'relative_humidity_2m', 'precipitation', 'precipitation_probability', 'weathercode', 'windspeed_10m']
+      : [
+        'temperature_2m', 'apparent_temperature', 'relative_humidity_2m', 'dewpoint_2m',
+        'precipitation', 'precipitation_probability', 'weathercode',
+        'windspeed_10m', 'windgusts_10m', 'uv_index', 'visibility', 'cloudcover',
+      ]
+    ).join(',');
+    const daily = (isBasic
+      ? ['precipitation_sum', 'weathercode']
+      : [
+        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'weathercode',
+        'windspeed_10m_max', 'windgusts_10m_max', 'sunrise', 'sunset',
+        'sunshine_duration', 'precipitation_probability_max', 'uv_index_max', 'shortwave_radiation_sum',
+      ]
+    ).join(',');
     const url = `${FORECAST_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&hourly=${hourly}&daily=${daily}&timezone=Asia%2FTaipei&start_date=${dateStr}&end_date=${dateStr}`;
     const resp = await fetch(url, { signal: options.signal });
     if (!resp.ok) throw new Error(`Forecast API error: ${resp.status}`);
@@ -229,15 +236,22 @@ export class WeatherService {
   }
 
   async _fetchHistoricalFull(lat, lng, dateStr, hour, options = {}) {
-    const hourly = [
-      'temperature_2m', 'apparent_temperature', 'relative_humidity_2m', 'dewpoint_2m',
-      'precipitation', 'weathercode', 'windspeed_10m', 'windgusts_10m', 'visibility', 'cloudcover',
-    ].join(',');
-    const daily = [
-      'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'weathercode',
-      'windspeed_10m_max', 'windgusts_10m_max', 'sunrise', 'sunset',
-      'sunshine_duration', 'shortwave_radiation_sum',
-    ].join(',');
+    const isBasic = !!options.basicOnly;
+    const hourly = (isBasic
+      ? ['temperature_2m', 'relative_humidity_2m', 'precipitation', 'weathercode', 'windspeed_10m']
+      : [
+        'temperature_2m', 'apparent_temperature', 'relative_humidity_2m', 'dewpoint_2m',
+        'precipitation', 'weathercode', 'windspeed_10m', 'windgusts_10m', 'visibility', 'cloudcover',
+      ]
+    ).join(',');
+    const daily = (isBasic
+      ? ['precipitation_sum', 'weathercode']
+      : [
+        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'weathercode',
+        'windspeed_10m_max', 'windgusts_10m_max', 'sunrise', 'sunset',
+        'sunshine_duration', 'shortwave_radiation_sum',
+      ]
+    ).join(',');
     const url = `${HISTORICAL_API}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&hourly=${hourly}&daily=${daily}&timezone=Asia%2FTaipei&start_date=${dateStr}&end_date=${dateStr}`;
     const resp = await fetch(url, { signal: options.signal });
     if (!resp.ok) throw new Error(`Historical API error: ${resp.status}`);
