@@ -4232,6 +4232,68 @@ body.route-list-dragging {
   line-height: 1.45;
 }
 
+/* 天氣資訊 / 集水區 map-corner panels (formerly 天氣設置 in the side panel). */
+.feature-panel {
+  width: 280px;
+}
+
+.feature-panel .measure-panel-head .shape-panel-title {
+  flex: 1;
+}
+
+.feature-panel .settings-group-label {
+  margin: 0 0 6px;
+}
+
+.feature-panel .catchment-settings-group,
+.feature-panel .weather-cache-settings {
+  padding: 0;
+}
+
+.feature-panel .weather-quick-actions,
+.feature-panel .catchment-quick-actions,
+.feature-panel .catchment-enable-row,
+.feature-panel .wp-display-matrix,
+.feature-panel .catchment-clear-row {
+  margin-bottom: 0;
+}
+
+.feature-panel .catchment-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feature-panel .wp-display-matrix {
+  grid-template-columns: 1fr 56px 56px;
+}
+
+.feature-enable-row {
+  grid-template-columns: 1fr;
+}
+
+.feature-panel-selects {
+  display: flex;
+  gap: 6px;
+}
+
+.feature-panel-selects select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+/* Collapsed info card whose detail is locked: still readable, visibly not expandable. */
+.wc-compact-data.is-locked {
+  cursor: not-allowed;
+}
+
 /* Route Mode Selector */
 .route-mode-selector {
   display: flex;

@@ -994,6 +994,21 @@ const weatherDetailEnabledFor = (pt) => (pt?.isWaypoint ? wpDetailWeather : imDe
 const catchmentDetailEnabledFor = (pt) =>
   catchmentEnabled && (pt?.isWaypoint ? wpDetailCatchment : imDetailCatchment);
 
+// 天氣資訊 feature master (its panel's 啟用 switch). Together with the data being
+// loaded it gates the info card's detail: without it the card stays on its
+// collapsed basic weather and cannot expand / switch to that feature's detail.
+const LS_WEATHER_ENABLED_KEY = 'mappingElf_weatherEnabled';
+let weatherEnabled = localStorage.getItem(LS_WEATHER_ENABLED_KEY) !== '0';   // default true
+const weatherDetailUnlocked = (colIdx) => weatherEnabled && hasLoadedWeatherCardInfo(colIdx);
+// "Loaded" for 集水區 = this point's basin is already in the retained cache
+// (filled by 取得集水區 / the 詳細集水區 view). Direct lookup, not
+// getCatchmentCacheHit: that prunes + persists, too heavy for per-card checks.
+const catchmentDetailUnlocked = (colIdx) => {
+  const pt = weatherPoints[colIdx];
+  return catchmentEnabled && !!pt && !!cachedCatchmentData?.[catchmentCoordKey(pt.lat, pt.lng)]?.result;
+};
+const cardDetailUnlocked = (colIdx) => weatherDetailUnlocked(colIdx) || catchmentDetailUnlocked(colIdx);
+
 // Lock (never hide) every 集水區 entry point, so the feature stays discoverable
 // and the switch's effect is visible right where the user is already looking.
 function syncCatchmentEnabledUI() {
@@ -1522,6 +1537,7 @@ function applySettingsFromStorage() {
   imDetailCatchment = localStorage.getItem(LS_IM_DETAIL_CATCHMENT_KEY) === '1';
   catchmentEnabled = localStorage.getItem(LS_CATCHMENT_ENABLED_KEY) !== '0';
   catchmentInfoEnabled = localStorage.getItem(LS_CATCHMENT_INFO_KEY) !== '0';
+  weatherEnabled = localStorage.getItem(LS_WEATHER_ENABLED_KEY) !== '0';
   try {
     paceParams = { ...DEFAULT_PACE_PARAMS, ...JSON.parse(localStorage.getItem(LS_PACE_PARAMS_KEY) || 'null') };
   } catch {
@@ -1597,6 +1613,8 @@ function applySettingsFromStorage() {
   if (imDetailCatchmentEl) imDetailCatchmentEl.checked = imDetailCatchment;
   applyCatchmentEnabled(catchmentEnabled, { persist: false });
   applyCatchmentInfoEnabled(catchmentInfoEnabled, { persist: false });
+  const weatherEnableReloadEl = document.getElementById('weather-enable');
+  if (weatherEnableReloadEl) weatherEnableReloadEl.checked = weatherEnabled;
   syncWeatherCacheSettingsUI();
 
   // Refresh UI
@@ -2223,6 +2241,20 @@ function initWaypointSettings() {
   }
   applyCatchmentEnabled(catchmentEnabled, { persist: false });
   applyCatchmentInfoEnabled(catchmentInfoEnabled, { persist: false });
+
+  const weatherEnableEl = document.getElementById('weather-enable');
+  if (weatherEnableEl) {
+    weatherEnableEl.checked = weatherEnabled;
+    weatherEnableEl.addEventListener('change', () => {
+      if (isRouteWeatherBusy()) {
+        runOrDeferBusySetting('weather-enable', () => weatherEnableEl.dispatchEvent(new Event('change')));
+        return;
+      }
+      weatherEnabled = weatherEnableEl.checked;
+      localStorage.setItem(LS_WEATHER_ENABLED_KEY, weatherEnabled ? '1' : '0');
+      refreshOpenWeatherCards();
+    });
+  }
 
   const importAutoSortEl = document.getElementById('import-auto-sort-enable');
   if (importAutoSortEl) {
@@ -3938,7 +3970,7 @@ function updateTerrainToggleAvailability() {
   if (tvToggleCatchment) {
     tvToggleCatchment.disabled = !hasWaypoints || !catchmentEnabled;
     tvToggleCatchment.title = !catchmentEnabled
-      ? '集水區功能已關閉（可在側欄「天氣設置」開啟）'
+      ? '集水區功能已關閉（可在左下「集水區」開啟）'
       : hasWaypoints
         ? '集水區（開啟時自動計算各主航點的集水範圍並貼合地形顯示）'
         : '此路線沒有可計算集水區的主航點';
@@ -4488,6 +4520,41 @@ btnMyLocation.addEventListener('click', async () => {
   }
 });
 
+// =========== 天氣資訊 / 集水區 feature panels ===========
+// Map-corner tools next to 量測工具 / 繪圖板 / 魔法陣 (they share the corner, so
+// opening any one closes the rest). The panels own the weather / catchment
+// settings; the waypoint info card's detail stays locked until the matching
+// feature is enabled AND loaded (see cardDetailUnlocked).
+const weatherPanel = document.getElementById('weather-panel');
+const catchmentPanel = document.getElementById('catchment-panel');
+const btnWeatherTool = document.getElementById('btn-weather-tool');
+const btnCatchmentTool = document.getElementById('btn-catchment-tool');
+
+function setWeatherPanelActive(active) {
+  if (!weatherPanel) return;
+  if (active) { setMeasureActive(false); setShapeActive(false); setStarActive(false); setCatchmentPanelActive(false); }
+  weatherPanel.classList.toggle('hidden', !active);
+  btnWeatherTool?.setAttribute('aria-pressed', String(active));
+}
+
+function setCatchmentPanelActive(active) {
+  if (!catchmentPanel) return;
+  if (active) { setMeasureActive(false); setShapeActive(false); setStarActive(false); setWeatherPanelActive(false); }
+  catchmentPanel.classList.toggle('hidden', !active);
+  btnCatchmentTool?.setAttribute('aria-pressed', String(active));
+}
+
+// Called by the other corner tools when they open.
+function closeFeaturePanels() {
+  setWeatherPanelActive(false);
+  setCatchmentPanelActive(false);
+}
+
+btnWeatherTool?.addEventListener('click', () => setWeatherPanelActive(weatherPanel?.classList.contains('hidden')));
+btnCatchmentTool?.addEventListener('click', () => setCatchmentPanelActive(catchmentPanel?.classList.contains('hidden')));
+document.getElementById('btn-weather-close')?.addEventListener('click', () => setWeatherPanelActive(false));
+document.getElementById('btn-catchment-close')?.addEventListener('click', () => setCatchmentPanelActive(false));
+
 // =========== F2: 2D map measurement tools ===========
 // Two modes share one panel + Leaflet overlay layer:
 //   segment — click two points; snap each to the planned track and report the
@@ -5012,6 +5079,7 @@ function setMeasureMode(mode) {
 
 function setMeasureActive(active) {
   if (!measurePanel) return;
+  if (active) closeFeaturePanels();
   mapManager.measureMode = active ? measureMode : null;
   measurePanel.classList.toggle('hidden', !active);
   btnMeasureTool?.setAttribute('aria-pressed', String(active));
@@ -5564,6 +5632,7 @@ function setShapeActive(active) {
   if (active) {
     setMeasureActive(false);   // shares the same corner of the map
     setStarActive(false);
+    closeFeaturePanels();
     syncShapeCanvasSize();
     hydrateShapeStrokes();
     redrawShapeCanvas();
@@ -7297,6 +7366,7 @@ function setStarActive(active) {
   starPanel.classList.toggle('hidden', !active);
   btnStarTool?.setAttribute('aria-pressed', String(active));
   if (active) {
+    closeFeaturePanels();
     ensureStarLayers();
     if (!starResults.length) {
       const recentWp = mapManager.getRecentWaypoint?.();
@@ -15187,7 +15257,7 @@ async function fetchAllCatchmentData(options = {}) {
     if (!wasCancelled) busyTask.set({ detail: '完成', progress: 100 });
     busyTask.end();
     if (fetchBtn) fetchBtn.disabled = false;
-    if (!wasCancelled) syncCatchmentBasins();   // reconcile every catchment-view basin at completion
+    if (!wasCancelled) { syncCatchmentBasins(); refreshOpenWeatherCards(); }   // reconcile every catchment-view basin + card lock state at completion
     // Honest completion (parity with weather): total blackout keeps the restricted
     // hint; a partial failure warns + invites a per-column retry; else success.
     if (!wasCancelled) {
@@ -15482,6 +15552,7 @@ function setWeatherCardMode(colIdx, mode, options = {}) {
     if (options.notify) showWeatherNotLoadedNotice();
     return;
   }
+  if (mode === 'full' && !cardDetailUnlocked(colIdx)) mode = 'compact';
   closeOtherOpenWeatherCardsOnMobile(colIdx, mode);
   const prevMode = _wcStates.get(colIdx);
   _wcStates.set(colIdx, mode);
@@ -15605,10 +15676,23 @@ function catchmentViewKeyFor(colIdx) {
   return pt ? getSemanticKey(pt) : `idx:${colIdx}`;
 }
 function isCatchmentView(colIdx) {
-  // Master switch off → every card reads as weather view, but the remembered
-  // choice is kept so re-enabling restores the cards the user had flipped.
-  if (!catchmentEnabled) return false;
+  // Feature off / this point's basin not loaded yet → every card reads as weather
+  // view, but the remembered choice is kept so re-enabling / loading restores the
+  // cards the user had flipped.
+  if (!catchmentDetailUnlocked(colIdx)) return false;
   return _wcCatchmentViewMemory.get(catchmentViewKeyFor(colIdx)) === true;
+}
+// What a FULL card actually shows: the catchment side when chosen, or when it is the
+// only unlocked side (weather disabled / not loaded).
+function cardShowsCatchment(colIdx) {
+  return isCatchmentView(colIdx) || (!weatherDetailUnlocked(colIdx) && catchmentDetailUnlocked(colIdx));
+}
+// True (and tells the user why) when a compact card is asked to expand but neither
+// the weather nor the catchment detail is unlocked.
+function blockLockedCardExpand(colIdx, curMode) {
+  if (curMode !== 'compact' || cardDetailUnlocked(colIdx)) return false;
+  showNotification('詳細資訊已鎖定：請先在左下「天氣資訊」/「集水區」功能啟用並載入', 'info', 2200);
+  return true;
 }
 function setCatchmentViewMemory(colIdx, on) {
   _wcCatchmentViewMemory.set(catchmentViewKeyFor(colIdx), !!on);
@@ -15787,13 +15871,14 @@ function drawCatchmentPolygonForCard(colIdx) {
   drawBasinOverlay(colIdx, pt.lat, pt.lng, _weatherPointGradColor(pt));
 }
 
-function buildWeatherCardViewToggleHtml(showCatchment) {
-  // Locked rather than removed when the master switch is off: the card keeps its
-  // familiar shape and the user can see why the 集水區 side is unavailable.
-  const lock = catchmentEnabled ? '' : ' disabled title="集水區功能已關閉"';
+function buildWeatherCardViewToggleHtml(showCatchment, { weatherLocked = false, catchmentLocked = !catchmentEnabled } = {}) {
+  // Locked rather than removed: the card keeps its familiar shape and the user can
+  // see why a side is unavailable (feature off, or its data not loaded yet).
+  const wLock = weatherLocked ? ' disabled title="天氣資訊未啟用或尚未載入"' : '';
+  const cLock = catchmentLocked ? ` disabled title="${catchmentEnabled ? '集水區尚未載入' : '集水區功能已關閉'}"` : '';
   return `<div class="wc-view-toggle" role="tablist">
-    <button class="wc-view-btn${showCatchment ? '' : ' active'}" type="button" data-wc-view="weather" role="tab" aria-selected="${!showCatchment}">天氣</button>
-    <button class="wc-view-btn${showCatchment ? ' active' : ''}" type="button" data-wc-view="catchment" role="tab" aria-selected="${showCatchment}"${lock}>集水區</button>
+    <button class="wc-view-btn${showCatchment ? '' : ' active'}" type="button" data-wc-view="weather" role="tab" aria-selected="${!showCatchment}"${wLock}>天氣</button>
+    <button class="wc-view-btn${showCatchment ? ' active' : ''}" type="button" data-wc-view="catchment" role="tab" aria-selected="${showCatchment}"${cLock}>集水區</button>
   </div>`;
 }
 
@@ -16123,8 +16208,12 @@ function _renderWeatherCard(colIdx) {
   }
 
   const { data, cells, pt, dateStr, hour } = info;
-  const isCompact = state === 'compact';
-  const isFull = state === 'full';
+  // Detail locked (feature not enabled / not loaded): collapsed basic weather only.
+  const detailUnlocked = cardDetailUnlocked(colIdx);
+  const effectiveState = (state === 'full' && !detailUnlocked) ? 'compact' : state;
+  if (effectiveState !== state) _wcStates.set(colIdx, effectiveState);
+  const isCompact = effectiveState === 'compact';
+  const isFull = effectiveState === 'full';
   // Basin overlays are reconciled centrally by syncCatchmentBasins() (called from
   // the view toggle, refreshOpenWeatherCards, and route rebuilds), so the overlay
   // follows the catchment-view choice regardless of card size/open-state — full,
@@ -16189,7 +16278,8 @@ function _renderWeatherCard(colIdx) {
   if (isCompact) {
     html += `<div class="wc-compact">`;
     html += `<button class="wc-compact-icon q-close" type="button" title="Close weather card" aria-label="Close weather card">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-compact-weather-icon')}</button>`;
-    html += `<button class="wc-compact-data q-toggle" type="button" title="Expand weather details" aria-label="Expand weather details">`;
+    const expandLabel = detailUnlocked ? 'Expand weather details' : 'Details locked: enable and load weather / catchment first';
+    html += `<button class="wc-compact-data q-toggle${detailUnlocked ? '' : ' is-locked'}" type="button" title="${expandLabel}" aria-label="${expandLabel}"${detailUnlocked ? '' : ' aria-disabled="true"'}>`;
     html += buildCompactWeatherValuesHtml([temp, precipitation, precipProb, windSpeed]);
     html += `</button>`;
     html += `</div>`;
@@ -16198,11 +16288,14 @@ function _renderWeatherCard(colIdx) {
     html += `<div class="wc-weather-main"><button class="wc-weather-icon q-weather-icon-close" type="button" title="關閉天氣卡" aria-label="關閉天氣卡">${buildWeatherRoundIconHtml(displayWeatherIcon, 'wc-main-weather-icon')}</button><span class="wc-weather-desc">${wDesc}</span><span class="wc-weather-temp">${tempIcon}${temp}</span></div>`;
   }
   if (isFull) {
-    const showCatch = isCatchmentView(colIdx);
+    const showCatch = cardShowsCatchment(colIdx);
     // Time controls sit in the shared block above the weather/集水區 toggle so they
     // apply to whichever view is active.
     html += buildWeatherCardTimeControlsHtml(pt, colIdx, dateStr, hour);
-    html += buildWeatherCardViewToggleHtml(showCatch);
+    html += buildWeatherCardViewToggleHtml(showCatch, {
+      weatherLocked: !weatherDetailUnlocked(colIdx),
+      catchmentLocked: !catchmentDetailUnlocked(colIdx),
+    });
     if (showCatch) {
       html += `<div class="wc-catchment"></div>`;
     } else if (!weatherDetailEnabledFor(pt)) {
@@ -16463,6 +16556,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   root.querySelector('.q-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curMode = _wcStates.get(colIdx) || 'compact';
+    if (blockLockedCardExpand(colIdx, curMode)) return;
     const nextMode = curMode === 'compact' ? 'full' : 'compact';
     const targets = getWeatherCardInteractionIndices(colIdx, curMode);
     setWeatherCardModeForTargets(targets, nextMode, colIdx);
@@ -16552,7 +16646,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const toCatch = btn.dataset.wcView === 'catchment';
-      if (toCatch === isCatchmentView(colIdx)) return;   // already in this view
+      if (toCatch === cardShowsCatchment(colIdx)) return;   // already in this view
       // Remember the choice for the whole collective set (so closed/compact cards
       // adopt it too), then re-render only the open cards via the safe refresh
       // path (raw _renderWeatherCard would close a momentarily-unloaded card).
@@ -16566,7 +16660,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
 
   // If this full card is in catchment view, fill its panel (the basin overlay on
   // the map is handled separately by syncCatchmentBasins).
-  if (isCatchmentView(colIdx)) {
+  if (cardShowsCatchment(colIdx)) {
     const container = root.querySelector('.wc-catchment');
     const info = _getWeatherCardData(colIdx);
     if (container && info?.pt) {
@@ -16624,6 +16718,7 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
       if (dy < 0) {
         // Swipe up: toggle between compact and full
         const curMode = _wcStates.get(colIdx) || 'compact';
+        if (blockLockedCardExpand(colIdx, curMode)) return;
         const nextMode = curMode === 'compact' ? 'full' : 'compact';
         const targets = getWeatherCardInteractionIndices(colIdx, curMode);
         setWeatherCardModeForTargets(targets, nextMode, colIdx);
