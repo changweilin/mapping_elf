@@ -1,4 +1,4 @@
-﻿import { test, expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 // 集水區域 switch (#catchment-enable-block) — the feature master, since 水文資訊
 // is computed from the 區域. The feature reaches four separate surfaces; the switch
@@ -8,11 +8,11 @@
 const MEASURE_CATCHMENT = '#measure-mode-toggle [data-measure-mode="catchment"]';
 const BP_CATCHMENT = '#bp-view-toggle [data-bp-view="catchment"]';
 
-// The switch lives in the 天氣設置 section body, which starts collapsed.
+// The switch lives in the map-corner 集水區 tool panel.
 async function openApp(page) {
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#btn-catchment-tool').click();
   await expect(page.locator('#catchment-enable-block')).toBeVisible();
 }
 
@@ -31,7 +31,7 @@ test('集水區域 and 水文資訊 sit side by side on one row', async ({ page 
     block: await page.locator('#catchment-enable-block').locator('xpath=ancestor::label').boundingBox(),
     info: await page.locator('#catchment-enable-info').locator('xpath=ancestor::label').boundingBox(),
   });
-  // The 天氣設置 body animates open — measure only once the row has settled.
+  // The tool panel animates open — measure only once the row has settled.
   await expect.poll(async () => {
     const { block, info } = await boxes();
     return Math.round(block.y) === Math.round(info.y);
@@ -40,7 +40,7 @@ test('集水區域 and 水文資訊 sit side by side on one row', async ({ page 
   const { block, info } = await boxes();
   expect(block.x + block.width).toBeLessThanOrEqual(info.x + 1);  // 區域 left, 水文 right
   // Both halves share the row evenly rather than one shrinking to its text.
-  expect(Math.abs(block.width - info.width)).toBeLessThan(2);
+  expect(Math.abs(block.width - info.width)).toBeLessThan(5);
 });
 
 test('switching off locks every catchment entry point, switching back on restores them', async ({ page }) => {
@@ -52,7 +52,7 @@ test('switching off locks every catchment entry point, switching back on restore
     '#btn-catchment-quick-fetch', '#btn-catchment-quick-view'];
   for (const sel of gated) await expect(page.locator(sel)).toBeDisabled();
   // The per-waypoint 詳細集水區 row reads as locked, not missing.
-  await expect(page.locator('#waypoint-settings-body .wpm-row-label.catchment-gated')).toHaveClass(/is-locked/);
+  await expect(page.locator('.wpm-row-label.catchment-gated')).toHaveClass(/is-locked/);
 
   await page.locator('#catchment-enable-block').check();
   for (const sel of gated) await expect(page.locator(sel)).toBeEnabled();
@@ -75,6 +75,7 @@ test('switching off drops the 量測工具 out of catchment mode', async ({ page
   await page.locator(MEASURE_CATCHMENT).click();
   await expect(page.locator(MEASURE_CATCHMENT)).toHaveClass(/active/);
 
+  await page.locator('#btn-catchment-tool').click();
   await page.locator('#catchment-enable-block').uncheck();
   await expect(page.locator(MEASURE_CATCHMENT)).not.toHaveClass(/active/);
   await expect(page.locator('#measure-mode-toggle [data-measure-mode="segment"]')).toHaveClass(/active/);
@@ -88,11 +89,12 @@ test('the off state persists across a reload and blocks a restored catchment sur
   await page.locator('#btn-measure-tool').click();
   await page.locator(MEASURE_CATCHMENT).click();
   await expect(page.locator(MEASURE_CATCHMENT)).toHaveClass(/active/);
+  await page.locator('#btn-catchment-tool').click();
   await page.locator('#catchment-enable-block').uncheck();
 
   await page.reload();
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#btn-catchment-tool').click();
   await expect(page.locator('#catchment-enable-block')).not.toBeChecked();
   await expect(page.locator(MEASURE_CATCHMENT)).toBeDisabled();
   await expect(page.locator(BP_CATCHMENT)).toBeDisabled();

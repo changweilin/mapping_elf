@@ -127,7 +127,7 @@ test('水文資訊 off: 水文 rows are neither rendered nor requested', async (
   await expect(cells(page, 'hydro').filter({ hasText: '…' })).toHaveCount(0, { timeout: 60000 });
   await overlayHidden(page);
 
-  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#btn-catchment-tool').click();
   await page.locator('#catchment-enable-info').uncheck();
 
   // The 水文 half disappears from the table; 區域 rows stay.
@@ -154,13 +154,13 @@ test('the 水文資訊 choice persists on its own, independently of 集水區域
   await page.addInitScript(() => { localStorage.setItem('mappingElf_language', 'zh-TW'); });
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#btn-catchment-tool').click();
   await expect(page.locator('#catchment-enable-info')).toBeChecked();
 
   await page.locator('#catchment-enable-info').uncheck();
   await page.reload();
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#btn-catchment-tool').click();
   await expect(page.locator('#catchment-enable-info')).not.toBeChecked();
   await expect(page.locator('#catchment-enable-block')).toBeChecked();   // 區域 untouched
 

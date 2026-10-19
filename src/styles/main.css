@@ -4097,7 +4097,7 @@ body.route-list-dragging {
 /* 集水區域 + 水文資訊 sit side by side: one master and its dependent half. */
 .catchment-enable-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 8px;
 }
@@ -4106,6 +4106,7 @@ body.route-list-dragging {
   display: flex;
   justify-content: center;
   width: 100%;
+  min-width: 0;
   height: 32px;
 }
 
@@ -5286,6 +5287,17 @@ body.route-list-dragging {
   /* Bottom panel cannot exceed landscape viewport */
   #bottom-panel {
     max-height: 100vh;
+  }
+
+  .map-action-btns {
+    bottom: 10px;
+    max-height: calc(100dvh - var(--toolbar-height) - 20px);
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .map-action-btns::-webkit-scrollbar {
+    display: none;
   }
 }
 

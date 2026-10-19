@@ -1000,13 +1000,7 @@ const catchmentDetailEnabledFor = (pt) =>
 const LS_WEATHER_ENABLED_KEY = 'mappingElf_weatherEnabled';
 let weatherEnabled = localStorage.getItem(LS_WEATHER_ENABLED_KEY) !== '0';   // default true
 const weatherDetailUnlocked = (colIdx) => weatherEnabled && hasLoadedWeatherCardInfo(colIdx);
-// "Loaded" for 集水區 = this point's basin is already in the retained cache
-// (filled by 取得集水區 / the 詳細集水區 view). Direct lookup, not
-// getCatchmentCacheHit: that prunes + persists, too heavy for per-card checks.
-const catchmentDetailUnlocked = (colIdx) => {
-  const pt = weatherPoints[colIdx];
-  return catchmentEnabled && !!pt && !!cachedCatchmentData?.[catchmentCoordKey(pt.lat, pt.lng)]?.result;
-};
+const catchmentDetailUnlocked = (colIdx) => catchmentEnabled && !!weatherPoints[colIdx];
 const cardDetailUnlocked = (colIdx) => weatherDetailUnlocked(colIdx) || catchmentDetailUnlocked(colIdx);
 
 // Lock (never hide) every 集水區 entry point, so the feature stays discoverable

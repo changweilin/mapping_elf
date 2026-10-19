@@ -3,8 +3,7 @@ import { coneElevation, flood } from './helpers/apiMocks.mjs';
 
 // These drive Leaflet weather-card popups that pan/animate for a moment after
 // opening; under CI/load the popup can still be settling when a step fires.
-// Retry to absorb that environmental flakiness (the feature itself is stable).
-test.describe.configure({ retries: 2 });
+test.describe.configure({ retries: 0 });
 
 // Weather-card catchment view (both waypoint and GPS-cursor cards) + the
 // per-point "set to now" buttons. A cone DEM (drains to the map centre) lets a
@@ -47,7 +46,7 @@ function forecast(page) {
 
 
 
-// Two waypoints (wp1 at the cone centre → a large basin) with weather loaded.
+// Two waypoints (wp1 at the cone centre → a large basin) with weather and catchment loaded.
 // `collective` links the two waypoint cards; when off, one centred card opens.
 async function setupRoute(page, { collective = false } = {}) {
   await page.addInitScript((collective) => {
@@ -185,7 +184,7 @@ test('水文資訊 off: the card shows 集水區域 alone, not the side-by-side 
   await expect(card.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
   await expect(card.locator('.wc-catchment .wc-catch-col')).toHaveCount(2);
 
-  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#btn-catchment-tool').click();
   await page.locator('#catchment-enable-info').uncheck();
 
   await expect(card.locator('.wc-catchment .wc-catch-pair')).toHaveCount(0);

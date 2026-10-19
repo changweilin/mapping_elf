@@ -1225,10 +1225,22 @@ function translateElementAttributes(el) {
     const translated = t(el.dataset.i18n);
     if (el.textContent !== translated) el.textContent = translated;
   }
-  if (el.dataset.i18nTitle) el.setAttribute('title', t(el.dataset.i18nTitle));
-  if (el.dataset.i18nPlaceholder) el.setAttribute('placeholder', t(el.dataset.i18nPlaceholder));
-  if (el.dataset.i18nAriaLabel) el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
-  if (el.dataset.i18nAlt) el.setAttribute('alt', t(el.dataset.i18nAlt));
+  if (el.dataset.i18nTitle) {
+    const tr = t(el.dataset.i18nTitle);
+    if (el.getAttribute('title') !== tr) el.setAttribute('title', tr);
+  }
+  if (el.dataset.i18nPlaceholder) {
+    const tr = t(el.dataset.i18nPlaceholder);
+    if (el.getAttribute('placeholder') !== tr) el.setAttribute('placeholder', tr);
+  }
+  if (el.dataset.i18nAriaLabel) {
+    const tr = t(el.dataset.i18nAriaLabel);
+    if (el.getAttribute('aria-label') !== tr) el.setAttribute('aria-label', tr);
+  }
+  if (el.dataset.i18nAlt) {
+    const tr = t(el.dataset.i18nAlt);
+    if (el.getAttribute('alt') !== tr) el.setAttribute('alt', tr);
+  }
   ['title', 'placeholder', 'aria-label', 'alt'].forEach(attr => {
     if (!el.hasAttribute(attr)) return;
     const key = `i18nOriginal${attr.replace(/-([a-z])/g, (_, c) => c.toUpperCase())}`;

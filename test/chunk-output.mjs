@@ -14,13 +14,12 @@ const assetsDir = path.resolve('dist', 'assets');
 // lowered to the new measurement rather than left as headroom. Re-baseline
 // deliberately (measure, then set ≈5% above) when a feature legitimately grows
 // a chunk — never to silence an unexplained jump.
-// Measured 2026-08-12: index 735.1 kB, three 590.6 kB, star 60.8 kB.
-// index moved 699.8 → 735.1 kB with the 魔法陣 tool — its main.js wiring plus
-// 115 new 8-language phrases. The tool's own modules are split into star-*
-// (vite.config.js), which is why index did not grow by the full ~95 kB.
+// Measured 2026-10-19: index 860.5 kB, three 606.6 kB.
+// index moved 735.1 → 860.5 kB with 3D diorama/chibi hiker redesign, shape-route
+// search upgrades, and bottom-left weather/catchment tool panels.
 const DEFAULT_MAX_KB = 500;
 const ALLOWANCES_KB = [
-  { pattern: /^index-/, maxKB: 772 },
+  { pattern: /^index-/, maxKB: 905 },
   { pattern: /^three-/, maxKB: 620 },
 ];
 

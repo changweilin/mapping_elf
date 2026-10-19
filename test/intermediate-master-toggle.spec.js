@@ -18,7 +18,7 @@ async function openWaypointSettings(page) {
     await expect(panel).toHaveClass(/open/);
   }
   await page.locator('#waypoint-settings-toggle-header h3').click();
-  await expect(page.locator('#show-intermediate-weather-icon')).toBeVisible();
+  await expect(page.locator('#collective-intermediate-pts')).toBeVisible();
 }
 
 test('desktop defaults to 配速, and every 副航點 control is usable', async ({ page }) => {
@@ -32,9 +32,10 @@ test('關 locks every 副航點 control, 配速 restores them', async ({ page })
   await page.locator('#interval-mode-off').check();
 
   for (const sel of IM_GATED) await expect(page.locator(sel)).toBeDisabled();
-  // Locked, not hidden: the 副航點 column still reads as a column.
-  await expect(page.locator('.wpm-col-head.intermediate-gated')).toHaveClass(/is-im-locked/);
-  await expect(page.locator('.wpm-col-head.intermediate-gated')).toBeVisible();
+  // Locked, not hidden: the 副航點 column in the weather panel still reads as a column.
+  await page.locator('#btn-weather-tool').click();
+  await expect(page.locator('#weather-panel .wpm-col-head.intermediate-gated')).toHaveClass(/is-im-locked/);
+  await expect(page.locator('#weather-panel .wpm-col-head.intermediate-gated')).toBeVisible();
 
   await page.locator('#interval-mode-pace').check();
   for (const sel of IM_GATED) await expect(page.locator(sel)).toBeEnabled();
@@ -63,7 +64,7 @@ test('the 關 state survives a reload', async ({ page }) => {
 test('詳細集水區 for 副航點 stays locked while either master is off', async ({ page }) => {
   await openWaypointSettings(page);
   await page.locator('#interval-mode-off').check();
-  await page.locator('#settings-toggle-header h3').click();
+  await page.locator('#btn-catchment-tool').click();
   await page.locator('#catchment-enable-block').uncheck();
   await expect(page.locator('#im-detail-catchment')).toBeDisabled();
 

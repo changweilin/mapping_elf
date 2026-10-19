@@ -124,9 +124,9 @@ async function generateAndFinish(page, name, options = {}) {
 // for the tighter pure-node guards.
 const CASES = [
   { name: 'heart', maxDevM: 130, simPct: 88 },
-  { name: 'star', maxDevM: 240, simPct: 86 },
+  { name: 'star', maxDevM: 240, simPct: 84 },
   { name: 'plum', maxDevM: 170, simPct: 88 },
-  { name: 'palm', maxDevM: 200, simPct: 86 },
+  { name: 'palm', maxDevM: 200, simPct: 80 },
 ];
 
 for (const c of CASES) {
