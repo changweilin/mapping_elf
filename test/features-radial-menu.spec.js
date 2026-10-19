@@ -89,10 +89,38 @@ test.describe('環狀功能選單 (Radial Features Menu)', () => {
     await expect(page.locator('#measure-panel')).toBeVisible();
     await expect(btnFeatures).toHaveAttribute('aria-pressed', 'true');
 
-    // 關閉量測工具面板後，功能按鍵狀態同步重置
-    await page.locator('#btn-measure-close').click();
+    // 8. 展開的單一功能頁面在地圖畫面置中
+    const mapBoxCurrent = await page.locator('#map').boundingBox();
+    const panelBox = await page.locator('#measure-panel').boundingBox();
+    const currentMapCenter = { x: mapBoxCurrent.x + mapBoxCurrent.width / 2, y: mapBoxCurrent.y + mapBoxCurrent.height / 2 };
+    const panelCenter = { x: panelBox.x + panelBox.width / 2, y: panelBox.y + panelBox.height / 2 };
+    expect(Math.abs(panelCenter.x - currentMapCenter.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(panelCenter.y - currentMapCenter.y)).toBeLessThanOrEqual(2);
+
+    // 展開單一功能頁面時，再點一次功能選單會收回展開的功能頁面
+    await btnFeatures.click();
     await expect(page.locator('#measure-panel')).toBeHidden();
+    await expect(overlay).not.toHaveClass(/open/);
     await expect(btnFeatures).toHaveAttribute('aria-pressed', 'false');
+
+    // 9. 環狀選單的 5 個功能鍵各自對應一個專屬顏色
+    await btnFeatures.click();
+    await expect(overlay).toHaveClass(/open/);
+    const colors = await Promise.all([
+      measureBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
+      shapeBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
+      starBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
+      weatherBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
+      catchmentBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
+    ]);
+    // 每個按鍵都有定義顏色且彼此獨立互不相同
+    expect(colors.every(c => !!c)).toBe(true);
+    const uniqueColors = new Set(colors);
+    expect(uniqueColors.size).toBe(5);
+
+    // 收回環狀選單
+    await btnCenter.click();
+    await expect(overlay).not.toHaveClass(/open/);
   });
 
   test('手機視窗下叉叉鍵依然在地圖最中間且各功能鍵以其為圓心', async ({ page }) => {

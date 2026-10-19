@@ -4563,14 +4563,53 @@ function isRadialMenuOpen() {
   return radialOverlay?.classList.contains('open') || false;
 }
 
-function updateRadialMenuPosition() {
+function hasActiveFeaturePanel() {
+  const mp = document.getElementById('measure-panel');
+  const sp = document.getElementById('shape-panel');
+  const stp = document.getElementById('star-panel');
+  const wp = document.getElementById('weather-panel');
+  const cp = document.getElementById('catchment-panel');
+  return (!mp?.classList.contains('hidden')) ||
+    (!sp?.classList.contains('hidden')) ||
+    (!stp?.classList.contains('hidden')) ||
+    (!wp?.classList.contains('hidden')) ||
+    (!cp?.classList.contains('hidden'));
+}
+
+function closeAllFeaturePanels() {
+  if (typeof setMeasureActive === 'function' && !document.getElementById('measure-panel')?.classList.contains('hidden')) {
+    setMeasureActive(false);
+  }
+  if (typeof setShapeActive === 'function' && !document.getElementById('shape-panel')?.classList.contains('hidden')) {
+    setShapeActive(false);
+  }
+  if (typeof setStarActive === 'function' && !document.getElementById('star-panel')?.classList.contains('hidden')) {
+    setStarActive(false);
+  }
+  if (typeof setWeatherPanelActive === 'function' && !document.getElementById('weather-panel')?.classList.contains('hidden')) {
+    setWeatherPanelActive(false);
+  }
+  if (typeof setCatchmentPanelActive === 'function' && !document.getElementById('catchment-panel')?.classList.contains('hidden')) {
+    setCatchmentPanelActive(false);
+  }
+}
+
+function updateMapCenterVariables() {
   const mapEl = document.getElementById('map');
-  if (!mapEl || !radialContainer) return;
+  if (!mapEl) return;
   const rect = mapEl.getBoundingClientRect();
   const cx = Math.round(rect.left + rect.width / 2);
   const cy = Math.round(rect.top + rect.height / 2);
-  radialContainer.style.setProperty('--radial-center-x', `${cx}px`);
-  radialContainer.style.setProperty('--radial-center-y', `${cy}px`);
+  document.documentElement.style.setProperty('--map-center-x', `${cx}px`);
+  document.documentElement.style.setProperty('--map-center-y', `${cy}px`);
+  if (radialContainer) {
+    radialContainer.style.setProperty('--radial-center-x', `${cx}px`);
+    radialContainer.style.setProperty('--radial-center-y', `${cy}px`);
+  }
+}
+
+function updateRadialMenuPosition() {
+  updateMapCenterVariables();
 }
 
 function openRadialMenu() {
@@ -4595,17 +4634,17 @@ function closeRadialMenu() {
 function toggleRadialMenu() {
   if (isRadialMenuOpen()) {
     closeRadialMenu();
-  } else {
-    openRadialMenu();
+    return;
   }
+  if (hasActiveFeaturePanel()) {
+    closeAllFeaturePanels();
+    return;
+  }
+  openRadialMenu();
 }
 
 function syncFeaturesMenuState() {
-  const isAnyActive = !measurePanel?.classList.contains('hidden') ||
-    !shapePanel?.classList.contains('hidden') ||
-    !starPanel?.classList.contains('hidden') ||
-    !weatherPanel?.classList.contains('hidden') ||
-    !catchmentPanel?.classList.contains('hidden');
+  const isAnyActive = hasActiveFeaturePanel();
   btnFeaturesMenu?.setAttribute('aria-pressed', String(isAnyActive));
   btnFeaturesMenu?.classList.toggle('has-active-feature', isAnyActive);
 }
@@ -4615,12 +4654,16 @@ btnRadialCenter?.addEventListener('click', closeRadialMenu);
 radialBackdrop?.addEventListener('click', closeRadialMenu);
 
 window.addEventListener('resize', () => {
-  if (isRadialMenuOpen()) updateRadialMenuPosition();
+  updateMapCenterVariables();
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isRadialMenuOpen()) {
-    closeRadialMenu();
+  if (e.key === 'Escape') {
+    if (isRadialMenuOpen()) {
+      closeRadialMenu();
+    } else if (hasActiveFeaturePanel()) {
+      closeAllFeaturePanels();
+    }
   }
 });
 
@@ -4636,7 +4679,13 @@ const btnCatchmentTool = document.getElementById('btn-catchment-tool');
 
 function setWeatherPanelActive(active) {
   if (!weatherPanel) return;
-  if (active) { setMeasureActive(false); setShapeActive(false); setStarActive(false); setCatchmentPanelActive(false); }
+  if (active) {
+    updateMapCenterVariables();
+    setMeasureActive(false);
+    setShapeActive(false);
+    setStarActive(false);
+    setCatchmentPanelActive(false);
+  }
   weatherPanel.classList.toggle('hidden', !active);
   btnWeatherTool?.setAttribute('aria-pressed', String(active));
   syncFeaturesMenuState();
@@ -4644,7 +4693,13 @@ function setWeatherPanelActive(active) {
 
 function setCatchmentPanelActive(active) {
   if (!catchmentPanel) return;
-  if (active) { setMeasureActive(false); setShapeActive(false); setStarActive(false); setWeatherPanelActive(false); }
+  if (active) {
+    updateMapCenterVariables();
+    setMeasureActive(false);
+    setShapeActive(false);
+    setStarActive(false);
+    setWeatherPanelActive(false);
+  }
   catchmentPanel.classList.toggle('hidden', !active);
   btnCatchmentTool?.setAttribute('aria-pressed', String(active));
   syncFeaturesMenuState();
@@ -5191,7 +5246,12 @@ function setMeasureMode(mode) {
 
 function setMeasureActive(active) {
   if (!measurePanel) return;
-  if (active) closeFeaturePanels();
+  if (active) {
+    updateMapCenterVariables();
+    setShapeActive(false);
+    setStarActive(false);
+    closeFeaturePanels();
+  }
   mapManager.measureMode = active ? measureMode : null;
   measurePanel.classList.toggle('hidden', !active);
   btnMeasureTool?.setAttribute('aria-pressed', String(active));
@@ -5744,6 +5804,7 @@ function setShapeActive(active) {
   shapePanel.classList.toggle('hidden', !active);
   btnShapeTool?.setAttribute('aria-pressed', String(active));
   if (active) {
+    updateMapCenterVariables();
     setMeasureActive(false);   // shares the same corner of the map
     setStarActive(false);
     closeFeaturePanels();
@@ -7482,6 +7543,9 @@ function setStarActive(active) {
   starPanel.classList.toggle('hidden', !active);
   btnStarTool?.setAttribute('aria-pressed', String(active));
   if (active) {
+    updateMapCenterVariables();
+    setMeasureActive(false);
+    setShapeActive(false);
     closeFeaturePanels();
     ensureStarLayers();
     if (!starResults.length) {
@@ -12954,8 +13018,10 @@ function initWeatherControls() {
   // Sync CSS var whenever panel naturally resizes (content changes)
   new ResizeObserver(entries => {
     const h = Math.round(entries[0]?.contentRect.height || 0);
-    if (h > 0 && !panel._resizing)
+    if (h > 0 && !panel._resizing) {
       document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+      updateMapCenterVariables();
+    }
     // Redraw chart so it fills the container correctly after layout changes.
     // Skip during active drag — chart.resize() is expensive and would be called
     // on every pixel of movement, causing stutter. The drag-end path handles it.
