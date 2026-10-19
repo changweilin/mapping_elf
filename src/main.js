@@ -4554,6 +4554,7 @@ btnMyLocation.addEventListener('click', async () => {
 
 // =========== 環狀功能選單 (Radial Features Menu) ===========
 const radialOverlay = document.getElementById('radial-menu-overlay');
+const radialContainer = document.getElementById('radial-menu-container');
 const btnFeaturesMenu = document.getElementById('btn-features-menu');
 const btnRadialCenter = document.getElementById('btn-radial-center');
 const radialBackdrop = document.getElementById('radial-menu-backdrop');
@@ -4562,8 +4563,19 @@ function isRadialMenuOpen() {
   return radialOverlay?.classList.contains('open') || false;
 }
 
+function updateRadialMenuPosition() {
+  const mapEl = document.getElementById('map');
+  if (!mapEl || !radialContainer) return;
+  const rect = mapEl.getBoundingClientRect();
+  const cx = Math.round(rect.left + rect.width / 2);
+  const cy = Math.round(rect.top + rect.height / 2);
+  radialContainer.style.setProperty('--radial-center-x', `${cx}px`);
+  radialContainer.style.setProperty('--radial-center-y', `${cy}px`);
+}
+
 function openRadialMenu() {
   if (!radialOverlay) return;
+  updateRadialMenuPosition();
   radialOverlay.classList.remove('hidden');
   void radialOverlay.offsetWidth;
   radialOverlay.classList.add('open');
@@ -4601,6 +4613,10 @@ function syncFeaturesMenuState() {
 btnFeaturesMenu?.addEventListener('click', toggleRadialMenu);
 btnRadialCenter?.addEventListener('click', closeRadialMenu);
 radialBackdrop?.addEventListener('click', closeRadialMenu);
+
+window.addEventListener('resize', () => {
+  if (isRadialMenuOpen()) updateRadialMenuPosition();
+});
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && isRadialMenuOpen()) {
