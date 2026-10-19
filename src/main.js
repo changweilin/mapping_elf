@@ -4457,43 +4457,81 @@ sidePanel.addEventListener('touchend', (e) => {
 const LS_BP_VIEW_KEY = 'mappingElf_bpView';
 const bottomPanelEl = document.getElementById('bottom-panel');
 const BP_VIEWS = ['elev', 'weather', 'catchment'];
-// False until the weather panel has rendered once (weatherPoints initialised). The
-// module-eval bootstrap below sets the mode class but MUST NOT touch weatherPoints
-// (TDZ), so catchment render/fetch side-effects are gated on this.
+// False until the weather panel has rendered once (weatherPoints initialised).
 let bottomPanelReady = false;
+
+function isWeatherModalOpen() {
+  const modal = document.getElementById('weather-modal');
+  return !!(modal && !modal.classList.contains('hidden'));
+}
+
+function openWeatherModal() {
+  const modal = document.getElementById('weather-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  if (bottomPanelReady) renderWeatherPanel();
+}
+
+function closeWeatherModal() {
+  const modal = document.getElementById('weather-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  if (!isCatchmentModalOpen() && !document.querySelector('.modal-overlay:not(.hidden)')) {
+    document.body.classList.remove('modal-open');
+  }
+}
+
+function isCatchmentModalOpen() {
+  const modal = document.getElementById('catchment-modal');
+  return !!(modal && !modal.classList.contains('hidden'));
+}
+
+function openCatchmentModal() {
+  if (!catchmentEnabled) return;
+  const modal = document.getElementById('catchment-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  if (bottomPanelReady) {
+    renderCatchmentPanel();
+    autoFetchCatchment({ notify: true });
+    syncCatchmentBasins();
+  }
+}
+
+function closeCatchmentModal() {
+  const modal = document.getElementById('catchment-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  if (!isWeatherModalOpen() && !document.querySelector('.modal-overlay:not(.hidden)')) {
+    document.body.classList.remove('modal-open');
+  }
+  if (bottomPanelReady) syncCatchmentBasins();
+}
+
 function getBottomPanelView() {
-  if (bottomPanelEl?.classList.contains('bp-mode-weather')) return 'weather';
-  if (bottomPanelEl?.classList.contains('bp-mode-catchment')) return 'catchment';
+  if (isCatchmentModalOpen()) return 'catchment';
+  if (isWeatherModalOpen()) return 'weather';
   return 'elev';
 }
+
 function setBottomPanelView(view, persist = true) {
-  const requested = BP_VIEWS.includes(view) ? view : 'elev';
-  // 集水區 view is locked while the master switch is off (incl. a restored 暫存).
-  const mode = (requested === 'catchment' && !catchmentEnabled) ? 'elev' : requested;
-  bottomPanelEl?.classList.toggle('bp-mode-weather', mode === 'weather');
-  bottomPanelEl?.classList.toggle('bp-mode-catchment', mode === 'catchment');
-  bottomPanelEl?.classList.toggle('bp-mode-elev', mode === 'elev');
-  document.querySelectorAll('#bp-view-toggle .bp-view-btn').forEach((b) => {
-    const on = b.dataset.bpView === mode;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  });
-  // Chart.js needs a resize when its container becomes visible again.
-  if (mode === 'elev') requestAnimationFrame(() => elevationProfile?.chart?.resize());
-  // Opening the catchment view renders the table, then lazily backfills any
-  // waypoint whose 集水區 read-out isn't cached yet (progress-bar managed).
-  if (mode === 'catchment' && bottomPanelReady) { renderCatchmentPanel(); autoFetchCatchment({ notify: true }); }
-  // Basins follow the active view: draw them for the 集水區 columns on the way in
-  // (autoFetchCatchment is a no-op when everything is already cached, so it can't
-  // be relied on for this), and clear the panel-driven ones on the way out.
-  if (bottomPanelReady) syncCatchmentBasins();
-  if (persist) { try { localStorage.setItem(LS_BP_VIEW_KEY, mode); } catch (_) { } }
+  if (view === 'weather') {
+    openWeatherModal();
+    return;
+  }
+  if (view === 'catchment') {
+    if (catchmentEnabled) openCatchmentModal();
+    return;
+  }
+  bottomPanelEl?.classList.remove('bp-mode-weather', 'bp-mode-catchment');
+  bottomPanelEl?.classList.add('bp-mode-elev');
+  requestAnimationFrame(() => elevationProfile?.chart?.resize());
+  if (persist) { try { localStorage.setItem(LS_BP_VIEW_KEY, 'elev'); } catch (_) { } }
 }
-document.getElementById('bp-view-toggle')?.addEventListener('click', (e) => {
-  const btn = e.target.closest('.bp-view-btn');
-  if (btn) setBottomPanelView(btn.dataset.bpView);
-});
-setBottomPanelView(BP_VIEWS.includes(localStorage.getItem(LS_BP_VIEW_KEY)) ? localStorage.getItem(LS_BP_VIEW_KEY) : 'elev', false);
+
+setBottomPanelView('elev', false);
 
 
 // 手機平板螢幕下，點擊地圖自動收合側拉面板
@@ -4514,6 +4552,62 @@ btnMyLocation.addEventListener('click', async () => {
   }
 });
 
+// =========== 環狀功能選單 (Radial Features Menu) ===========
+const radialOverlay = document.getElementById('radial-menu-overlay');
+const btnFeaturesMenu = document.getElementById('btn-features-menu');
+const btnRadialCenter = document.getElementById('btn-radial-center');
+const radialBackdrop = document.getElementById('radial-menu-backdrop');
+
+function isRadialMenuOpen() {
+  return radialOverlay?.classList.contains('open') || false;
+}
+
+function openRadialMenu() {
+  if (!radialOverlay) return;
+  radialOverlay.classList.remove('hidden');
+  void radialOverlay.offsetWidth;
+  radialOverlay.classList.add('open');
+  document.body.classList.add('radial-menu-active');
+  radialOverlay.setAttribute('aria-hidden', 'false');
+  btnFeaturesMenu?.setAttribute('aria-expanded', 'true');
+}
+
+function closeRadialMenu() {
+  if (!radialOverlay) return;
+  radialOverlay.classList.remove('open');
+  document.body.classList.remove('radial-menu-active');
+  radialOverlay.setAttribute('aria-hidden', 'true');
+  btnFeaturesMenu?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleRadialMenu() {
+  if (isRadialMenuOpen()) {
+    closeRadialMenu();
+  } else {
+    openRadialMenu();
+  }
+}
+
+function syncFeaturesMenuState() {
+  const isAnyActive = !measurePanel?.classList.contains('hidden') ||
+    !shapePanel?.classList.contains('hidden') ||
+    !starPanel?.classList.contains('hidden') ||
+    !weatherPanel?.classList.contains('hidden') ||
+    !catchmentPanel?.classList.contains('hidden');
+  btnFeaturesMenu?.setAttribute('aria-pressed', String(isAnyActive));
+  btnFeaturesMenu?.classList.toggle('has-active-feature', isAnyActive);
+}
+
+btnFeaturesMenu?.addEventListener('click', toggleRadialMenu);
+btnRadialCenter?.addEventListener('click', closeRadialMenu);
+radialBackdrop?.addEventListener('click', closeRadialMenu);
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isRadialMenuOpen()) {
+    closeRadialMenu();
+  }
+});
+
 // =========== 天氣資訊 / 集水區 feature panels ===========
 // Map-corner tools next to 量測工具 / 繪圖板 / 魔法陣 (they share the corner, so
 // opening any one closes the rest). The panels own the weather / catchment
@@ -4529,6 +4623,7 @@ function setWeatherPanelActive(active) {
   if (active) { setMeasureActive(false); setShapeActive(false); setStarActive(false); setCatchmentPanelActive(false); }
   weatherPanel.classList.toggle('hidden', !active);
   btnWeatherTool?.setAttribute('aria-pressed', String(active));
+  syncFeaturesMenuState();
 }
 
 function setCatchmentPanelActive(active) {
@@ -4536,6 +4631,7 @@ function setCatchmentPanelActive(active) {
   if (active) { setMeasureActive(false); setShapeActive(false); setStarActive(false); setWeatherPanelActive(false); }
   catchmentPanel.classList.toggle('hidden', !active);
   btnCatchmentTool?.setAttribute('aria-pressed', String(active));
+  syncFeaturesMenuState();
 }
 
 // Called by the other corner tools when they open.
@@ -4544,8 +4640,14 @@ function closeFeaturePanels() {
   setCatchmentPanelActive(false);
 }
 
-btnWeatherTool?.addEventListener('click', () => setWeatherPanelActive(weatherPanel?.classList.contains('hidden')));
-btnCatchmentTool?.addEventListener('click', () => setCatchmentPanelActive(catchmentPanel?.classList.contains('hidden')));
+btnWeatherTool?.addEventListener('click', () => {
+  setWeatherPanelActive(weatherPanel?.classList.contains('hidden'));
+  closeRadialMenu();
+});
+btnCatchmentTool?.addEventListener('click', () => {
+  setCatchmentPanelActive(catchmentPanel?.classList.contains('hidden'));
+  closeRadialMenu();
+});
 document.getElementById('btn-weather-close')?.addEventListener('click', () => setWeatherPanelActive(false));
 document.getElementById('btn-catchment-close')?.addEventListener('click', () => setCatchmentPanelActive(false));
 
@@ -5079,6 +5181,7 @@ function setMeasureActive(active) {
   btnMeasureTool?.setAttribute('aria-pressed', String(active));
   if (!active) clearMeasureOverlay();
   saveMeasureToolState();
+  syncFeaturesMenuState();
 }
 
 // --- 量測工具 暫存: panel state + clicked points survive a reload -------------
@@ -5159,6 +5262,7 @@ btnMeasureTool?.addEventListener('click', () => {
   const opening = measurePanel?.classList.contains('hidden');
   if (opening) { setShapeActive(false); setStarActive(false); } // shared map corner
   setMeasureActive(opening);
+  closeRadialMenu();
 });
 document.getElementById('measure-mode-toggle')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.measure-mode-btn');
@@ -5636,6 +5740,7 @@ function setShapeActive(active) {
     shapePreviewLayer?.clearLayers();
   }
   saveShapeBoardState();
+  syncFeaturesMenuState();
 }
 
 function readShapeDistanceKm() {
@@ -7015,6 +7120,7 @@ function finishShapeRun(run, actualM) {
 
 btnShapeTool?.addEventListener('click', () => {
   setShapeActive(shapePanel?.classList.contains('hidden'));
+  closeRadialMenu();
 });
 document.getElementById('btn-shape-close')?.addEventListener('click', () => setShapeActive(false));
 document.getElementById('btn-shape-clear')?.addEventListener('click', clearShapeBoard);
@@ -7379,6 +7485,7 @@ function setStarActive(active) {
     }
   }
   saveStarToolStateNow();
+  syncFeaturesMenuState();
 }
 
 function saveStarToolStateNow() {
@@ -7667,6 +7774,7 @@ btnStarTool?.addEventListener('click', () => {
   const opening = starPanel?.classList.contains('hidden');
   if (opening) { setMeasureActive(false); setShapeActive(false); }   // shared map corner
   setStarActive(opening);
+  closeRadialMenu();
 });
 document.getElementById('btn-star-close')?.addEventListener('click', () => setStarActive(false));
 document.getElementById('btn-star-clear')?.addEventListener('click', clearStarTool);
@@ -17467,33 +17575,47 @@ async function init() {
     searchInput?.select();
   });
 
-  // --- Weather center quick entries: 取得 (update weather) and 查看/調整 (open
-  //     the detailed weather view, where per-column date/time adjustments live) ---
+  // --- Weather center quick entries: 取得 (update weather) and 完整列表 modal ---
   {
-    const openWeatherView = () => setBottomPanelView('weather');
-    document.getElementById('btn-weather-quick-view')?.addEventListener('click', openWeatherView);
+    document.getElementById('btn-weather-quick-view')?.addEventListener('click', openWeatherModal);
     document.getElementById('btn-weather-quick-fetch')?.addEventListener('click', () => {
-      openWeatherView();
+      openWeatherModal();
       fetchAllWeatherData({ force: true });
+    });
+    document.getElementById('btn-weather-modal-close')?.addEventListener('click', closeWeatherModal);
+    document.getElementById('btn-weather-modal-bottom-close')?.addEventListener('click', closeWeatherModal);
+    document.getElementById('weather-modal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'weather-modal') closeWeatherModal();
     });
   }
 
   // --- 集水區 quick entries: same pair as weather, gated by the master switch ---
   {
-    const openCatchmentView = () => setBottomPanelView('catchment');
     document.getElementById('btn-catchment-quick-view')?.addEventListener('click', () => {
       if (!catchmentEnabled) return;
-      openCatchmentView();
+      openCatchmentModal();
     });
     document.getElementById('btn-catchment-quick-fetch')?.addEventListener('click', () => {
       if (!catchmentEnabled) return;
-      openCatchmentView();
+      openCatchmentModal();
       fetchAllCatchmentData({ force: true });
     });
     document.getElementById('btn-catchment-clear')?.addEventListener('click', () => {
       if (!catchmentEnabled) return;
       clearCatchmentStoredData();
       showNotification('已清除集水區資料', 'success', 1600);
+    });
+    document.getElementById('btn-catchment-modal-close')?.addEventListener('click', closeCatchmentModal);
+    document.getElementById('btn-catchment-modal-bottom-close')?.addEventListener('click', closeCatchmentModal);
+    document.getElementById('catchment-modal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'catchment-modal') closeCatchmentModal();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (isWeatherModalOpen()) closeWeatherModal();
+        if (isCatchmentModalOpen()) closeCatchmentModal();
+      }
     });
   }
 

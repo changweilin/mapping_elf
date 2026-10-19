@@ -172,34 +172,74 @@
           fill="currentColor" />
       </svg>
     </button>
-    <button id="btn-measure-tool" class="map-action-btn" title="量測工具" aria-label="量測工具" aria-pressed="false">
+    <button id="btn-features-menu" class="map-action-btn" title="功能選單" aria-label="功能選單" aria-haspopup="true" aria-expanded="false" aria-pressed="false">
       <svg viewBox="0 0 24 24" width="20" height="20">
-        <path d="M21.71 8.29l-6-6a1 1 0 0 0-1.42 0l-12 12a1 1 0 0 0 0 1.42l6 6a1 1 0 0 0 1.42 0l12-12a1 1 0 0 0 0-1.42zM9 19.59 4.41 15l1.3-1.29 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8L15 4.41 19.59 9 9 19.59z" fill="currentColor" />
+        <circle cx="12" cy="12" r="3" fill="currentColor" />
+        <circle cx="12" cy="4" r="2" fill="currentColor" />
+        <circle cx="19.6" cy="9.5" r="2" fill="currentColor" />
+        <circle cx="16.7" cy="18.5" r="2" fill="currentColor" />
+        <circle cx="7.3" cy="18.5" r="2" fill="currentColor" />
+        <circle cx="4.4" cy="9.5" r="2" fill="currentColor" />
+        <circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2" opacity="0.6" />
       </svg>
     </button>
-    <button id="btn-shape-tool" class="map-action-btn" title="繪圖板" aria-label="繪圖板" aria-pressed="false">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8.5 3.5l1 2.5M7 4l1.2 2.5" />
-        <path d="M8.2 6.5c-1.2.7-2.7 1.5-4 2.5-.6.5-.4 1.4.4 1.7 1 .3 2-.3 3-1.1.8 1.4 1.6 2.9 2 4.9L9 20.5M11.2 15l.3 5.5" />
-        <path d="M9.5 6c2 1.2 3.5 1.5 5.5 1.8 2 .2 3.2 1.2 3.6 3.2.3 1.5 0 3-.4 4.5" />
-        <path d="M11.5 15.8c1.7.4 3.5.2 5-.6L16 20.5M18 15.5l.5 5" />
-        <path d="M18.2 11.5c1.6.5 3 1.7 3.4 3.3.2 1.4-.8 2.7-2.2 2.4-.8-.2-1.2-1.2-1.2-2.4" />
-        <path d="M10 6.5c.8 1.5 1.2 3 1 4.5M12.2 8c.8 1.5 1 3 .6 4.2" />
-        <circle cx="6.5" cy="8.6" r="0.75" fill="currentColor" />
-      </svg>
-    </button>
-    <button id="btn-star-tool" class="map-action-btn" title="魔法陣" aria-label="魔法陣" aria-pressed="false">
-      <svg viewBox="0 0 24 24" width="20" height="20">
-        <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.55" />
-        <path d="M12 3.6 19.1 19.6 4.3 9.4h15.4L4.9 19.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-      </svg>
-    </button>
-    <button id="btn-weather-tool" class="map-action-btn" title="天氣資訊" aria-label="天氣資訊" aria-pressed="false">
-      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor" /></svg>
-    </button>
-    <button id="btn-catchment-tool" class="map-action-btn" title="集水區" aria-label="集水區" aria-pressed="false">
-      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><path d="M8.6 13.4a3.4 3.4 0 0 0 3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.7" /></svg>
-    </button>
+  </div>
+
+  <!-- Radial Features Menu Overlay (環狀功能選單) -->
+  <div id="radial-menu-overlay" class="radial-menu-overlay" aria-hidden="true">
+    <div class="radial-menu-backdrop" id="radial-menu-backdrop"></div>
+    <div class="radial-menu-container" id="radial-menu-container" role="menu" aria-label="功能選單">
+      <button type="button" id="btn-radial-center" class="radial-center-btn" title="收回功能選單" aria-label="收回功能選單">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+        </svg>
+      </button>
+      <div class="radial-items">
+        <div class="radial-menu-item" style="--angle: -90deg; --idx: 0;">
+          <button type="button" id="btn-measure-tool" class="map-action-btn radial-btn" title="量測工具" aria-label="量測工具" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="20" height="20">
+              <path d="M21.71 8.29l-6-6a1 1 0 0 0-1.42 0l-12 12a1 1 0 0 0 0 1.42l6 6a1 1 0 0 0 1.42 0l12-12a1 1 0 0 0 0-1.42zM9 19.59 4.41 15l1.3-1.29 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8 1.47-1.46 1.79 1.79 1.41-1.41-1.79-1.8L15 4.41 19.59 9 9 19.59z" fill="currentColor" />
+            </svg>
+            <span class="radial-btn-label">量測工具</span>
+          </button>
+        </div>
+        <div class="radial-menu-item" style="--angle: -18deg; --idx: 1;">
+          <button type="button" id="btn-shape-tool" class="map-action-btn radial-btn" title="繪圖板" aria-label="繪圖板" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8.5 3.5l1 2.5M7 4l1.2 2.5" />
+              <path d="M8.2 6.5c-1.2.7-2.7 1.5-4 2.5-.6.5-.4 1.4.4 1.7 1 .3 2-.3 3-1.1.8 1.4 1.6 2.9 2 4.9L9 20.5M11.2 15l.3 5.5" />
+              <path d="M9.5 6c2 1.2 3.5 1.5 5.5 1.8 2 .2 3.2 1.2 3.6 3.2.3 1.5 0 3-.4 4.5" />
+              <path d="M11.5 15.8c1.7.4 3.5.2 5-.6L16 20.5M18 15.5l.5 5" />
+              <path d="M18.2 11.5c1.6.5 3 1.7 3.4 3.3.2 1.4-.8 2.7-2.2 2.4-.8-.2-1.2-1.2-1.2-2.4" />
+              <path d="M10 6.5c.8 1.5 1.2 3 1 4.5M12.2 8c.8 1.5 1 3 .6 4.2" />
+              <circle cx="6.5" cy="8.6" r="0.75" fill="currentColor" />
+            </svg>
+            <span class="radial-btn-label">繪圖板</span>
+          </button>
+        </div>
+        <div class="radial-menu-item" style="--angle: 54deg; --idx: 2;">
+          <button type="button" id="btn-star-tool" class="map-action-btn radial-btn" title="魔法陣" aria-label="魔法陣" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="20" height="20">
+              <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.3" opacity="0.55" />
+              <path d="M12 3.6 19.1 19.6 4.3 9.4h15.4L4.9 19.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+            </svg>
+            <span class="radial-btn-label">魔法陣</span>
+          </button>
+        </div>
+        <div class="radial-menu-item" style="--angle: 126deg; --idx: 3;">
+          <button type="button" id="btn-weather-tool" class="map-action-btn radial-btn" title="天氣資訊" aria-label="天氣資訊" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor" /></svg>
+            <span class="radial-btn-label">天氣資訊</span>
+          </button>
+        </div>
+        <div class="radial-menu-item" style="--angle: 198deg; --idx: 4;">
+          <button type="button" id="btn-catchment-tool" class="map-action-btn radial-btn" title="集水區" aria-label="集水區" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><path d="M8.6 13.4a3.4 3.4 0 0 0 3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.7" /></svg>
+            <span class="radial-btn-label">集水區</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- F2: Measurement tools panel -->
@@ -508,11 +548,11 @@
         </svg>
         <span>更新天氣</span>
       </button>
-      <button class="btn-secondary weather-quick-btn" id="btn-weather-quick-view" title="詳細天氣">
+      <button class="btn-secondary weather-quick-btn" id="btn-weather-quick-view" title="完整列表">
         <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
           <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor" />
         </svg>
-        <span>詳細天氣</span>
+        <span>完整列表</span>
       </button>
     </div>
     <div class="settings-group-label">Windy</div>
@@ -623,11 +663,11 @@
           </svg>
           <span>取得集水區</span>
         </button>
-        <button class="btn-secondary weather-quick-btn" id="btn-catchment-quick-view" title="詳細集水區">
+        <button class="btn-secondary weather-quick-btn" id="btn-catchment-quick-view" title="完整列表">
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
             <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor" />
           </svg>
-          <span>詳細集水區</span>
+          <span>完整列表</span>
         </button>
       </div>
       <div class="wp-display-matrix">
@@ -655,33 +695,10 @@
     </div>
   </div>
 
-  <!-- Bottom Panel: Elevation Profile + Weather Timeline -->
+  <!-- Bottom Panel: Elevation Profile -->
   <div id="bottom-panel" class="bottom-panel bp-mode-elev">
     <div class="bp-resize-handle" id="bp-resize-handle"></div>
     <div class="bp-chart-row">
-      <!-- Pinned top-right so it stays reachable even where the summary bar is
-           hidden (landscape phones) or scrolled off (narrow portrait). -->
-      <!-- Icon-only buttons: the labelled pill was wide enough to cover the
-           距離 / 預估時間 chips of the summary bar it overlays. -->
-      <div class="bp-view-toggle" id="bp-view-toggle" role="group" aria-label="下方面板檢視切換">
-        <button type="button" class="bp-view-btn active" data-bp-view="elev" aria-pressed="true" title="垂直軌跡圖" aria-label="垂直軌跡圖">
-          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-            <path d="M4 17l4.6-7 3.1 3.6L16.4 6l4 11z" fill="currentColor" opacity="0.9" />
-            <path d="M3 20.2h18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-          </svg>
-        </button>
-        <button type="button" class="bp-view-btn" data-bp-view="weather" aria-pressed="false" title="詳細天氣" aria-label="詳細天氣">
-          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-            <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor" />
-          </svg>
-        </button>
-        <button type="button" class="bp-view-btn" data-bp-view="catchment" aria-pressed="false" title="詳細集水區" aria-label="詳細集水區">
-          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-            <path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-            <path d="M8.6 13.4a3.4 3.4 0 0 0 3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.7" />
-          </svg>
-        </button>
-      </div>
       <!-- Always-visible route summary chips (mirror the side-panel stats).
            Lives inside .bp-chart-row so the panel's default-height math
            (handle + chart row) accounts for it automatically. -->
@@ -707,20 +724,6 @@
         <canvas id="elevation-chart"></canvas>
         <div class="chart-empty-state" id="chart-empty">
           <p>新增路線後顯示高度剖面</p>
-        </div>
-      </div>
-    </div>
-    <div class="bp-weather-scroll">
-      <div id="weather-table-container">
-        <div class="weather-empty-state">
-          <p>完成規劃路線後點擊「取得天氣」</p>
-        </div>
-      </div>
-    </div>
-    <div class="bp-catchment-scroll">
-      <div id="catchment-table-container">
-        <div class="weather-empty-state">
-          <p>完成規劃路線後點擊「取得集水區」</p>
         </div>
       </div>
     </div>
@@ -1727,6 +1730,55 @@
       <div id="favorites-replace-list" class="favorites-replace-list"></div>
       <div class="modal-actions">
         <button class="btn-secondary" id="btn-favorites-replace-cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Weather Full List Modal -->
+  <div id="weather-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="weather-modal-title">
+    <div class="modal-box table-modal-box">
+      <div class="table-modal-header">
+        <h3 class="table-modal-title" id="weather-modal-title">
+          <span>天氣資訊完整列表</span>
+          <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
+        </h3>
+        <button type="button" class="icon-btn table-modal-close-btn" id="btn-weather-modal-close" title="關閉" aria-label="關閉">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/></svg>
+        </button>
+      </div>
+      <div class="table-modal-body bp-weather-scroll">
+        <div id="weather-table-container">
+          <div class="weather-empty-state">
+            <p>完成規劃路線後點擊「更新天氣」</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions table-modal-actions">
+        <button type="button" class="btn-secondary" id="btn-weather-modal-bottom-close">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Catchment Full List Modal -->
+  <div id="catchment-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="catchment-modal-title">
+    <div class="modal-box table-modal-box">
+      <div class="table-modal-header">
+        <h3 class="table-modal-title" id="catchment-modal-title">
+          <span>集水區完整列表</span>
+        </h3>
+        <button type="button" class="icon-btn table-modal-close-btn" id="btn-catchment-modal-close" title="關閉" aria-label="關閉">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/></svg>
+        </button>
+      </div>
+      <div class="table-modal-body bp-catchment-scroll">
+        <div id="catchment-table-container">
+          <div class="weather-empty-state">
+            <p>完成規劃路線後點擊「取得集水區」</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions table-modal-actions">
+        <button type="button" class="btn-secondary" id="btn-catchment-modal-bottom-close">關閉</button>
       </div>
     </div>
   </div>
