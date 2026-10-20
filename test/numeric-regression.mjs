@@ -47,6 +47,7 @@ import {
 import { SHAPE_NAMES, shapeStroke } from './helpers/testShapes.mjs';
 import { makeGridWorld } from './helpers/gridWorld.mjs';
 import { TerrainViewer } from '../src/modules/terrainViewer.js';
+import { parseSpeedSegments } from '../src/modules/routeEngine.js';
 
 const closeTo = (actual, expected, epsilon = 1e-6) => {
   assert.ok(
@@ -84,6 +85,54 @@ closeTo(trip.movingH, 0.8857723213109405);
 assert.equal(trip.restH, 0);
 assert.equal(trip.kcalExpended, 310);
 assert.equal(trip.kcalSuggested, 221);
+
+
+// --- Speed limit and speed offset regression tests for motorcycle and driving ---
+const testMessages = [
+  ['Longitude', 'Latitude', 'Elevation', 'Distance', 'CostPerKm', 'ElevCost', 'TurnCost', 'NodeCost', 'InitialCost', 'WayTags', 'NodeTags', 'Time', 'Energy'],
+  ['121500000', '25000000', '10', '1000', '1000', '0', '0', '0', '0', 'highway=secondary maxspeed=40', '', '90', '100'],
+  ['121510000', '25010000', '10', '2000', '1000', '0', '0', '0', '0', 'highway=primary maxspeed=60', '', '210', '100'],
+  ['121520000', '25020000', '10', '1000', '1000', '0', '0', '0', '0', 'highway=residential', '', '300', '100'],
+];
+
+const parsedSpeedSegs = parseSpeedSegments(testMessages);
+assert.equal(parsedSpeedSegs.length, 3);
+assert.equal(parsedSpeedSegs[0].maxspeed, 40);
+assert.equal(parsedSpeedSegs[1].maxspeed, 60);
+assert.equal(parsedSpeedSegs[2].maxspeed, null);
+closeTo(parsedSpeedSegs[2].baseKmh, (1000 / 90) * 3.6); // 40 km/h
+
+// Test motorcycle and driving with speed limit offset
+const testElevs = [0, 0, 0, 0];
+const testDists = [0, 1000, 3000, 4000]; // segments: 1km (limit 40), 2km (limit 60), 1km (base 40)
+
+// At offset 0: 1/40 + 2/60 + 1/40 = 0.025 + 0.0333333 + 0.025 = 0.0833333 h (5 min)
+const motoBase = computeTripStats(testElevs, testDists, 'motorcycle', {
+  ...DEFAULT_PACE_PARAMS,
+  speedSegments: parsedSpeedSegs,
+  speedLimitOffsetKmH: 0,
+});
+closeTo(motoBase.movingH, 1/40 + 2/60 + 1/40);
+
+// At offset +10 km/h: 1/50 + 2/70 + 1/50 = 0.02 + 0.0285714 + 0.02 = 0.0685714 h
+const motoFast = computeTripStats(testElevs, testDists, 'motorcycle', {
+  ...DEFAULT_PACE_PARAMS,
+  speedSegments: parsedSpeedSegs,
+  speedLimitOffsetKmH: 10,
+});
+closeTo(motoFast.movingH, 1/50 + 2/70 + 1/50);
+
+// At offset -10 km/h: 1/30 + 2/50 + 1/30 = 0.0333333 + 0.04 + 0.0333333 = 0.1066667 h
+const driveSlow = computeTripStats(testElevs, testDists, 'driving', {
+  ...DEFAULT_PACE_PARAMS,
+  speedSegments: parsedSpeedSegs,
+  speedLimitOffsetKmH: -10,
+});
+closeTo(driveSlow.movingH, 1/30 + 2/50 + 1/30);
+
+const motoTrip = computeTripStats(elevations, distances, 'motorcycle', DEFAULT_PACE_PARAMS);
+closeTo(motoTrip.movingH, distances[2] / 1000 / 35);
+assert.equal(motoTrip.restH, 0);
 
 const hourly = computeHourlyPoints(coords, elevations, distances, 'hiking', 0.25, paceParams);
 assert.equal(hourly.length, 3);

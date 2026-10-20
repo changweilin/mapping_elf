@@ -923,6 +923,18 @@
             </span>
           </label>
           <label class="mode-option">
+            <input type="radio" name="route-mode" value="motorcycle" />
+            <span class="mode-label">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <path
+                  d="M19.44 9.03L15.41 5H11v2h3.59l2 2H5c-2.8 0-5 2.2-5 5s2.2 5 5 5c2.46 0 4.45-1.69 4.9-4h4.2c.45 2.31 2.44 4 4.9 4 2.8 0 5-2.2 5-5s-2.2-5-5-5h-.56zM7.82 15C7.4 16.15 6.28 17 5 17c-1.63 0-3-1.37-3-3s1.37-3 3-3c1.28 0 2.4.85 2.82 2H5v2h2.82zM19 17c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"
+                  fill="currentColor" />
+              </svg>
+              機車
+            </span>
+          </label>
+
+          <label class="mode-option">
             <input type="radio" name="route-mode" value="driving" />
             <span class="mode-label">
               <svg viewBox="0 0 24 24" width="16" height="16">
@@ -933,6 +945,14 @@
               駕車
             </span>
           </label>
+        </div>
+        <div class="route-speed-limit-row" id="route-speed-limit-row" style="display:none">
+          <label class="route-speed-limit-label" title="若 OSM 有標示速限，以速限加減速度預測行駛時間">
+            <span>速限偏移 (±km/h)：</span>
+            <input type="number" id="route-speed-limit-offset-input" class="route-speed-limit-input" min="-60" max="60" step="1" value="0" placeholder="0">
+            <span class="route-speed-limit-unit">km/h</span>
+          </label>
+          <span class="route-speed-limit-badge" title="路線包含 OSM 道路速限資料時自動套用">考量 OSM 速限</span>
         </div>
       </div>
     </section>
@@ -964,6 +984,7 @@
             <option value="trail-run">越野跑</option>
             <option value="running">跑步</option>
             <option value="cycling">自行車</option>
+            <option value="motorcycle">機車</option>
             <option value="driving">駕車</option>
           </select>
         </div>
@@ -993,6 +1014,13 @@
             </select>
           </div>
         </div>
+          <div class="pace-field" id="pace-speed-limit-offset-field" style="display:none">
+            <label class="pace-label" title="若 OSM 有標示速限，以速限加減速度預測時間">速限偏移</label>
+            <div style="display:flex;align-items:center;gap:4px;">
+              <input type="number" id="pace-speed-limit-offset-input" class="pace-input" min="-60" max="60" step="1" value="0" placeholder="0">
+              <span class="pace-unit">km/h</span>
+            </div>
+          </div>
         <!-- 按段重算 + 配速時間 並排 -->
         <div class="pace-checks-row">
           <label class="pace-check-opt" title="勾選後,各段副航點時間以前一個航點為錨點重新計算,不受先前段落手動調整影響">

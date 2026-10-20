@@ -12,7 +12,40 @@ const PROFILE_MAP = {
   walking: 'foot',
   cycling: 'bike',
   driving: 'car',
+  motorcycle: 'car',
 };
+
+export function parseSpeedSegments(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) return null;
+  let cumM = 0;
+  let prevT = 0;
+  const segments = [];
+  for (let i = 1; i < messages.length; i++) {
+    const row = messages[i];
+    const dM = parseInt(row[3], 10) || 0;
+    const cumT = parseFloat(row[11]) || 0;
+    const dt = Math.max(0.01, cumT - prevT);
+    prevT = cumT;
+    const tags = row[9] || '';
+    const m = tags.match(/maxspeed=(\d+)\s*(mph)?/i);
+    let maxspeed = null;
+    if (m) {
+      maxspeed = parseInt(m[1], 10);
+      if (m[2] && m[2].toLowerCase() === 'mph') {
+        maxspeed = Math.round(maxspeed * 1.60934);
+      }
+    }
+    const baseKmh = dM > 0 ? (dM / dt) * 3.6 : 40;
+    segments.push({
+      startM: cumM,
+      endM: cumM + dM,
+      maxspeed,
+      baseKmh,
+    });
+    cumM += dM;
+  }
+  return segments.length > 0 ? segments : null;
+}
 
 export class RouteEngine {
   constructor() {
@@ -47,10 +80,11 @@ export class RouteEngine {
 
     let rawRoutes = [];
 
-    if (this.mode === 'hiking') {
+    if (this.mode === 'hiking' || this.mode === 'motorcycle' || this.mode === 'driving') {
+      const brouterProfile = this.mode === 'motorcycle' ? 'moped' : (this.mode === 'driving' ? 'car-fast' : 'hiking-mountain');
       try {
         const coordStr = waypoints.map((w) => `${w[1]},${w[0]}`).join('|');
-        const url = `https://brouter.de/brouter?lonlats=${coordStr}&profile=hiking-mountain&alternativeidx=0&format=geojson`;
+        const url = `https://brouter.de/brouter?lonlats=${coordStr}&profile=${brouterProfile}&alternativeidx=0&format=geojson`;
         
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`BRouter error: ${resp.status}`);
@@ -72,20 +106,32 @@ export class RouteEngine {
         if (coords.length > 1) coords[coords.length - 1] = [...waypoints[waypoints.length - 1]];
         const distance = feature.properties['track-length'] || 0;
         const duration = feature.properties['total-time'] || 0;
+        const messages = feature.properties.messages || null;
+        const speedSegments = parseSpeedSegments(messages);
 
         rawRoutes = [{
           coords,
           inlineElevations,
           osrmDistance: distance,
-          osrmDuration: duration
+          osrmDuration: duration,
+          messages,
+          speedSegments,
         }];
       } catch (err) {
         // BRouter 400s the WHOLE request when a single via-point can't be snapped
         // (e.g. a newly-added waypoint slightly off a mapped way). Rather than
         // collapsing the entire route to naive straight lines, route each leg
         // independently and only straight-line the leg(s) that genuinely fail.
-        console.warn('BRouter combined routing failed, falling back to per-segment:', err.message);
-        rawRoutes = [await this._routeBrouterPerSegment(waypoints)];
+        console.warn(`BRouter ${brouterProfile} combined routing failed, falling back:`, err.message);
+        try {
+          rawRoutes = [await this._routeBrouterPerSegment(waypoints, brouterProfile)];
+        } catch (segErr) {
+          if (this.mode === 'driving' || this.mode === 'motorcycle') {
+            rawRoutes = await this._routeOsrmFallback(waypoints);
+          } else {
+            rawRoutes = [{ coords: [...waypoints], inlineElevations: null, osrmDistance: 0, osrmDuration: 0, speedSegments: null }];
+          }
+        }
       }
     } else {
       const profile = PROFILE_MAP[this.mode] || 'foot';
@@ -218,6 +264,7 @@ export class RouteEngine {
           score: 0, // will be calculated below
           label: '',
           index: idx,
+          speedSegments: route.speedSegments || null,
         };
       })
     );
@@ -272,13 +319,17 @@ export class RouteEngine {
    * only place BRouter's [lng,lat] order is swapped — see INC-101). Throws if
    * BRouter can't map the leg, so the caller can straight-line just this one.
    */
-  async _routeBrouterSegment(a, b) {
-    const url = `https://brouter.de/brouter?lonlats=${a[1]},${a[0]}|${b[1]},${b[0]}&profile=hiking-mountain&alternativeidx=0&format=geojson`;
+  async _routeBrouterSegment(a, b, profile = 'hiking-mountain') {
+    const url = `https://brouter.de/brouter?lonlats=${a[1]},${a[0]}|${b[1]},${b[0]}&profile=${profile}&alternativeidx=0&format=geojson`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`BRouter segment error: ${resp.status}`);
     const data = await resp.json();
     if (!data.features || data.features.length === 0) throw new Error('No segment route');
-    return data.features[0].geometry.coordinates.map((c) => [c[1], c[0]]);
+    const f = data.features[0];
+    return {
+      coords: f.geometry.coordinates.map((c) => [c[1], c[0]]),
+      speedSegments: parseSpeedSegments(f.properties?.messages),
+    };
   }
 
   /**
@@ -289,34 +340,77 @@ export class RouteEngine {
    * the old whole-route fallback. Elevations are left to the shared sampler
    * (inlineElevations: null) so mixed real/straight legs stay consistent.
    */
-  async _routeBrouterPerSegment(waypoints) {
+  async _routeBrouterPerSegment(waypoints, profile = 'hiking-mountain') {
     const legs = [];
     for (let i = 0; i < waypoints.length - 1; i++) legs.push([waypoints[i], waypoints[i + 1]]);
 
-    const legCoords = await Promise.all(legs.map(async ([a, b]) => {
+    const legResults = await Promise.all(legs.map(async ([a, b]) => {
       let coords;
+      let speedSegments = null;
       try {
-        coords = await this._routeBrouterSegment(a, b);
+        const res = await this._routeBrouterSegment(a, b, profile);
+        coords = res.coords;
+        speedSegments = res.speedSegments;
       } catch (err) {
         console.warn('BRouter segment failed, straight-lining leg:', err.message);
         coords = [[...a], [...b]];
       }
-      // Anchor each leg's endpoints exactly on the original waypoints (INC-133);
-      // this also guarantees adjacent legs meet at an identical join point.
       if (coords.length > 0) coords[0] = [...a];
       if (coords.length > 1) coords[coords.length - 1] = [...b];
-      return coords;
+      return { coords, speedSegments };
     }));
 
     const coords = [];
-    legCoords.forEach((leg, i) => {
-      // Drop each leg's first point after the first leg — it duplicates the
-      // shared waypoint already appended as the previous leg's last point.
-      if (i === 0) coords.push(...leg);
-      else coords.push(...leg.slice(1));
+    const allSpeedSegments = [];
+    let cumOffsetM = 0;
+    legResults.forEach((leg, i) => {
+      if (i === 0) coords.push(...leg.coords);
+      else coords.push(...leg.coords.slice(1));
+
+      if (Array.isArray(leg.speedSegments) && leg.speedSegments.length > 0) {
+        const segEnd = leg.speedSegments[leg.speedSegments.length - 1].endM;
+        for (const s of leg.speedSegments) {
+          allSpeedSegments.push({
+            startM: s.startM + cumOffsetM,
+            endM: s.endM + cumOffsetM,
+            maxspeed: s.maxspeed,
+            baseKmh: s.baseKmh,
+          });
+        }
+        cumOffsetM += segEnd;
+      }
     });
 
-    return { coords, inlineElevations: null, osrmDistance: 0, osrmDuration: 0 };
+    return {
+      coords,
+      inlineElevations: null,
+      osrmDistance: 0,
+      osrmDuration: 0,
+      speedSegments: allSpeedSegments.length > 0 ? allSpeedSegments : null,
+    };
+  }
+
+  async _routeOsrmFallback(waypoints) {
+    const profile = PROFILE_MAP[this.mode] || 'car';
+    const coordStr = waypoints.map((w) => `${w[1]},${w[0]}`).join(';');
+    const url = `${OSRM_BASE}/${profile}/${coordStr}?overview=full&geometries=geojson&steps=false`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`OSRM fallback error: ${resp.status}`);
+    const data = await resp.json();
+    if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+      throw new Error('No OSRM route found');
+    }
+    const r = data.routes[0];
+    const coords = r.geometry.coordinates.map((c) => [c[1], c[0]]);
+    if (coords.length > 0) coords[0] = [...waypoints[0]];
+    if (coords.length > 1) coords[coords.length - 1] = [...waypoints[waypoints.length - 1]];
+    return [{
+      coords,
+      inlineElevations: null,
+      osrmDistance: r.distance,
+      osrmDuration: r.duration,
+      speedSegments: null,
+    }];
   }
 
   /**

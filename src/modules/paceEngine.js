@@ -35,6 +35,7 @@ export const ACTIVITY_PROFILES = {
   'trail-run': { name: 'trail run', speedKmH: 8.0, ascentMH: 800, descentMH: 1200, fatigue: true, baseMET: 10.0 },
   running: { name: 'running', speedKmH: 10, ascentMH: 600, descentMH: 900, fatigue: true, baseMET: 11.0 },
   cycling: { name: 'cycling', speedKmH: 15, ascentMH: 1200, descentMH: 0, fatigue: false, baseMET: 8.0 },
+  motorcycle: { name: 'motorcycle', speedKmH: 35, ascentMH: 0, descentMH: 0, fatigue: false, baseMET: 2.5 },
   driving: { name: 'driving', speedKmH: 40, ascentMH: 0, descentMH: 0, fatigue: false, baseMET: 2.0 },
 };
 
@@ -117,6 +118,8 @@ function resolveModel(activity, params = {}) {
   const calibrationFactor = merged.calibrationEnabled
     ? clamp(Number(merged.calibrationFactor) || 1, MIN_CALIBRATION_FACTOR, MAX_CALIBRATION_FACTOR)
     : 1;
+  const speedLimitOffsetKmH = Number(merged.speedLimitOffsetKmH) || 0;
+  const speedSegments = Array.isArray(merged.speedSegments) ? merged.speedSegments : null;
 
   return {
     prof,
@@ -136,6 +139,8 @@ function resolveModel(activity, params = {}) {
     restEveryH: Math.max(0, Number(merged.restEveryH) || 0),
     restMinutes: Math.max(0, Number(merged.restMinutes) || 0),
     calibrationFactor,
+    speedLimitOffsetKmH,
+    speedSegments,
   };
 }
 
@@ -157,9 +162,43 @@ function downhillAdjustmentH(horizontalH, descM, distM, prof) {
   return horizontalH * Math.min(0.65, (grade - 0.06) * 3.0);
 }
 
-function estimateBaseSegment(distKm, ascM, descM, model) {
+function findSpeedSegment(segments, distM) {
+  if (!segments || segments.length === 0) return null;
+  let low = 0, high = segments.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const seg = segments[mid];
+    if (distM < seg.startM) {
+      high = mid - 1;
+    } else if (distM > seg.endM) {
+      low = mid + 1;
+    } else {
+      return seg;
+    }
+  }
+  return segments[Math.min(segments.length - 1, Math.max(0, low))];
+}
+
+function estimateBaseSegment(distKm, ascM, descM, model, meta = null) {
   const distM = distKm * 1000;
-  const horizontalH = distKm / Math.max(0.01, model.baseSpeed);
+  let segSpeed = model.baseSpeed;
+  if (['motorcycle', 'driving'].includes(model.prof.name)) {
+    if (model.speedSegments && meta && meta.midDistM != null) {
+      const seg = findSpeedSegment(model.speedSegments, meta.midDistM);
+      if (seg) {
+        if (seg.maxspeed != null) {
+          segSpeed = Math.max(5, seg.maxspeed + model.speedLimitOffsetKmH);
+        } else {
+          segSpeed = Math.max(5, (seg.baseKmh || model.baseSpeed) + model.speedLimitOffsetKmH);
+        }
+      } else {
+        segSpeed = Math.max(5, model.baseSpeed + model.speedLimitOffsetKmH);
+      }
+    } else {
+      segSpeed = Math.max(5, model.baseSpeed + model.speedLimitOffsetKmH);
+    }
+  }
+  const horizontalH = distKm / Math.max(0.01, segSpeed);
   const ascentH = model.prof.ascentMH > 0 ? ascM / model.ascentRate : 0;
   const descAdjH = downhillAdjustmentH(horizontalH, descM, distM, model.prof);
   return Math.max(0, horizontalH + ascentH + descAdjH);
@@ -302,11 +341,12 @@ export function computePaceSegments(elevations, distances, activity, params = {}
 
   for (let i = 1; i < Math.min(elevs.length, dists.length); i++) {
     const distKm = Math.max(0, (dists[i] - dists[i - 1]) / 1000);
+    const midDistM = (dists[i] + dists[i - 1]) / 2;
     const dElev = (elevs[i] ?? 0) - (elevs[i - 1] ?? 0);
     const ascM = Math.max(0, dElev);
     const descM = Math.max(0, -dElev);
-    let rawRemH = estimateBaseSegment(distKm, ascM, descM, model);
-    const meta = { index: i, distKm, ascM, descM };
+    const meta = { index: i, distKm, ascM, descM, midDistM };
+    let rawRemH = estimateBaseSegment(distKm, ascM, descM, model, meta);
 
     while (model.fatigue && model.restEveryH > 0 && rawRemH > 0) {
       const fm = fatigueMultiplier(model, ctx.fatH);

@@ -808,6 +808,7 @@ const ROUTE_MODE_DEFAULT_ACTIVITY = Object.freeze({
   walking: 'walking',
   hiking: 'hiking',
   cycling: 'cycling',
+  motorcycle: 'motorcycle',
   driving: 'driving',
 });
 
@@ -1177,6 +1178,7 @@ function setCurrentRouteData(coords = [], elevations = []) {
   currentRouteCoords = coords;
   currentElevations = elevations;
   bumpRouteVersion();
+  syncRouteSpeedLimitOffsetUI();
   // A restored 軌跡量測 needs the track. Every caller fills the elevation profile
   // synchronously right after this call, so defer one macrotask to replay against
   // the aligned profile (asc/desc included) instead of the raw coords.
@@ -1258,8 +1260,12 @@ function getPaceComputation(elevs, dists, activity = speedActivity, params = pac
     return paceComputationCache;
   }
 
-  const times = computeCumulativeTimes(elevs, dists, activity, params);
-  const trip = computeTripStats(elevs, dists, activity, params);
+  const mergedParams = {
+    ...params,
+    speedSegments: currentRouteSpeedSegments,
+  };
+  const times = computeCumulativeTimes(elevs, dists, activity, mergedParams);
+  const trip = computeTripStats(elevs, dists, activity, mergedParams);
   if (!isCurrentState) return { times, trip };
   emitTestEvent('pace-computation-cache', { status: 'miss', paceVersion, elevationVersion });
   paceComputationCache = { paceVersion, elevationVersion, times, trip };
@@ -2025,17 +2031,61 @@ function updateFlatPlaceholder() {
   setDynamicPlaceholder(paceFlatInput, formatFlatPacePlaceholder(spdKmh, paceUnit));
 }
 
+
+function shouldShowTimeStat() {
+  return speedIntervalMode || segmentIntervalKm > 0 || ['driving', 'motorcycle'].includes(speedActivity);
+}
+
+function syncRouteSpeedLimitOffsetUI() {
+  const isMotor = ['motorcycle', 'driving'].includes(routeEngine.mode);
+  const routeSpeedRow = document.getElementById('route-speed-limit-row');
+  if (routeSpeedRow) {
+    routeSpeedRow.style.display = isMotor ? 'flex' : 'none';
+  }
+  const paceSpeedOffsetField = document.getElementById('pace-speed-limit-offset-field');
+  if (paceSpeedOffsetField) {
+    paceSpeedOffsetField.style.display = isMotor ? '' : 'none';
+  }
+  const offset = paceParams.speedLimitOffsetKmH ?? 0;
+  const routeInput = document.getElementById('route-speed-limit-offset-input');
+  if (routeInput && document.activeElement !== routeInput) {
+    routeInput.value = offset;
+  }
+  const paceInput = document.getElementById('pace-speed-limit-offset-input');
+  if (paceInput && document.activeElement !== paceInput) {
+    paceInput.value = offset;
+  }
+}
+
+function onSpeedLimitOffsetChange(val) {
+  const num = parseInt(val, 10);
+  const offset = Number.isFinite(num) ? Math.max(-60, Math.min(60, num)) : 0;
+  paceParams = {
+    ...paceParams,
+    speedLimitOffsetKmH: offset,
+  };
+  localStorage.setItem(LS_PACE_PARAMS_KEY, JSON.stringify(paceParams));
+  bumpPaceVersion();
+  syncRouteSpeedLimitOffsetUI();
+  updateTimeStat();
+  updateIntermediateMarkers();
+  renderWeatherPanel();
+}
+
 function shouldShowEnergyStats() {
-  return speedActivity !== 'driving';
+  return !['driving', 'motorcycle'].includes(speedActivity);
 }
 
 function syncPaceActivityApplicabilityUi() {
   const showEnergy = shouldShowEnergyStats();
+  const showTime = shouldShowTimeStat();
   const active = speedIntervalMode || segmentIntervalKm > 0;
   const paceLoadRow = document.getElementById('pace-load-row');
   const paceFatigueField = document.getElementById('pace-fatigue-field');
   if (paceLoadRow) paceLoadRow.style.display = showEnergy ? '' : 'none';
   if (paceFatigueField) paceFatigueField.style.display = showEnergy ? '' : 'none';
+  syncRouteSpeedLimitOffsetUI();
+  if (statTimeCard) statTimeCard.style.display = showTime ? '' : 'none';
   if (paceRestRow) {
     paceRestRow.style.display = showEnergy && paceFatigueLevelEl?.value !== 'none' ? '' : 'none';
   }
@@ -2098,7 +2148,7 @@ function flashPaceActivitySync() {
 
 function applyRouteMode(mode, options = {}) {
   const { syncPaceActivity = true } = options;
-  const routeMode = ['walking', 'hiking', 'cycling', 'driving'].includes(mode) ? mode : 'hiking';
+  const routeMode = ['walking', 'hiking', 'cycling', 'motorcycle', 'driving'].includes(mode) ? mode : 'hiking';
   routeEngine.setMode(routeMode);
   localStorage.setItem(LS_ROUTE_MODE_KEY, routeMode);
   bumpRouteVersion();
@@ -3546,7 +3596,8 @@ async function restoreCurrentRouteSnapshot(snap, requestId) {
     // currentRouteCoords — so without this reset the 3D view would keep
     // showing the favourite's route even after the track is restored.
     allAlternatives = [];
-    selectedAltIndex = 0;
+  selectedAltIndex = 0;
+  currentRouteSpeedSegments = null;
     const ok = await restoreImportedTrack(snap);
     if (ok) autoFetchWeather({ force: false });
     return ok;
@@ -9143,6 +9194,7 @@ async function selectAlternative(index, options = {}) {
 
   selectedAltIndex = index;
   const route = allAlternatives[index];
+  currentRouteSpeedSegments = route.speedSegments || null;
   if (isStale()) return false;
 
   if (options.isStale) {
@@ -9694,7 +9746,9 @@ function updateElevationStats(stats) {
 
 /** Compute total travel time and calorie stats for the current route. */
 function updateTimeStat() {
-  if ((!speedIntervalMode && segmentIntervalKm === 0) || !statTime || !statTimeCard) return;
+  const showTime = shouldShowTimeStat();
+  if (statTimeCard) statTimeCard.style.display = showTime ? '' : 'none';
+  if (!showTime || !statTime) return;
   const pts = elevationProfile.points;
   const elevs = elevationProfile.elevations;
   const dists = elevationProfile.distances;
@@ -10494,6 +10548,7 @@ const ROUTE_MODE_LABELS = {
   walking: '步行',
   hiking: '山徑',
   cycling: '自行車',
+  motorcycle: '機車',
   driving: '駕車',
 };
 
@@ -10503,6 +10558,7 @@ const SPEED_ACTIVITY_LABELS = {
   'trail-run': '越野跑',
   running: '跑步',
   cycling: '自行車',
+  motorcycle: '機車',
   driving: '駕車',
 };
 
@@ -17527,7 +17583,7 @@ async function init() {
     const anyActive = initMode !== 'off';
     if (activityRow) activityRow.style.display = anyActive ? '' : 'none';
     if (pacePanel) pacePanel.style.display = anyActive ? '' : 'none';
-    if (statTimeCard) statTimeCard.style.display = anyActive ? '' : 'none';
+    if (statTimeCard) statTimeCard.style.display = shouldShowTimeStat() ? '' : 'none';
     syncPaceActivityApplicabilityUi();
     syncIntermediateEnabledUI();
 
@@ -17583,6 +17639,20 @@ async function init() {
   // Restore saved paceParams to UI inputs
   const paceUnitSelectRestored = paceUnitSelect;
   if (paceUnitSelectRestored) paceUnitSelectRestored.value = paceUnit;
+    const routeSpeedOffsetInput = document.getElementById('route-speed-limit-offset-input');
+    const paceSpeedOffsetInput = document.getElementById('pace-speed-limit-offset-input');
+    [routeSpeedOffsetInput, paceSpeedOffsetInput].forEach((el) => {
+      if (el) {
+        el.addEventListener('change', (e) => onSpeedLimitOffsetChange(e.target.value));
+        el.addEventListener('input', (e) => {
+          // Sync other input simultaneously
+          const other = el === routeSpeedOffsetInput ? paceSpeedOffsetInput : routeSpeedOffsetInput;
+          if (other) other.value = el.value;
+        });
+      }
+    });
+    syncRouteSpeedLimitOffsetUI();
+
 
   // Restore flat pace in the current unit
   if (paceFlatInput) {

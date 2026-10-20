@@ -112,6 +112,8 @@ const PHRASES = {
   '逆': { en: 'CCW', ja: '反時計回り', ko: '반시계 방향', fr: 'Sens anti-horaire', de: 'Gegen den Uhrzeigersinn', es: 'Sentido antihorario', it: 'Senso antiorario' },
   '自行車': { en: 'Cycling', ja: '自転車', ko: '자전거', fr: 'Vélo', de: 'Radfahren', es: 'Ciclismo', it: 'Bici' },
   '駕車': { en: 'Driving', ja: '車', ko: '운전', fr: 'Voiture', de: 'Auto', es: 'Conducir', it: 'Auto' },
+  '速限偏移': { en: 'Speed limit offset', ja: '制限速度オフセット', ko: '속도 제한 오프셋', fr: 'Décalage limite vitesse', de: 'Tempolimit-Abweichung', es: 'Desplazamiento límite velocidad', it: 'Offset limite di velocità' },
+  '考量 OSM 速限': { en: 'Using OSM speed limits', ja: 'OSM制限速度を考慮', ko: 'OSM 속도 제한 고려', fr: 'Prend en compte les limitations OSM', de: 'Berücksichtigt OSM-Tempolimits', es: 'Considera límites de velocidad OSM', it: 'Considera i limiti di velocità OSM' },
   '配速參數': { en: 'Pace parameters', ja: 'ペース設定', ko: '페이스 설정', fr: 'Paramètres d’allure', de: 'Tempo-Parameter', es: 'Parámetros de ritmo', it: 'Parametri di passo' },
   '重置配速': { en: 'Reset pace', ja: 'ペースをリセット', ko: '페이스 재설정', fr: 'Réinitialiser l’allure', de: 'Tempo zurücksetzen', es: 'Restablecer ritmo', it: 'Reimposta passo' },
   '平地配速': { en: 'Flat pace', ja: '平地ペース', ko: '평지 페이스', fr: 'Allure sur plat', de: 'Tempo in der Ebene', es: 'Ritmo en llano', it: 'Passo in piano' },
