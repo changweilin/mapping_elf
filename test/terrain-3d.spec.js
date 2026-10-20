@@ -471,7 +471,19 @@ test('3D terrain: 地標裝飾 (效果) button is gated on landmarks, independen
 test('3D terrain: 地標裝飾 (效果) button toggles landmark visibility once the route has landmarks', async ({ page }) => {
   await mockElevation(page, { delayMs: 30 });
   await mockFeatures(page, {
-    elements: [{ type: 'node', id: 1, lat: 24.2133, lon: 121.3472, tags: { natural: 'peak', name: 'Test Peak' } }],
+    elements: [
+      { type: 'node', id: 1, lat: 24.2133, lon: 121.3472, tags: { natural: 'peak', name: 'Test Peak', ele: '2600' } },
+      { type: 'node', id: 2, lat: 24.2140, lon: 121.3480, tags: { tourism: 'alpine_hut', name: 'Test Hut' } },
+      { type: 'node', id: 3, lat: 24.2125, lon: 121.3465, tags: { waterway: 'waterfall', name: 'Test Falls' } },
+      { type: 'node', id: 4, lat: 24.2145, lon: 121.3490, tags: { power: 'generator', 'generator:source': 'wind' } },
+      { type: 'node', id: 5, lat: 24.2118, lon: 121.3460, tags: { amenity: 'place_of_worship', religion: 'taoist', name: '山神廟' } },
+      { type: 'node', id: 10, lat: 24.2130, lon: 121.3470 },
+      { type: 'node', id: 11, lat: 24.2138, lon: 121.3478 },
+      { type: 'way', id: 20, nodes: [10, 11], tags: { highway: 'path', bridge: 'suspension', name: 'Test Suspension Bridge' } },
+      { type: 'way', id: 21, nodes: [10, 11], tags: { railway: 'narrow_gauge', name: 'Test Forest Rail' } },
+      { type: 'way', id: 22, nodes: [10, 11], tags: { aerialway: 'gondola', name: 'Test Gondola' } },
+      { type: 'way', id: 23, nodes: [10, 11], tags: { waterway: 'dam', name: 'Test Dam' } },
+    ],
   });
   await openWithRoute(page);
 

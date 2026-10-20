@@ -101,10 +101,11 @@ export class TerrainViewer {
     this.featureLabelGroup = null;
     this._featuresVisible = true;
     this._weatherVisible = true;
-    // Point-landmark models (peaks/trees/towers/viewpoints/monuments) are visual
+    // Point-landmark models (peaks/trees/towers/viewpoints/monuments/etc.) are visual
     // embellishments rather than base map imagery, so 特效 (effects) can declutter
     // them independently of 圖資 — visible only when BOTH 圖資 and 特效 are on.
     this.landmarkGroup = null;
+    this._windTurbineRotors = [];
 
     // --- Clickable 3D markers (billboard signboards) ---
     this._onMarkerClick = null;
@@ -4488,8 +4489,8 @@ export class TerrainViewer {
   // ---------- Map features (道路 / 河流 / 水體 / 綠地 / 荒地 / 建築) ----------
 
   // Classify an OSM element's tags into a render category, or null to ignore.
-  // Returns { group:'line'|'area'|'building', kind, cls } where kind drives the
-  // colour/label priority and cls the line/area style.
+  // Returns { group:'line'|'area'|'building'|'structure', kind, cls, ... } where
+  // kind drives the colour/label priority and cls the line/area/structure style.
   static _classifyFeature(tags) {
     if (!tags) return null;
     if (tags.building && tags.building !== 'no') return { group: 'building', kind: 'building', cls: 'building' };
@@ -4498,25 +4499,78 @@ export class TerrainViewer {
     // podium, wings and stepped massing render as distinct volumes.
     if (tags['building:part'] && tags['building:part'] !== 'no') return { group: 'building', kind: 'building', cls: 'part' };
 
+    // 3D civil & natural structures (dams, piers, breakwaters, walls, cliffs).
+    const ww = tags.waterway;
+    if (ww === 'dam' || ww === 'weir') return { group: 'structure', kind: 'structure', cls: 'dam' };
+    const mm = tags.man_made;
+    if (mm === 'pier') return { group: 'structure', kind: 'structure', cls: 'pier' };
+    if (/^(breakwater|groyne|embankment|dyke)$/.test(mm || '')) return { group: 'structure', kind: 'structure', cls: 'breakwater' };
+    if (/^(city_wall|retaining_wall|wall)$/.test(tags.barrier || '') || tags.historic === 'citywalls') {
+      return { group: 'structure', kind: 'structure', cls: 'wall' };
+    }
+    if (/^(cliff|ridge|arete)$/.test(tags.natural || '') && tags.area !== 'yes') {
+      return { group: 'structure', kind: 'structure', cls: 'cliff' };
+    }
+
+    // Aerialway cable cars, gondolas, chairlifts & forestry zip-lines.
+    const aw = tags.aerialway;
+    if (aw && /^(cable_car|gondola|chair_lift|mixed_lift|drag_lift|zip_line|goods|rope_tow)$/.test(aw)) {
+      return { group: 'line', kind: 'aerialway', cls: 'aerialway', sub: aw };
+    }
+
+    // Overhead high-voltage power transmission lines.
+    if (/^(line|minor_line)$/.test(tags.power || '')) {
+      return { group: 'line', kind: 'power', cls: 'power_line' };
+    }
+
+    // Railways (mainline, forest narrow-gauge, light rail, funicular, tram).
+    const rw = tags.railway;
+    if (rw && tags.area !== 'yes' && /^(rail|narrow_gauge|light_rail|subway|tram|monorail|funicular|preserved)$/.test(rw)) {
+      const isBridge = !!(tags.bridge && tags.bridge !== 'no');
+      const isTunnel = !!(tags.tunnel && tags.tunnel !== 'no' && tags.tunnel !== 'culvert');
+      return {
+        group: 'line', kind: 'rail', cls: 'railway',
+        bridge: isBridge, bridgeType: isBridge ? String(tags.bridge) : null,
+        tunnel: isTunnel,
+      };
+    }
+
     const hw = tags.highway;
     if (hw && tags.area !== 'yes') {
-      if (/^(motorway|trunk|primary|secondary|tertiary)(_link)?$/.test(hw)) return { group: 'line', kind: 'road', cls: 'major' };
-      if (/^(residential|unclassified|service|living_street|road|pedestrian)$/.test(hw)) return { group: 'line', kind: 'road', cls: 'minor' };
-      if (/^(footway|path|track|cycleway|steps|bridleway)$/.test(hw)) {
+      const isBridge = !!(tags.bridge && tags.bridge !== 'no');
+      const isTunnel = !!(tags.tunnel && tags.tunnel !== 'no' && tags.tunnel !== 'culvert');
+      let cls = 'minor';
+      if (/^(motorway|trunk|primary|secondary|tertiary)(_link)?$/.test(hw)) cls = 'major';
+      else if (/^(residential|unclassified|service|living_street|road|pedestrian)$/.test(hw)) cls = 'minor';
+      else if (/^(footway|path|track|cycleway|steps|bridleway)$/.test(hw)) {
         // A track/path tagged with 2+ lanes is a real paved rural road, not a
         // dirt trail — render it as such even where it crosses green/bare
         // terrain, instead of blending into the ground as a thin dirt line.
         const lanes = parseFloat(tags.lanes);
-        if (Number.isFinite(lanes) && lanes >= 2) return { group: 'line', kind: 'road', cls: 'minor' };
-        return { group: 'line', kind: 'road', cls: 'trail' };
+        cls = (Number.isFinite(lanes) && lanes >= 2) ? 'minor' : 'trail';
       }
-      return { group: 'line', kind: 'road', cls: 'minor' };
+      return {
+        group: 'line', kind: 'road', cls,
+        bridge: isBridge, bridgeType: isBridge ? String(tags.bridge) : null,
+        tunnel: isTunnel,
+      };
     }
 
-    const ww = tags.waterway;
+    if (/^(runway|taxiway)$/.test(tags.aeroway || '')) {
+      return { group: 'line', kind: 'road', cls: 'major' };
+    }
+
     if (ww && !tags.tunnel) {
       if (/^(river|canal)$/.test(ww)) return { group: 'line', kind: 'water', cls: 'river' };
       if (/^(stream|ditch|drain|brook)$/.test(ww)) return { group: 'line', kind: 'water', cls: 'stream' };
+    }
+
+    // Sports courts, running tracks & swimming pools.
+    if (tags.leisure === 'swimming_pool') {
+      return { group: 'area', kind: 'sport', cls: 'pool' };
+    }
+    if (/^(pitch|track|stadium)$/.test(tags.leisure || '')) {
+      return { group: 'area', kind: 'sport', cls: 'pitch', sport: tags.sport || tags.leisure };
     }
 
     // 濕地 (沼澤 marsh / 潮間帶 intertidal flats) — a water-domain cover kept
@@ -4534,7 +4588,7 @@ export class TerrainViewer {
     }
     if (/^(grass|meadow|village_green|recreation_ground|farmland|farmyard|cemetery|allotments)$/.test(tags.landuse || '')
       || /^(grassland|fell)$/.test(tags.natural || '')
-      || /^(park|garden|nature_reserve|golf_course|pitch|recreation_ground|common)$/.test(tags.leisure || '')) {
+      || /^(park|garden|nature_reserve|golf_course|recreation_ground|common)$/.test(tags.leisure || '')) {
       return { group: 'area', kind: 'green', cls: 'grass' };
     }
     if (/^(bare_rock|scree|rock|cliff)$/.test(tags.natural || '') || tags.landuse === 'quarry') {
@@ -4560,20 +4614,143 @@ export class TerrainViewer {
     return tags['name:zh'] || tags['name:zh-Hant'] || tags.name || tags['name:en'] || null;
   }
 
-  // Classify an OSM point (node) into a landmark render category, or null to
-  // ignore (Plan §III-1). Drives which procedural 3D model _buildMapFeatures spawns.
+  // Classify an OSM point (node or landmark way centroid) into a 3D landmark
+  // render category, or null to ignore (Plan §III-1). Drives which procedural
+  // 3D model _buildMapFeatures spawns.
   static _classifyPoint(tags) {
     if (!tags) return null;
     const nat = tags.natural;
     if (nat === 'peak' || nat === 'volcano') return { cls: 'peak' };
-    if (nat === 'saddle') return { cls: 'saddle' };
-    if (nat === 'tree') return { cls: 'tree' };
-    const mm = tags.man_made;
-    if (mm && /^(tower|mast|communications_tower|water_tower|lighthouse|chimney)$/.test(mm)) {
-      return { cls: mm === 'lighthouse' ? 'lighthouse' : 'tower' };
+    if (nat === 'saddle' || tags.mountain_pass === 'yes') return { cls: 'saddle' };
+    if (tags.waterway === 'waterfall' || nat === 'waterfall') return { cls: 'waterfall' };
+    if (/^(spring|hot_spring|geyser)$/.test(nat || '')
+      || tags.amenity === 'public_bath'
+      || /^(hot_spring|onsen)$/.test(tags['bath:type'] || '')) {
+      return { cls: 'spring' };
     }
-    if (tags.tourism && /^(viewpoint|attraction|artwork)$/.test(tags.tourism)) return { cls: 'viewpoint' };
-    if (tags.historic && /^(monument|memorial|castle|ruins|archaeological_site)$/.test(tags.historic)) return { cls: 'monument' };
+    if (/^(cave_entrance|arch|sinkhole)$/.test(nat || '')) return { cls: 'cave' };
+    if (nat === 'stone' || nat === 'rock' || tags.historic === 'boundary_stone') return { cls: 'rock' };
+    if (nat === 'tree') {
+      const nm = TerrainViewer._featureName(tags) || '';
+      if (tags.denotation === 'natural_monument' || tags.denotation === 'landmark'
+        || tags.monument === 'yes' || tags.historic || /神木|巨木|夫妻樹|千年/.test(nm)) {
+        return { cls: 'sacred_tree' };
+      }
+      return { cls: 'tree' };
+    }
+
+    const tour = tags.tourism;
+    const amen = tags.amenity;
+    const leis = tags.leisure;
+    const bld = String(tags.building || '').toLowerCase();
+    const hist = tags.historic;
+    const mm = tags.man_made;
+
+    // Mountain huts, wilderness cabins, trail shelters & traditional pavilions.
+    if (/^(pavilion|kiosk)$/.test(bld) || leis === 'pavilion'
+      || (amen === 'shelter' && /^(pavilion|gazebo|picnic_shelter|sun_shelter)$/.test(tags.shelter_type || ''))) {
+      return { cls: 'pavilion' };
+    }
+    if (/^(alpine_hut|wilderness_hut|chalet)$/.test(tour || '')
+      || amen === 'shelter'
+      || /^(hut|cabin|shelter)$/.test(bld)) {
+      return { cls: 'hut' };
+    }
+
+    // Campgrounds & expedition tent sites.
+    if (/^(camp_site|caravan_site)$/.test(tour || '') || tags.campsite) {
+      return { cls: 'camp_site' };
+    }
+
+    // Places of worship: Christian churches/chapels vs East Asian temples/shrines/torii.
+    if ((amen === 'place_of_worship' && tags.religion === 'christian')
+      || /^(church|cathedral|chapel)$/.test(bld)) {
+      return { cls: 'church' };
+    }
+    if (amen === 'place_of_worship'
+      || /^(temple|shrine|mosque|synagogue)$/.test(bld)
+      || hist === 'wayside_shrine'
+      || mm === 'torii') {
+      return { cls: 'temple' };
+    }
+
+    // Energy, utilities & vertical towers.
+    if ((tags.power === 'generator' && (/^(wind|wind_turbine)$/.test(tags['generator:source'] || tags['generator:method'] || '') || !tags['generator:source']))
+      || /^(windmill|wind_pump)$/.test(mm || '')) {
+      return { cls: 'wind_turbine' };
+    }
+    if (tags.power === 'tower' || tags.power === 'pole') {
+      return { cls: 'power_tower' };
+    }
+    if (/^(water_tower|storage_tank|silo)$/.test(mm || '')) {
+      return { cls: 'water_tower' };
+    }
+    if (/^(lighthouse|beacon)$/.test(mm || '') || /^(lighthouse|light_major)$/.test(tags['seamark:type'] || '')) {
+      return { cls: 'lighthouse' };
+    }
+    if (/^(chimney|kiln)$/.test(mm || '')) {
+      return { cls: 'chimney' };
+    }
+    if (mm && /^(tower|mast|communications_tower|observatory)$/.test(mm)) {
+      return { cls: 'tower' };
+    }
+
+    // Historic castles/forts/bunkers vs obelisk monuments/memorials.
+    if ((hist && /^(castle|fort|bunker|ruins|city_gate|cannon)$/.test(hist)) || tags.military === 'bunker') {
+      return { cls: 'castle' };
+    }
+    if (hist && /^(monument|memorial|archaeological_site|milestone)$/.test(hist)) {
+      return { cls: 'monument' };
+    }
+
+    // Viewpoints, trailheads/guideposts, stations, helipads, parking & picnic sites.
+    if ((tour && /^(viewpoint|attraction|artwork)$/.test(tour)) || mm === 'cairn') {
+      return { cls: 'viewpoint' };
+    }
+    if (tags.highway === 'trailhead'
+      || /^(guidepost|board|map)$/.test(tags.information || '')
+      || tour === 'information') {
+      return { cls: 'trailhead' };
+    }
+    if (/^(station|halt|tram_stop|subway_entrance)$/.test(tags.railway || '')
+      || tags.aerialway === 'station'
+      || amen === 'bus_station'
+      || tags.public_transport === 'station') {
+      return { cls: 'station' };
+    }
+    if (/^(helipad|heliport)$/.test(tags.aeroway || '')) {
+      return { cls: 'heliport' };
+    }
+    if (/^(parking|bicycle_parking|motorcycle_parking)$/.test(amen || '')
+      || /^(rest_area|services)$/.test(tags.highway || '')) {
+      return { cls: 'parking' };
+    }
+    if (tour === 'picnic_site'
+      || /^(picnic_table|firepit)$/.test(leis || '')
+      || /^(drinking_water|fountain|bench|bbq)$/.test(amen || '')) {
+      return { cls: 'picnic' };
+    }
+    return null;
+  }
+
+  // Architectural style archetype for an extruded building footprint so temples,
+  // churches, mountain huts and greenhouses get distinct diorama materials/roofs.
+  static _buildingArch(tags) {
+    if (!tags) return null;
+    const bld = String(tags.building || tags['building:part'] || '').toLowerCase();
+    if ((tags.amenity === 'place_of_worship' && tags.religion === 'christian')
+      || /^(church|cathedral|chapel)$/.test(bld)) {
+      return 'church';
+    }
+    if (tags.amenity === 'place_of_worship' || /^(temple|shrine)$/.test(bld)) {
+      return 'temple';
+    }
+    if (/^(alpine_hut|wilderness_hut|chalet)$/.test(tags.tourism || '')
+      || /^(hut|cabin|shelter|pavilion)$/.test(bld)) {
+      return 'hut';
+    }
+    if (/^(greenhouse|glasshouse)$/.test(bld)) return 'greenhouse';
+    if (/^(industrial|warehouse|manufacture|hangar)$/.test(bld)) return 'industrial';
     return null;
   }
 
@@ -4735,32 +4912,53 @@ export class TerrainViewer {
   }
 
   // Download vector map features inside the terrain bbox from Overpass. Returns a
-  // compact, serialisable structure { lines, areas, buildings } so it can be
-  // cached. Parsed once here; rendering happens in _buildMapFeatures.
+  // compact, serialisable structure { lines, areas, buildings, structures, points }
+  // so it can be cached. Parsed once here; rendering happens in _buildMapFeatures.
   async _fetchMapFeatures(bbox, onProgress) {
     const s = bbox.minLat.toFixed(5), w = bbox.minLng.toFixed(5);
     const n = bbox.maxLat.toFixed(5), e = bbox.maxLng.toFixed(5);
     const bb = `${s},${w},${n},${e}`;
     const q = `[out:json][timeout:30];(` +
       `way["highway"](${bb});` +
+      `way["railway"~"rail|narrow_gauge|light_rail|subway|tram|monorail|funicular|preserved"](${bb});` +
+      `way["aerialway"](${bb});` +
+      `way["power"~"line|minor_line"](${bb});` +
       `way["waterway"](${bb});` +
-      `way["natural"~"water|wood|scrub|heath|grassland|wetland|mud|saltmarsh|bare_rock|scree|sand|shingle"](${bb});` +
+      `way["man_made"~"bridge|pier|breakwater|groyne|embankment|dyke|tower|mast|communications_tower|water_tower|storage_tank|silo|lighthouse|chimney|windmill|wind_pump|torii"](${bb});` +
+      `way["barrier"~"city_wall|retaining_wall|wall"](${bb});` +
+      `way["historic"~"citywalls|castle|fort|bunker|ruins|city_gate|monument|memorial|archaeological_site|wayside_shrine"](${bb});` +
+      `way["natural"~"water|wood|scrub|heath|grassland|wetland|mud|saltmarsh|bare_rock|scree|sand|shingle|cliff|ridge|arete"](${bb});` +
       `way["water"](${bb});` +
       `way["wetland"](${bb});` +
       `way["tidal"="yes"](${bb});` +
       `way["landuse"](${bb});` +
-      `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|recreation_ground|common"](${bb});` +
+      `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|track|stadium|swimming_pool|recreation_ground|common|pavilion|picnic_table"](${bb});` +
+      `way["tourism"~"alpine_hut|wilderness_hut|chalet|camp_site|caravan_site|viewpoint|attraction|artwork|picnic_site|information"](${bb});` +
+      `way["amenity"~"shelter|place_of_worship|parking|bus_station|drinking_water|fountain|public_bath"](${bb});` +
+      `way["aeroway"~"helipad|heliport|runway|taxiway"](${bb});` +
       `way["building"](${bb});` +
       `way["building:part"](${bb});` +
-      // Point landmarks (Plan §III-1): peaks, notable trees, towers/masts,
-      // viewpoints and monuments become directional 3D models.
-      `node["natural"~"peak|volcano|saddle|tree"](${bb});` +
-      `node["man_made"~"tower|mast|communications_tower|water_tower|lighthouse|chimney"](${bb});` +
-      `node["tourism"~"viewpoint|attraction|artwork"](${bb});` +
-      `node["historic"~"monument|memorial|castle|ruins|archaeological_site"](${bb});` +
-      `relation["natural"~"water|wetland"](${bb});` +
-      `relation["landuse"~"forest|reservoir|basin"](${bb});` +
-      `relation["leisure"~"park|nature_reserve"](${bb});` +
+      // Point landmarks (Plan §III-1): peaks, passes, waterfalls, springs, caves,
+      // rocks, trees, huts, pavilions, campsites, temples, churches, wind turbines,
+      // power pylons, water towers, towers, lighthouses, chimneys, castles,
+      // monuments, viewpoints, trailheads, stations, helipads, parking & picnic areas.
+      `node["natural"~"peak|volcano|saddle|tree|spring|hot_spring|geyser|cave_entrance|arch|stone|rock|waterfall"](${bb});` +
+      `node["mountain_pass"="yes"](${bb});` +
+      `node["waterway"="waterfall"](${bb});` +
+      `node["man_made"~"tower|mast|communications_tower|water_tower|storage_tank|silo|lighthouse|beacon|chimney|windmill|wind_pump|torii|cairn|observatory"](${bb});` +
+      `node["power"~"tower|pole|generator"](${bb});` +
+      `node["tourism"~"viewpoint|attraction|artwork|alpine_hut|wilderness_hut|chalet|camp_site|caravan_site|picnic_site|information"](${bb});` +
+      `node["amenity"~"shelter|place_of_worship|drinking_water|fountain|bench|parking|bus_station|public_bath"](${bb});` +
+      `node["leisure"~"pavilion|picnic_table"](${bb});` +
+      `node["historic"~"monument|memorial|castle|fort|bunker|ruins|city_gate|archaeological_site|wayside_shrine|boundary_stone"](${bb});` +
+      `node["highway"="trailhead"](${bb});` +
+      `node["information"~"guidepost|board|map"](${bb});` +
+      `node["railway"~"station|halt|tram_stop|subway_entrance"](${bb});` +
+      `node["aerialway"="station"](${bb});` +
+      `node["aeroway"~"helipad|heliport"](${bb});` +
+      `relation["natural"~"water|wetland|wood"](${bb});` +
+      `relation["landuse"~"forest|reservoir|basin|grass|meadow|farmland|orchard"](${bb});` +
+      `relation["leisure"~"park|nature_reserve|pitch|stadium|golf_course"](${bb});` +
       `);out geom 6000;`;
 
     onProgress?.(0.1);
@@ -4789,6 +4987,7 @@ export class TerrainViewer {
     const lines = [];
     const areas = [];
     const buildings = [];
+    const structures = [];
     const points = [];
     const ringFrom = (geom) => geom.filter((g) => g && Number.isFinite(g.lat) && Number.isFinite(g.lon)).map((g) => [g.lat, g.lon]);
 
@@ -4797,7 +4996,7 @@ export class TerrainViewer {
       const name = TerrainViewer._featureName(tags);
 
       // Point landmarks (nodes) are classified separately — _classifyFeature only
-      // handles line/area/building ways, so nodes must be routed before it.
+      // handles line/area/building/structure ways, so nodes must be routed before it.
       if (el.type === 'node') {
         if (!Number.isFinite(el.lat) || !Number.isFinite(el.lon)) continue;
         const pcat = TerrainViewer._classifyPoint(tags);
@@ -4811,24 +5010,55 @@ export class TerrainViewer {
       }
 
       const cat = TerrainViewer._classifyFeature(tags);
-      if (!cat) continue;
 
       if (el.type === 'way' && Array.isArray(el.geometry)) {
         const pts = ringFrom(el.geometry);
+        // Many OSM landmarks (camp_site, shelter, pavilion, water_tower, lighthouse,
+        // castle, helipad, parking, picnic_site, alpine_hut, temple, station) are
+        // mapped as closed polygon ways without (or instead of) a separate node.
+        // Spawn a 3D point landmark at the way's centroid when it isn't already a
+        // standard extruded building, or when it's a specialised non-building landmark.
+        const pcat = TerrainViewer._classifyPoint(tags);
+        if (pcat && pts.length >= 3 && (!cat || (cat.group !== 'building' && cat.group !== 'line' && cat.group !== 'structure'))) {
+          let cla = 0, clo = 0;
+          for (const [la, lo] of pts) { cla += la; clo += lo; }
+          cla /= pts.length; clo /= pts.length;
+          points.push({
+            cls: pcat.cls, name, lat: cla, lon: clo,
+            h: TerrainViewer._parseLengthM(tags.height ?? tags['building:height']),
+          });
+        }
+
+        if (!cat) continue;
         if (cat.group === 'line') {
-          if (pts.length >= 2) lines.push({ kind: cat.kind, cls: cat.cls, name, pts });
+          if (pts.length >= 2) {
+            lines.push({
+              kind: cat.kind, cls: cat.cls, sub: cat.sub || null, name, pts,
+              bridge: !!cat.bridge, bridgeType: cat.bridgeType || null,
+              tunnel: !!cat.tunnel,
+            });
+          }
+        } else if (cat.group === 'structure') {
+          if (pts.length >= 2) {
+            structures.push({
+              cls: cat.cls, name, pts,
+              h: TerrainViewer._parseLengthM(tags.height),
+            });
+          }
         } else if (cat.group === 'building') {
           if (pts.length >= 4) buildings.push({
             name, ring: pts,
             h: TerrainViewer._buildingHeight(tags),
             minH: TerrainViewer._buildingMinHeight(tags),
             roof: TerrainViewer._roofInfo(tags),
+            arch: TerrainViewer._buildingArch(tags),
+            wallColor: TerrainViewer._parseHexColour(tags['building:colour'] || tags['building:color']),
             part: cat.cls === 'part',
           });
         } else {
-          if (pts.length >= 4) areas.push({ kind: cat.kind, cls: cat.cls, name, rings: [pts] });
+          if (pts.length >= 4) areas.push({ kind: cat.kind, cls: cat.cls, sport: cat.sport || null, name, rings: [pts] });
         }
-      } else if (el.type === 'relation' && Array.isArray(el.members) && cat.group === 'area') {
+      } else if (el.type === 'relation' && Array.isArray(el.members) && cat && cat.group === 'area') {
         const outers = [];
         const inners = [];
         for (const m of el.members) {
@@ -4836,12 +5066,12 @@ export class TerrainViewer {
           const r = ringFrom(m.geometry);
           if (r.length >= 4) (m.role === 'inner' ? inners : outers).push(r);
         }
-        for (const outer of outers) areas.push({ kind: cat.kind, cls: cat.cls, name, rings: [outer, ...inners] });
+        for (const outer of outers) areas.push({ kind: cat.kind, cls: cat.cls, sport: cat.sport || null, name, rings: [outer, ...inners] });
       }
     }
 
     onProgress?.(1);
-    return { lines, areas, buildings, points };
+    return { lines, areas, buildings, structures, points };
   }
 
   // --- Clip vector features to the terrain bbox -------------------------------
@@ -4938,25 +5168,47 @@ export class TerrainViewer {
       return Number.isFinite(e) ? `${base} ${Math.round(e)} m` : base;
     }
     const names = {
+      sacred_tree: '神木',
+      hut: '山屋',
+      pavilion: '涼亭',
+      camp_site: '營地',
+      temple: '廟宇',
+      church: '教堂',
+      wind_turbine: '風力發電',
+      power_tower: '電塔',
+      water_tower: '水塔',
       tower: '高塔',
       lighthouse: '燈塔',
       chimney: '煙囪',
+      waterfall: '瀑布',
+      spring: '湧泉',
+      cave: '岩洞',
+      rock: '奇岩',
+      castle: '古蹟砲台',
       viewpoint: '觀景點',
       monument: '紀念地標',
+      trailhead: '登山口指標',
+      station: '車站',
+      heliport: '停機坪',
+      parking: '停車場',
+      picnic: '休憩區',
     };
     return names[cls] || null;
   }
 
   // Build a stylized low-poly diorama 3D model for an OSM point landmark:
-  //   • tree       — Conifer pine (4 scalloped tiers) or broadleaf (multi-crown)
-  //   • peak       — Stacked stone cairn (瑪尼堆) + triangulation pillar (三角點基石)
-  //                  + banded survey pole with waving summit pennant
-  //   • saddle     — Twin pass rock cairns + timber directional trail signpost
-  //   • tower      — 3-stage steel truss tower with observation deck & dish antennas
-  //   • lighthouse — Coastal bastion base + keeper's cottage + striped tower + beacon
-  //   • chimney    — Brick powerhouse base + banded flue stack + low-poly steam puffs
-  //   • viewpoint  — Elevated timber viewing deck with railings, lectern & telescope
-  //   • monument   — Stepped granite plinth + corner bollards + obelisk & bronze plaque
+  //   • tree / sacred_tree — Conifer pine, broadleaf, or ancient giant cypress (神木)
+  //   • peak / saddle      — Summit cairn + trig pillar + flag / pass twin cairns + signpost
+  //   • hut / pavilion     — Alpine mountain cabin with solar roof / hexagonal pagoda pavilion
+  //   • camp_site          — Geodesic dome & A-frame tents + glowing stone-ring campfire
+  //   • temple / church    — East Asian swallowtail-roof temple + incense / spire church
+  //   • wind_turbine       — Tapered tower + nacelle + 3 spinning aerodynamic rotor blades
+  //   • power_tower        — Steel lattice high-voltage transmission pylon + insulators
+  //   • water_tower        — Elevated spherical/cylindrical water tank on braced legs
+  //   • tower / lighthouse / chimney — Telecom truss tower / coastal lighthouse / smokestack
+  //   • waterfall / spring / cave / rock — Cascading cliff waterfall / steaming spring / cave / crag
+  //   • castle / monument  — Battlemented stone fortress & watchtower / obelisk monument
+  //   • viewpoint / trailhead / station / heliport / parking / picnic
   _buildPointModel(cls, ms, realH, lat = 0, lon = 0) {
     const g = new THREE.Group();
     const add = (mesh, x = 0, y = 0, z = 0) => {
@@ -4967,6 +5219,47 @@ export class TerrainViewer {
       return mesh;
     };
     const seed = Math.abs(Math.sin(lat * 127.1 + lon * 311.7) * 43758.5453) % 1;
+
+    if (cls === 'sacred_tree') {
+      // --- Ancient Giant Red-Cypress Sacred Tree (千年神木／巨木) ---
+      const barkMat = new THREE.MeshStandardMaterial({ color: 0x7a4424, roughness: 0.88, flatShading: true });
+      const rootMat = new THREE.MeshStandardMaterial({ color: 0x5c3218, roughness: 0.92, flatShading: true });
+      const ropeMat = new THREE.MeshStandardMaterial({ color: 0xf5ecd8, roughness: 0.6, emissive: 0x3a2e18, emissiveIntensity: 0.2 });
+      const fenceMat = new THREE.MeshStandardMaterial({ color: 0x8f5b32, roughness: 0.84, flatShading: true });
+      const trunkH = 9.5 * ms;
+      // Massive gnarled buttress roots.
+      add(new THREE.Mesh(new THREE.ConeGeometry(3.2 * ms, 2.6 * ms, 8), rootMat), 0, 1.3 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.45 * ms, 2.25 * ms, trunkH, 8), barkMat), 0, trunkH / 2, 0);
+      // Sacred shimenawa rope collar & white paper shide tabs around the trunk.
+      const rope = add(new THREE.Mesh(new THREE.TorusGeometry(1.82 * ms, 0.28 * ms, 6, 14), ropeMat), 0, 3.6 * ms, 0);
+      rope.rotation.x = Math.PI / 2;
+      // Gnarled ancient side boughs.
+      for (const sx of [-1, 1]) {
+        const bough = add(new THREE.Mesh(new THREE.CylinderGeometry(0.55 * ms, 0.85 * ms, 4.2 * ms, 6), barkMat), sx * 1.8 * ms, trunkH - 1.4 * ms, 0);
+        bough.rotation.z = -sx * 0.65;
+      }
+      // Multi-tiered ancient cypress crown domes.
+      const crownCols = [0x1f5420, 0x296828, 0x357c32, 0x438e3d];
+      const lobes = [
+        { x: 0, y: trunkH + 3.6 * ms, z: 0, s: 4.8 * ms, c: crownCols[0] },
+        { x: -2.8 * ms, y: trunkH + 1.8 * ms, z: 1.1 * ms, s: 3.6 * ms, c: crownCols[1] },
+        { x: 2.7 * ms, y: trunkH + 2.1 * ms, z: -0.9 * ms, s: 3.7 * ms, c: crownCols[2] },
+        { x: 0.3 * ms, y: trunkH + 2.4 * ms, z: -2.4 * ms, s: 3.3 * ms, c: crownCols[3] },
+        { x: -0.4 * ms, y: trunkH + 5.2 * ms, z: 0.4 * ms, s: 3.4 * ms, c: crownCols[2] },
+      ];
+      for (const lb of lobes) {
+        const mat = new THREE.MeshStandardMaterial({ color: lb.c, roughness: 0.84, flatShading: true });
+        const cr = add(new THREE.Mesh(new THREE.DodecahedronGeometry(lb.s, 0), mat), lb.x, lb.y, lb.z);
+        cr.scale.set(1.18, 0.78, 1.12);
+        cr.rotation.y = seed * 3 + lb.x;
+      }
+      // Low timber protective rail ring at base.
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.2 * ms, 0.22 * ms, 1.4 * ms, 6), fenceMat), Math.cos(a) * 3.8 * ms, 0.7 * ms, Math.sin(a) * 3.8 * ms);
+      }
+      return g;
+    }
 
     if (cls === 'tree') {
       const barkMat = new THREE.MeshStandardMaterial({ color: 0x6b4728, roughness: 0.9, flatShading: true });
@@ -5087,6 +5380,252 @@ export class TerrainViewer {
       return g;
     }
 
+    if (cls === 'hut') {
+      // --- Alpine Mountain Hut / Wilderness Cabin (高山山屋／避難小屋) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x7a756e, roughness: 0.92, flatShading: true });
+      const logMat = new THREE.MeshStandardMaterial({ color: 0x9c6638, roughness: 0.82, flatShading: true });
+      const trimMat = new THREE.MeshStandardMaterial({ color: 0x59371b, roughness: 0.86, flatShading: true });
+      const roofMat = new THREE.MeshStandardMaterial({
+        color: seed < 0.5 ? 0x2b689c : 0xb83c32, roughness: 0.55, metalness: 0.25, flatShading: true,
+      });
+      const solarMat = new THREE.MeshStandardMaterial({ color: 0x1c355e, roughness: 0.25, metalness: 0.6, emissive: 0x09152b, emissiveIntensity: 0.25 });
+      const winMat = new THREE.MeshStandardMaterial({ color: 0xffe596, emissive: 0xffaa2b, emissiveIntensity: 0.9, roughness: 0.3 });
+      const tankMat = new THREE.MeshStandardMaterial({ color: 0xd0d7de, roughness: 0.35, metalness: 0.65 });
+
+      // Raised stone foundation + front timber porch deck.
+      add(new THREE.Mesh(new THREE.BoxGeometry(7.2 * ms, 1.2 * ms, 5.8 * ms), stoneMat), 0, 0.6 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.2 * ms, 3.4 * ms, 4.4 * ms), logMat), 0, 2.9 * ms, -0.3 * ms);
+      // Gable pitched roof (2 sloped roof planes + ridge beam).
+      for (const sx of [-1, 1]) {
+        const rSlope = add(new THREE.Mesh(new THREE.BoxGeometry(4.2 * ms, 0.45 * ms, 5.4 * ms), roofMat), sx * 1.75 * ms, 5.45 * ms, -0.3 * ms);
+        rSlope.rotation.z = -sx * 0.52;
+      }
+      // Rooftop solar panel array on the right slope.
+      const solar = add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 0.18 * ms, 3.2 * ms), solarMat), 1.65 * ms, 5.75 * ms, -0.2 * ms);
+      solar.rotation.z = -0.52;
+      // Doorway + glowing warm cabin windows.
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.3 * ms, 2.2 * ms, 0.25 * ms), trimMat), 0, 2.3 * ms, 1.92 * ms);
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(1.15 * ms, 1.05 * ms, 0.25 * ms), winMat), sx * 1.95 * ms, 2.9 * ms, 1.92 * ms);
+      }
+      // Side stainless rainwater harvesting tank.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.95 * ms, 0.95 * ms, 2.4 * ms, 10), tankMat), -3.9 * ms, 1.8 * ms, -0.6 * ms);
+      return g;
+    }
+
+    if (cls === 'pavilion') {
+      // --- Traditional Hexagonal Trail Pavilion / Gazebo (山林涼亭) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x969086, roughness: 0.9, flatShading: true });
+      const pillarMat = new THREE.MeshStandardMaterial({ color: 0xb3392b, roughness: 0.65, flatShading: true });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0x2c6b4f, roughness: 0.6, flatShading: true });
+      const goldMat = new THREE.MeshStandardMaterial({ color: 0xffcf40, roughness: 0.35, metalness: 0.6, emissive: 0x664400, emissiveIntensity: 0.3 });
+
+      add(new THREE.Mesh(new THREE.CylinderGeometry(3.8 * ms, 4.3 * ms, 1.1 * ms, 6), stoneMat), 0, 0.55 * ms, 0);
+      const colH = 3.8 * ms;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.28 * ms, 0.32 * ms, colH, 6), pillarMat), Math.cos(a) * 3.1 * ms, 1.1 * ms + colH / 2, Math.sin(a) * 3.1 * ms);
+      }
+      // Two-tiered hexagonal pagoda roof with upturned eaves.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.8 * ms, 4.8 * ms, 1.6 * ms, 6), roofMat), 0, 1.1 * ms + colH + 0.7 * ms, 0);
+      add(new THREE.Mesh(new THREE.ConeGeometry(3.2 * ms, 1.9 * ms, 6), roofMat), 0, 1.1 * ms + colH + 2.2 * ms, 0);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.48 * ms, 8, 6), goldMat), 0, 1.1 * ms + colH + 3.3 * ms, 0);
+      return g;
+    }
+
+    if (cls === 'camp_site') {
+      // --- Expedition Campground: Geodesic Dome Tent + A-Frame Tent + Campfire (露營區) ---
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x997048, roughness: 0.88, flatShading: true });
+      const tentOrange = new THREE.MeshStandardMaterial({ color: 0xf28c28, roughness: 0.62, emissive: 0x4a2205, emissiveIntensity: 0.25, flatShading: true });
+      const tentGreen = new THREE.MeshStandardMaterial({ color: 0x4b8b3b, roughness: 0.68, flatShading: true });
+      const doorMat = new THREE.MeshStandardMaterial({ color: 0x2b3440, roughness: 0.8, flatShading: true });
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x78726a, roughness: 0.92, flatShading: true });
+      const fireMat = new THREE.MeshStandardMaterial({ color: 0xff6a00, emissive: 0xff4500, emissiveIntensity: 1.1, roughness: 0.2, flatShading: true });
+      const flameTipMat = new THREE.MeshStandardMaterial({ color: 0xffe042, emissive: 0xffbb00, emissiveIntensity: 1.1 });
+
+      // Timber camp deck pad.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(5.2 * ms, 5.5 * ms, 0.55 * ms, 8), padMat), 0, 0.28 * ms, 0);
+      // Main geodesic dome tent (left-back).
+      const dome = add(new THREE.Mesh(new THREE.SphereGeometry(2.55 * ms, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), tentOrange), -1.6 * ms, 0.5 * ms, -0.8 * ms);
+      dome.scale.set(1.15, 0.95, 1.0);
+      const vest = add(new THREE.Mesh(new THREE.ConeGeometry(1.35 * ms, 1.8 * ms, 4), doorMat), -0.9 * ms, 1.2 * ms, 1.1 * ms);
+      vest.rotation.y = Math.PI / 4;
+      // Secondary green A-frame pup tent (right-back).
+      const pup = add(new THREE.Mesh(new THREE.CylinderGeometry(1.4 * ms, 1.4 * ms, 3.0 * ms, 3), tentGreen), 2.2 * ms, 1.2 * ms, -0.7 * ms);
+      pup.rotation.z = Math.PI / 2;
+      pup.rotation.y = -0.35;
+      // Stone-ring campfire in the foreground (+z).
+      const fx = 0.6 * ms, fz = 2.4 * ms;
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        add(new THREE.Mesh(new THREE.DodecahedronGeometry(0.42 * ms, 0), stoneMat), fx + Math.cos(a) * 1.1 * ms, 0.65 * ms, fz + Math.sin(a) * 1.1 * ms);
+      }
+      add(new THREE.Mesh(new THREE.ConeGeometry(0.85 * ms, 1.9 * ms, 6), fireMat), fx, 1.45 * ms, fz);
+      add(new THREE.Mesh(new THREE.ConeGeometry(0.48 * ms, 1.3 * ms, 5), flameTipMat), fx, 2.1 * ms, fz);
+      return g;
+    }
+
+    if (cls === 'temple') {
+      // --- East Asian Temple / Shrine with Swallowtail Roof, Torii & Incense Cauldron (廟宇／神社) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0xb8b2a8, roughness: 0.86, flatShading: true });
+      const redMat = new THREE.MeshStandardMaterial({ color: 0xc43628, roughness: 0.58, flatShading: true });
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xf2e6d0, roughness: 0.75, flatShading: true });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0xd98a26, roughness: 0.48, metalness: 0.2, flatShading: true });
+      const goldMat = new THREE.MeshStandardMaterial({ color: 0xffd240, roughness: 0.3, metalness: 0.65, emissive: 0x664400, emissiveIntensity: 0.35 });
+      const bronzeMat = new THREE.MeshStandardMaterial({ color: 0x8c6d3b, roughness: 0.45, metalness: 0.55 });
+
+      // Stepped stone foundation terrace.
+      add(new THREE.Mesh(new THREE.BoxGeometry(7.6 * ms, 1.2 * ms, 6.4 * ms), stoneMat), 0, 0.6 * ms, -0.4 * ms);
+      // Main sanctuary hall + vermilion corner pillars.
+      add(new THREE.Mesh(new THREE.BoxGeometry(5.6 * ms, 3.4 * ms, 4.2 * ms), wallMat), 0, 2.9 * ms, -0.6 * ms);
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.36 * ms, 3.6 * ms, 8), redMat), sx * 2.85 * ms, 3.0 * ms, -0.6 * ms + sz * 2.1 * ms);
+        }
+      }
+      // Double-tiered hipped palace roof + swallowtail ridge beam (燕尾脊).
+      const r1 = add(new THREE.Mesh(new THREE.ConeGeometry(4.9 * ms, 1.8 * ms, 4), roofMat), 0, 5.3 * ms, -0.6 * ms);
+      r1.rotation.y = Math.PI / 4;
+      r1.scale.set(1.15, 1.0, 0.92);
+      const r2 = add(new THREE.Mesh(new THREE.ConeGeometry(3.6 * ms, 1.7 * ms, 4), roofMat), 0, 6.7 * ms, -0.6 * ms);
+      r2.rotation.y = Math.PI / 4;
+      r2.scale.set(1.15, 1.0, 0.92);
+      add(new THREE.Mesh(new THREE.BoxGeometry(5.2 * ms, 0.45 * ms, 0.45 * ms), goldMat), 0, 7.55 * ms, -0.6 * ms);
+      for (const sx of [-1, 1]) {
+        const tail = add(new THREE.Mesh(new THREE.ConeGeometry(0.45 * ms, 1.3 * ms, 4), goldMat), sx * 2.7 * ms, 7.95 * ms, -0.6 * ms);
+        tail.rotation.z = -sx * 0.45;
+      }
+      // Forecourt bronze incense burner (香爐) + entrance torii/archway.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.75 * ms, 0.6 * ms, 1.2 * ms, 8), bronzeMat), 0, 1.8 * ms, 1.8 * ms);
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.24 * ms, 0.28 * ms, 3.4 * ms, 6), redMat), sx * 1.8 * ms, 2.4 * ms, 3.1 * ms);
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(4.6 * ms, 0.38 * ms, 0.45 * ms), redMat), 0, 4.15 * ms, 3.1 * ms);
+      return g;
+    }
+
+    if (cls === 'church') {
+      // --- Christian Church / Chapel with Bell Tower Spire & Cross (教堂) ---
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xeae3d5, roughness: 0.78, flatShading: true });
+      const plinthMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, roughness: 0.9, flatShading: true });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0x45586e, roughness: 0.65, flatShading: true });
+      const goldMat = new THREE.MeshStandardMaterial({ color: 0xffd240, roughness: 0.3, metalness: 0.7, emissive: 0x664400, emissiveIntensity: 0.35 });
+      const glassMat = new THREE.MeshStandardMaterial({ color: 0x7cc4ff, emissive: 0x3b82f6, emissiveIntensity: 0.65, roughness: 0.25 });
+
+      add(new THREE.Mesh(new THREE.BoxGeometry(5.4 * ms, 1.0 * ms, 7.2 * ms), plinthMat), 0, 0.5 * ms, 0);
+      // Main nave body + pitched roof.
+      add(new THREE.Mesh(new THREE.BoxGeometry(4.6 * ms, 3.8 * ms, 6.2 * ms), wallMat), 0, 2.9 * ms, -0.3 * ms);
+      const naveRoof = add(new THREE.Mesh(new THREE.CylinderGeometry(2.7 * ms, 2.7 * ms, 6.5 * ms, 3), roofMat), 0, 5.6 * ms, -0.3 * ms);
+      naveRoof.rotation.x = Math.PI / 2;
+      // Front bell tower + tall pointed spire + rose window.
+      const tz = 2.2 * ms;
+      add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 7.2 * ms, 2.6 * ms), wallMat), 0, 4.6 * ms, tz);
+      const spire = add(new THREE.Mesh(new THREE.ConeGeometry(1.95 * ms, 4.6 * ms, 4), roofMat), 0, 10.5 * ms, tz);
+      spire.rotation.y = Math.PI / 4;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.65 * ms, 0.65 * ms, 0.25 * ms, 12), glassMat), 0, 5.2 * ms, tz + 1.32 * ms).rotation.x = Math.PI / 2;
+      // Golden cross finial at the apex of the spire.
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.24 * ms, 1.8 * ms, 0.24 * ms), goldMat), 0, 13.4 * ms, tz);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.15 * ms, 0.24 * ms, 0.24 * ms), goldMat), 0, 13.6 * ms, tz);
+      return g;
+    }
+
+    if (cls === 'wind_turbine') {
+      // --- 3-Blade Wind Turbine Generator with Live Spinning Rotor (風力發電機) ---
+      const h = Math.max(16 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.28 : 21 * ms, 32 * ms));
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x949088, roughness: 0.9, flatShading: true });
+      const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf4f7fa, roughness: 0.38, metalness: 0.18 });
+      const redMat = new THREE.MeshStandardMaterial({ color: 0xe63939, emissive: 0xff2222, emissiveIntensity: 0.85 });
+
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.2 * ms, 2.8 * ms, 1.0 * ms, 10), padMat), 0, 0.5 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.48 * ms, 1.15 * ms, h, 12), whiteMat), 0, 1.0 * ms + h / 2, 0);
+      // Nacelle housing + aviation warning beacon at the tower top.
+      const topY = 1.0 * ms + h;
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.4 * ms, 1.4 * ms, 3.2 * ms), whiteMat), 0, topY, 0.2 * ms);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.36 * ms, 8, 6), redMat), 0, topY + 0.9 * ms, -0.6 * ms);
+
+      // Rotor hub + 3 aerodynamic blades (registered for per-frame rotation).
+      const rotor = new THREE.Group();
+      rotor.position.set(0, topY, 1.9 * ms);
+      rotor.rotation.z = seed * Math.PI * 2;
+      const hub = new THREE.Mesh(new THREE.ConeGeometry(0.72 * ms, 1.5 * ms, 10), whiteMat);
+      hub.rotation.x = Math.PI / 2;
+      hub.castShadow = true;
+      rotor.add(hub);
+      const bladeLen = h * 0.46;
+      for (let b = 0; b < 3; b++) {
+        const bPivot = new THREE.Group();
+        bPivot.rotation.z = (b / 3) * Math.PI * 2;
+        const blade = new THREE.Mesh(new THREE.ConeGeometry(0.48 * ms, bladeLen, 5), whiteMat);
+        blade.scale.set(0.65, 1.0, 0.22);
+        blade.position.y = bladeLen / 2 + 0.35 * ms;
+        blade.castShadow = true;
+        bPivot.add(blade);
+        rotor.add(bPivot);
+      }
+      g.add(rotor);
+      this._windTurbineRotors.push(rotor);
+      return g;
+    }
+
+    if (cls === 'power_tower') {
+      // --- High-Voltage Steel Lattice Transmission Pylon (高壓輸電鐵塔) ---
+      const h = Math.max(13 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.28 : 16.5 * ms, 26 * ms));
+      const steelMat = new THREE.MeshStandardMaterial({ color: 0x8e99a6, roughness: 0.5, metalness: 0.45, flatShading: true });
+      const darkSteel = new THREE.MeshStandardMaterial({ color: 0x5c6673, roughness: 0.55, metalness: 0.45, flatShading: true });
+      const insMat = new THREE.MeshStandardMaterial({ color: 0x4aa3b8, roughness: 0.35, metalness: 0.2 });
+
+      // 4 concrete footing pads.
+      const legSpan = 2.2 * ms;
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.BoxGeometry(0.9 * ms, 0.8 * ms, 0.9 * ms), darkSteel), sx * legSpan, 0.4 * ms, sz * legSpan);
+        }
+      }
+      // Tapered 4-sided lattice mast body.
+      const mast = add(new THREE.Mesh(new THREE.CylinderGeometry(0.75 * ms, legSpan * 1.25, h, 4), steelMat), 0, 0.6 * ms + h / 2, 0);
+      mast.rotation.y = Math.PI / 4;
+      // 3 tiers of wide horizontal cross-arms + hanging ceramic insulator strings.
+      const armTiers = [
+        { y: h * 0.56, w: 7.4 * ms },
+        { y: h * 0.76, w: 6.2 * ms },
+        { y: h * 0.94, w: 4.8 * ms },
+      ];
+      for (const tier of armTiers) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(tier.w, 0.42 * ms, 0.65 * ms), darkSteel), 0, tier.y, 0);
+        for (const sx of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.CylinderGeometry(0.22 * ms, 0.22 * ms, 1.35 * ms, 6), insMat), sx * (tier.w * 0.47), tier.y - 0.8 * ms, 0);
+        }
+      }
+      add(new THREE.Mesh(new THREE.ConeGeometry(0.85 * ms, 1.8 * ms, 4), steelMat), 0, h + 1.2 * ms, 0).rotation.y = Math.PI / 4;
+      return g;
+    }
+
+    if (cls === 'water_tower') {
+      // --- Elevated Spherical/Cylindrical Water Tower on Braced Legs (水塔／儲槽) ---
+      const h = Math.max(11 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.3 : 14.5 * ms, 24 * ms));
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x8d8880, roughness: 0.9, flatShading: true });
+      const legMat = new THREE.MeshStandardMaterial({ color: 0x6c7682, roughness: 0.55, metalness: 0.4 });
+      const tankMat = new THREE.MeshStandardMaterial({ color: 0xd8e8f2, roughness: 0.42, metalness: 0.25, flatShading: true });
+      const bandMat = new THREE.MeshStandardMaterial({ color: 0x2f7ab8, roughness: 0.48, metalness: 0.2 });
+
+      add(new THREE.Mesh(new THREE.CylinderGeometry(3.2 * ms, 3.6 * ms, 0.9 * ms, 10), padMat), 0, 0.45 * ms, 0);
+      const legH = h * 0.58;
+      // Central riser pipe + 6 perimeter support columns + horizontal brace ring.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.58 * ms, 0.68 * ms, legH, 8), legMat), 0, 0.8 * ms + legH / 2, 0);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.24 * ms, 0.28 * ms, legH, 6), legMat), Math.cos(a) * 2.2 * ms, 0.8 * ms + legH / 2, Math.sin(a) * 2.2 * ms);
+      }
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.35 * ms, 2.35 * ms, 0.32 * ms, 12), legMat), 0, 0.8 * ms + legH * 0.55, 0);
+      // Elevated tank drum + blue accent stripe + conical roof cap.
+      const tankY = 0.8 * ms + legH;
+      const tankH = h * 0.36;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.85 * ms, 2.65 * ms, tankH, 12), tankMat), 0, tankY + tankH / 2, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.92 * ms, 2.92 * ms, tankH * 0.26, 12), bandMat), 0, tankY + tankH * 0.52, 0);
+      add(new THREE.Mesh(new THREE.ConeGeometry(3.05 * ms, 1.8 * ms, 12), bandMat), 0, tankY + tankH + 0.9 * ms, 0);
+      return g;
+    }
+
     if (cls === 'tower') {
       // --- Steel Lattice / Truss Communications & Observation Tower (高塔／電塔) ---
       const h = Math.max(13 * ms, Math.min(Number.isFinite(realH) && realH > 0 ? realH * ms * 0.3 : 17 * ms, 30 * ms));
@@ -5202,6 +5741,136 @@ export class TerrainViewer {
       return g;
     }
 
+    if (cls === 'waterfall') {
+      // --- Cascading Mountain Cliff Waterfall & Plunge Pool (瀑布) ---
+      const cliffMat = new THREE.MeshStandardMaterial({ color: 0x5c5750, roughness: 0.92, flatShading: true });
+      const cliffLight = new THREE.MeshStandardMaterial({ color: 0x78726a, roughness: 0.9, flatShading: true });
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x45c4ff, emissive: 0x12669e, emissiveIntensity: 0.45, roughness: 0.2, metalness: 0.15, flatShading: true,
+      });
+      const foamMat = new THREE.MeshStandardMaterial({
+        color: 0xf2fbff, emissive: 0x8ad8ff, emissiveIntensity: 0.55, roughness: 0.4, transparent: true, opacity: 0.88, flatShading: true,
+      });
+
+      // Stepped craggy cliff rock formation behind the cascade.
+      for (const [x, y, z, rx, ry, rz, m] of [
+        [-2.2, 4.2, -1.2, 2.2, 4.2, 1.8, cliffMat],
+        [2.2, 4.0, -1.1, 2.1, 4.0, 1.8, cliffMat],
+        [0, 5.2, -1.6, 2.6, 5.2, 1.6, cliffLight],
+        [-3.2, 1.8, 0.2, 1.8, 1.8, 1.6, cliffLight],
+        [3.1, 1.7, 0.3, 1.7, 1.7, 1.6, cliffLight],
+      ]) {
+        const r = add(new THREE.Mesh(new THREE.DodecahedronGeometry(1.0 * ms, 0), m), x * ms, y * ms, z * ms);
+        r.scale.set(rx, ry, rz);
+      }
+      // Upper & lower cascading water ribbons + white foam crest.
+      const fall1 = add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 5.2 * ms, 0.65 * ms), waterMat), 0, 5.8 * ms, -0.3 * ms);
+      fall1.rotation.x = 0.18;
+      const fall2 = add(new THREE.Mesh(new THREE.BoxGeometry(3.1 * ms, 4.4 * ms, 0.7 * ms), foamMat), 0, 2.6 * ms, 0.45 * ms);
+      fall2.rotation.x = 0.26;
+      // Turquoise plunge pool at the base + billowing mist puffs.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(3.8 * ms, 4.2 * ms, 0.55 * ms, 12), waterMat), 0, 0.28 * ms, 1.4 * ms);
+      for (const [mx, my, mz, msR] of [[-1.1, 1.1, 1.4, 1.1], [0.9, 1.2, 1.5, 1.2], [0, 0.9, 2.2, 0.95]]) {
+        add(new THREE.Mesh(new THREE.DodecahedronGeometry(msR * ms, 0), foamMat), mx * ms, my * ms, mz * ms);
+      }
+      return g;
+    }
+
+    if (cls === 'spring') {
+      // --- Steaming Natural Rock Hot Spring / Mountain Spring Pool (溫泉／湧泉) ---
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x7d766d, roughness: 0.9, flatShading: true });
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x38d6c4, emissive: 0x0f7a6e, emissiveIntensity: 0.45, roughness: 0.18, metalness: 0.1,
+      });
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0xa67446, roughness: 0.8, flatShading: true });
+      const steamMat = new THREE.MeshStandardMaterial({
+        color: 0xf4f9fc, emissive: 0x6b8294, emissiveIntensity: 0.25, transparent: true, opacity: 0.72, flatShading: true,
+      });
+
+      // Glowing mineral-turquoise spring basin.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(3.4 * ms, 3.8 * ms, 0.65 * ms, 12), waterMat), 0, 0.35 * ms, 0);
+      // Ring of natural river boulders around the pool rim.
+      for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * Math.PI * 2;
+        const r = 3.45 * ms;
+        const b = add(new THREE.Mesh(new THREE.DodecahedronGeometry((0.85 + (i % 3) * 0.22) * ms, 0), rockMat), Math.cos(a) * r, 0.65 * ms, Math.sin(a) * r);
+        b.scale.set(1.15, 0.72, 1.05);
+      }
+      // Bamboo/timber spring spout at the back + rising steam puffs.
+      const spout = add(new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.35 * ms, 2.6 * ms, 8), woodMat), 0, 1.8 * ms, -2.8 * ms);
+      spout.rotation.x = 1.05;
+      for (const [sx, sy, sz, sr] of [[-0.6, 2.4, -0.3, 0.95], [0.8, 3.8, 0.4, 1.25], [-0.2, 5.3, 0.1, 1.5]]) {
+        add(new THREE.Mesh(new THREE.DodecahedronGeometry(sr * ms, 0), steamMat), sx * ms, sy * ms, sz * ms);
+      }
+      return g;
+    }
+
+    if (cls === 'cave') {
+      // --- Rugged Limestone Cave Archway & Stalactites (岩洞／石門洞穴) ---
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x6e685f, roughness: 0.92, flatShading: true });
+      const rockLight = new THREE.MeshStandardMaterial({ color: 0x8c857b, roughness: 0.88, flatShading: true });
+      const darkVoid = new THREE.MeshStandardMaterial({ color: 0x111318, roughness: 0.98 });
+
+      // Recessed dark cavern mouth + arched rock portal pillars & crown.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(2.6 * ms, 3.0 * ms, 3.8 * ms, 8), darkVoid), 0, 1.9 * ms, -0.4 * ms);
+      for (const sx of [-1, 1]) {
+        const pil = add(new THREE.Mesh(new THREE.DodecahedronGeometry(2.4 * ms, 0), rockMat), sx * 2.5 * ms, 2.2 * ms, 0);
+        pil.scale.set(0.95, 1.35, 1.05);
+      }
+      const arch = add(new THREE.Mesh(new THREE.DodecahedronGeometry(3.2 * ms, 0), rockLight), 0, 4.6 * ms, -0.2 * ms);
+      arch.scale.set(1.45, 0.72, 1.0);
+      // Hanging stalactite teeth inside the cave brow.
+      for (const sx of [-0.9, 0, 0.85]) {
+        const stal = add(new THREE.Mesh(new THREE.ConeGeometry(0.32 * ms, 1.3 * ms, 5), rockLight), sx * ms, 3.4 * ms, 0.7 * ms);
+        stal.rotation.x = Math.PI;
+      }
+      return g;
+    }
+
+    if (cls === 'rock') {
+      // --- Dramatic Clustered Monolith Crag & Boulders (奇岩／巨石地標) ---
+      const rockDark = new THREE.MeshStandardMaterial({ color: 0x6b655e, roughness: 0.92, flatShading: true });
+      const rockMid = new THREE.MeshStandardMaterial({ color: 0x8a8279, roughness: 0.88, flatShading: true });
+      const mossMat = new THREE.MeshStandardMaterial({ color: 0x4b7838, roughness: 0.86, flatShading: true });
+
+      const mainSpire = add(new THREE.Mesh(new THREE.DodecahedronGeometry(2.8 * ms, 0), rockMid), 0, 3.2 * ms, 0);
+      mainSpire.scale.set(0.85, 1.55, 0.78);
+      mainSpire.rotation.set(0.15, seed * 3, -0.12);
+      const sideSpire = add(new THREE.Mesh(new THREE.DodecahedronGeometry(2.1 * ms, 0), rockDark), -2.1 * ms, 1.9 * ms, 0.7 * ms);
+      sideSpire.scale.set(1.05, 1.15, 0.9);
+      const foreBoulder = add(new THREE.Mesh(new THREE.DodecahedronGeometry(1.6 * ms, 0), rockMid), 1.8 * ms, 1.2 * ms, 1.1 * ms);
+      foreBoulder.scale.set(1.2, 0.75, 1.0);
+      const moss = add(new THREE.Mesh(new THREE.DodecahedronGeometry(1.4 * ms, 0), mossMat), 0, 5.8 * ms, 0);
+      moss.scale.set(1.1, 0.42, 0.95);
+      return g;
+    }
+
+    if (cls === 'castle') {
+      // --- Historic Stone Fortress / Bastion with Battlements & Watchtower (古蹟城堡／砲台) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x9c9488, roughness: 0.88, flatShading: true });
+      const stoneDark = new THREE.MeshStandardMaterial({ color: 0x6e685f, roughness: 0.92, flatShading: true });
+      const gateMat = new THREE.MeshStandardMaterial({ color: 0x3b2818, roughness: 0.9 });
+      const flagMat = new THREE.MeshStandardMaterial({ color: 0xd93829, emissive: 0x3d0a05, emissiveIntensity: 0.28, side: THREE.DoubleSide });
+
+      // Main battered bastion wall + arched gate.
+      add(new THREE.Mesh(new THREE.BoxGeometry(7.2 * ms, 3.8 * ms, 5.6 * ms), stoneMat), 0, 1.9 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.8 * ms, 2.4 * ms, 0.4 * ms), gateMat), 0, 1.2 * ms, 2.75 * ms);
+      // Crenelated merlon battlements along the front & back parapet.
+      for (const sx of [-2.7, -0.9, 0.9, 2.7]) {
+        for (const sz of [-2.4, 2.4]) {
+          add(new THREE.Mesh(new THREE.BoxGeometry(1.05 * ms, 0.85 * ms, 0.65 * ms), stoneDark), sx * ms, 4.2 * ms, sz * ms);
+        }
+      }
+      // Corner cylindrical keep / watchtower turret + heritage pennant.
+      const tx = -2.2 * ms, tz = -1.6 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.65 * ms, 1.85 * ms, 6.8 * ms, 8), stoneDark), tx, 3.4 * ms, tz);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.9 * ms, 1.7 * ms, 0.9 * ms, 8), stoneMat), tx, 7.1 * ms, tz);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.14 * ms, 0.14 * ms, 3.2 * ms, 6), stoneMat), tx, 8.9 * ms, tz);
+      const flag = add(new THREE.Mesh(new THREE.ConeGeometry(0.95 * ms, 2.4 * ms, 4), flagMat), tx + 1.2 * ms, 9.8 * ms, tz);
+      flag.rotation.z = -Math.PI / 2;
+      return g;
+    }
+
     if (cls === 'monument') {
       // --- Stepped Stone Plinth + Obelisk + Bronze Plaque (紀念碑) ---
       const stoneLight = new THREE.MeshStandardMaterial({ color: 0xd6d0c4, roughness: 0.78, flatShading: true });
@@ -5228,6 +5897,133 @@ export class TerrainViewer {
       cap.rotation.y = Math.PI / 4;
       // Inlaid bronze memorial plaque on the front (+z) of the pedestal.
       add(new THREE.Mesh(new THREE.BoxGeometry(1.9 * ms, 0.9 * ms, 0.2 * ms), bronzeMat), 0, 2.6 * ms, 1.72 * ms);
+      return g;
+    }
+
+    if (cls === 'trailhead') {
+      // --- Trailhead Information Kiosk & Multi-Blade Guidepost (登山口導覽牌／指標樁) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x827b72, roughness: 0.9, flatShading: true });
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0x8c5830, roughness: 0.82, flatShading: true });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0x54331a, roughness: 0.86, flatShading: true });
+      const mapMat = new THREE.MeshStandardMaterial({ color: 0xeaf2e8, emissive: 0x1e3824, emissiveIntensity: 0.22, roughness: 0.5 });
+      const signMat = new THREE.MeshStandardMaterial({ color: 0xd99b4e, roughness: 0.72, flatShading: true });
+
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.75 * ms, 0.95 * ms, 1.1 * ms, 6), stoneMat), sx * 1.9 * ms, 0.55 * ms, 0);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.36 * ms, 5.8 * ms, 7), woodMat), sx * 1.9 * ms, 3.4 * ms, 0);
+      }
+      // Trail map board + pitched cedar rooflet.
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.8 * ms, 2.4 * ms, 0.42 * ms), woodMat), 0, 4.1 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.3 * ms, 1.9 * ms, 0.48 * ms), mapMat), 0, 4.1 * ms, 0);
+      for (const sx of [-1, 1]) {
+        const r = add(new THREE.Mesh(new THREE.BoxGeometry(2.8 * ms, 0.35 * ms, 2.1 * ms), roofMat), sx * 1.15 * ms, 6.35 * ms, 0);
+        r.rotation.z = -sx * 0.35;
+      }
+      // Adjacent fingerpost with directional arrow blades.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.26 * ms, 0.3 * ms, 7.2 * ms, 6), woodMat), 3.4 * ms, 3.6 * ms, 0.4 * ms);
+      add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 0.72 * ms, 0.28 * ms), signMat), 4.3 * ms, 6.4 * ms, 0.4 * ms);
+      const b2 = add(new THREE.Mesh(new THREE.BoxGeometry(2.4 * ms, 0.72 * ms, 0.28 * ms), signMat), 3.4 * ms, 5.3 * ms, 1.2 * ms);
+      b2.rotation.y = Math.PI / 2;
+      return g;
+    }
+
+    if (cls === 'station') {
+      // --- Mountain Railway / Cable-Car Station Platform & Miniature Railcar (車站) ---
+      const platMat = new THREE.MeshStandardMaterial({ color: 0x9e9a92, roughness: 0.88, flatShading: true });
+      const lineMat = new THREE.MeshStandardMaterial({ color: 0xf5c438, emissive: 0x594200, emissiveIntensity: 0.3 });
+      const steelMat = new THREE.MeshStandardMaterial({ color: 0x455260, roughness: 0.55, metalness: 0.4 });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0x35698c, roughness: 0.58, metalness: 0.25, flatShading: true });
+      const carRed = new THREE.MeshStandardMaterial({ color: 0xd93b30, roughness: 0.45, metalness: 0.15, flatShading: true });
+      const carCream = new THREE.MeshStandardMaterial({ color: 0xf7efe0, roughness: 0.45, flatShading: true });
+      const winMat = new THREE.MeshStandardMaterial({ color: 0x9ce2ff, emissive: 0x3898ff, emissiveIntensity: 0.6 });
+
+      // Raised concrete platform + yellow safety stripe.
+      add(new THREE.Mesh(new THREE.BoxGeometry(8.6 * ms, 1.3 * ms, 4.4 * ms), platMat), 0, 0.65 * ms, -0.8 * ms);
+      add(new THREE.Mesh(new THREE.BoxGeometry(8.4 * ms, 0.16 * ms, 0.35 * ms), lineMat), 0, 1.32 * ms, 1.0 * ms);
+      // Platform canopy pillars + butterfly/pitched canopy roof.
+      for (const sx of [-2.6, 0, 2.6]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.26 * ms, 0.3 * ms, 4.2 * ms, 6), steelMat), sx * ms, 3.4 * ms, -1.1 * ms);
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(8.8 * ms, 0.55 * ms, 4.2 * ms), roofMat), 0, 5.55 * ms, -0.9 * ms);
+      // Miniature two-tone mountain railcar stopped alongside the platform (+z).
+      const cz = 2.55 * ms;
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.4 * ms, 1.5 * ms, 2.3 * ms), carRed), 0, 1.35 * ms, cz);
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.2 * ms, 1.25 * ms, 2.2 * ms), carCream), 0, 2.65 * ms, cz);
+      add(new THREE.Mesh(new THREE.BoxGeometry(5.6 * ms, 0.75 * ms, 2.32 * ms), winMat), 0, 2.68 * ms, cz);
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.4 * ms, 0.35 * ms, 2.25 * ms), steelMat), 0, 3.4 * ms, cz);
+      return g;
+    }
+
+    if (cls === 'heliport') {
+      // --- Mountain Rescue Helipad with "H" Marking & Windsock (直升機停機坪) ---
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x586068, roughness: 0.85, flatShading: true });
+      const markYellow = new THREE.MeshStandardMaterial({ color: 0xffcc29, emissive: 0x664d00, emissiveIntensity: 0.35 });
+      const markWhite = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x555555, emissiveIntensity: 0.4 });
+      const sockOrange = new THREE.MeshStandardMaterial({ color: 0xff5919, emissive: 0x661a00, emissiveIntensity: 0.4 });
+      const lightGreen = new THREE.MeshStandardMaterial({ color: 0x38ff7a, emissive: 0x19e65c, emissiveIntensity: 0.95 });
+
+      add(new THREE.Mesh(new THREE.CylinderGeometry(5.2 * ms, 5.6 * ms, 0.85 * ms, 8), padMat), 0, 0.42 * ms, 0);
+      const ring = add(new THREE.Mesh(new THREE.RingGeometry(3.6 * ms, 4.2 * ms, 16), markYellow), 0, 0.88 * ms, 0);
+      ring.rotation.x = -Math.PI / 2;
+      // White "H" landing symbol.
+      for (const sx of [-1.25, 1.25]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(0.65 * ms, 0.14 * ms, 3.6 * ms), markWhite), sx * ms, 0.9 * ms, 0);
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 0.14 * ms, 0.65 * ms), markWhite), 0, 0.9 * ms, 0);
+      // Perimeter green threshold lights.
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.28 * ms, 6, 5), lightGreen), Math.cos(a) * 4.7 * ms, 0.95 * ms, Math.sin(a) * 4.7 * ms);
+      }
+      // Windsock pole + flying orange/white windsock cone.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.16 * ms, 0.2 * ms, 5.6 * ms, 6), markWhite), 4.6 * ms, 3.2 * ms, -2.2 * ms);
+      const sock = add(new THREE.Mesh(new THREE.ConeGeometry(0.58 * ms, 2.4 * ms, 8), sockOrange), 5.8 * ms, 5.7 * ms, -2.2 * ms);
+      sock.rotation.z = -Math.PI / 2 + 0.18;
+      return g;
+    }
+
+    if (cls === 'parking') {
+      // --- Trailhead Parking Lot with "P" Signpost & Miniature Cars (停車場) ---
+      const asphaltMat = new THREE.MeshStandardMaterial({ color: 0x4b5159, roughness: 0.88, flatShading: true });
+      const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf2f5f8, emissive: 0x333840, emissiveIntensity: 0.25 });
+      const signBlue = new THREE.MeshStandardMaterial({ color: 0x1d6fd6, emissive: 0x0a2c59, emissiveIntensity: 0.35, roughness: 0.4 });
+      const car1Mat = new THREE.MeshStandardMaterial({ color: 0xe0483e, roughness: 0.4, metalness: 0.2, flatShading: true });
+      const car2Mat = new THREE.MeshStandardMaterial({ color: 0x3898db, roughness: 0.4, metalness: 0.2, flatShading: true });
+      const cabMat = new THREE.MeshStandardMaterial({ color: 0xdcebf7, roughness: 0.3, metalness: 0.3 });
+
+      add(new THREE.Mesh(new THREE.BoxGeometry(7.6 * ms, 0.55 * ms, 5.6 * ms), asphaltMat), 0, 0.28 * ms, 0);
+      for (const sx of [-2.4, 0, 2.4]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(0.24 * ms, 0.12 * ms, 3.6 * ms), stripeMat), sx * ms, 0.58 * ms, 0.4 * ms);
+      }
+      // Blue "P" parking signpost at the corner.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.18 * ms, 0.22 * ms, 5.2 * ms, 6), stripeMat), -3.2 * ms, 2.8 * ms, -2.1 * ms);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.7 * ms, 1.7 * ms, 0.35 * ms), signBlue), -3.2 * ms, 5.4 * ms, -2.1 * ms);
+      // 2 cute low-poly parked cars.
+      for (const [cx, cMat] of [[-1.2 * ms, car1Mat], [1.25 * ms, car2Mat]]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(1.75 * ms, 0.85 * ms, 3.2 * ms), cMat), cx, 0.98 * ms, 0.4 * ms);
+        add(new THREE.Mesh(new THREE.BoxGeometry(1.45 * ms, 0.72 * ms, 1.75 * ms), cabMat), cx, 1.65 * ms, 0.2 * ms);
+      }
+      return g;
+    }
+
+    if (cls === 'picnic') {
+      // --- Rest & Picnic Area: Wooden Table, Sun Umbrella & Water Tap (休憩野餐區) ---
+      const padMat = new THREE.MeshStandardMaterial({ color: 0xb5aba0, roughness: 0.9, flatShading: true });
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0x996536, roughness: 0.82, flatShading: true });
+      const umbMat = new THREE.MeshStandardMaterial({ color: 0xd94e34, roughness: 0.65, flatShading: true });
+      const tapMat = new THREE.MeshStandardMaterial({ color: 0x5c859e, roughness: 0.45, metalness: 0.45 });
+
+      add(new THREE.Mesh(new THREE.CylinderGeometry(3.8 * ms, 4.1 * ms, 0.48 * ms, 8), padMat), 0, 0.24 * ms, 0);
+      // Picnic table top + 2 side benches.
+      add(new THREE.Mesh(new THREE.BoxGeometry(2.8 * ms, 0.32 * ms, 2.0 * ms), woodMat), -0.4 * ms, 1.65 * ms, 0);
+      for (const sz of [-1.35, 1.35]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(2.8 * ms, 0.28 * ms, 0.65 * ms), woodMat), -0.4 * ms, 1.05 * ms, sz * ms);
+      }
+      // Parasol pole + octagonal canopy.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.16 * ms, 0.18 * ms, 4.6 * ms, 6), woodMat), -0.4 * ms, 2.6 * ms, 0);
+      add(new THREE.Mesh(new THREE.ConeGeometry(2.65 * ms, 1.35 * ms, 8), umbMat), -0.4 * ms, 5.1 * ms, 0);
+      // Drinking-water standpipe fountain on the side.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.38 * ms, 0.45 * ms, 2.2 * ms, 8), tapMat), 2.3 * ms, 1.3 * ms, 0.8 * ms);
       return g;
     }
 
@@ -5283,6 +6079,7 @@ export class TerrainViewer {
     this.featureGroup = new THREE.Group();
     this.featureLabelGroup = new THREE.Group();
     this.landmarkGroup = new THREE.Group();
+    this._windTurbineRotors = [];
     this.scene.add(this.featureGroup);
     this.scene.add(this.featureLabelGroup);
     this.scene.add(this.landmarkGroup);
@@ -5290,6 +6087,7 @@ export class TerrainViewer {
     const ms = this._markerScale || 1;
     const range = Math.max(1, this._fieldMaxV - this._fieldMinV);
     const baseLift = Math.max(2, range * 0.004);
+    const elevScale = this._elevScale || 1;
     const dLatCell = (bbox.maxLat - bbox.minLat) / (FIELD_SIZE - 1);
     const dLngCell = (bbox.maxLng - bbox.minLng) / (FIELD_SIZE - 1);
 
@@ -5300,16 +6098,22 @@ export class TerrainViewer {
       return new THREE.Vector3(p.x, p.y, p.z);
     };
 
-    // ----- Lines (roads + waterways), batched with diorama curb/bank casings -----
+    // ----- Lines (roads, waterways, railways, bridges, tunnels, aerialways, power lines) -----
     const LINE_STYLE = {
-      major:  { color: 0xf4b942, width: 3.1, opacity: 0.96, lift: baseLift * 1.65, casingColor: 0x4a4035, casingWidth: 4.8, casingOpacity: 0.78 },
-      minor:  { color: 0xf0eadc, width: 2.1, opacity: 0.92, lift: baseLift * 1.45, casingColor: 0x5c5346, casingWidth: 3.4, casingOpacity: 0.72 },
-      trail:  { color: 0xd9924c, width: 1.65, opacity: 0.88, lift: baseLift * 1.32, casingColor: 0x6b4423, casingWidth: 2.7, casingOpacity: 0.65 },
-      river:  { color: 0x3db5ff, width: 2.9, opacity: 0.94, lift: baseLift * 0.95, casingColor: 0x1b5c8f, casingWidth: 4.5, casingOpacity: 0.78 },
-      stream: { color: 0x7dd0ff, width: 1.75, opacity: 0.88, lift: baseLift * 0.92, casingColor: 0x266da1, casingWidth: 2.7, casingOpacity: 0.68 },
+      major:      { color: 0xf4b942, width: 3.1, opacity: 0.96, lift: baseLift * 1.65, casingColor: 0x4a4035, casingWidth: 4.8, casingOpacity: 0.78 },
+      minor:      { color: 0xf0eadc, width: 2.1, opacity: 0.92, lift: baseLift * 1.45, casingColor: 0x5c5346, casingWidth: 3.4, casingOpacity: 0.72 },
+      trail:      { color: 0xd9924c, width: 1.65, opacity: 0.88, lift: baseLift * 1.32, casingColor: 0x6b4423, casingWidth: 2.7, casingOpacity: 0.65 },
+      river:      { color: 0x3db5ff, width: 2.9, opacity: 0.94, lift: baseLift * 0.95, casingColor: 0x1b5c8f, casingWidth: 4.5, casingOpacity: 0.78 },
+      stream:     { color: 0x7dd0ff, width: 1.75, opacity: 0.88, lift: baseLift * 0.92, casingColor: 0x266da1, casingWidth: 2.7, casingOpacity: 0.68 },
+      railway:    { color: 0xd8dfe8, width: 2.0, opacity: 0.95, lift: baseLift * 1.58, casingColor: 0x4a3b2e, casingWidth: 4.2, casingOpacity: 0.85 },
+      aerialway:  { color: 0x334155, width: 1.6, opacity: 0.92, lift: baseLift * 1.5 + 14 * ms, casingColor: null },
+      power_line: { color: 0x94a3b8, width: 1.15, opacity: 0.68, lift: baseLift * 1.5 + 16 * ms, casingColor: null },
     };
     const buckets = {};
     const casingBuckets = {};
+    const tunnelVerts = [];
+    const bridgeParapetVerts = [];
+    const railSleeperVerts = [];
     const drapeLine = (pts, lift) => {
       const out = [];
       for (let i = 0; i < pts.length - 1; i++) {
@@ -5329,6 +6133,40 @@ export class TerrainViewer {
       if (name) labelCands.push({ name, pos, color, pri, key: key || name });
     };
 
+    const bridgePierMat = new THREE.MeshStandardMaterial({ color: 0x8d959e, roughness: 0.82, metalness: 0.08, flatShading: true });
+    const bridgeTowerMat = new THREE.MeshStandardMaterial({ color: 0xc84b31, roughness: 0.62, metalness: 0.22, flatShading: true });
+    const portalStoneMat = new THREE.MeshStandardMaterial({ color: 0x767b82, roughness: 0.88, metalness: 0.05, flatShading: true });
+    const portalDarkMat = new THREE.MeshStandardMaterial({ color: 0x16191d, roughness: 0.95, metalness: 0, flatShading: true });
+    const gondolaBodyMat = new THREE.MeshStandardMaterial({ color: 0xe63946, roughness: 0.55, metalness: 0.15, flatShading: true });
+    const gondolaGlassMat = new THREE.MeshStandardMaterial({ color: 0x90e0ef, roughness: 0.25, metalness: 0.25, flatShading: true });
+    const pylonSteelMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.6, metalness: 0.3, flatShading: true });
+
+    let bridgePierCount = 0;
+    let tunnelPortalCount = 0;
+    let aerialPylonCount = 0;
+
+    const addTunnelPortal = (pt, dir) => {
+      if (tunnelPortalCount >= 40) return;
+      tunnelPortalCount++;
+      const pg = new THREE.Group();
+      pg.position.copy(pt);
+      const yaw = Math.atan2(dir.x, dir.z);
+      pg.rotation.y = yaw;
+      const pw = 3.2 * ms, ph = 2.8 * ms, pd = 1.2 * ms;
+      const arch = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pd), portalStoneMat);
+      arch.position.y = ph * 0.45;
+      arch.castShadow = true;
+      pg.add(arch);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(pw * 1.15, ph * 0.22, pd * 1.18), portalStoneMat);
+      cap.position.y = ph * 0.95;
+      pg.add(cap);
+      const bore = new THREE.Mesh(new THREE.CylinderGeometry(pw * 0.32, pw * 0.32, pd * 1.06, 8), portalDarkMat);
+      bore.rotation.x = Math.PI / 2;
+      bore.position.y = ph * 0.36;
+      pg.add(bore);
+      this.featureGroup.add(pg);
+    };
+
     for (const ln of (data.lines || [])) {
       const style = LINE_STYLE[ln.cls] || LINE_STYLE.minor;
       const key = ln.cls;
@@ -5336,53 +6174,277 @@ export class TerrainViewer {
       let labelLen = -1;
       const clippedRuns = this._clipPolylineToBbox(ln.pts, bbox)
         .flatMap((run) => this._splitPolylineAtHoles(run));
+      const bridgeLift = ln.bridge ? Math.max(3.5 * ms, baseLift * 2.2) : 0;
+      const lineLift = style.lift + bridgeLift;
+
       for (const run of clippedRuns) {
-        const w = drapeLine(run, style.lift);
+        const w = drapeLine(run, lineLift);
         if (w.length < 2) continue;
-        const verts = (buckets[key] = buckets[key] || []);
-        const cVerts = (casingBuckets[key] = casingBuckets[key] || []);
-        const cDrop = baseLift * 0.12;
-        for (let i = 0; i < w.length - 1; i++) {
-          verts.push(w[i].x, w[i].y, w[i].z, w[i + 1].x, w[i + 1].y, w[i + 1].z);
-          cVerts.push(w[i].x, w[i].y - cDrop, w[i].z, w[i + 1].x, w[i + 1].y - cDrop, w[i + 1].z);
+
+        if (ln.tunnel) {
+          for (let i = 0; i < w.length - 1; i++) {
+            if (i % 2 === 0) {
+              tunnelVerts.push(w[i].x, w[i].y, w[i].z, w[i + 1].x, w[i + 1].y, w[i + 1].z);
+            }
+          }
+          const d0 = new THREE.Vector3().subVectors(w[1], w[0]).normalize();
+          const d1 = new THREE.Vector3().subVectors(w[w.length - 2], w[w.length - 1]).normalize();
+          addTunnelPortal(w[0], d0);
+          if (w[0].distanceTo(w[w.length - 1]) > 8 * ms) addTunnelPortal(w[w.length - 1], d1);
+        } else {
+          const verts = (buckets[key] = buckets[key] || []);
+          const cVerts = (casingBuckets[key] = casingBuckets[key] || []);
+          const cDrop = baseLift * 0.12;
+          for (let i = 0; i < w.length - 1; i++) {
+            verts.push(w[i].x, w[i].y, w[i].z, w[i + 1].x, w[i + 1].y, w[i + 1].z);
+            if (style.casingColor != null) {
+              cVerts.push(w[i].x, w[i].y - cDrop, w[i].z, w[i + 1].x, w[i + 1].y - cDrop, w[i + 1].z);
+            }
+          }
+
+          // Railway cross-tie sleepers perpendicular to the track
+          if (ln.cls === 'railway') {
+            let acc = 0;
+            const sleeperStep = 2.6 * ms;
+            const halfTie = 1.25 * ms;
+            for (let i = 0; i < w.length - 1; i++) {
+              const segLen = w[i].distanceTo(w[i + 1]);
+              acc += segLen;
+              if (acc >= sleeperStep && segLen > 0.01) {
+                acc = 0;
+                const dx = (w[i + 1].x - w[i].x) / segLen;
+                const dz = (w[i + 1].z - w[i].z) / segLen;
+                const nx = -dz * halfTie, nz = dx * halfTie;
+                const mx = (w[i].x + w[i + 1].x) * 0.5;
+                const my = (w[i].y + w[i + 1].y) * 0.5 + baseLift * 0.05;
+                const mz = (w[i].z + w[i + 1].z) * 0.5;
+                railSleeperVerts.push(mx - nx, my, mz - nz, mx + nx, my, mz + nz);
+              }
+            }
+          }
+
+          // 3D Bridge: side parapets + support piers + suspension towers for trail/suspension bridges
+          if (ln.bridge) {
+            const halfDeck = (ln.cls === 'major' ? 1.8 : (ln.cls === 'trail' ? 0.95 : 1.35)) * ms;
+            const railH = 0.85 * ms;
+            let pierAcc = 0;
+            const pierSpacing = (ln.cls === 'trail' ? 18 : 14) * ms;
+            for (let i = 0; i < w.length - 1; i++) {
+              const segLen = w[i].distanceTo(w[i + 1]);
+              if (segLen < 0.01) continue;
+              const dx = (w[i + 1].x - w[i].x) / segLen;
+              const dz = (w[i + 1].z - w[i].z) / segLen;
+              const nx = -dz * halfDeck, nz = dx * halfDeck;
+              bridgeParapetVerts.push(
+                w[i].x - nx, w[i].y + railH, w[i].z - nz,
+                w[i + 1].x - nx, w[i + 1].y + railH, w[i + 1].z - nz,
+                w[i].x + nx, w[i].y + railH, w[i].z + nz,
+                w[i + 1].x + nx, w[i + 1].y + railH, w[i + 1].z + nz
+              );
+              pierAcc += segLen;
+              if (pierAcc >= pierSpacing && bridgePierCount < 80) {
+                pierAcc = 0;
+                bridgePierCount++;
+                const pierH = bridgeLift + style.lift;
+                const pier = new THREE.Mesh(
+                  new THREE.CylinderGeometry(0.45 * ms, 0.62 * ms, pierH, 6),
+                  bridgePierMat
+                );
+                pier.position.set(w[i].x, w[i].y - pierH * 0.5, w[i].z);
+                pier.castShadow = true;
+                this.featureGroup.add(pier);
+              }
+            }
+            if ((ln.bridgeType === 'suspension' || ln.cls === 'trail') && bridgePierCount < 80 && w[0].distanceTo(w[w.length - 1]) > 6 * ms) {
+              const towerH = 4.2 * ms;
+              for (const endPt of [w[0], w[w.length - 1]]) {
+                const tower = new THREE.Mesh(new THREE.BoxGeometry(1.8 * ms, towerH, 0.7 * ms), bridgeTowerMat);
+                tower.position.set(endPt.x, endPt.y + towerH * 0.4, endPt.z);
+                tower.castShadow = true;
+                this.featureGroup.add(tower);
+              }
+            }
+          }
+
+          // 3D Aerialway: support pylons + suspended gondola cabins along the cable
+          if (ln.cls === 'aerialway' && aerialPylonCount < 50) {
+            const cableH = 14 * ms;
+            let acc = 0;
+            for (let i = 0; i < w.length - 1; i++) {
+              const segLen = w[i].distanceTo(w[i + 1]);
+              acc += segLen;
+              if ((i === 0 || acc >= 28 * ms) && aerialPylonCount < 50) {
+                acc = 0;
+                aerialPylonCount++;
+                const pylon = new THREE.Group();
+                pylon.position.set(w[i].x, w[i].y - cableH, w[i].z);
+                const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.32 * ms, 0.65 * ms, cableH, 6), pylonSteelMat);
+                mast.position.y = cableH * 0.5;
+                mast.castShadow = true;
+                pylon.add(mast);
+                const cross = new THREE.Mesh(new THREE.BoxGeometry(3.2 * ms, 0.45 * ms, 0.45 * ms), pylonSteelMat);
+                cross.position.y = cableH;
+                pylon.add(cross);
+                this.featureGroup.add(pylon);
+              }
+              if (segLen > 4 * ms && i % 3 === 1) {
+                const mx = (w[i].x + w[i + 1].x) * 0.5;
+                const my = (w[i].y + w[i + 1].y) * 0.5;
+                const mz = (w[i].z + w[i + 1].z) * 0.5;
+                const cab = new THREE.Group();
+                cab.position.set(mx, my, mz);
+                const hanger = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * ms, 0.08 * ms, 1.8 * ms, 4), pylonSteelMat);
+                hanger.position.y = -0.9 * ms;
+                cab.add(hanger);
+                const body = new THREE.Mesh(new THREE.BoxGeometry(1.7 * ms, 1.5 * ms, 1.4 * ms), gondolaBodyMat);
+                body.position.y = -2.2 * ms;
+                body.castShadow = true;
+                cab.add(body);
+                const win = new THREE.Mesh(new THREE.BoxGeometry(1.76 * ms, 0.55 * ms, 1.46 * ms), gondolaGlassMat);
+                win.position.y = -2.05 * ms;
+                cab.add(win);
+                this.featureGroup.add(cab);
+              }
+            }
+          }
         }
         if (w.length > labelLen) { labelLen = w.length; labelMid = w[Math.floor(w.length / 2)]; }
       }
       if (labelMid) {
-        const pri = ln.kind === 'water' ? (ln.cls === 'river' ? 1 : 7) : (ln.cls === 'major' ? 3 : (ln.cls === 'trail' ? 7 : 5));
-        pushLabelCand(ln.name, labelMid.clone().setY(labelMid.y + 10 * ms), ln.kind === 'water' ? 0x9fd8ff : 0xffd27a, pri);
+        const pri = ln.kind === 'water'
+          ? (ln.cls === 'river' ? 1 : 7)
+          : (ln.cls === 'major' || ln.cls === 'railway' || ln.cls === 'aerialway' ? 3 : (ln.cls === 'trail' ? 7 : 5));
+        const lColor = ln.kind === 'water' ? 0x9fd8ff : (ln.cls === 'railway' || ln.cls === 'aerialway' ? 0xe2e8f0 : 0xffd27a);
+        pushLabelCand(ln.name, labelMid.clone().setY(labelMid.y + 10 * ms), lColor, pri);
       }
     }
-    for (const key of Object.keys(buckets)) {
-      const verts = buckets[key];
-      if (!verts.length) continue;
-      const style = LINE_STYLE[key];
-      const cVerts = casingBuckets[key];
-      if (cVerts && cVerts.length && style.casingColor != null) {
-        const cGeo = new LineSegmentsGeometry();
-        cGeo.setPositions(cVerts);
-        const cMat = new LineMaterial({
-          color: style.casingColor, linewidth: style.casingWidth,
-          transparent: true, opacity: style.casingOpacity,
-        });
-        const cSeg = new LineSegments2(cGeo, cMat);
-        cSeg.computeLineDistances();
-        this.featureGroup.add(cSeg);
-        this._lineMaterials.push(cMat);
-      }
+
+    const addLinePass = (verts, color, linewidth, opacity) => {
+      if (!verts || verts.length < 6) return;
       const geo = new LineSegmentsGeometry();
       geo.setPositions(verts);
-      const mat = new LineMaterial({ color: style.color, linewidth: style.width, transparent: true, opacity: style.opacity });
+      const mat = new LineMaterial({ color, linewidth, transparent: true, opacity });
       const seg = new LineSegments2(geo, mat);
       seg.computeLineDistances();
       this.featureGroup.add(seg);
       this._lineMaterials.push(mat);
-    }
+    };
 
-    // ----- Land cover -----
+    for (const key of Object.keys(buckets)) {
+      const verts = buckets[key];
+      if (!verts.length) continue;
+      const style = LINE_STYLE[key] || LINE_STYLE.minor;
+      const cVerts = casingBuckets[key];
+      if (cVerts && cVerts.length && style.casingColor != null) {
+        addLinePass(cVerts, style.casingColor, style.casingWidth, style.casingOpacity);
+      }
+      addLinePass(verts, style.color, style.width, style.opacity);
+    }
+    addLinePass(tunnelVerts, 0x94a3b8, 2.0, 0.52);
+    addLinePass(bridgeParapetVerts, 0xe2e8f0, 1.5, 0.88);
+    addLinePass(railSleeperVerts, 0x5c4033, 2.2, 0.88);
+
+    // ----- 3D Civil & Natural Linear/Polygon Structures (dams, piers, breakwaters, walls, cliffs) -----
+    const structMaterials = {
+      dam:        new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.78, metalness: 0.08, flatShading: true, side: THREE.DoubleSide }),
+      pier:       new THREE.MeshStandardMaterial({ color: 0x9c7a54, roughness: 0.85, metalness: 0.04, flatShading: true, side: THREE.DoubleSide }),
+      breakwater: new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.92, metalness: 0.04, flatShading: true, side: THREE.DoubleSide }),
+      wall:       new THREE.MeshStandardMaterial({ color: 0xa89f91, roughness: 0.88, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+      cliff:      new THREE.MeshStandardMaterial({ color: 0x736b60, roughness: 0.92, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+    };
+    const buildRibbon3D = (pts3D, halfW, height, mat) => {
+      if (pts3D.length < 2) return;
+      const positions = [];
+      for (let i = 0; i < pts3D.length - 1; i++) {
+        const a = pts3D[i], b = pts3D[i + 1];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const len = Math.hypot(dx, dz);
+        if (len < 0.01) continue;
+        const nx = (-dz / len) * halfW, nz = (dx / len) * halfW;
+        const alx = a.x - nx, alz = a.z - nz, arx = a.x + nx, arz = a.z + nz;
+        const blx = b.x - nx, blz = b.z - nz, brx = b.x + nx, brz = b.z + nz;
+        const ay0 = a.y - height * 0.25, ay1 = a.y + height;
+        const by0 = b.y - height * 0.25, by1 = b.y + height;
+        positions.push(alx, ay1, alz, arx, ay1, arz, brx, by1, brz);
+        positions.push(alx, ay1, alz, brx, by1, brz, blx, by1, blz);
+        positions.push(alx, ay0, alz, alx, ay1, alz, blx, by1, blz);
+        positions.push(alx, ay0, alz, blx, by1, blz, blx, by0, blz);
+        positions.push(arx, ay1, arz, arx, ay0, arz, brx, by0, brz);
+        positions.push(arx, ay1, arz, brx, by0, brz, brx, by1, brz);
+      }
+      if (!positions.length) return;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.featureGroup.add(mesh);
+    };
+
+    const cliffLineVerts = [];
+    let cliffToothCount = 0;
+    for (const st of (data.structures || [])) {
+      const mat = structMaterials[st.cls] || structMaterials.wall;
+      const cfg = st.cls === 'dam'
+        ? { halfW: 2.6 * ms, h: 9.5 * ms }
+        : st.cls === 'pier'
+          ? { halfW: 1.5 * ms, h: 1.4 * ms }
+          : st.cls === 'breakwater'
+            ? { halfW: 2.2 * ms, h: 3.2 * ms }
+            : { halfW: 0.75 * ms, h: 2.4 * ms };
+
+      const runs = this._clipPolylineToBbox(st.pts, bbox)
+        .flatMap((run) => this._splitPolylineAtHoles(run));
+      let labelPt = null;
+      for (const run of runs) {
+        const w = drapeLine(run, baseLift * 0.9);
+        if (w.length < 2) continue;
+        if (!labelPt) labelPt = w[Math.floor(w.length / 2)];
+        if (st.cls === 'cliff') {
+          let acc = 0;
+          for (let i = 0; i < w.length - 1; i++) {
+            cliffLineVerts.push(w[i].x, w[i].y + baseLift * 0.5, w[i].z, w[i + 1].x, w[i + 1].y + baseLift * 0.5, w[i + 1].z);
+            const segLen = w[i].distanceTo(w[i + 1]);
+            acc += segLen;
+            if (acc >= 6 * ms && cliffToothCount < 140) {
+              acc = 0;
+              cliffToothCount++;
+              const crag = new THREE.Mesh(new THREE.ConeGeometry(1.8 * ms, 4.2 * ms, 5), mat);
+              crag.position.set(w[i].x, w[i].y + 1.6 * ms, w[i].z);
+              crag.rotation.y = (cliffToothCount * 1.7) % (Math.PI * 2);
+              crag.castShadow = true;
+              this.featureGroup.add(crag);
+            }
+          }
+        } else {
+          buildRibbon3D(w, cfg.halfW, cfg.h, mat);
+          if (st.cls === 'pier') {
+            let acc = 0;
+            for (let i = 0; i < w.length; i++) {
+              if (i > 0) acc += w[i].distanceTo(w[i - 1]);
+              if (i === 0 || i === w.length - 1 || acc >= 8 * ms) {
+                acc = 0;
+                const pile = new THREE.Mesh(new THREE.CylinderGeometry(0.28 * ms, 0.28 * ms, 3.2 * ms, 6), mat);
+                pile.position.set(w[i].x, w[i].y - 0.6 * ms, w[i].z);
+                this.featureGroup.add(pile);
+              }
+            }
+          }
+        }
+      }
+      if (st.name && labelPt) {
+        pushLabelCand(st.name, labelPt.clone().setY(labelPt.y + (cfg.h + 10 * ms)), 0xe2e8f0, 3);
+      }
+    }
+    addLinePass(cliffLineVerts, 0x57534e, 2.4, 0.85);
+
+    // ----- Land cover & civic grounds (water, wetland, swimming pools, sports pitches) -----
     const AREA_STYLE = {
       water:   { color: 0x2482d6, opacity: 0.76, roughness: 0.25, metalness: 0.15, outline: 0x8ad4ff, outlineW: 1.9, lift: baseLift * 0.65, labelColor: 0x9fd8ff, pri: 0 },
       wetland: { color: 0x468972, opacity: 0.58, roughness: 0.68, metalness: 0.04, outline: 0x9be2c8, outlineW: 1.5, lift: baseLift * 0.58, labelColor: 0xade8cf, pri: 1 },
+      pool:    { color: 0x22d3ee, opacity: 0.86, roughness: 0.18, metalness: 0.2,  outline: 0xf8fafc, outlineW: 2.1, lift: baseLift * 1.15, labelColor: 0xa5f3fc, pri: 3 },
+      pitch:   { color: 0x2ea043, opacity: 0.82, roughness: 0.72, metalness: 0.02, outline: 0xffffff, outlineW: 1.8, lift: baseLift * 1.12, labelColor: 0xbbf7d0, pri: 4 },
       forest:  { labelColor: 0x9be07a, pri: 2 },
       scrub:   { labelColor: 0xb6e488, pri: 2 },
       grass:   { labelColor: 0xc7f29a, pri: 2 },
@@ -5447,20 +6509,14 @@ export class TerrainViewer {
           }
         }
 
-        // Shoreline / bank outline.
+        // Shoreline / bank / court boundary outline.
         const ov = [];
         for (const seg of this._splitPolylineAtHoles([...outer, outer[0]])) {
           const ow = drapeLine(seg, style.lift + baseLift * 0.4);
           for (let i = 0; i < ow.length - 1; i++) ov.push(ow[i].x, ow[i].y, ow[i].z, ow[i + 1].x, ow[i + 1].y, ow[i + 1].z);
         }
         if (ov.length >= 6) {
-          const geo = new LineSegmentsGeometry();
-          geo.setPositions(ov);
-          const mat = new LineMaterial({ color: style.outline, linewidth: style.outlineW || 1.5, transparent: true, opacity: 0.78 });
-          const seg = new LineSegments2(geo, mat);
-          seg.computeLineDistances();
-          this.featureGroup.add(seg);
-          this._lineMaterials.push(mat);
+          addLinePass(ov, style.outline, style.outlineW || 1.5, 0.82);
         }
       }
 
@@ -5473,7 +6529,7 @@ export class TerrainViewer {
       }
     }
 
-    // ----- Buildings: diorama massing with foundation plinth, wall palette & roofs -----
+    // ----- Buildings: diorama massing with architectural archetypes, plinth & roofs -----
     const ringArea = (ring) => {
       let a = 0;
       for (let i = 0; i < ring.length - 1; i++) a += ring[i][1] * ring[i + 1][0] - ring[i + 1][1] * ring[i][0];
@@ -5498,13 +6554,26 @@ export class TerrainViewer {
       new THREE.MeshStandardMaterial({ color: 0xa4acb8, roughness: 0.82, metalness: 0.06, flatShading: true, side: THREE.DoubleSide }),
       new THREE.MeshStandardMaterial({ color: 0xc2b5a3, roughness: 0.88, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
     ];
+    const archWallMaterials = {
+      temple:     new THREE.MeshStandardMaterial({ color: 0xc83e2b, roughness: 0.78, metalness: 0.04, flatShading: true, side: THREE.DoubleSide }),
+      church:     new THREE.MeshStandardMaterial({ color: 0xede6d6, roughness: 0.84, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+      hut:        new THREE.MeshStandardMaterial({ color: 0x9b6b43, roughness: 0.88, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+      greenhouse: new THREE.MeshStandardMaterial({ color: 0xa5d8e6, transparent: true, opacity: 0.65, roughness: 0.25, metalness: 0.18, flatShading: true, side: THREE.DoubleSide }),
+      industrial: new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.72, metalness: 0.18, flatShading: true, side: THREE.DoubleSide }),
+    };
+    const archRoofMaterials = {
+      temple:     new THREE.MeshStandardMaterial({ color: 0xd49b27, roughness: 0.65, metalness: 0.15, flatShading: true, side: THREE.DoubleSide }),
+      church:     new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.78, metalness: 0.08, flatShading: true, side: THREE.DoubleSide }),
+      hut:        new THREE.MeshStandardMaterial({ color: 0x2b6cb0, roughness: 0.68, metalness: 0.14, flatShading: true, side: THREE.DoubleSide }),
+      greenhouse: new THREE.MeshStandardMaterial({ color: 0xcffafe, transparent: true, opacity: 0.58, roughness: 0.22, metalness: 0.2, flatShading: true, side: THREE.DoubleSide }),
+      industrial: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.75, metalness: 0.18, flatShading: true, side: THREE.DoubleSide }),
+    };
     const plinthMat = new THREE.MeshStandardMaterial({ color: 0x6b665f, roughness: 0.92, metalness: 0, flatShading: true, side: THREE.DoubleSide });
     const roofPalette = [
       new THREE.MeshStandardMaterial({ color: 0xa45a42, roughness: 0.82, metalness: 0.04, flatShading: true, side: THREE.DoubleSide }),
       new THREE.MeshStandardMaterial({ color: 0x566370, roughness: 0.8, metalness: 0.08, flatShading: true, side: THREE.DoubleSide }),
       new THREE.MeshStandardMaterial({ color: 0x7d5c49, roughness: 0.84, metalness: 0.03, flatShading: true, side: THREE.DoubleSide }),
     ];
-    const elevScale = this._elevScale || 1;
     for (const b of blds) {
       let ring = b.ring.slice();
       if (ring.length > 1) {
@@ -5537,22 +6606,24 @@ export class TerrainViewer {
       cx /= worldXZ.length; cz /= worldXZ.length;
       const groundY = baseY * elevScale;
       const hash = Math.abs(Math.floor(cx * 13 + cz * 31));
-      const wallMat = wallPalette[hash % wallPalette.length];
-      const defaultRoofMat = roofPalette[hash % roofPalette.length];
+      const wallMat = b.wallColor != null
+        ? new THREE.MeshStandardMaterial({ color: b.wallColor, roughness: 0.84, metalness: 0.04, flatShading: true, side: THREE.DoubleSide })
+        : (archWallMaterials[b.arch] || wallPalette[hash % wallPalette.length]);
+      const defaultRoofMat = archRoofMaterials[b.arch] || roofPalette[hash % roofPalette.length];
 
       const totalH = Math.max(2, b.h);
       const minH = Math.max(0, Math.min(b.minH || 0, totalH - 1));
       const planDim = Math.max(1, Math.min(maxX - minX, maxZ - minZ));
-      // Diorama roof rule: explicit roof:shape always wins; otherwise small/medium
-      // standalone buildings get a subtle pitched roof so townscapes read like a
-      // miniature village rather than flat grey blocks.
-      const autoPitch = !b.roof && !b.part && planDim < 22 && totalH <= 14;
-      const roof = b.roof || (autoPitch ? { shape: (hash % 2 === 0) ? 'gabled' : 'hipped', height: null, colour: null } : null);
+      const archDefaultShape = b.arch === 'temple' ? 'hipped'
+        : (b.arch === 'church' || b.arch === 'hut' || b.arch === 'greenhouse') ? 'gabled'
+        : null;
+      const autoPitch = !b.roof && !b.part && (archDefaultShape || (planDim < 22 && totalH <= 14));
+      const roof = b.roof || (autoPitch ? { shape: archDefaultShape || ((hash % 2 === 0) ? 'gabled' : 'hipped'), height: null, colour: null } : null);
       let roofH = 0;
       if (roof) {
         roofH = Number.isFinite(roof.height) && roof.height > 0
           ? roof.height
-          : Math.max(1.8, Math.min(planDim * (b.roof ? 0.35 : 0.24), b.roof ? 8 : 4.2));
+          : Math.max(1.8, Math.min(planDim * (b.roof || archDefaultShape ? 0.36 : 0.24), b.roof || archDefaultShape ? 8 : 4.2));
         roofH = Math.min(roofH, (totalH - minH) * 0.55);
       }
       const wallTopM = totalH - roofH;
@@ -5619,22 +6690,42 @@ export class TerrainViewer {
       }
     }
 
-    // ----- Point landmarks: peaks / trees / towers / viewpoints (Plan §III-1) -----
-    const allPoints = data.points || [];
+    // ----- Point landmarks: 22 procedural diorama 3D landmark categories -----
+    const POINT_PRIORITY = {
+      peak: 1, waterfall: 1, lighthouse: 1, castle: 1, temple: 2, church: 2,
+      hut: 2, sacred_tree: 2, wind_turbine: 2, saddle: 2, tower: 3, water_tower: 3,
+      chimney: 3, viewpoint: 3, pavilion: 3, trailhead: 3, station: 3, monument: 3,
+      spring: 4, cave: 4, camp_site: 4, heliport: 4, power_tower: 5, rock: 5,
+      picnic: 5, parking: 5, tree: 9,
+    };
+    const POINT_LABEL_COLOR = {
+      peak: 0xffd9a0, saddle: 0xffd9a0, rock: 0xd9d2c7, cave: 0xd9d2c7,
+      waterfall: 0x9fd8ff, spring: 0x9fd8ff,
+      sacred_tree: 0xa7f3d0, tree: 0xa7f3d0,
+      temple: 0xfca5a5, church: 0xfde68a, castle: 0xfde68a, monument: 0xfde68a,
+      hut: 0xfcd34d, pavilion: 0xfcd34d, camp_site: 0xfcd34d, trailhead: 0xfcd34d,
+    };
+    const allPoints = (data.points || []).slice().sort((a, b) => (POINT_PRIORITY[a.cls] || 6) - (POINT_PRIORITY[b.cls] || 6));
     const nonTree = allPoints.filter((p) => p.cls !== 'tree');
     const trees = allPoints.filter((p) => p.cls === 'tree');
-    for (const p of [...nonTree.slice(0, 120), ...trees.slice(0, 60)]) {
+    const placedCells = new Set();
+    for (const p of [...nonTree.slice(0, 180), ...trees.slice(0, 65)]) {
       const { lat, lon } = p;
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
       if (lat < bbox.minLat || lat > bbox.maxLat || lon < bbox.minLng || lon > bbox.maxLng) continue;
       if (this._isOverHole(lat, lon)) continue;
+      if (p.cls !== 'tree') {
+        const cellKey = `${Math.round(lat * 5000)},${Math.round(lon * 5000)}`;
+        if (placedCells.has(cellKey)) continue;
+        placedCells.add(cellKey);
+      }
       const model = this._buildPointModel(p.cls, ms, p.h, lat, lon);
       if (!model) continue;
       model.position.copy(world(lat, lon, baseLift));
       this.landmarkGroup.add(model);
-      if (p.cls !== 'tree') {
-        const color = (p.cls === 'peak' || p.cls === 'saddle') ? 0xffd9a0 : 0xd8e0ea;
-        const pri = (p.cls === 'peak') ? 2 : 4;
+      if (p.cls !== 'tree' && p.cls !== 'power_tower') {
+        const color = POINT_LABEL_COLOR[p.cls] || 0xd8e0ea;
+        const pri = POINT_PRIORITY[p.cls] || 4;
         const labelPos = model.position.clone().setY(model.position.y + 16 * ms);
         if (p.name && p.name.trim()) {
           pushLabelCand(p.name, labelPos, color, pri);
@@ -6487,6 +7578,7 @@ export class TerrainViewer {
     this.featureGroup = null;
     this.featureLabelGroup = null;
     this.landmarkGroup = null;
+    this._windTurbineRotors = [];
     // The traversal above disposed + removed the catchment group; drop the handle
     // (the basin DATA is retained so _rebuildInPlace can redraw it).
     this._catchmentGroup = null;
@@ -6629,6 +7721,9 @@ export class TerrainViewer {
     // (cloud drift, falling rain/snow, swirling fog, lightning). Distant rigs are
     // culled inside update() so a long route stays cheap.
     if (this._weather3d) this._weather3d.update(dt, this.camera);
+    if (this._windTurbineRotors && this._windTurbineRotors.length && this.landmarkGroup?.visible) {
+      for (const rotor of this._windTurbineRotors) rotor.rotation.z -= dt * 1.8;
+    }
 
     this.renderer.render(this.scene, this.camera);
   }

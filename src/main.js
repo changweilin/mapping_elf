@@ -2627,7 +2627,7 @@ const TERRAIN_ROUTE_CACHE_MAX = 8;
 // reopening the 3D page would silently re-hit Overpass every time. The Cache
 // API shares the browser's much larger storage-quota budget, so 圖資 now
 // reliably survives a page reload/reopen.
-const TERRAIN_FEATURES_CACHE_NAME = 'mapping-elf-terrain3d-features-v1';
+const TERRAIN_FEATURES_CACHE_NAME = 'mapping-elf-terrain3d-features-v2';
 const TERRAIN_FEATURES_URL_PREFIX = 'https://mapping-elf.local/terrain-features/';
 
 // --- 3D viewer display settings (persisted across reloads) ----------------

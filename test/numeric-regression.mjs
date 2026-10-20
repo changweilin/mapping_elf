@@ -46,6 +46,7 @@ import {
 } from '../src/modules/shapeRoutePlanner.js';
 import { SHAPE_NAMES, shapeStroke } from './helpers/testShapes.mjs';
 import { makeGridWorld } from './helpers/gridWorld.mjs';
+import { TerrainViewer } from '../src/modules/terrainViewer.js';
 
 const closeTo = (actual, expected, epsilon = 1e-6) => {
   assert.ok(
@@ -518,6 +519,92 @@ assert.equal(planSpurRetraction(nearRoute, nearWps, nearTs, geoRing, { offShapeM
     assert.ok(v4.simPct >= 88, `${shape}: trimmed similarity ${v4.simPct.toFixed(0)}% < 88%`);
     assert.ok(Math.abs(v4.actual - 5000) / 5000 <= 0.13, `${shape}: trimmed mileage error ${(Math.abs(v4.actual - 5000) / 50).toFixed(0)}%`);
   }
+}
+
+// --- 3D Terrain OSM object classification & procedural model builders ---
+{
+  // Linear & structural OSM features
+  assert.deepEqual(TerrainViewer._classifyFeature({ waterway: 'dam', name: '石門水庫大壩' }), {
+    group: 'structure', kind: 'structure', cls: 'dam',
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ man_made: 'pier', name: '大稻埕碼頭' }), {
+    group: 'structure', kind: 'structure', cls: 'pier',
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ natural: 'cliff', name: '錐麓斷崖' }), {
+    group: 'structure', kind: 'structure', cls: 'cliff',
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ aerialway: 'gondola', name: '貓空纜車' }), {
+    group: 'line', kind: 'aerialway', cls: 'aerialway', sub: 'gondola',
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ railway: 'narrow_gauge', bridge: 'yes', name: '阿里山林鐵' }), {
+    group: 'line', kind: 'rail', cls: 'railway', bridge: true, bridgeType: 'yes', tunnel: false,
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ highway: 'path', bridge: 'suspension', name: '巴陵吊橋' }), {
+    group: 'line', kind: 'road', cls: 'trail', bridge: true, bridgeType: 'suspension', tunnel: false,
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ highway: 'primary', tunnel: 'yes', name: '雪山隧道' }), {
+    group: 'line', kind: 'road', cls: 'major', bridge: false, bridgeType: null, tunnel: true,
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ power: 'line' }), {
+    group: 'line', kind: 'power', cls: 'power_line',
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ leisure: 'pitch', name: '棒球場' }), {
+    group: 'area', kind: 'sport', cls: 'pitch', sport: 'pitch',
+  });
+  assert.deepEqual(TerrainViewer._classifyFeature({ leisure: 'swimming_pool' }), {
+    group: 'area', kind: 'sport', cls: 'pool',
+  });
+
+  // Building architectural archetypes
+  assert.equal(TerrainViewer._buildingArch({ building: 'temple' }), 'temple');
+  assert.equal(TerrainViewer._buildingArch({ building: 'yes', amenity: 'place_of_worship', religion: 'christian' }), 'church');
+  assert.equal(TerrainViewer._buildingArch({ building: 'cabin' }), 'hut');
+  assert.equal(TerrainViewer._buildingArch({ building: 'greenhouse' }), 'greenhouse');
+  assert.equal(TerrainViewer._buildingArch({ building: 'industrial' }), 'industrial');
+
+  // Point landmark classification across all 22 categories
+  const pointCases = [
+    [{ natural: 'peak', name: '玉山主峰', ele: '3952' }, 'peak'],
+    [{ natural: 'saddle', name: '八通關鞍部' }, 'saddle'],
+    [{ waterway: 'waterfall', name: '十分瀑布' }, 'waterfall'],
+    [{ natural: 'hot_spring', name: '野溪溫泉' }, 'spring'],
+    [{ natural: 'cave_entrance', name: '蝙蝠洞' }, 'cave'],
+    [{ natural: 'stone', name: '夫妻石' }, 'rock'],
+    [{ natural: 'tree', denotation: 'natural_monument', name: '阿里山神木' }, 'sacred_tree'],
+    [{ natural: 'tree' }, 'tree'],
+    [{ amenity: 'shelter', shelter_type: 'gazebo', name: '觀景涼亭' }, 'pavilion'],
+    [{ tourism: 'alpine_hut', name: '排雲山莊' }, 'hut'],
+    [{ tourism: 'camp_site', name: '武陵露營區' }, 'camp_site'],
+    [{ amenity: 'place_of_worship', religion: 'christian', name: '玫瑰堂' }, 'church'],
+    [{ amenity: 'place_of_worship', religion: 'taoist', name: '指南宮' }, 'temple'],
+    [{ power: 'generator', 'generator:source': 'wind' }, 'wind_turbine'],
+    [{ power: 'tower' }, 'power_tower'],
+    [{ man_made: 'water_tower' }, 'water_tower'],
+    [{ man_made: 'lighthouse', name: '鵝鑾鼻燈塔' }, 'lighthouse'],
+    [{ man_made: 'chimney' }, 'chimney'],
+    [{ man_made: 'communications_tower' }, 'tower'],
+    [{ historic: 'castle', name: '安平古堡' }, 'castle'],
+    [{ historic: 'memorial', name: '紀念碑' }, 'monument'],
+    [{ tourism: 'viewpoint', name: '觀景台' }, 'viewpoint'],
+    [{ highway: 'trailhead', name: '塔塔加登山口' }, 'trailhead'],
+    [{ railway: 'station', name: '奮起湖車站' }, 'station'],
+    [{ aeroway: 'helipad' }, 'heliport'],
+    [{ amenity: 'parking' }, 'parking'],
+    [{ tourism: 'picnic_site' }, 'picnic'],
+  ];
+  const mockViewer = {
+    _windTurbineRotors: [],
+    _fallbackLandmarkName: TerrainViewer.prototype._fallbackLandmarkName,
+    _buildPointModel: TerrainViewer.prototype._buildPointModel,
+  };
+  for (const [tags, expectedCls] of pointCases) {
+    const pt = TerrainViewer._classifyPoint(tags);
+    assert.ok(pt, `Expected _classifyPoint to classify ${JSON.stringify(tags)}`);
+    assert.equal(pt.cls, expectedCls);
+    const model = mockViewer._buildPointModel(expectedCls, 1.0, pt.h, 24.2133, 121.3472);
+    assert.ok(model && model.children.length > 0, `Expected _buildPointModel('${expectedCls}') to build non-empty THREE.Group`);
+  }
+  assert.ok(mockViewer._windTurbineRotors.length > 0, 'wind_turbine model should register its spinning rotor');
 }
 
 console.log('Numeric regression ok');
