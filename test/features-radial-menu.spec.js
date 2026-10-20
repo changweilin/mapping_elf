@@ -148,4 +148,39 @@ test.describe('環狀功能選單 (Radial Features Menu)', () => {
       expect(Math.abs(dist - 108)).toBeLessThanOrEqual(3);
     }
   });
+
+  test('各功能頁面上方標題列貼齊頂部且不遮住下方操作區塊', async ({ page }) => {
+    await boot(page);
+    const btnFeatures = page.locator('#btn-features-menu');
+
+    const tools = [
+      { btn: '#btn-measure-tool', panel: '#measure-panel', close: '#btn-measure-close' },
+      { btn: '#btn-shape-tool', panel: '#shape-panel', close: '#btn-shape-close' },
+      { btn: '#btn-star-tool', panel: '#star-panel', close: '#btn-star-close' },
+      { btn: '#btn-weather-tool', panel: '#weather-panel', close: '#btn-weather-close' },
+      { btn: '#btn-catchment-tool', panel: '#catchment-panel', close: '#btn-catchment-close' },
+    ];
+
+    for (const t of tools) {
+      await btnFeatures.click();
+      await page.locator(t.btn).click();
+      const panel = page.locator(t.panel);
+      await expect(panel).toBeVisible();
+
+      const head = panel.locator('.measure-panel-head');
+      const panelBox = await panel.boundingBox();
+      const headBox = await head.boundingBox();
+
+      // 標題列頂部貼齊面板（在 3px 頂部裝飾框之內，無多餘下沉）
+      expect(headBox.y - panelBox.y).toBeLessThanOrEqual(3.5);
+
+      // 下方第一組操作區塊不被標題列遮住
+      const nextOp = panel.locator('> *:nth-child(2)');
+      const nextBox = await nextOp.boundingBox();
+      expect(nextBox.y).toBeGreaterThanOrEqual(headBox.y + headBox.height);
+
+      await page.locator(t.close).click();
+      await expect(panel).toBeHidden();
+    }
+  });
 });
