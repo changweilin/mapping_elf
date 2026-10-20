@@ -110,6 +110,7 @@ export class TerrainViewer {
     // --- Clickable 3D markers (billboard signboards) ---
     this._onMarkerClick = null;
     this._pickables = [];                 // THREE objects with userData.detail
+    this._featurePickables = [];          // Map features & landmarks with userData.detail
     this._raycaster = null;
     this._pointer = new THREE.Vector2();
     this._pointerDownInfo = null;         // { x, y, t } for click-vs-drag detection
@@ -1434,27 +1435,41 @@ export class TerrainViewer {
       this._pointerDownInfo = null;
       if (!d) return;
       const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
-      if (moved > 6 || (now() - d.t) > 600) return; // drag / long-press → orbit, not a pick
+      if (moved > 10 || (now() - d.t) > 600) return; // drag / long-press → orbit, not a pick
       this._handlePick(e);
     });
     this._pointerHandlersBound = true;
   }
 
   _handlePick(e) {
-    if (!this.camera || !this.renderer || !this._onMarkerClick || !this._pickables.length) return;
+    if (!this.camera || !this.renderer || !this._onMarkerClick) return;
+    const candidates = [];
+    if (this._pickables && this._pickables.length) candidates.push(...this._pickables);
+    if (this._featurePickables && this._featurePickables.length) candidates.push(...this._featurePickables);
+    if (!candidates.length) return;
+
     const rect = this.renderer.domElement.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     this._pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this._pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     if (!this._raycaster) this._raycaster = new THREE.Raycaster();
     this._raycaster.setFromCamera(this._pointer, this.camera);
-    const hits = this._raycaster.intersectObjects(this._pickables, true);
+    const hits = this._raycaster.intersectObjects(candidates, true);
     for (const h of hits) {
       let cur = h.object;
+      let visible = true;
+      let p = cur;
+      while (p) {
+        if (!p.visible) { visible = false; break; }
+        p = p.parent;
+      }
+      if (!visible) continue;
+
       while (cur && !cur.userData?.detail) cur = cur.parent;
       const detail = cur?.userData?.detail;
       if (detail) { this._onMarkerClick(detail); return; }
     }
+    this._onMarkerClick(null);
   }
 
   // ---------- Environment: day/night lighting + weather ----------
@@ -5004,6 +5019,7 @@ export class TerrainViewer {
           points.push({
             cls: pcat.cls, name, lat: el.lat, lon: el.lon,
             h: TerrainViewer._parseLengthM(tags.height ?? tags['building:height']),
+            ele: tags.ele ? parseFloat(tags.ele) : (tags.elevation ? parseFloat(tags.elevation) : null),
           });
         }
         continue;
@@ -5026,6 +5042,7 @@ export class TerrainViewer {
           points.push({
             cls: pcat.cls, name, lat: cla, lon: clo,
             h: TerrainViewer._parseLengthM(tags.height ?? tags['building:height']),
+            ele: tags.ele ? parseFloat(tags.ele) : (tags.elevation ? parseFloat(tags.elevation) : null),
           });
         }
 
@@ -6076,6 +6093,11 @@ export class TerrainViewer {
     // on the updated terrain surface.
     this._applyLandCoverColors(data.areas, data.buildings, bbox, data.lines);
 
+    if (this.featureGroup) this.scene.remove(this.featureGroup);
+    if (this.featureLabelGroup) this.scene.remove(this.featureLabelGroup);
+    if (this.landmarkGroup) this.scene.remove(this.landmarkGroup);
+    this._featurePickables = [];
+
     this.featureGroup = new THREE.Group();
     this.featureLabelGroup = new THREE.Group();
     this.landmarkGroup = new THREE.Group();
@@ -6129,8 +6151,8 @@ export class TerrainViewer {
       return out;
     };
     const labelCands = [];
-    const pushLabelCand = (name, pos, color, pri, key) => {
-      if (name) labelCands.push({ name, pos, color, pri, key: key || name });
+    const pushLabelCand = (name, pos, color, pri, key, detail = null) => {
+      if (name) labelCands.push({ name, pos, color, pri, key: key || name, detail });
     };
 
     const bridgePierMat = new THREE.MeshStandardMaterial({ color: 0x8d959e, roughness: 0.82, metalness: 0.08, flatShading: true });
@@ -6315,7 +6337,18 @@ export class TerrainViewer {
           ? (ln.cls === 'river' ? 1 : 7)
           : (ln.cls === 'major' || ln.cls === 'railway' || ln.cls === 'aerialway' ? 3 : (ln.cls === 'trail' ? 7 : 5));
         const lColor = ln.kind === 'water' ? 0x9fd8ff : (ln.cls === 'railway' || ln.cls === 'aerialway' ? 0xe2e8f0 : 0xffd27a);
-        pushLabelCand(ln.name, labelMid.clone().setY(labelMid.y + 10 * ms), lColor, pri);
+        const lKindName = ln.kind === 'water' ? '水系河流' : (ln.cls === 'trail' ? '步道山徑' : (ln.cls === 'railway' ? '鐵路' : (ln.cls === 'aerialway' ? '索道纜車' : '道路')));
+        const lIcon = ln.kind === 'water' ? '🌊' : (ln.cls === 'trail' ? '🥾' : (ln.cls === 'railway' ? '🚆' : (ln.cls === 'aerialway' ? '🚡' : '🛣️')));
+        const lineDetail = {
+          type: 'feature',
+          kind: 'line',
+          cls: ln.cls,
+          label: ln.name,
+          category: lKindName,
+          icon: lIcon,
+          colorCss: '#' + lColor.toString(16).padStart(6, '0'),
+        };
+        pushLabelCand(ln.name, labelMid.clone().setY(labelMid.y + 10 * ms), lColor, pri, null, lineDetail);
       }
     }
 
@@ -6434,7 +6467,23 @@ export class TerrainViewer {
         }
       }
       if (st.name && labelPt) {
-        pushLabelCand(st.name, labelPt.clone().setY(labelPt.y + (cfg.h + 10 * ms)), 0xe2e8f0, 3);
+        const stElev = typeof this._sampleGridElevation === 'function' && st.pts && st.pts[0]
+          ? Math.round(this._sampleGridElevation(st.pts[0][0], st.pts[0][1])) : null;
+        const stCategory = st.cls === 'dam' ? '水壩 / 水利設施' : (st.cls === 'cliff' ? '懸崖 / 斷崖' : (st.cls === 'pier' ? '碼頭' : '結構設施'));
+        const stIcon = st.cls === 'dam' ? '🧱' : (st.cls === 'cliff' ? '🧗' : '🏛️');
+        const stDetail = {
+          type: 'feature',
+          kind: 'structure',
+          cls: st.cls,
+          label: st.name,
+          category: stCategory,
+          icon: stIcon,
+          elevation: stElev,
+          lat: st.pts && st.pts[0] ? st.pts[0][0] : null,
+          lng: st.pts && st.pts[0] ? st.pts[0][1] : null,
+          colorCss: '#e2e8f0',
+        };
+        pushLabelCand(st.name, labelPt.clone().setY(labelPt.y + (cfg.h + 10 * ms)), 0xe2e8f0, 3, null, stDetail);
       }
     }
     addLinePass(cliffLineVerts, 0x57534e, 2.4, 0.85);
@@ -6525,7 +6574,25 @@ export class TerrainViewer {
       cla /= outer.length; clo /= outer.length;
       if (!this._isOverHole(cla, clo)) {
         const labelLift = (baked ? baseLift * 0.8 : style.lift) + 14 * ms;
-        pushLabelCand(ar.name, world(cla, clo, labelLift), style.labelColor, style.pri);
+        const areaElev = typeof this._sampleGridElevation === 'function' ? Math.round(this._sampleGridElevation(cla, clo)) : null;
+        const arCategory = ar.cls === 'water' || ar.cls === 'reservoir' || ar.cls === 'lake' ? '水體湖泊'
+          : (ar.cls === 'wood' || ar.cls === 'forest' ? '林地森林'
+          : (ar.cls === 'park' ? '公園綠地' : '地圖區域'));
+        const arIcon = ar.cls === 'water' || ar.cls === 'reservoir' || ar.cls === 'lake' ? '💧'
+          : (ar.cls === 'wood' || ar.cls === 'forest' ? '🌲' : '🏞️');
+        const areaDetail = {
+          type: 'feature',
+          kind: 'area',
+          cls: ar.cls,
+          label: ar.name,
+          category: arCategory,
+          icon: arIcon,
+          elevation: areaElev,
+          lat: cla,
+          lng: clo,
+          colorCss: '#' + (style.labelColor || 0x9fd8ff).toString(16).padStart(6, '0'),
+        };
+        pushLabelCand(ar.name, world(cla, clo, labelLift), style.labelColor, style.pri, null, areaDetail);
       }
     }
 
@@ -6584,6 +6651,28 @@ export class TerrainViewer {
       if (ring.length < 3) continue;
       if (ring.some(([la, lo]) => this._isOverHole(la, lo))) continue;
 
+      let bLat = 0, bLng = 0;
+      ring.forEach(([la, lo]) => { bLat += la; bLng += lo; });
+      bLat /= ring.length;
+      bLng /= ring.length;
+      const bArchLabel = b.arch === 'temple' ? '寺廟建築' : (b.arch === 'church' ? '教堂建築' : (b.arch === 'hut' ? '山屋避難所' : (b.arch === 'greenhouse' ? '溫室' : (b.arch === 'industrial' ? '廠房倉庫' : '建築物'))));
+      const bIcon = b.arch === 'temple' ? '🛕' : (b.arch === 'church' ? '⛪' : (b.arch === 'hut' ? '🛖' : '🏢'));
+      const bElev = typeof this._sampleGridElevation === 'function' ? Math.round(this._sampleGridElevation(bLat, bLng)) : null;
+      const bTitle = (b.name && b.name.trim()) || bArchLabel;
+      const bDetail = {
+        type: 'feature',
+        kind: 'building',
+        cls: b.arch || 'building',
+        label: bTitle,
+        category: bArchLabel,
+        icon: bIcon,
+        elevation: Number.isFinite(bElev) ? bElev : null,
+        height: Number.isFinite(b.h) && b.h > 0 ? Math.round(b.h) : null,
+        lat: bLat,
+        lng: bLng,
+        colorCss: '#cfcabf',
+      };
+
       const shellOnly = !b.part && hasSubParts(ring);
 
       const shape = new THREE.Shape();
@@ -6641,7 +6730,9 @@ export class TerrainViewer {
             const pMesh = new THREE.Mesh(pGeo, plinthMat);
             pMesh.castShadow = true;
             pMesh.receiveShadow = true;
+            pMesh.userData.detail = bDetail;
             this.featureGroup.add(pMesh);
+            this._featurePickables.push(pMesh);
           }
         }
 
@@ -6653,7 +6744,9 @@ export class TerrainViewer {
           const mesh = new THREE.Mesh(geo, wallMat);
           mesh.castShadow = true;
           mesh.receiveShadow = true;
+          mesh.userData.detail = bDetail;
           this.featureGroup.add(mesh);
+          this._featurePickables.push(mesh);
 
           if (roofH > 0.5 && worldXZ.length >= 3) {
             const springY = groundY + wallTopM;
@@ -6668,7 +6761,9 @@ export class TerrainViewer {
             const rmesh = new THREE.Mesh(rgeo, rmat);
             rmesh.castShadow = true;
             rmesh.receiveShadow = true;
+            rmesh.userData.detail = bDetail;
             this.featureGroup.add(rmesh);
+            this._featurePickables.push(rmesh);
           } else if (worldXZ.length >= 3) {
             // Flat-roofed larger block: add a dark cornice/parapet collar band at the top.
             const capH = Math.min(0.85, wallDepth * 0.12);
@@ -6679,18 +6774,38 @@ export class TerrainViewer {
               cGeo.translate(0, groundY + totalH, 0);
               const cMesh = new THREE.Mesh(cGeo, plinthMat);
               cMesh.castShadow = true;
+              cMesh.userData.detail = bDetail;
               this.featureGroup.add(cMesh);
+              this._featurePickables.push(cMesh);
             }
           }
         }
       }
 
       if (b.name && b._a > 0 && !b.part) {
-        pushLabelCand(b.name, new THREE.Vector3(cx, groundY + totalH + 4 * ms, cz), 0xcfcabf, 6);
+        pushLabelCand(b.name, new THREE.Vector3(cx, groundY + totalH + 4 * ms, cz), 0xcfcabf, 6, null, bDetail);
       }
     }
 
     // ----- Point landmarks: 22 procedural diorama 3D landmark categories -----
+    const LANDMARK_CATEGORY_LABELS = {
+      peak: '山峰', saddle: '鞍部', waterfall: '瀑布', spring: '湧泉 / 溫泉',
+      cave: '岩洞 / 洞穴', rock: '奇岩 / 巨石', tree: '地標樹木', sacred_tree: '神木 / 巨木',
+      hut: '山屋 / 避難小屋', pavilion: '涼亭', camp_site: '露營地', church: '教堂',
+      temple: '寺廟 / 神社', wind_turbine: '風力發電', power_tower: '輸電塔', water_tower: '水塔',
+      lighthouse: '燈塔', chimney: '煙囪', tower: '高塔 / 瞭望塔', castle: '古蹟 / 城堡 / 砲台',
+      monument: '紀念碑 / 地標', viewpoint: '觀景點', trailhead: '登山口', station: '車站',
+      heliport: '停機坪', parking: '停車場', picnic: '休憩區',
+    };
+    const LANDMARK_ICONS = {
+      peak: '⛰️', saddle: '〰️', waterfall: '🌊', spring: '♨️',
+      cave: '🕳️', rock: '🪨', tree: '🌳', sacred_tree: '🌲',
+      hut: '🛖', pavilion: '⛩️', camp_site: '⛺', church: '⛪',
+      temple: '🛕', wind_turbine: '🌀', power_tower: '🗼', water_tower: '💧',
+      lighthouse: '🏮', chimney: '🏭', tower: '🗼', castle: '🏰',
+      monument: '🗿', viewpoint: '🔭', trailhead: '🥾', station: '🚉',
+      heliport: '🚁', parking: '🅿️', picnic: '🧺',
+    };
     const POINT_PRIORITY = {
       peak: 1, waterfall: 1, lighthouse: 1, castle: 1, temple: 2, church: 2,
       hut: 2, sacred_tree: 2, wind_turbine: 2, saddle: 2, tower: 3, water_tower: 3,
@@ -6722,16 +6837,38 @@ export class TerrainViewer {
       const model = this._buildPointModel(p.cls, ms, p.h, lat, lon);
       if (!model) continue;
       model.position.copy(world(lat, lon, baseLift));
+      const pElev = Number.isFinite(p.ele)
+        ? p.ele
+        : (typeof this._sampleGridElevation === 'function' ? Math.round(this._sampleGridElevation(lat, lon)) : null);
+      const labelName = (p.name && p.name.trim()) || this._fallbackLandmarkName(p.cls, lat, lon) || '地標';
+      const pColor = POINT_LABEL_COLOR[p.cls] || 0xd8e0ea;
+      const colorCss = '#' + pColor.toString(16).padStart(6, '0');
+      const pDetail = {
+        type: 'landmark',
+        cls: p.cls,
+        category: LANDMARK_CATEGORY_LABELS[p.cls] || '地標',
+        label: labelName,
+        icon: LANDMARK_ICONS[p.cls] || '📍',
+        elevation: pElev,
+        height: Number.isFinite(p.h) && p.h > 0 ? Math.round(p.h) : null,
+        lat,
+        lng: lon,
+        colorCss,
+      };
+      model.userData.detail = pDetail;
       this.landmarkGroup.add(model);
+      if (p.cls !== 'tree' || p.name) {
+        this._featurePickables.push(model);
+      }
       if (p.cls !== 'tree' && p.cls !== 'power_tower') {
-        const color = POINT_LABEL_COLOR[p.cls] || 0xd8e0ea;
+        const color = pColor;
         const pri = POINT_PRIORITY[p.cls] || 4;
         const labelPos = model.position.clone().setY(model.position.y + 16 * ms);
         if (p.name && p.name.trim()) {
-          pushLabelCand(p.name, labelPos, color, pri);
+          pushLabelCand(p.name, labelPos, color, pri, null, pDetail);
         } else {
           const fb = this._fallbackLandmarkName(p.cls, lat, lon);
-          if (fb) pushLabelCand(fb, labelPos, color, pri + 3, `${p.cls}@${lat.toFixed(4)},${lon.toFixed(4)}`);
+          if (fb) pushLabelCand(fb, labelPos, color, pri + 3, `${p.cls}@${lat.toFixed(4)},${lon.toFixed(4)}`, pDetail);
         }
       }
     }
@@ -6749,8 +6886,14 @@ export class TerrainViewer {
       seen.add(key);
       const label = this._createLabel(name, c.pos.x, c.pos.y, c.pos.z, c.color);
       label.scale.set(46 * ms, 15 * ms, 1);
+      label.userData.detail = c.detail || {
+        type: 'feature',
+        label: name,
+        colorCss: '#' + (c.color != null ? c.color.toString(16).padStart(6, '0') : 'd8e0ea'),
+      };
       this._registerLabel(label);
       this.featureLabelGroup.add(label);
+      this._featurePickables.push(label);
       made++;
     }
 

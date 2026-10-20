@@ -3296,6 +3296,7 @@ function closeTerrainViewer() {
   }
   setTerrainBusy(false);
   hideWaypointCard();
+  hideTerrainMarkerDetail();
   tvLoading?.classList.add('hidden');
   tvLoading?.classList.remove('tv-loading-bg');
   terrainViewerEl.classList.add('hidden');
@@ -4288,7 +4289,12 @@ function hideTerrainMarkerDetail() {
 }
 
 function renderTerrainMarkerDetail(detail) {
-  if (!tvMarkerDetail || !tvMarkerDetailBody || !detail) return;
+  if (!tvMarkerDetail) return;
+  if (!detail) {
+    hideTerrainMarkerDetail();
+    return;
+  }
+  if (!tvMarkerDetailBody) return;
   const colorCss = detail.colorCss || '#44aaff';
   const rows = [];
   const addRow = (label, value) => {
@@ -4301,6 +4307,18 @@ function renderTerrainMarkerDetail(detail) {
     title = `${detail.icon || '🌡️'} ${detail.label || '天氣點'}`;
     addRow('溫度', detail.temperature != null ? `${Math.round(detail.temperature)}°C` : null);
     addRow('天氣', detail.weatherCode != null ? tWmo(detail.weatherCode) : null);
+  } else if (detail.type === 'landmark') {
+    title = `${detail.icon || '📍'} ${detail.label || '地標'}`;
+    addRow('類別', detail.category || '地標');
+    if (detail.height != null && detail.height > 0) {
+      addRow('高度', `${Math.round(detail.height)} m`);
+    }
+  } else if (detail.type === 'feature') {
+    title = `${detail.icon || '🗺️'} ${detail.label || '地圖圖資'}`;
+    addRow('類別', detail.category || '圖資');
+    if (detail.height != null && detail.height > 0) {
+      addRow('高度', `${Math.round(detail.height)} m`);
+    }
   } else {
     const tag = detail.isStart ? '（起點）' : (detail.isEnd ? '（終點）' : '');
     title = `${detail.label || '航點'}${tag}`;
