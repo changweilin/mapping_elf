@@ -148,11 +148,11 @@ test('intermediate (副航點) card defaults: minimal card — no basin, no full
   await expect(card.locator('.wc-bottom-facts')).toHaveCount(0);
   await expect(card).not.toContainText('坐標');
 
-  // Catchment view: weather-only — no 地形/水文 rows computed, no basin drawn.
+  // Toggle buttons are locked (disabled) because there is no detailed weather or catchment info beyond 4 basic items.
+  await expect(card.locator('.wc-view-btn[data-wc-view="weather"]')).toBeDisabled();
+  await expect(card.locator('.wc-view-btn[data-wc-view="catchment"]')).toBeDisabled();
   await card.locator('.wc-view-btn[data-wc-view="catchment"]').dispatchEvent('click');
-  await page.waitForTimeout(1500);
-  await expect(card.locator('.wc-catchment')).toContainText('雨量');
-  await expect(card.locator('.wc-catchment')).not.toContainText('集水區面積');
-  await expect(card.locator('.wc-catchment')).not.toContainText('土壤含水量');
+  await page.waitForTimeout(500);
+  await expect(card.locator('.wc-catchment')).toHaveCount(0);
   await expect(page.locator('#map .leaflet-overlay-pane path.wc-catchment-poly')).toHaveCount(0);
 });

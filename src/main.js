@@ -999,9 +999,16 @@ const catchmentDetailEnabledFor = (pt) =>
 // collapsed basic weather and cannot expand / switch to that feature's detail.
 const LS_WEATHER_ENABLED_KEY = 'mappingElf_weatherEnabled';
 let weatherEnabled = localStorage.getItem(LS_WEATHER_ENABLED_KEY) !== '0';   // default true
-const weatherDetailUnlocked = (colIdx) => weatherEnabled && hasLoadedWeatherCardInfo(colIdx);
-const catchmentDetailUnlocked = (colIdx) => catchmentEnabled && !!weatherPoints[colIdx];
-const cardDetailUnlocked = (colIdx) => weatherDetailUnlocked(colIdx) || catchmentDetailUnlocked(colIdx);
+const weatherDetailUnlocked = (colIdx) => {
+  const pt = weatherPoints[colIdx];
+  return !!pt && weatherEnabled && weatherDetailEnabledFor(pt) && hasLoadedWeatherFullDetailInfo(colIdx);
+};
+const catchmentDetailUnlocked = (colIdx) => {
+  const pt = weatherPoints[colIdx];
+  return !!pt && catchmentEnabled && catchmentDetailEnabledFor(pt);
+};
+const cardDetailUnlocked = (colIdx) =>
+  (weatherEnabled && hasLoadedWeatherCardInfo(colIdx)) || catchmentDetailUnlocked(colIdx);
 
 // Lock (never hide) every 集水區 entry point, so the feature stays discoverable
 // and the switch's effect is visible right where the user is already looking.
@@ -1092,10 +1099,8 @@ function applyCatchmentInfoEnabled(on, { persist = true } = {}) {
     try { localStorage.setItem(LS_CATCHMENT_INFO_KEY, catchmentInfoEnabled ? '1' : '0'); } catch (_) { }
   }
   syncCatchmentEnabledUI();
-  if (bottomPanelReady) {
-    renderCatchmentPanel();
-    refreshOpenWeatherCards();
-  }
+  if (bottomPanelReady) renderCatchmentPanel();
+  refreshOpenWeatherCards();
 }
 
 let paceParams = (() => {
@@ -4653,6 +4658,7 @@ function syncFeaturesMenuState() {
   const isAnyActive = hasActiveFeaturePanel();
   btnFeaturesMenu?.setAttribute('aria-pressed', String(isAnyActive));
   btnFeaturesMenu?.classList.toggle('has-active-feature', isAnyActive);
+  document.body.classList.toggle('feature-panel-active', isAnyActive);
 }
 
 btnFeaturesMenu?.addEventListener('click', toggleRadialMenu);
@@ -11719,6 +11725,27 @@ function hasWeatherTableDetailInfo(colIdx) {
   return keys.some(key => getWeatherTableCellDisplayValue(colIdx, key) !== null);
 }
 
+function hasWeatherTableFullDetailInfo(colIdx) {
+  return WEATHER_FULL_DETAIL_KEYS.some(key => getWeatherTableCellDisplayValue(colIdx, key) !== null);
+}
+
+function hasLoadedWeatherFullDetailInfo(colIdx) {
+  const pt = weatherPoints[colIdx];
+  if (!pt) return false;
+  const schedule = getWeatherPointSchedule(pt, colIdx);
+  const dateStr = schedule?.date || null;
+  const hour = schedule?.hour ?? 8;
+  if (!dateStr) return false;
+
+  const cacheHit = getWeatherCacheHit(pt, dateStr, hour);
+  if (cacheHit?.data && hasWeatherDataFullDetailInfo(cacheHit.data, pt)) return true;
+
+  const saved = getSavedWeatherCells(pt);
+  if (saved && weatherCellsMatchSchedule(saved, dateStr, hour) && hasSavedWeatherFullDetailInfo(saved)) return true;
+
+  return hasWeatherTableFullDetailInfo(colIdx);
+}
+
 function weatherCellsMatchSchedule(cells, dateStr, hour) {
   if (!cells) return false;
   const storedDate = cells._weatherDate || cells._date || null;
@@ -15951,10 +15978,9 @@ function isCatchmentView(colIdx) {
   if (!catchmentDetailUnlocked(colIdx)) return false;
   return _wcCatchmentViewMemory.get(catchmentViewKeyFor(colIdx)) === true;
 }
-// What a FULL card actually shows: the catchment side when chosen, or when it is the
-// only unlocked side (weather disabled / not loaded).
+// What a FULL card actually shows: the catchment side when chosen and unlocked.
 function cardShowsCatchment(colIdx) {
-  return isCatchmentView(colIdx) || (!weatherDetailUnlocked(colIdx) && catchmentDetailUnlocked(colIdx));
+  return isCatchmentView(colIdx);
 }
 // True (and tells the user why) when a compact card is asked to expand but neither
 // the weather nor the catchment detail is unlocked.
@@ -16143,8 +16169,8 @@ function drawCatchmentPolygonForCard(colIdx) {
 function buildWeatherCardViewToggleHtml(showCatchment, { weatherLocked = false, catchmentLocked = !catchmentEnabled } = {}) {
   // Locked rather than removed: the card keeps its familiar shape and the user can
   // see why a side is unavailable (feature off, or its data not loaded yet).
-  const wLock = weatherLocked ? ' disabled title="天氣資訊未啟用或尚未載入"' : '';
-  const cLock = catchmentLocked ? ` disabled title="${catchmentEnabled ? '集水區尚未載入' : '集水區功能已關閉'}"` : '';
+  const wLock = weatherLocked ? ' disabled title="天氣資訊未啟用、無詳細資訊或尚未載入"' : '';
+  const cLock = catchmentLocked ? ` disabled title="${catchmentEnabled ? '集水區無詳細資訊或尚未載入' : '集水區功能已關閉'}"` : '';
   return `<div class="wc-view-toggle" role="tablist">
     <button class="wc-view-btn${showCatchment ? '' : ' active'}" type="button" data-wc-view="weather" role="tab" aria-selected="${!showCatchment}"${wLock}>天氣</button>
     <button class="wc-view-btn${showCatchment ? ' active' : ''}" type="button" data-wc-view="catchment" role="tab" aria-selected="${showCatchment}"${cLock}>集水區</button>
@@ -16736,7 +16762,9 @@ function _bindCursorWeatherCardEvents(wrapper, lat, lng) {
   wrapper.querySelectorAll('.wc-view-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (btn.disabled) return;
       const toCatch = btn.dataset.wcView === 'catchment';
+      if (toCatch && !catchmentEnabled) return;
       if (toCatch === cursorCatchmentView) return;
       cursorCatchmentView = toCatch;
       if (!toCatch) clearCardCatchment('cursor');
@@ -16914,7 +16942,9 @@ function _bindWeatherCardEvents(colIdx, wrapper) {
   root.querySelectorAll('.wc-view-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (btn.disabled) return;
       const toCatch = btn.dataset.wcView === 'catchment';
+      if (toCatch ? !catchmentDetailUnlocked(colIdx) : !weatherDetailUnlocked(colIdx)) return;
       if (toCatch === cardShowsCatchment(colIdx)) return;   // already in this view
       // Remember the choice for the whole collective set (so closed/compact cards
       // adopt it too), then re-render only the open cards via the safe refresh

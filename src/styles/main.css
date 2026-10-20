@@ -1097,6 +1097,15 @@ body.weather-card-busy .weather-edit-control:disabled {
   padding: 4px;
   border: 1px solid var(--border);
   box-shadow: var(--shadow-md);
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+body.radial-menu-active .view-mode-toggle,
+body.feature-panel-active .view-mode-toggle,
+body:has(#btn-features-menu.has-active-feature) .view-mode-toggle {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
 }
 
 .view-mode-btn {
@@ -1555,7 +1564,7 @@ body.radial-menu-active .map-action-btns,
   max-height: min(calc(100dvh - var(--toolbar-height) - 32px), max(220px, calc(100dvh - var(--toolbar-height) - var(--bottom-panel-height) - 24px)));
   overflow-y: auto;
   overscroll-behavior: contain;
-  z-index: 620;
+  z-index: 950;
   width: 280px;
   max-width: calc(100vw - 32px);
   padding: 12px;
@@ -1583,6 +1592,7 @@ body.radial-menu-active .map-action-btns,
 .measure-panel-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   /* Pinned to the top of the scrolling panel so the close X stays tappable at
      any scroll depth (short viewports clamp .measure-panel's max-height). The
@@ -1592,15 +1602,16 @@ body.radial-menu-active .map-action-btns,
   top: 0;
   z-index: 2;
   margin: -12px -12px 0;
-  padding: 12px 12px 2px;
+  padding: 10px 12px;
   background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
   border-radius: 11px 11px 0 0;
 }
 
 .measure-mode-toggle {
   display: inline-flex;
   flex: 0 0 auto;
-  margin-right: auto;
+  margin-left: auto;
   border: 1px solid var(--border);
   border-radius: 999px;
   overflow: hidden;
@@ -1801,10 +1812,29 @@ body.radial-menu-active .map-action-btns,
   }
 }
 
-.shape-panel-title {
-  flex: 1;
+.shape-panel-title,
+.shape-panel-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.shape-panel-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.shape-panel-title-wrap .shape-panel-title {
+  flex: 0 0 auto;
+}
+
+.shape-panel-title {
+  flex: 1;
+  min-width: 0;
 }
 
 .shape-preset-chips {
@@ -4513,8 +4543,12 @@ body.route-list-dragging {
   width: 280px;
 }
 
-.feature-panel .measure-panel-head .shape-panel-title {
+.feature-panel .measure-panel-head .shape-panel-title-wrap {
   flex: 1;
+}
+
+.feature-panel .measure-panel-head .shape-panel-title {
+  flex: 0 0 auto;
 }
 
 .feature-panel .settings-group-label {

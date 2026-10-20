@@ -123,11 +123,17 @@ export class TerrainViewer {
     this._bbox = null;
     // Smoothed/upsampled height field shared by the surface mesh + contours, and
     // the valid (hole-excluded) elevation range over it.
+    this._baseField = null;
     this._field = null;
-    // Per-vertex land-cover family (FIELD_SIZE²) baked into the terrain colours.
+    // Per-vertex land-cover family & fine sub-biome (FIELD_SIZE²) baked into terrain.
     this._landCoverField = null;
-    // Per-vertex true slope (FIELD_SIZE²) used by the terrain colouring.
+    this._subBiomeField = null;
+    this._waterDistField = null;
+    // Per-vertex geomorphology fields (FIELD_SIZE²): slope, aspect, curvature, AO.
     this._slopeField = null;
+    this._aspectField = null;
+    this._curvatureField = null;
+    this._aoField = null;
     this._fieldMinV = 0;
     this._fieldMaxV = 1;
     this._terrainInfo = null;
@@ -214,6 +220,7 @@ export class TerrainViewer {
     // Fixed midday rig that lights only the terrain (see _setupEnvironment).
     this._terrainSun = null;
     this._terrainSunTarget = null;
+    this._terrainRim = null;
     this._terrainAmbient = null;
     this._terrainHemi = null;
     this._rain = null;
@@ -262,12 +269,19 @@ export class TerrainViewer {
     // finish (mid-route stops live in _waypointStops).
     this._startDetail = null;
     this._endDetail = null;
-    // Satellite imagery draped over the terrain surface (F3). Lazily fetched
-    // Esri tiles mosaicked into a CanvasTexture; falls back to the procedural
-    // land-cover colours when tiles can't load (offline / CORS / no coverage).
+    // Satellite imagery + OSM + geomorphology surface synthesis:
+    // Esri tiles are mosaicked into _satCanvas / _satImageData and fused with OSM
+    // land-cover and DEM geomorphology to synthesize high-detail albedo, bump and
+    // roughness maps for the terrain mesh.
     this._satelliteEnabled = false;
     this._satTexture = null;
     this._satTextureKey = null;
+    this._satCanvas = null;
+    this._satCanvasKey = null;
+    this._satImageData = null;
+    this._surfaceMap = null;
+    this._surfaceBumpMap = null;
+    this._surfaceRoughMap = null;
     this._onSatelliteError = null;
     // Playback staging: reveal-as-walked engaged by play() (independent of the
     // persisted 揭示 toggle), and the opening fly-in timer (Infinity = no intro).
@@ -1132,6 +1146,12 @@ export class TerrainViewer {
     this._updatePlayerPosition();
     this._emitMetrics(true);
 
+    // Automatically sample satellite imagery in the background (non-blocking) to
+    // fuse real-world vegetation density & surface texture with OSM + DEM relief.
+    if (!this._aborted) {
+      this._autoLoadSatelliteForSurface(bbox, buildToken);
+    }
+
     // Kick off the background map-feature download (only when the cache didn't
     // already supply it) before closing out the load state, so the same progress
     // channel keeps counting up through the 圖資 phase instead of hiding and a
@@ -1468,22 +1488,23 @@ export class TerrainViewer {
 
     // The day/night rig above lives on layer 0 and therefore lights only the 3D
     // objects (landmarks/buildings/route/weather rigs) + the sky background. The
-    // terrain is on TERRAIN_LAYER, so it is lit exclusively by this fixed midday
-    // rig — a stable SE-tilted sun that keeps the relief readable (with hillshade)
-    // no matter the route clock. Directions/intensities mirror the old
-    // day/night-off "bright daytime" look.
+    // terrain is on TERRAIN_LAYER, so it is lit exclusively by this cartographic
+    // dual-azimuth relief rig — an oblique key sun + cool counter-azimuth rim
+    // light that accentuates ridges, gullies and canopy bump relief regardless
+    // of the route clock.
     const dayPreset = this._skyPreset(55);
-    this._terrainSun = new THREE.DirectionalLight(dayPreset.sun.getHex(), dayPreset.sunI);
-    this._terrainSun.position.copy(new THREE.Vector3(0.32, 0.9, 0.28).normalize().multiplyScalar(120000));
+    this._terrainSun = new THREE.DirectionalLight(0xfff4e2, 1.38);
+    this._terrainSun.position.copy(new THREE.Vector3(-0.56, 0.58, 0.59).normalize().multiplyScalar(120000));
     this._terrainSun.castShadow = true;
-    const td = 50000;
+    const td = Math.max(1500, (this._worldSpan || 2000) * 0.95);
     this._terrainSun.shadow.camera.left = -td;
     this._terrainSun.shadow.camera.right = td;
     this._terrainSun.shadow.camera.top = td;
     this._terrainSun.shadow.camera.bottom = -td;
-    this._terrainSun.shadow.camera.far = 400000;
-    this._terrainSun.shadow.mapSize.width = 1024;
-    this._terrainSun.shadow.mapSize.height = 1024;
+    this._terrainSun.shadow.camera.far = 350000;
+    this._terrainSun.shadow.bias = -0.00035;
+    this._terrainSun.shadow.mapSize.width = 2048;
+    this._terrainSun.shadow.mapSize.height = 2048;
     this._terrainSun.shadow.camera.updateProjectionMatrix();
     this._terrainSun.layers.set(TERRAIN_LAYER);
     // Shadow cameras default to layer 0 only; enable the terrain layer so the
@@ -1496,11 +1517,18 @@ export class TerrainViewer {
     this.scene.add(this._terrainSunTarget);
     this._terrainSun.target = this._terrainSunTarget;
 
-    this._terrainAmbient = new THREE.AmbientLight(dayPreset.amb.getHex(), dayPreset.ambI);
+    // Cool sky counter-light from the opposite azimuth so shaded slopes retain
+    // micro-relief definition rather than flattening out.
+    this._terrainRim = new THREE.DirectionalLight(0x9bc4ee, 0.44);
+    this._terrainRim.position.copy(new THREE.Vector3(0.58, 0.46, -0.54).normalize().multiplyScalar(100000));
+    this._terrainRim.layers.set(TERRAIN_LAYER);
+    this.scene.add(this._terrainRim);
+
+    this._terrainAmbient = new THREE.AmbientLight(dayPreset.amb.getHex(), 0.44);
     this._terrainAmbient.layers.set(TERRAIN_LAYER);
     this.scene.add(this._terrainAmbient);
 
-    this._terrainHemi = new THREE.HemisphereLight(dayPreset.hemiS.getHex(), dayPreset.hemiG.getHex(), dayPreset.hemiI);
+    this._terrainHemi = new THREE.HemisphereLight(0x9ed4f7, 0x3d3222, 0.52);
     this._terrainHemi.layers.set(TERRAIN_LAYER);
     this.scene.add(this._terrainHemi);
 
@@ -2051,19 +2079,118 @@ export class TerrainViewer {
             lo.c[2] + (hi.c[2] - lo.c[2]) * f];
   }
 
-  // Vegetation (綠地) tint keyed on ABSOLUTE elevation (metres). Lowland and
-  // montane forest stay green well up the slopes; only beyond the (Taiwan)
-  // treeline does it fade to alpine grass, bare rock and finally a snow cap.
-  // Using true altitude — not the relief-normalised height the previous ramp
-  // used — keeps a low summit green instead of painting every local peak grey.
+  // Deterministic 2D hash & multi-octave procedural noise used for geomorphological
+  // micro-relief, 3D forest canopy crown mottling, and stratified rock grain.
+  static _hash2D(ix, iy) {
+    let n = (ix * 374761393 + iy * 668265263) | 0;
+    n = (n ^ (n >> 13)) | 0;
+    n = Math.imul(n, 1274126177);
+    return ((n ^ (n >> 16)) >>> 0) / 4294967295;
+  }
+
+  static _valueNoise2D(x, y) {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const fx = x - ix;
+    const fy = y - iy;
+    const ux = fx * fx * (3 - 2 * fx);
+    const uy = fy * fy * (3 - 2 * fy);
+    const a = TerrainViewer._hash2D(ix, iy);
+    const b = TerrainViewer._hash2D(ix + 1, iy);
+    const c = TerrainViewer._hash2D(ix, iy + 1);
+    const d = TerrainViewer._hash2D(ix + 1, iy + 1);
+    return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+  }
+
+  static _fbm2D(x, y, octaves = 3) {
+    let val = 0;
+    let amp = 0.5;
+    let freq = 1;
+    let norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      val += amp * TerrainViewer._valueNoise2D(x * freq, y * freq);
+      norm += amp;
+      freq *= 2.07;
+      amp *= 0.5;
+    }
+    return norm > 0 ? val / norm : 0.5;
+  }
+
+  // Ridged multifractal noise (0..1, sharp crests at 1) for craggy mountain spurs,
+  // gully incisions and bedrock strata.
+  static _ridgedFbm2D(x, y, octaves = 3) {
+    let val = 0;
+    let amp = 0.5;
+    let freq = 1;
+    let weight = 1;
+    let norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      let r = 1 - Math.abs(TerrainViewer._valueNoise2D(x * freq, y * freq) * 2 - 1);
+      r = r * r * weight;
+      weight = Math.max(0.15, Math.min(1, r * 1.6));
+      val += r * amp;
+      norm += amp;
+      freq *= 2.13;
+      amp *= 0.5;
+    }
+    return norm > 0 ? val / norm : 0.5;
+  }
+
+  // Open vegetation / meadow (草地／一般綠地) tint keyed on ABSOLUTE elevation (m).
   static _vegRampColor(elevM) {
     return TerrainViewer._rampSampleAbs([
-      { t: 0,    c: [0.29, 0.47, 0.24] }, // coastal / lowland green
-      { t: 700,  c: [0.23, 0.43, 0.20] }, // lush forest
-      { t: 1600, c: [0.30, 0.46, 0.25] }, // montane forest
-      { t: 2600, c: [0.43, 0.51, 0.32] }, // subalpine scrub (olive)
-      { t: 3200, c: [0.64, 0.62, 0.46] }, // treeline grass / tan
+      { t: 0,    c: [0.31, 0.50, 0.25] }, // coastal / lowland meadow green
+      { t: 700,  c: [0.25, 0.46, 0.21] }, // lush foothill green
+      { t: 1600, c: [0.31, 0.48, 0.26] }, // montane green
+      { t: 2600, c: [0.44, 0.52, 0.32] }, // subalpine bamboo / scrub (玉山箭竹)
+      { t: 3200, c: [0.62, 0.61, 0.44] }, // alpine tundra / treeline grass
       { t: 3500, c: [0.68, 0.66, 0.61] }, // bare alpine rock
+      { t: 3850, c: [0.94, 0.95, 0.97] }, // snow cap
+    ], elevM);
+  }
+
+  // Closed-canopy forest (茂密森林／樹冠) tint: deeper, richer chlorophyll greens
+  // shifting from broadleaf evergreen to dark montane cypress/fir conifer.
+  static _forestRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.18, 0.37, 0.16] }, // lowland broadleaf canopy
+      { t: 900,  c: [0.15, 0.34, 0.15] }, // dense machilus-castanopsis forest
+      { t: 1800, c: [0.14, 0.32, 0.17] }, // cloud-belt cypress / conifer forest
+      { t: 2800, c: [0.17, 0.30, 0.18] }, // subalpine hemlock / fir (鐵杉／冷杉)
+      { t: 3350, c: [0.38, 0.44, 0.28] }, // krummholz juniper transition
+      { t: 3650, c: [0.65, 0.64, 0.59] }, // alpine rock above treeline
+      { t: 3850, c: [0.94, 0.95, 0.97] }, // snow cap
+    ], elevM);
+  }
+
+  // Shrubland / orchard (灌叢／果園／茶園) tint: warm olive-emerald.
+  static _scrubRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.36, 0.52, 0.26] },
+      { t: 1200, c: [0.34, 0.49, 0.25] },
+      { t: 2500, c: [0.46, 0.53, 0.31] },
+      { t: 3400, c: [0.64, 0.62, 0.47] },
+      { t: 3850, c: [0.93, 0.94, 0.96] },
+    ], elevM);
+  }
+
+  // Riparian / valley corridor (溪畔濱水植物帶): moisture-enriched emerald foliage.
+  static _riparianRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.20, 0.42, 0.22] },
+      { t: 1200, c: [0.18, 0.39, 0.21] },
+      { t: 2400, c: [0.24, 0.42, 0.24] },
+      { t: 3400, c: [0.52, 0.55, 0.42] },
+    ], elevM);
+  }
+
+  // Exposed bedrock / cliff / scree (裸岩／碎石坡／斷崖) tint.
+  static _rockRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.50, 0.48, 0.44] }, // weathered sandstone / slate
+      { t: 1500, c: [0.54, 0.52, 0.49] }, // montane grey-brown cliff
+      { t: 2800, c: [0.60, 0.58, 0.55] }, // alpine shale / quartzite
+      { t: 3550, c: [0.70, 0.69, 0.66] }, // high peak scree
       { t: 3850, c: [0.94, 0.95, 0.97] }, // snow cap
     ], elevM);
   }
@@ -2079,6 +2206,15 @@ export class TerrainViewer {
     ], elevM);
   }
 
+  // Sand / gravel bar / shingle (沙地／河床礫石灘) tint.
+  static _sandRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.74, 0.68, 0.54] },
+      { t: 1500, c: [0.70, 0.66, 0.56] },
+      { t: 3200, c: [0.76, 0.74, 0.68] },
+    ], elevM);
+  }
+
   // Built-up (市區) tint: slate grey, lightening slightly with altitude.
   static _urbanRampColor(elevM) {
     return TerrainViewer._rampSampleAbs([
@@ -2089,45 +2225,148 @@ export class TerrainViewer {
     ], elevM);
   }
 
-  // Final per-vertex terrain colour from land-cover family + ABSOLUTE elevation +
-  // slope:
-  //   green (default) → 山林色系 (forest / grassland / parks)
-  //   soil            → 土黃色系 (bare ground / farmland / quarry / brownfield)
-  //   urban           → 灰色系   (built-up / residential / commercial blocks)
-  // Green/default vegetation greens the low-and-mid ground and only turns to
-  // rock/snow on genuinely high or steep terrain; soil stays earthy; urban stays
-  // grey. Steep ground exposes bare rock (vegetation can't cling to cliffs), so
-  // ridges and peaks pick up natural rocky highlights while valleys and gentle
-  // slopes read green — instead of the old scheme that greyed every summit.
-  static _terrainColorFor(family, elevM, slope) {
-    if (family === 'urban') return TerrainViewer._urbanRampColor(elevM);
-    if (family === 'soil')  return TerrainViewer._soilRampColor(elevM);
+  // Final per-vertex/per-sample terrain colour from land-cover family + sub-biome +
+  // ABSOLUTE elevation + slope + geomorphology (curvature, aspect, AO, riparian
+  // moisture, satellite vegetation index):
+  //   green (default) → 山林與草坡色系 (forest / scrub / grass / riparian)
+  //   soil            → 岩層與裸土色系 (rock / sand / bare soil)
+  //   urban           → 城鎮街區灰色系 (built-up blocks)
+  static _terrainColorFor(family, elevM, slope, opts = null) {
+    const sub = opts?.sub || null;
+    const curv = Number.isFinite(opts?.curvature) ? opts.curvature : 0;
+    const aspect = Number.isFinite(opts?.aspect) ? opts.aspect : 0;
+    const ao = Number.isFinite(opts?.ao) ? opts.ao : 1;
+    const waterProx = Number.isFinite(opts?.waterProx) ? opts.waterProx : 0;
+    const satVeg = Number.isFinite(opts?.satVeg) ? opts.satVeg : null;
+
+    if (family === 'urban' || sub === 'urban') {
+      const u = TerrainViewer._urbanRampColor(elevM);
+      const shade = 0.88 + 0.12 * ao;
+      return [u[0] * shade, u[1] * shade, u[2] * shade];
+    }
+    if (sub === 'sand') {
+      const sd = TerrainViewer._sandRampColor(elevM);
+      const shade = 0.9 + 0.1 * ao;
+      return [sd[0] * shade, sd[1] * shade, sd[2] * shade];
+    }
+    if (sub === 'rock') {
+      const rk = TerrainViewer._rockRampColor(elevM);
+      const shade = 0.85 + 0.15 * ao + Math.max(0, curv) * 0.06;
+      return [
+        Math.min(1, rk[0] * shade),
+        Math.min(1, rk[1] * shade),
+        Math.min(1, rk[2] * shade),
+      ];
+    }
+    if (family === 'soil' || sub === 'soil') {
+      const sl = TerrainViewer._soilRampColor(elevM);
+      const rk = TerrainViewer._rockRampColor(elevM);
+      const s = Number.isFinite(slope) ? slope : 0;
+      const rockMix = Math.max(0, Math.min(1, (s - 0.45) / 0.85));
+      const shade = 0.86 + 0.14 * ao;
+      return [
+        (sl[0] + (rk[0] - sl[0]) * rockMix) * shade,
+        (sl[1] + (rk[1] - sl[1]) * rockMix) * shade,
+        (sl[2] + (rk[2] - sl[2]) * rockMix) * shade,
+      ];
+    }
+
+    // Determine vegetation structure (closed forest vs scrub vs open grass vs riparian)
+    // from OSM sub-biome, topographic moisture (concave valleys + north/east aspect +
+    // stream proximity), and satellite greenness when available.
     const veg = TerrainViewer._vegRampColor(elevM);
-    const rock = [0.55, 0.53, 0.50];
+    const forest = TerrainViewer._forestRampColor(elevM);
+    const scrub = TerrainViewer._scrubRampColor(elevM);
+    const riparian = TerrainViewer._riparianRampColor(elevM);
     const s = Number.isFinite(slope) ? slope : 0;
-    let rockAmt = Math.max(0, Math.min(1, (s - 0.7) / 1.0)); // ~35° starts, ~80° full
-    // OSM-confirmed vegetation resists the rock blend far more than unlabelled ground.
-    rockAmt *= (family === 'green') ? 0.3 : 0.75;
-    // Keep snow caps white rather than greying them on steep summits.
+
+    // Topographic moisture index: concave gullies (curv < 0), shaded NE slopes, and
+    // stream corridors hold more moisture and support denser, darker canopy.
+    const neAspect = Math.cos(aspect - Math.PI * 0.25); // +1 facing NE, -1 facing SW
+    const moisture = Math.max(0, Math.min(1,
+      0.35 + (-curv) * 0.45 + neAspect * 0.12 + waterProx * 0.55 - Math.max(0, s - 0.5) * 0.25
+    ));
+
+    let base;
+    if (sub === 'forest') {
+      base = [
+        forest[0] * 0.82 + veg[0] * 0.18,
+        forest[1] * 0.82 + veg[1] * 0.18,
+        forest[2] * 0.82 + veg[2] * 0.18,
+      ];
+    } else if (sub === 'scrub') {
+      base = scrub.slice();
+    } else if (sub === 'riparian' || sub === 'wetland') {
+      base = riparian.slice();
+    } else if (sub === 'grass') {
+      base = [
+        veg[0] * 1.04,
+        veg[1] * 1.05,
+        veg[2] * 0.96,
+      ];
+    } else {
+      // Unlabelled natural terrain: blend between open montane green and deep forest
+      // canopy using topographic moisture + satellite vegetation cues.
+      let canopyWeight = Math.max(0, Math.min(1, 0.32 + moisture * 0.48 - Math.max(0, (elevM - 3000) / 500)));
+      if (satVeg != null) {
+        canopyWeight = Math.max(0, Math.min(1, canopyWeight * 0.55 + Math.max(0, satVeg * 1.35) * 0.45));
+      }
+      base = [
+        veg[0] + (forest[0] - veg[0]) * canopyWeight,
+        veg[1] + (forest[1] - veg[1]) * canopyWeight,
+        veg[2] + (forest[2] - veg[2]) * canopyWeight,
+      ];
+    }
+
+    // Riparian / ravine lushness along streams and concave valleys.
+    if (waterProx > 0.05 && elevM < 3300) {
+      const rw = Math.min(0.65, waterProx * 0.7);
+      base[0] += (riparian[0] - base[0]) * rw;
+      base[1] += (riparian[1] - base[1]) * rw;
+      base[2] += (riparian[2] - base[2]) * rw;
+    }
+
+    // Steep slopes & sharp convex ridges expose stratified bedrock / scree.
+    const rock = TerrainViewer._rockRampColor(elevM);
+    const ridgeExposure = Math.max(0, curv) * 0.28;
+    let rockAmt = Math.max(0, Math.min(1, (s + ridgeExposure - 0.58) / 0.92));
+    if (sub === 'forest') rockAmt *= 0.25;
+    else if (family === 'green' || sub === 'grass' || sub === 'scrub') rockAmt *= 0.38;
+    else rockAmt *= 0.78;
+    if (satVeg != null && satVeg < -0.04 && s > 0.28) {
+      // Satellite confirms bare ground/scree/landslide scar on slope.
+      rockAmt = Math.min(1, rockAmt + Math.min(0.55, (-satVeg) * 1.4));
+    }
     if (elevM > 3550) rockAmt *= 0.2;
+
+    const c0 = base[0] + (rock[0] - base[0]) * rockAmt;
+    const c1 = base[1] + (rock[1] - base[1]) * rockAmt;
+    const c2 = base[2] + (rock[2] - base[2]) * rockAmt;
+
+    // Subtle valley ambient occlusion & ridge sun-kissed warmth.
+    const ridgeLift = Math.max(0, curv) * 0.055;
+    const shade = (0.84 + 0.16 * ao) + ridgeLift;
     return [
-      veg[0] + (rock[0] - veg[0]) * rockAmt,
-      veg[1] + (rock[1] - veg[1]) * rockAmt,
-      veg[2] + (rock[2] - veg[2]) * rockAmt,
+      Math.max(0, Math.min(1, c0 * shade)),
+      Math.max(0, Math.min(1, c1 * shade)),
+      Math.max(0, Math.min(1, c2 * shade)),
     ];
   }
 
-  // OSM land-cover class → terrain colour family + raster priority (a higher
-  // priority wins where polygons overlap, so a park inside a town reads green).
-  // Water is intentionally absent — it keeps its own translucent surface overlay
-  // instead of tinting the ground.
+  // OSM land-cover class → terrain colour family + fine sub-biome + raster priority
+  // (a higher priority wins where polygons overlap, so a forest or park inside a
+  // town reads green). `family` keeps the 3-way ('green'|'soil'|'urban') contract
+  // expected by 3MF export while `sub` drives high-detail surface synthesis.
   static _landCoverFamily(cls) {
     switch (cls) {
-      case 'forest':
-      case 'grass':  return { family: 'green', pri: 3 };
-      case 'waste':  return { family: 'soil',  pri: 2 };
-      case 'urban':  return { family: 'urban', pri: 1 };
-      default:       return null;
+      case 'forest':  return { family: 'green', sub: 'forest', pri: 5 };
+      case 'scrub':   return { family: 'green', sub: 'scrub',  pri: 4 };
+      case 'grass':   return { family: 'green', sub: 'grass',  pri: 3 };
+      case 'rock':    return { family: 'soil',  sub: 'rock',   pri: 4 };
+      case 'sand':    return { family: 'soil',  sub: 'sand',   pri: 3 };
+      case 'waste':   return { family: 'soil',  sub: 'soil',   pri: 2 };
+      case 'urban':   return { family: 'urban', sub: 'urban',  pri: 1 };
+      default:        return null;
     }
   }
 
@@ -2144,22 +2383,26 @@ export class TerrainViewer {
     return inside;
   }
 
-  // Rasterise the area polygons onto the fine field grid, producing a per-vertex
-  // land-cover family (null → default green). Each polygon is only tested over
-  // the grid cells inside its lat/lng bounding box, so this stays cheap even with
-  // hundreds of areas. Holes (rings[1..]) are subtracted so an inner lake/clearing
-  // doesn't inherit the outer cover.
-  _buildLandCoverField(areas, buildings, bbox) {
+  // Rasterise the area polygons, building footprint density, and hydrological
+  // riparian corridors onto the fine field grid. Returns the coarse `fam` grid
+  // ('green'|'soil'|'urban'|null) for backward compatibility while also populating
+  // `this._subBiomeField` and `this._waterDistField`.
+  _buildLandCoverField(areas, buildings, bbox, lines = null) {
     const N = FIELD_SIZE;
     const fam = [];
+    const sub = [];
     const pri = [];
-    for (let i = 0; i < N; i++) { fam.push(new Array(N).fill(null)); pri.push(new Array(N).fill(0)); }
+    const waterProx = [];
+    for (let i = 0; i < N; i++) {
+      fam.push(new Array(N).fill(null));
+      sub.push(new Array(N).fill(null));
+      pri.push(new Array(N).fill(0));
+      waterProx.push(new Float32Array(N));
+    }
     const latSpan = (bbox.maxLat - bbox.minLat) || 1;
     const lngSpan = (bbox.maxLng - bbox.minLng) || 1;
 
     for (const ar of (areas || [])) {
-      const info = TerrainViewer._landCoverFamily(ar.cls);
-      if (!info) continue;
       const rings = ar.rings || [];
       const outer = rings[0];
       if (!outer || outer.length < 3) continue;
@@ -2175,6 +2418,27 @@ export class TerrainViewer {
       const j0 = Math.max(0, Math.floor((rminLng - bbox.minLng) / lngSpan * (N - 1)));
       const j1 = Math.min(N - 1, Math.ceil((rmaxLng - bbox.minLng) / lngSpan * (N - 1)));
 
+      if (ar.cls === 'water' || ar.cls === 'wetland') {
+        for (let i = i0; i <= i1; i++) {
+          const lat = bbox.minLat + latSpan * i / (N - 1);
+          for (let j = j0; j <= j1; j++) {
+            const lng = bbox.minLng + lngSpan * j / (N - 1);
+            if (!this._pointInRing(lat, lng, outer)) continue;
+            if (holes.some((h) => this._pointInRing(lat, lng, h))) continue;
+            waterProx[i][j] = Math.max(waterProx[i][j], ar.cls === 'water' ? 1.0 : 0.78);
+            if (ar.cls === 'wetland' && pri[i][j] < 4) {
+              fam[i][j] = 'green';
+              sub[i][j] = 'wetland';
+              pri[i][j] = 4;
+            }
+          }
+        }
+        continue;
+      }
+
+      const info = TerrainViewer._landCoverFamily(ar.cls);
+      if (!info) continue;
+
       for (let i = i0; i <= i1; i++) {
         const lat = bbox.minLat + latSpan * i / (N - 1);
         for (let j = j0; j <= j1; j++) {
@@ -2183,19 +2447,67 @@ export class TerrainViewer {
           if (!this._pointInRing(lat, lng, outer)) continue;
           if (holes.some((h) => this._pointInRing(lat, lng, h))) continue;
           fam[i][j] = info.family;
+          sub[i][j] = info.sub;
           pri[i][j] = info.pri;
         }
       }
     }
 
-    // Built-up density: where several building footprints fall in one fine cell
-    // and no higher-priority cover (park / forest / farmland) claimed it, mark the
-    // ground urban (灰). This makes real townscapes read grey even where OSM has
-    // no landuse=residential polygon — the gap that previously left city blocks
-    // painted green.
+    // Rasterise OSM river/stream polylines into waterProx so river channels carve
+    // subtle valley incisions and their banks grow lush riparian vegetation.
+    const srcLines = lines || (this._featuresData && this._featuresData.lines) || [];
+    for (const ln of srcLines) {
+      if (ln.kind !== 'water' || !Array.isArray(ln.pts) || ln.pts.length < 2) continue;
+      const isRiver = ln.cls === 'river';
+      const radius = isRiver ? 3.2 : 2.2;
+      const strength = isRiver ? 0.95 : 0.72;
+      for (let k = 0; k < ln.pts.length - 1; k++) {
+        const [la0, lo0] = ln.pts[k];
+        const [la1, lo1] = ln.pts[k + 1];
+        const fi0 = (la0 - bbox.minLat) / latSpan * (N - 1);
+        const fj0 = (lo0 - bbox.minLng) / lngSpan * (N - 1);
+        const fi1 = (la1 - bbox.minLat) / latSpan * (N - 1);
+        const fj1 = (lo1 - bbox.minLng) / lngSpan * (N - 1);
+        const steps = Math.max(1, Math.ceil(Math.hypot(fi1 - fi0, fj1 - fj0) * 1.5));
+        for (let s = 0; s <= steps; s++) {
+          const t = s / steps;
+          const ci = fi0 + (fi1 - fi0) * t;
+          const cj = fj0 + (fj1 - fj0) * t;
+          const rCeil = Math.ceil(radius);
+          const iMin = Math.max(0, Math.floor(ci - rCeil));
+          const iMax = Math.min(N - 1, Math.ceil(ci + rCeil));
+          const jMin = Math.max(0, Math.floor(cj - rCeil));
+          const jMax = Math.min(N - 1, Math.ceil(cj + rCeil));
+          for (let ii = iMin; ii <= iMax; ii++) {
+            for (let jj = jMin; jj <= jMax; jj++) {
+              const d = Math.hypot(ii - ci, jj - cj);
+              if (d <= radius) {
+                const w = strength * (1 - d / radius);
+                if (w > waterProx[ii][jj]) waterProx[ii][jj] = w;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Promote unlabelled or grass cells in the moisture halo of waterways/lakes
+    // into riparian vegetation belts.
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const wp = waterProx[i][j];
+        if (wp > 0.14 && wp < 0.88 && (sub[i][j] == null || sub[i][j] === 'grass')) {
+          fam[i][j] = 'green';
+          sub[i][j] = 'riparian';
+        }
+      }
+    }
+
+    // Built-up density: where building footprints cluster in a neighbourhood and
+    // no higher-priority cover claimed it, mark the ground urban (灰).
     if (Array.isArray(buildings) && buildings.length) {
       const counts = [];
-      for (let i = 0; i < N; i++) counts.push(new Array(N).fill(0));
+      for (let i = 0; i < N; i++) counts.push(new Float32Array(N));
       for (const b of buildings) {
         const ring = b.ring;
         if (!ring || ring.length < 3) continue;
@@ -2205,47 +2517,439 @@ export class TerrainViewer {
         const gi = Math.round((cla - bbox.minLat) / latSpan * (N - 1));
         const gj = Math.round((clo - bbox.minLng) / lngSpan * (N - 1));
         if (gi < 0 || gi >= N || gj < 0 || gj >= N) continue;
-        counts[gi][gj] += 1;
+        for (let di = -1; di <= 1; di++) {
+          for (let dj = -1; dj <= 1; dj++) {
+            const ii = gi + di, jj = gj + dj;
+            if (ii >= 0 && ii < N && jj >= 0 && jj < N) {
+              counts[ii][jj] += (di === 0 && dj === 0) ? 1.0 : 0.45;
+            }
+          }
+        }
       }
       const urban = TerrainViewer._landCoverFamily('urban');
       for (let i = 0; i < N; i++) {
         for (let j = 0; j < N; j++) {
-          if (counts[i][j] >= 3 && urban.pri > pri[i][j]) {
+          if (counts[i][j] >= 2.2 && urban.pri > pri[i][j]) {
             fam[i][j] = urban.family;
+            sub[i][j] = urban.sub;
             pri[i][j] = urban.pri;
           }
         }
       }
     }
+
+    this._subBiomeField = sub;
+    this._waterDistField = waterProx;
     return fam;
   }
 
-  // Re-tint the (already built) terrain mesh so each vertex uses its land-cover
-  // family's elevation ramp instead of the single default green ramp. Called once
-  // the map features are available; the colours live on the terrain geometry, so
-  // they persist regardless of the "圖資" overlay toggle.
-  _applyLandCoverColors(areas, buildings, bbox) {
-    if (!this.terrainMesh || !this._field) return;
-    const colorAttr = this.terrainMesh.geometry.getAttribute('color');
-    if (!colorAttr) return;
-    const fam = this._buildLandCoverField(areas, buildings, bbox);
-    this._landCoverField = fam;
+  // Sample satellite vegetation index (Excess Green: -1..1) and RGB (0..1) at
+  // normalized grid coordinates (u = j/(N-1), v = i/(N-1)).
+  _sampleSatelliteAtUV(u, v) {
+    const img = this._satImageData;
+    if (!img || !img.data || !img.width || !img.height) return null;
+    const x = Math.max(0, Math.min(img.width - 1, Math.round(u * (img.width - 1))));
+    const y = Math.max(0, Math.min(img.height - 1, Math.round((1 - v) * (img.height - 1))));
+    const idx = (y * img.width + x) * 4;
+    const d = img.data;
+    if (d[idx + 3] < 32) return null;
+    const r = d[idx] / 255;
+    const g = d[idx + 1] / 255;
+    const b = d[idx + 2] / 255;
+    const exg = Math.max(-1, Math.min(1, (2 * g - r - b) * 1.8));
+    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+    return { r, g, b, exg, luma };
+  }
 
-    const field = this._field;
+  // Re-sculpt micro-relief, update vertex colours, and synthesize the high-res
+  // PBR surface textures once OSM map features and/or satellite data are ready.
+  _applyLandCoverColors(areas, buildings, bbox, lines = null) {
+    if (!this.terrainMesh || !this._field) return;
+    const fam = this._buildLandCoverField(areas, buildings, bbox, lines);
+    this._landCoverField = fam;
+    this._refreshTerrainSurfaceFromSources(bbox);
+  }
+
+  // Refresh the terrain mesh's sculpted relief, geomorphological fields, vertex
+  // colours, analytic normals, and synthesized high-res PBR surface textures from
+  // all currently available sources (DEM + OSM + Satellite).
+  _refreshTerrainSurfaceFromSources(bbox = this._bbox) {
+    if (!this.terrainMesh || !this._field || !bbox) return;
     const N = FIELD_SIZE;
+
+    // Re-sculpt subtle hydrological channels and forest canopy / rock micro-relief
+    // into the height field and update the mesh vertex Y positions + normals.
+    this._sculptTerrainRelief(bbox);
+    const field = this._field;
+    const minElev = this._fieldMinV;
+    this._computeGeomorphFields(field, bbox, N);
+
+    const posAttr = this.terrainMesh.geometry.getAttribute('position');
+    if (posAttr) {
+      let vi = 0;
+      for (let i = 0; i < N; i++) {
+        const lat = bbox.minLat + (bbox.maxLat - bbox.minLat) * i / (N - 1);
+        for (let j = 0; j < N; j++) {
+          const lng = bbox.minLng + (bbox.maxLng - bbox.minLng) * j / (N - 1);
+          const raw = field[i][j];
+          const elev = this._isHole(raw) ? minElev : raw;
+          const p = this._latLngToLocal(lat, lng, elev, bbox);
+          posAttr.setXYZ(vi++, p.x, p.y, p.z);
+        }
+      }
+      posAttr.needsUpdate = true;
+    }
+
+    this.terrainMesh.geometry.setAttribute(
+      'normal',
+      new THREE.Float32BufferAttribute(this._computeFieldNormals(field, bbox, N), 3)
+    );
+
+    const colorAttr = this.terrainMesh.geometry.getAttribute('color');
+    if (colorAttr) {
+      const fam = this._landCoverField;
+      const sub = this._subBiomeField;
+      const waterProx = this._waterDistField;
+      const slopes = this._slopeField;
+      const curvs = this._curvatureField;
+      const aspects = this._aspectField;
+      const aos = this._aoField;
+      let idx = 0;
+      for (let i = 0; i < N; i++) {
+        const v = i / (N - 1);
+        for (let j = 0; j < N; j++) {
+          const u = j / (N - 1);
+          const raw = field[i][j];
+          const elev = this._isHole(raw) ? minElev : raw;
+          const sat = this._sampleSatelliteAtUV(u, v);
+          const [r, g, b] = TerrainViewer._terrainColorFor(
+            fam ? fam[i][j] : null,
+            elev,
+            slopes[i][j],
+            {
+              sub: sub ? sub[i][j] : null,
+              curvature: curvs ? curvs[i][j] : 0,
+              aspect: aspects ? aspects[i][j] : 0,
+              ao: aos ? aos[i][j] : 1,
+              waterProx: waterProx ? waterProx[i][j] : 0,
+              satVeg: sat ? sat.exg : null,
+            }
+          );
+          colorAttr.setXYZ(idx++, r, g, b);
+        }
+      }
+      colorAttr.needsUpdate = true;
+    }
+
+    this._rebuildTerrainSurfaceTextures(bbox);
+  }
+
+  // Synthesize high-resolution (512×512) Albedo, Bump, and Roughness textures
+  // fusing DEM geomorphology (elevation, slope, ridge/valley curvature, aspect,
+  // dual-azimuth hillshade, valley AO), spatially-feathered OSM land-cover &
+  // riparian corridors, procedural biome micro-textures (3D forest canopy crowns,
+  // stratified bedrock veins, meadow grain), and live Satellite imagery.
+  _rebuildTerrainSurfaceTextures(bbox = this._bbox) {
+    if (!this.terrainMesh || !this._field || !bbox) return;
+    const N = FIELD_SIZE;
+    const TEX = 512;
+    const field = this._field;
     const minElev = this._fieldMinV;
     const slopes = this._slopeField || this._computeFieldSlopes(field, bbox, N);
-    let idx = 0;
+    const curvs = this._curvatureField;
+    const aspects = this._aspectField;
+    const aos = this._aoField;
+    const fam = this._landCoverField;
+    const sub = this._subBiomeField;
+    const waterProx = this._waterDistField;
+
+    // 1) Precompute spatially-feathered vertex colours, canopy weight, rock weight,
+    //    water proximity, and analytical hillshade on the N×N grid so the 512×512
+    //    texel pass only needs fast bilinear interpolation + micro-texture noise.
+    const gridR = new Float32Array(N * N);
+    const gridG = new Float32Array(N * N);
+    const gridB = new Float32Array(N * N);
+    const gridCanopy = new Float32Array(N * N);
+    const gridRock = new Float32Array(N * N);
+    const gridWater = new Float32Array(N * N);
+    const gridShade = new Float32Array(N * N);
+    const gridElev = new Float32Array(N * N);
+
+    const rawR = new Float32Array(N * N);
+    const rawG = new Float32Array(N * N);
+    const rawB = new Float32Array(N * N);
+    const rawCanopy = new Float32Array(N * N);
+    const rawRock = new Float32Array(N * N);
+
     for (let i = 0; i < N; i++) {
+      const v = i / (N - 1);
       for (let j = 0; j < N; j++) {
+        const u = j / (N - 1);
+        const k = i * N + j;
         const raw = field[i][j];
         const elev = this._isHole(raw) ? minElev : raw;
-        const [r, g, b] = TerrainViewer._terrainColorFor(fam[i][j], elev, slopes[i][j]);
-        colorAttr.setXYZ(idx, r, g, b);
-        idx++;
+        gridElev[k] = elev;
+        const s = slopes[i][j] || 0;
+        const c = curvs ? curvs[i][j] : 0;
+        const a = aspects ? aspects[i][j] : 0;
+        const ao = aos ? aos[i][j] : 1;
+        const wp = waterProx ? waterProx[i][j] : 0;
+        const sb = sub ? sub[i][j] : null;
+        const fm = fam ? fam[i][j] : null;
+        const sat = this._sampleSatelliteAtUV(u, v);
+
+        const [cr, cg, cb] = TerrainViewer._terrainColorFor(fm, elev, s, {
+          sub: sb, curvature: c, aspect: a, ao, waterProx: wp, satVeg: sat ? sat.exg : null,
+        });
+        rawR[k] = cr; rawG[k] = cg; rawB[k] = cb;
+
+        // Canopy fullness (0..1) drives 3D crown mottling and bump amplitude.
+        let cw = 0;
+        if (sb === 'forest') cw = 0.95;
+        else if (sb === 'riparian') cw = 0.78;
+        else if (sb === 'scrub') cw = 0.55;
+        else if (sb === 'grass' || sb === 'wetland') cw = 0.18;
+        else if (fm == null && elev < 3300 && s < 0.85) {
+          cw = Math.max(0.15, Math.min(0.85, 0.48 - c * 0.25 + wp * 0.3 + (sat ? sat.exg * 0.45 : 0)));
+        }
+        if (sat && sat.exg > 0.12 && sb !== 'urban' && sb !== 'rock') {
+          cw = Math.max(cw, Math.min(0.92, 0.35 + sat.exg * 0.85));
+        }
+        rawCanopy[k] = cw;
+
+        // Rock / cliff / scree weight (0..1) drives stratified bedrock veins & bump.
+        let rw = sb === 'rock' ? 0.95 : (sb === 'soil' ? 0.35 : 0);
+        const slopeRock = Math.max(0, Math.min(1, (s + Math.max(0, c) * 0.25 - 0.52) / 0.85));
+        rw = Math.max(rw, slopeRock * (sb === 'forest' ? 0.35 : 0.88));
+        if (sat && sat.exg < -0.05 && s > 0.25) rw = Math.max(rw, Math.min(0.85, (-sat.exg) * 1.3));
+        rawRock[k] = rw;
+        gridWater[k] = wp;
+
+        // Dual-azimuth cartographic hillshade factor + valley AO.
+        const sinSlope = Math.sin(Math.atan(s));
+        const cosSlope = Math.cos(Math.atan(s));
+        // Primary NW oblique light + secondary SE counter-light.
+        const nw = cosSlope * 0.62 + sinSlope * 0.78 * Math.cos(a - (-Math.PI * 0.72));
+        const se = cosSlope * 0.72 + sinSlope * 0.68 * Math.cos(a - (Math.PI * 0.28));
+        const hs = (0.68 * Math.max(0.15, nw) + 0.32 * Math.max(0.2, se));
+        gridShade[k] = Math.max(0.52, Math.min(1.22, (0.55 + 0.62 * hs) * (0.78 + 0.22 * ao)));
       }
     }
-    colorAttr.needsUpdate = true;
+
+    // 3×3 spatial feather over the N×N biome arrays so polygon boundaries blend
+    // organically instead of showing grid-aligned steps.
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        let sr = 0, sg = 0, sb = 0, sc = 0, srk = 0, wSum = 0;
+        for (let di = -1; di <= 1; di++) {
+          const ii = i + di < 0 ? 0 : (i + di >= N ? N - 1 : i + di);
+          for (let dj = -1; dj <= 1; dj++) {
+            const jj = j + dj < 0 ? 0 : (j + dj >= N ? N - 1 : j + dj);
+            const wt = (di === 0 && dj === 0) ? 4 : ((di === 0 || dj === 0) ? 2 : 1);
+            const nk = ii * N + jj;
+            sr += rawR[nk] * wt;
+            sg += rawG[nk] * wt;
+            sb += rawB[nk] * wt;
+            sc += rawCanopy[nk] * wt;
+            srk += rawRock[nk] * wt;
+            wSum += wt;
+          }
+        }
+        const k = i * N + j;
+        gridR[k] = sr / wSum;
+        gridG[k] = sg / wSum;
+        gridB[k] = sb / wSum;
+        gridCanopy[k] = sc / wSum;
+        gridRock[k] = srk / wSum;
+      }
+    }
+
+    // 2) Synthesize the 512×512 Albedo, Bump, and Roughness canvases.
+    const albedoCanvas = document.createElement('canvas');
+    albedoCanvas.width = TEX; albedoCanvas.height = TEX;
+    const albedoCtx = albedoCanvas.getContext('2d');
+    const albedoImg = albedoCtx.createImageData(TEX, TEX);
+    const aData = albedoImg.data;
+
+    const bumpCanvas = document.createElement('canvas');
+    bumpCanvas.width = TEX; bumpCanvas.height = TEX;
+    const bumpCtx = bumpCanvas.getContext('2d');
+    const bumpImg = bumpCtx.createImageData(TEX, TEX);
+    const bData = bumpImg.data;
+
+    const roughCanvas = document.createElement('canvas');
+    roughCanvas.width = TEX; roughCanvas.height = TEX;
+    const roughCtx = roughCanvas.getContext('2d');
+    const roughImg = roughCtx.createImageData(TEX, TEX);
+    const rData = roughImg.data;
+
+    const satImg = this._satImageData;
+    const hasSat = !!(satImg && satImg.data && satImg.width > 0 && satImg.height > 0);
+    const satMode = !!this._satelliteEnabled && hasSat;
+
+    const bilerp = (arr, gi, gj) => {
+      const i0 = Math.max(0, Math.min(N - 2, Math.floor(gi)));
+      const j0 = Math.max(0, Math.min(N - 2, Math.floor(gj)));
+      const ty = gi - i0;
+      const tx = gj - j0;
+      const k00 = i0 * N + j0;
+      const top = arr[k00] + (arr[k00 + 1] - arr[k00]) * tx;
+      const bot = arr[k00 + N] + (arr[k00 + N + 1] - arr[k00 + N]) * tx;
+      return top + (bot - top) * ty;
+    };
+
+    for (let py = 0; py < TEX; py++) {
+      const v = 1 - py / (TEX - 1); // py=0 is north (v=1, maxLat)
+      const gi = v * (N - 1);
+      for (let px = 0; px < TEX; px++) {
+        const u = px / (TEX - 1);
+        const gj = u * (N - 1);
+        const pIdx = (py * TEX + px) * 4;
+
+        let r = bilerp(gridR, gi, gj);
+        let g = bilerp(gridG, gi, gj);
+        let b = bilerp(gridB, gi, gj);
+        const canopy = bilerp(gridCanopy, gi, gj);
+        const rock = bilerp(gridRock, gi, gj);
+        const water = bilerp(gridWater, gi, gj);
+        const shade = bilerp(gridShade, gi, gj);
+        const elev = bilerp(gridElev, gi, gj);
+
+        // Multi-scale procedural micro-texture:
+        //  • nCrown: cellular forest tree-crown domes (sunlit crown tips & dark gaps)
+        //  • nPatch: medium landscape patchiness (clearing / meadow / shrub clusters)
+        //  • nStrata: contour-following geological bedrock strata & cliff fractures
+        const nCrown1 = TerrainViewer._valueNoise2D(u * 96, v * 96);
+        const nCrown2 = TerrainViewer._valueNoise2D(u * 44 + 17.3, v * 44 + 9.1);
+        const crownDome = Math.sin(nCrown1 * Math.PI) * 0.65 + nCrown2 * 0.35; // 0..1
+        const nPatch = TerrainViewer._valueNoise2D(u * 18 + 3.7, v * 18 + 11.2) - 0.5;
+        const strataWave = Math.sin((elev * 0.14) + nCrown2 * 4.2) * 0.5 + 0.5;
+
+        // Apply organic canopy crown mottling & meadow variation to procedural base.
+        if (canopy > 0.08) {
+          const crownDelta = (crownDome - 0.52) * 0.24 * canopy;
+          r += crownDelta * 0.72 + nPatch * 0.04 * canopy;
+          g += crownDelta * 1.05 + nPatch * 0.06 * canopy;
+          b += crownDelta * 0.55;
+        } else {
+          // Subtle meadow / soil grain
+          const grain = (nCrown1 - 0.5) * 0.06 + nPatch * 0.04;
+          r += grain; g += grain; b += grain * 0.85;
+        }
+
+        // Apply stratified rock veins & scree texture on steep slopes / cliffs.
+        if (rock > 0.08) {
+          const rockMod = ((strataWave - 0.5) * 0.18 + (nCrown1 - 0.5) * 0.14) * rock;
+          r += rockMod;
+          g += rockMod * 0.96;
+          b += rockMod * 0.90;
+        }
+
+        // Apply dual-azimuth hillshade & valley AO to procedural colour.
+        r *= shade;
+        g *= shade;
+        b *= shade;
+
+        // Fuse with Satellite imagery when available:
+        if (hasSat) {
+          const sx = Math.max(0, Math.min(satImg.width - 1, Math.round(u * (satImg.width - 1))));
+          const sy = Math.max(0, Math.min(satImg.height - 1, Math.round((1 - v) * (satImg.height - 1))));
+          const sIdx = (sy * satImg.width + sx) * 4;
+          const sd = satImg.data;
+          if (sd[sIdx + 3] > 32) {
+            // Contrast-and-saturation enhanced satellite pixel, modulated by DEM relief shade.
+            let sr = sd[sIdx] / 255;
+            let sg = sd[sIdx + 1] / 255;
+            let sb = sd[sIdx + 2] / 255;
+            const sLuma = 0.299 * sr + 0.587 * sg + 0.114 * sb;
+            // Gentle vibrance boost & shadow recovery so aerial haze doesn't wash out the 3D relief.
+            const vib = 1.22;
+            sr = Math.max(0, Math.min(1, sLuma + (sr - sLuma) * vib));
+            sg = Math.max(0, Math.min(1, sLuma + (sg - sLuma) * vib));
+            sb = Math.max(0, Math.min(1, sLuma + (sb - sLuma) * vib));
+
+            const satRelief = 0.72 + 0.28 * shade;
+            sr *= satRelief;
+            sg *= satRelief;
+            sb *= satRelief;
+
+            if (satMode) {
+              // Explicit Satellite Mode: crisp relief-shaded satellite imagery
+              // harmonized with 20% OSM/geomorphology biome tint + canopy micro-detail.
+              const bioMix = 0.20;
+              r = sr * (1 - bioMix) + r * bioMix;
+              g = sg * (1 - bioMix) + g * bioMix;
+              b = sb * (1 - bioMix) + b * bioMix;
+            } else {
+              // Automatic Hybrid Mode: fuse real-world satellite texture & canopy
+              // variations (~30%) into the OSM + geomorphology terrain surface.
+              const autoMix = 0.30;
+              r = r * (1 - autoMix) + sr * autoMix;
+              g = g * (1 - autoMix) + sg * autoMix;
+              b = b * (1 - autoMix) + sb * autoMix;
+            }
+          }
+        }
+
+        aData[pIdx]     = Math.max(0, Math.min(255, Math.round(r * 255)));
+        aData[pIdx + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+        aData[pIdx + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+        aData[pIdx + 3] = 255;
+
+        // Bump map height (0..255): 3D canopy domes in forests + craggy strata on rock,
+        // smooth over water channels.
+        const waterFlatten = Math.max(0, 1 - water * 0.85);
+        const bumpVal = (
+          0.5 +
+          (crownDome - 0.5) * 0.55 * canopy +
+          (strataWave * 0.6 + nCrown1 * 0.4 - 0.5) * 0.65 * rock +
+          (nCrown2 - 0.5) * 0.14
+        ) * waterFlatten;
+        const bByte = Math.max(0, Math.min(255, Math.round(bumpVal * 255)));
+        bData[pIdx] = bData[pIdx + 1] = bData[pIdx + 2] = bByte;
+        bData[pIdx + 3] = 255;
+
+        // Roughness map (0..255): water/wetlands are glossy (low roughness),
+        // forest canopy is matte (high roughness), exposed rock has subtle mineral sheen.
+        let rough = 0.86 + canopy * 0.08 - rock * 0.14 - water * 0.52;
+        rough = Math.max(0.22, Math.min(0.96, rough));
+        const rByte = Math.round(rough * 255);
+        rData[pIdx] = rData[pIdx + 1] = rData[pIdx + 2] = rByte;
+        rData[pIdx + 3] = 255;
+      }
+    }
+
+    albedoCtx.putImageData(albedoImg, 0, 0);
+    bumpCtx.putImageData(bumpImg, 0, 0);
+    roughCtx.putImageData(roughImg, 0, 0);
+
+    const aniso = this.renderer?.capabilities?.getMaxAnisotropy?.() || 1;
+
+    this._surfaceMap?.dispose?.();
+    this._surfaceMap = new THREE.CanvasTexture(albedoCanvas);
+    this._surfaceMap.colorSpace = THREE.SRGBColorSpace;
+    this._surfaceMap.anisotropy = aniso;
+    this._surfaceMap.needsUpdate = true;
+
+    this._surfaceBumpMap?.dispose?.();
+    this._surfaceBumpMap = new THREE.CanvasTexture(bumpCanvas);
+    this._surfaceBumpMap.anisotropy = aniso;
+    this._surfaceBumpMap.needsUpdate = true;
+
+    this._surfaceRoughMap?.dispose?.();
+    this._surfaceRoughMap = new THREE.CanvasTexture(roughCanvas);
+    this._surfaceRoughMap.anisotropy = aniso;
+    this._surfaceRoughMap.needsUpdate = true;
+
+    const mat = this.terrainMesh.material;
+    mat.map = this._surfaceMap;
+    mat.bumpMap = this._surfaceBumpMap;
+    mat.bumpScale = Math.max(2.2, (this._worldSpan || 2000) * 0.0028);
+    mat.roughnessMap = this._surfaceRoughMap;
+    mat.roughness = 1.0;
+    mat.vertexColors = false;
+    mat.color.setRGB(1, 1, 1);
+    mat.needsUpdate = true;
   }
 
   _createTerrain(bbox) {
@@ -2258,10 +2962,11 @@ export class TerrainViewer {
     const uvs = [];
 
     const minElev = this._fieldMinV;
-    // Per-vertex true slope (independent of the vertical render scale) drives the
-    // rock-vs-vegetation blend so ridges/cliffs read rocky and valleys green.
-    const slopes = this._computeFieldSlopes(field, bbox, N);
-    this._slopeField = slopes;
+    this._computeGeomorphFields(field, bbox, N);
+    const slopes = this._slopeField;
+    const curvs = this._curvatureField;
+    const aspects = this._aspectField;
+    const aos = this._aoField;
 
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
@@ -2275,9 +2980,13 @@ export class TerrainViewer {
         vertices.push(p.x, p.y, p.z);
         uvs.push(j / (N - 1), i / (N - 1));
 
-        // Colour by absolute elevation + slope; land cover is painted in later by
-        // _applyLandCoverColors once the map features have downloaded.
-        const [r, g, b] = TerrainViewer._terrainColorFor(null, elev, slopes[i][j]);
+        // Colour by absolute elevation + slope + geomorphology; land cover +
+        // satellite are fused in by _refreshTerrainSurfaceFromSources.
+        const [r, g, b] = TerrainViewer._terrainColorFor(null, elev, slopes[i][j], {
+          curvature: curvs[i][j],
+          aspect: aspects[i][j],
+          ao: aos[i][j],
+        });
         colors.push(r, g, b);
       }
     }
@@ -2309,19 +3018,14 @@ export class TerrainViewer {
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(indices);
     // Smooth per-vertex normals from the height-field gradient (central
-    // differences) instead of averaging triangle faces. Triangulation-derived
-    // normals alternate cell-to-cell and read as regular directional wrinkles
-    // that shift with the light angle; gradient normals are independent of how
-    // the quads are split, so the surface shades cleanly.
+    // differences) instead of averaging triangle faces.
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(this._computeFieldNormals(field, bbox, N), 3));
 
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       flatShading: false,
-      // Matte surface: less specular glint so any residual facets don't catch
-      // the light and read as wrinkles.
-      roughness: 0.92,
-      metalness: 0.0,
+      roughness: 0.90,
+      metalness: 0.02,
       side: THREE.DoubleSide,
       // Push terrain fragments slightly back in the depth buffer so coincident
       // contour/route lines win and don't z-fight / break through.
@@ -2337,6 +3041,9 @@ export class TerrainViewer {
     // route-clock day/night lights (layer 0), so it never darkens at night.
     this.terrainMesh.layers.set(TERRAIN_LAYER);
     this.scene.add(this.terrainMesh);
+
+    // Synthesize initial high-resolution geomorphological surface + bump/roughness maps.
+    this._rebuildTerrainSurfaceTextures(bbox);
 
     // A rebuild recreates the mesh; re-drape satellite imagery if it was on.
     if (this._satelliteEnabled) this._applySatelliteTexture();
@@ -2354,7 +3061,8 @@ export class TerrainViewer {
 
   // 衛星影像: drape live Esri imagery over the terrain surface. The height-field
   // mesh already carries a 0..1 UV grid spanning the bbox (u→lng, v→lat), so the
-  // texture maps straight on. Off → back to the procedural land-cover colours.
+  // texture maps straight on. Off → back to the hybrid geomorphology+OSM+satellite
+  // biome surface.
   setSatelliteEnabled(on) {
     this._satelliteEnabled = !!on;
     if (this._satelliteEnabled) this._applySatelliteTexture();
@@ -2364,11 +3072,15 @@ export class TerrainViewer {
 
   _removeSatelliteTexture() {
     if (!this.terrainMesh) return;
-    const mat = this.terrainMesh.material;
-    mat.map = null;
-    mat.vertexColors = true;
-    mat.color.setRGB(1, 1, 1);
-    mat.needsUpdate = true;
+    if (this._bbox && this._field) {
+      this._rebuildTerrainSurfaceTextures(this._bbox);
+    } else {
+      const mat = this.terrainMesh.material;
+      mat.map = null;
+      mat.vertexColors = true;
+      mat.color.setRGB(1, 1, 1);
+      mat.needsUpdate = true;
+    }
   }
 
   async _applySatelliteTexture() {
@@ -2386,11 +3098,7 @@ export class TerrainViewer {
       // Guard: the user may have toggled it off, or the scene rebuilt, while the
       // tiles were downloading.
       if (!this._satelliteEnabled || !this.terrainMesh) return;
-      const mat = this.terrainMesh.material;
-      mat.map = this._satTexture;
-      mat.vertexColors = false;   // show the imagery, not the terrain tint × image
-      mat.color.setRGB(1, 1, 1);
-      mat.needsUpdate = true;
+      this._refreshTerrainSurfaceFromSources(b);
     } catch (err) {
       console.warn('satellite drape failed, falling back to land cover:', err);
       this._satelliteEnabled = false;
@@ -2399,21 +3107,50 @@ export class TerrainViewer {
     }
   }
 
-  // Mosaic Esri World Imagery tiles covering the bbox into a CanvasTexture.
-  // Returns null if no tile could be fetched (offline / no coverage).
-  async _buildSatelliteTexture(bbox) {
+  // Non-blocking background satellite sampler: quietly fetches a low-tile-count
+  // satellite mosaic for the bbox so the default 3D terrain automatically fuses
+  // real-world vegetation density, canopy texture and rock/soil patches with OSM.
+  async _autoLoadSatelliteForSurface(bbox, token) {
+    if (!bbox) return;
+    const key = `${bbox.minLat.toFixed(5)},${bbox.minLng.toFixed(5)},${bbox.maxLat.toFixed(5)},${bbox.maxLng.toFixed(5)}`;
+    if (this._satCanvasKey === key && this._satImageData) {
+      if (token === this._buildToken && this.terrainMesh) {
+        this._refreshTerrainSurfaceFromSources(bbox);
+      }
+      return;
+    }
+    try {
+      const canvas = await this._fetchSatelliteCanvas(bbox, { maxTilesPerSide: 3 });
+      if (!canvas || this._aborted || token !== this._buildToken || !this.terrainMesh) return;
+      this._satCanvas = canvas;
+      this._satCanvasKey = key;
+      try {
+        this._satImageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      } catch {
+        this._satImageData = null;
+      }
+      if (this._satImageData) {
+        this._refreshTerrainSurfaceFromSources(bbox);
+      }
+    } catch {
+      // Quietly fall back to DEM geomorphology + OSM procedural synthesis when offline.
+    }
+  }
+
+  // Mosaic Esri World Imagery tiles covering the bbox into a Canvas (and store its
+  // pixel data in _satImageData for hybrid biome/relief synthesis).
+  async _fetchSatelliteCanvas(bbox, { maxTilesPerSide = 5 } = {}) {
     const TILE = 256;
     const lngToX = (lng, z) => (lng + 180) / 360 * (1 << z);
     const latToY = (lat, z) => {
       const r = lat * Math.PI / 180;
       return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * (1 << z);
     };
-    // Highest zoom whose bbox still fits in ~5 tiles per side (caps downloads).
     let z = 17;
     for (; z >= 2; z--) {
       const xs = lngToX(bbox.maxLng, z) - lngToX(bbox.minLng, z);
       const ys = latToY(bbox.minLat, z) - latToY(bbox.maxLat, z);
-      if (Math.max(xs, ys) <= 5) break;
+      if (Math.max(xs, ys) <= maxTilesPerSide) break;
     }
     const x0 = lngToX(bbox.minLng, z), x1 = lngToX(bbox.maxLng, z);
     const y0 = latToY(bbox.maxLat, z), y1 = latToY(bbox.minLat, z);  // y0 = north/top
@@ -2444,6 +3181,22 @@ export class TerrainViewer {
     }
     await Promise.all(jobs);
     if (loaded === 0) return null;
+    return canvas;
+  }
+
+  // Mosaic Esri World Imagery tiles covering the bbox into a CanvasTexture.
+  // Returns null if no tile could be fetched (offline / no coverage).
+  async _buildSatelliteTexture(bbox) {
+    const key = `${bbox.minLat.toFixed(5)},${bbox.minLng.toFixed(5)},${bbox.maxLat.toFixed(5)},${bbox.maxLng.toFixed(5)}`;
+    const canvas = await this._fetchSatelliteCanvas(bbox, { maxTilesPerSide: 5 });
+    if (!canvas) return null;
+    this._satCanvas = canvas;
+    this._satCanvasKey = key;
+    try {
+      this._satImageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+    } catch {
+      this._satImageData = null;
+    }
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = this.renderer?.capabilities?.getMaxAnisotropy?.() || 1;
@@ -2452,16 +3205,16 @@ export class TerrainViewer {
   }
 
   // Smooth analytic normals (N×N×3, vertex order matching _createTerrain) from
-  // the height field's gradient. Using the continuous slope rather than the
-  // triangle facets removes the triangulation-dependent "corduroy" wrinkle that
-  // changed with the sun direction. World spacing between fine samples is needed
-  // so the slope is in true world units (x east, z north, y up).
+  // the height field's gradient. Accounts for the active vertical exaggeration
+  // (_elevScale) and applies a subtle cartographic relief boost so ridges,
+  // gullies, and slopes catch directional light with crisp 3D definition.
   _computeFieldNormals(field, bbox, N) {
     const R = 6371000;
     const toRad = Math.PI / 180;
     const cy = (bbox.minLat + bbox.maxLat) / 2;
     const dx = R * toRad * ((bbox.maxLng - bbox.minLng) / (N - 1)) * Math.cos(toRad * cy) || 1;
     const dz = R * toRad * ((bbox.maxLat - bbox.minLat) / (N - 1)) || 1;
+    const normScale = Math.max(1.32, (this._elevScale || 1) * 1.15);
 
     const normals = new Float32Array(N * N * 3);
     const at = (i, j) => {
@@ -2481,8 +3234,8 @@ export class TerrainViewer {
         const hr = at(i, j + 1) ?? center;
         const hd = at(i - 1, j) ?? center;
         const hu = at(i + 1, j) ?? center;
-        const gx = (hr - hl) / (2 * dx); // ∂h/∂x
-        const gz = (hu - hd) / (2 * dz); // ∂h/∂z
+        const gx = ((hr - hl) / (2 * dx)) * normScale; // ∂h/∂x
+        const gz = ((hu - hd) / (2 * dz)) * normScale; // ∂h/∂z
         tmp.set(-gx, 1, -gz).normalize();
         const o = (i * N + j) * 3;
         normals[o] = tmp.x;
@@ -2493,25 +3246,36 @@ export class TerrainViewer {
     return normals;
   }
 
-  // True-world slope magnitude (rise/run) per fine-field vertex, in the vertex
-  // order used by _createTerrain. Computed from ABSOLUTE elevations and true world
-  // spacing so it's independent of the vertical render scale — the "海拔歸一化"
-  // toggle exaggerates the relief but must not change the terrain colouring.
-  _computeFieldSlopes(field, bbox, N) {
+  // Compute full geomorphological fields on the N×N grid:
+  //  • _slopeField: true world rise/run slope
+  //  • _aspectField: slope orientation (radians, 0 = north, π/2 = east)
+  //  • _curvatureField: multi-scale ridge/valley TPI in [-1, 1] (+ridge, -valley)
+  //  • _aoField: topographic valley ambient occlusion / sky-view openness [0.45, 1]
+  _computeGeomorphFields(field, bbox, N) {
     const R = 6371000;
     const toRad = Math.PI / 180;
     const cy = (bbox.minLat + bbox.maxLat) / 2;
     const dx = R * toRad * ((bbox.maxLng - bbox.minLng) / (N - 1)) * Math.cos(toRad * cy) || 1;
     const dz = R * toRad * ((bbox.maxLat - bbox.minLat) / (N - 1)) || 1;
+    const cellScale = Math.max(4, Math.hypot(dx, dz));
+
     const at = (i, j) => {
       const ii = i < 0 ? 0 : (i >= N ? N - 1 : i);
       const jj = j < 0 ? 0 : (j >= N ? N - 1 : j);
       const v = field[ii][jj];
       return this._isHole(v) ? null : v;
     };
+
     const slopes = [];
+    const aspects = [];
+    const curvs = [];
+    const aos = [];
+
     for (let i = 0; i < N; i++) {
-      const row = new Array(N);
+      const sRow = new Array(N);
+      const aRow = new Array(N);
+      const cRow = new Array(N);
+      const oRow = new Array(N);
       for (let j = 0; j < N; j++) {
         const c = at(i, j);
         const center = c == null ? 0 : c;
@@ -2521,32 +3285,88 @@ export class TerrainViewer {
         const hu = at(i + 1, j) ?? center;
         const gx = (hr - hl) / (2 * dx);
         const gz = (hu - hd) / (2 * dz);
-        row[j] = Math.hypot(gx, gz);
+        const slope = Math.hypot(gx, gz);
+        sRow[j] = slope;
+        aRow[j] = Math.atan2(-gx, -gz);
+
+        // Fine 1-ring mean vs meso 3-ring mean for Topographic Position Index (TPI).
+        const avg1 = (hl + hr + hd + hu) * 0.25;
+        const hll = at(i, j - 3) ?? center;
+        const hrr = at(i, j + 3) ?? center;
+        const hdd = at(i - 3, j) ?? center;
+        const huu = at(i + 3, j) ?? center;
+        const hdl = at(i - 2, j - 2) ?? center;
+        const hdr = at(i - 2, j + 2) ?? center;
+        const hul = at(i + 2, j - 2) ?? center;
+        const hur = at(i + 2, j + 2) ?? center;
+        const avg3 = (hll + hrr + hdd + huu + hdl + hdr + hul + hur) * 0.125;
+
+        const diffFine = (center - avg1) / (cellScale * 0.14);
+        const diffMeso = (center - avg3) / (cellScale * 0.36);
+        const curv = Math.max(-1, Math.min(1, diffFine * 0.55 + diffMeso * 0.45));
+        cRow[j] = curv;
+
+        // Valley cavity occlusion: concave ravines and steep gorge walls darken
+        // naturally while exposed ridges receive full sky illumination.
+        const cavity = Math.max(0, -curv);
+        const ao = Math.max(0.45, Math.min(1.0, 1.0 - cavity * 0.34 - Math.min(0.22, slope * 0.12)));
+        oRow[j] = ao;
       }
-      slopes.push(row);
+      slopes.push(sRow);
+      aspects.push(aRow);
+      curvs.push(cRow);
+      aos.push(oRow);
     }
+
+    this._slopeField = slopes;
+    this._aspectField = aspects;
+    this._curvatureField = curvs;
+    this._aoField = aos;
     return slopes;
   }
 
-  // --- Smoothed / upsampled height field -------------------------------------
+  // True-world slope magnitude (rise/run) per fine-field vertex, in the vertex
+  // order used by _createTerrain.
+  _computeFieldSlopes(field, bbox, N) {
+    return this._computeGeomorphFields(field, bbox, N);
+  }
+
+  // --- Smoothed / upsampled height field + Geomorphological Micro-Relief -----
 
   _isHole(v) {
     return v == null || !Number.isFinite(v);
   }
 
-  // Build the fine render/contour field from the coarse download grid: a
-  // hole-aware light blur (softens DEM terracing) followed by a Catmull-Rom
-  // upsample to FIELD_SIZE (bilinear near holes). Records valid min/max in
-  // this._fieldMinV / this._fieldMaxV.
+  // Build the fine render/contour field from the coarse download grid: an
+  // edge-preserving bilateral filter (softens flat DEM terracing while keeping
+  // ridge crests and valley incisions sharp) followed by a Catmull-Rom upsample
+  // to FIELD_SIZE and geomorphological micro-relief sculpting.
   _buildFineField(grid) {
     const N = GRID_SIZE;
 
-    // 1) Hole-aware 3×3 blur of the coarse grid.
+    // Estimate coarse relief scale for the bilateral range weight.
+    let cMin = Infinity, cMax = -Infinity;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const v = grid[i][j];
+        if (!this._isHole(v)) {
+          if (v < cMin) cMin = v;
+          if (v > cMax) cMax = v;
+        }
+      }
+    }
+    const cRange = Math.max(20, (cMax - cMin) || 100);
+    const sigmaElev = Math.max(12, cRange * 0.16);
+
+    // 1) Hole-aware, edge-preserving bilateral 3×3 filter of the coarse grid:
+    //    smooths quantization steps on gentle slopes while preserving sharp ridges
+    //    and incised valleys.
     const sm = [];
     for (let i = 0; i < N; i++) {
       const row = [];
       for (let j = 0; j < N; j++) {
-        if (this._isHole(grid[i][j])) { row.push(null); continue; }
+        const center = grid[i][j];
+        if (this._isHole(center)) { row.push(null); continue; }
         let sum = 0;
         let w = 0;
         for (let di = -1; di <= 1; di++) {
@@ -2556,18 +3376,21 @@ export class TerrainViewer {
             if (ii < 0 || ii >= N || jj < 0 || jj >= N) continue;
             const v = grid[ii][jj];
             if (this._isHole(v)) continue;
-            const wt = (di === 0 && dj === 0) ? 4 : 1;
+            const spatialW = (di === 0 && dj === 0) ? 4.5 : ((di === 0 || dj === 0) ? 1.2 : 0.7);
+            const dz = (v - center) / sigmaElev;
+            const rangeW = Math.exp(-0.5 * dz * dz);
+            const wt = spatialW * (0.25 + 0.75 * rangeW);
             sum += v * wt;
             w += wt;
           }
         }
-        row.push(w > 0 ? sum / w : grid[i][j]);
+        row.push(w > 0 ? sum / w : center);
       }
       sm.push(row);
     }
 
-    // 2) Upsample to the fine field.
-    const field = [];
+    // 2) Upsample to the fine base field.
+    const baseField = [];
     let minV = Infinity;
     let maxV = -Infinity;
     for (let fi = 0; fi < FIELD_SIZE; fi++) {
@@ -2579,12 +3402,90 @@ export class TerrainViewer {
         row.push(v);
         if (v != null) { if (v < minV) minV = v; if (v > maxV) maxV = v; }
       }
-      field.push(row);
+      baseField.push(row);
     }
 
     this._fieldMinV = Number.isFinite(minV) ? minV : 0;
     this._fieldMaxV = Number.isFinite(maxV) ? maxV : (this._fieldMinV + 1);
-    return field;
+    this._baseField = baseField;
+    this._field = baseField.map((r) => r.slice());
+    if (this._bbox) this._sculptTerrainRelief(this._bbox);
+    return this._field;
+  }
+
+  // Sculpt realistic geomorphological micro-relief, hydrological river incisions,
+  // and forest canopy crown undulation onto `this._field` from `this._baseField`.
+  _sculptTerrainRelief(bbox) {
+    const base = this._baseField;
+    if (!base || !bbox) return;
+    const N = FIELD_SIZE;
+    const range = Math.max(10, this._fieldMaxV - this._fieldMinV);
+    const sub = this._subBiomeField;
+    const waterProx = this._waterDistField;
+
+    // Amplitude scales gently with terrain relief so micro-undulation adds visible
+    // 3D landform texture without unseating draped routes or contours.
+    const ridgeAmp = Math.min(6.5, Math.max(0.8, range * 0.0085));
+    const riverCarveAmp = Math.min(4.2, Math.max(0.6, range * 0.0055));
+    const canopyAmp = Math.min(2.8, Math.max(0.45, range * 0.0038));
+
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (let i = 0; i < N; i++) {
+      const v = i / (N - 1);
+      for (let j = 0; j < N; j++) {
+        const h0 = base[i][j];
+        if (this._isHole(h0)) {
+          this._field[i][j] = null;
+          continue;
+        }
+        const u = j / (N - 1);
+        // Fade micro-displacement near the outer border so boundary skirts stay clean.
+        const edgeFade = Math.min(1, Math.min(i, j, N - 1 - i, N - 1 - j) / 4);
+
+        // Local slope & Laplacian convexity from baseField.
+        const hl = base[i][Math.max(0, j - 1)] ?? h0;
+        const hr = base[i][Math.min(N - 1, j + 1)] ?? h0;
+        const hd = base[Math.max(0, i - 1)][j] ?? h0;
+        const hu = base[Math.min(N - 1, i + 1)][j] ?? h0;
+        const localGrad = Math.hypot(hr - hl, hu - hd) / Math.max(8, range * 0.04);
+        const slopeFactor = Math.max(0, Math.min(1, localGrad));
+        const lap = h0 - (hl + hr + hd + hu) * 0.25;
+
+        // 1) Multi-octave ridged micro-relief on mountain slopes and spurs:
+        //    accentuates secondary ridges, rock ribs and erosion gullies.
+        const ridged = TerrainViewer._ridgedFbm2D(u * 14 + 1.7, v * 14 + 3.1, 3) - 0.48;
+        const fineRib = (TerrainViewer._fbm2D(u * 32 + 5.2, v * 32 + 8.4, 2) - 0.5) * 0.45;
+        let dh = (ridged + fineRib) * ridgeAmp * (0.22 + 0.78 * slopeFactor) + Math.max(-1.5, Math.min(1.5, lap * 0.18));
+
+        // 2) OSM hydrological channel incision: rivers and streams sit in carved
+        //    topographic beds rather than floating on convex ground.
+        const wp = waterProx ? waterProx[i][j] : 0;
+        if (wp > 0.2) {
+          const carve = Math.pow((wp - 0.2) / 0.8, 1.35) * riverCarveAmp;
+          dh -= carve;
+        }
+
+        // 3) Forest canopy crown undulation from OSM forest/scrub & Satellite NDVI:
+        const sb = sub ? sub[i][j] : null;
+        const sat = this._sampleSatelliteAtUV(u, v);
+        let isForest = sb === 'forest' || sb === 'riparian';
+        if (!isForest && sb == null && sat && sat.exg > 0.18 && h0 < 3250) isForest = true;
+        if (isForest && wp < 0.55) {
+          const crownWave = Math.sin(TerrainViewer._valueNoise2D(u * 48, v * 48) * Math.PI);
+          dh += (crownWave - 0.35) * canopyAmp;
+        } else if (sb === 'urban') {
+          dh *= 0.25; // level urban ground
+        }
+
+        const hFinal = h0 + dh * edgeFade;
+        this._field[i][j] = hFinal;
+        if (hFinal < minV) minV = hFinal;
+        if (hFinal > maxV) maxV = hFinal;
+      }
+    }
+    if (Number.isFinite(minV)) this._fieldMinV = minV;
+    if (Number.isFinite(maxV)) this._fieldMaxV = maxV;
   }
 
   // Catmull-Rom (bicubic) sample of a grid at fractional coords; bilinear when
@@ -3628,13 +4529,22 @@ export class TerrainViewer {
       return { group: 'area', kind: 'water', cls: 'water' };
     }
     if (tags.natural === 'wood' || tags.landuse === 'forest') return { group: 'area', kind: 'green', cls: 'forest' };
-    if (/^(grass|meadow|village_green|recreation_ground|farmland|farmyard|orchard|cemetery|allotments|vineyard)$/.test(tags.landuse || '')
-      || /^(scrub|heath|grassland|fell)$/.test(tags.natural || '')
+    if (/^(scrub|heath)$/.test(tags.natural || '') || /^(orchard|vineyard|tea)$/.test(tags.landuse || '')) {
+      return { group: 'area', kind: 'green', cls: 'scrub' };
+    }
+    if (/^(grass|meadow|village_green|recreation_ground|farmland|farmyard|cemetery|allotments)$/.test(tags.landuse || '')
+      || /^(grassland|fell)$/.test(tags.natural || '')
       || /^(park|garden|nature_reserve|golf_course|pitch|recreation_ground|common)$/.test(tags.leisure || '')) {
       return { group: 'area', kind: 'green', cls: 'grass' };
     }
-    if (/^(brownfield|greenfield|landfill|quarry|construction|industrial|railway)$/.test(tags.landuse || '')
-      || /^(bare_rock|scree|sand|shingle|mud|rock|cliff)$/.test(tags.natural || '')) {
+    if (/^(bare_rock|scree|rock|cliff)$/.test(tags.natural || '') || tags.landuse === 'quarry') {
+      return { group: 'area', kind: 'waste', cls: 'rock' };
+    }
+    if (/^(sand|shingle|beach)$/.test(tags.natural || '')) {
+      return { group: 'area', kind: 'waste', cls: 'sand' };
+    }
+    if (/^(brownfield|greenfield|landfill|construction|industrial|railway)$/.test(tags.landuse || '')
+      || tags.natural === 'mud') {
       return { group: 'area', kind: 'waste', cls: 'waste' };
     }
     // Built-up / urban land cover (matches the tinted urban blocks on the 2D map).
@@ -4365,6 +5275,11 @@ export class TerrainViewer {
   // terrain surface so it sits on the ground.
   _buildMapFeatures(data, bbox) {
     if (!data || !this.scene) return;
+    // Sculpt OSM hydrological channel incisions, forest canopy relief, and land-cover
+    // surface textures first so all draped lines, polygons, and buildings sit flush
+    // on the updated terrain surface.
+    this._applyLandCoverColors(data.areas, data.buildings, bbox, data.lines);
+
     this.featureGroup = new THREE.Group();
     this.featureLabelGroup = new THREE.Group();
     this.landmarkGroup = new THREE.Group();
@@ -4465,13 +5380,14 @@ export class TerrainViewer {
     }
 
     // ----- Land cover -----
-    this._applyLandCoverColors(data.areas, data.buildings, bbox);
-
     const AREA_STYLE = {
       water:   { color: 0x2482d6, opacity: 0.76, roughness: 0.25, metalness: 0.15, outline: 0x8ad4ff, outlineW: 1.9, lift: baseLift * 0.65, labelColor: 0x9fd8ff, pri: 0 },
       wetland: { color: 0x468972, opacity: 0.58, roughness: 0.68, metalness: 0.04, outline: 0x9be2c8, outlineW: 1.5, lift: baseLift * 0.58, labelColor: 0xade8cf, pri: 1 },
       forest:  { labelColor: 0x9be07a, pri: 2 },
+      scrub:   { labelColor: 0xb6e488, pri: 2 },
       grass:   { labelColor: 0xc7f29a, pri: 2 },
+      rock:    { labelColor: 0xd9d2c7, pri: 4 },
+      sand:    { labelColor: 0xf0deb4, pri: 4 },
       waste:   { labelColor: 0xe6d3a0, pri: 4 },
       urban:   { labelColor: 0xe2dccf, pri: 5 },
     };
@@ -5534,9 +6450,16 @@ export class TerrainViewer {
       if (child.geometry) child.geometry.dispose();
       if (child.material) {
         if (Array.isArray(child.material)) {
-          child.material.forEach((m) => { if (m?.map) m.map.dispose(); m?.dispose?.(); });
+          child.material.forEach((m) => {
+            if (m?.map) m.map.dispose();
+            if (m?.bumpMap) m.bumpMap.dispose();
+            if (m?.roughnessMap) m.roughnessMap.dispose();
+            m?.dispose?.();
+          });
         } else {
           if (child.material.map) child.material.map.dispose();
+          if (child.material.bumpMap) child.material.bumpMap.dispose();
+          if (child.material.roughnessMap) child.material.roughnessMap.dispose();
           child.material.dispose();
         }
       }
@@ -5548,6 +6471,9 @@ export class TerrainViewer {
     // above; drop our cached handle so a re-drape rebuilds a fresh one.
     this._satTexture = null;
     this._satTextureKey = null;
+    this._surfaceMap = null;
+    this._surfaceBumpMap = null;
+    this._surfaceRoughMap = null;
     this.terrainMesh = null;
     this.routeLine = null;
     this.routeTube = null;
@@ -5568,7 +6494,12 @@ export class TerrainViewer {
     this._marqueeLabels = [];
     this._marqueeAccum = 0;
     this._landCoverField = null;
+    this._subBiomeField = null;
+    this._waterDistField = null;
     this._slopeField = null;
+    this._aspectField = null;
+    this._curvatureField = null;
+    this._aoField = null;
     this.playerMarker = null;
     this.playerRing = null;
     this.playerTrail = null;
@@ -5588,6 +6519,7 @@ export class TerrainViewer {
     this._hemi = null;
     this._terrainSun = null;
     this._terrainSunTarget = null;
+    this._terrainRim = null;
     this._terrainAmbient = null;
     this._terrainHemi = null;
     this._rain = null;

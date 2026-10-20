@@ -246,6 +246,7 @@
   <!-- F2: Measurement tools panel -->
   <div id="measure-panel" class="measure-panel hidden" role="group" aria-label="量測工具">
     <div class="measure-panel-head">
+      <span class="shape-panel-title" data-i18n="量測工具">量測工具</span>
       <!-- Icon-only modes: the hint line under the toggle already spells out the
            active mode, so the labels only cost panel width. -->
       <div class="measure-mode-toggle" id="measure-mode-toggle" role="group">
@@ -283,7 +284,7 @@
   <!-- Drawing board: sketch a shape, plan a matching running loop nearby -->
   <div id="shape-panel" class="measure-panel shape-panel hidden" role="group" aria-label="繪圖板">
     <div class="measure-panel-head">
-      <span class="shape-panel-title">繪圖板</span>
+      <span class="shape-panel-title" data-i18n="繪圖板">繪圖板</span>
       <button type="button" class="measure-close-btn" id="btn-shape-close" title="關閉繪圖板" aria-label="關閉繪圖板">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" /></svg>
       </button>
@@ -530,8 +531,10 @@
        the matching panel is enabled AND its data is loaded. -->
   <div id="weather-panel" class="measure-panel feature-panel hidden" role="group" aria-label="天氣資訊">
     <div class="measure-panel-head">
-      <span class="shape-panel-title">天氣資訊</span>
-      <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
+      <div class="shape-panel-title-wrap">
+        <span class="shape-panel-title" data-i18n="天氣資訊">天氣資訊</span>
+        <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
+      </div>
       <button type="button" class="measure-close-btn" id="btn-weather-close" title="關閉天氣資訊" aria-label="關閉天氣資訊">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19.0 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" /></svg>
       </button>
@@ -634,7 +637,7 @@
 
   <div id="catchment-panel" class="measure-panel feature-panel hidden" role="group" aria-label="集水區">
     <div class="measure-panel-head">
-      <span class="shape-panel-title">集水區</span>
+      <span class="shape-panel-title" data-i18n="集水區">集水區</span>
       <button type="button" class="measure-close-btn" id="btn-catchment-close" title="關閉集水區" aria-label="關閉集水區">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19.0 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor" /></svg>
       </button>
