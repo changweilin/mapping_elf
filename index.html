@@ -703,6 +703,29 @@
   <div id="bottom-panel" class="bottom-panel bp-mode-elev">
     <div class="bp-resize-handle" id="bp-resize-handle"></div>
     <div class="bp-chart-row">
+      <!-- Pinned top-right so it stays reachable even where the summary bar is
+           hidden (landscape phones) or scrolled off (narrow portrait). -->
+      <!-- Icon-only buttons: the labelled pill was wide enough to cover the
+           距離 / 預估時間 chips of the summary bar it overlays. -->
+      <div class="bp-view-toggle" id="bp-view-toggle" role="group" aria-label="下方面板檢視切換">
+        <button type="button" class="bp-view-btn active" data-bp-view="elev" aria-pressed="true" title="垂直軌跡圖" aria-label="垂直軌跡圖">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path d="M4 17l4.6-7 3.1 3.6L16.4 6l4 11z" fill="currentColor" opacity="0.9" />
+            <path d="M3 20.2h18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button type="button" class="bp-view-btn" data-bp-view="weather" aria-pressed="false" title="詳細天氣" aria-label="詳細天氣">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="currentColor" />
+          </svg>
+        </button>
+        <button type="button" class="bp-view-btn" data-bp-view="catchment" aria-pressed="false" title="詳細集水區" aria-label="詳細集水區">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+            <path d="M8.6 13.4a3.4 3.4 0 0 0 3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.7" />
+          </svg>
+        </button>
+      </div>
       <!-- Always-visible route summary chips (mirror the side-panel stats).
            Lives inside .bp-chart-row so the panel's default-height math
            (handle + chart row) accounts for it automatically. -->
@@ -728,6 +751,20 @@
         <canvas id="elevation-chart"></canvas>
         <div class="chart-empty-state" id="chart-empty">
           <p>新增路線後顯示高度剖面</p>
+        </div>
+      </div>
+    </div>
+      <div class="bp-weather-scroll">
+      <div id="weather-table-container">
+        <div class="weather-empty-state">
+          <p>完成規劃路線後點擊「取得天氣」</p>
+        </div>
+      </div>
+    </div>
+    <div class="bp-catchment-scroll">
+      <div id="catchment-table-container">
+        <div class="weather-empty-state">
+          <p>完成規劃路線後點擊「取得集水區」</p>
         </div>
       </div>
     </div>
@@ -1766,56 +1803,7 @@
     </div>
   </div>
 
-  <!-- Weather Full List Modal -->
-  <div id="weather-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="weather-modal-title">
-    <div class="modal-box table-modal-box">
-      <div class="table-modal-header">
-        <h3 class="table-modal-title" id="weather-modal-title">
-          <span>天氣資訊完整列表</span>
-          <img src="https://www.windy.com/favicon.ico" width="14" height="14" alt="Windy" class="windy-favicon">
-        </h3>
-        <button type="button" class="icon-btn table-modal-close-btn" id="btn-weather-modal-close" title="關閉" aria-label="關閉">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/></svg>
-        </button>
-      </div>
-      <div class="table-modal-body bp-weather-scroll">
-        <div id="weather-table-container">
-          <div class="weather-empty-state">
-            <p>完成規劃路線後點擊「更新天氣」</p>
-          </div>
-        </div>
-      </div>
-      <div class="modal-actions table-modal-actions">
-        <button type="button" class="btn-secondary" id="btn-weather-modal-bottom-close">關閉</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Catchment Full List Modal -->
-  <div id="catchment-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="catchment-modal-title">
-    <div class="modal-box table-modal-box">
-      <div class="table-modal-header">
-        <h3 class="table-modal-title" id="catchment-modal-title">
-          <span>集水區完整列表</span>
-        </h3>
-        <button type="button" class="icon-btn table-modal-close-btn" id="btn-catchment-modal-close" title="關閉" aria-label="關閉">
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="currentColor"/></svg>
-        </button>
-      </div>
-      <div class="table-modal-body bp-catchment-scroll">
-        <div id="catchment-table-container">
-          <div class="weather-empty-state">
-            <p>完成規劃路線後點擊「取得集水區」</p>
-          </div>
-        </div>
-      </div>
-      <div class="modal-actions table-modal-actions">
-        <button type="button" class="btn-secondary" id="btn-catchment-modal-bottom-close">關閉</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Notification Container -->
+<!-- Notification Container -->
   <div id="notifications" class="notifications"></div>
 
   <!-- Hidden file input for route / .melmap import -->

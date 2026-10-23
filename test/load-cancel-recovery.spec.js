@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { expect, test } from '@playwright/test';
 import { coneElevation, flood } from './helpers/apiMocks.mjs';
 
@@ -118,7 +119,7 @@ test('a load started after a cancel completes and closes the bar', async ({ page
   // The endpoint recovers; 更新天氣 must run to completion and leave the bar closed.
   await page.unroute(/v1\/elevation/);
   await coneElevation(page);
-  await page.locator('#btn-weather-tool').click();
+  await openTool(page, '#btn-weather-tool');
   await page.locator('#btn-weather-quick-fetch').click();
   await expect(overlay(page)).toHaveClass(/hidden/, { timeout: 30_000 });
   await expect(page.locator('body')).not.toHaveClass(/route-weather-busy/);
@@ -129,7 +130,7 @@ test('cancelling the batch 集水區 load closes the bar and frees a re-run', as
   await hangElevation(page);
 
   await page.locator('#bp-view-toggle [data-bp-view="catchment"]').click();
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await page.locator('#btn-catchment-quick-fetch').click();
   await stopThenCancel(page);
   await expect(overlay(page)).toHaveClass(/hidden/);

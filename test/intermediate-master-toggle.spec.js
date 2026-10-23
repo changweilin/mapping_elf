@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { openTool } from './helpers/openTool.js';
 
 // 副航點設置 master — the interval mode itself (關 / 距離 / 配速). 關 means no 副航點
 // is ever generated, so every 副航點-only control must lock (not vanish), including
@@ -33,7 +34,7 @@ test('關 locks every 副航點 control, 配速 restores them', async ({ page })
 
   for (const sel of IM_GATED) await expect(page.locator(sel)).toBeDisabled();
   // Locked, not hidden: the 副航點 column in the weather panel still reads as a column.
-  await page.locator('#btn-weather-tool').click();
+  await openTool(page, '#btn-weather-tool');
   await expect(page.locator('#weather-panel .wpm-col-head.intermediate-gated')).toHaveClass(/is-im-locked/);
   await expect(page.locator('#weather-panel .wpm-col-head.intermediate-gated')).toBeVisible();
 
@@ -64,7 +65,7 @@ test('the 關 state survives a reload', async ({ page }) => {
 test('詳細集水區 for 副航點 stays locked while either master is off', async ({ page }) => {
   await openWaypointSettings(page);
   await page.locator('#interval-mode-off').check();
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await page.locator('#catchment-enable-block').uncheck();
   await expect(page.locator('#im-detail-catchment')).toBeDisabled();
 

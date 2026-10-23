@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { test, expect } from '@playwright/test';
 
 // Overlay bounds contract for two floating controls that used to be unusable:
@@ -68,7 +69,7 @@ for (const [label, size] of [
   test(`繪圖板 stays inside the viewport with a tall bottom panel (${label})`, async ({ page }) => {
     await page.setViewportSize(size);
     await boot(page);
-    await page.locator('#btn-shape-tool').click();
+    await openTool(page, '#btn-shape-tool');
     await expect(page.locator('#shape-panel')).toBeVisible();
 
     // Divider dragged nearly to the toolbar — the worst case for the panel.
@@ -92,7 +93,7 @@ for (const [label, size] of [
 test('量測工具 overlays the bottom panel instead of being pushed off screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await boot(page);
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
 
   const before = await page.locator('#measure-panel').boundingBox();

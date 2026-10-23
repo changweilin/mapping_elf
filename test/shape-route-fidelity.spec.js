@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { expect, test } from '@playwright/test';
 import { makeGridWorld } from './helpers/gridWorld.mjs';
 import { shapeStroke } from './helpers/testShapes.mjs';
@@ -102,7 +103,7 @@ async function drawStroke(page, name) {
 async function generateAndFinish(page, name, options = {}) {
   await installMocks(page);
   await openApp(page);
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(page.locator('#shape-panel')).toBeVisible();
   await drawStroke(page, name);
   await page.locator('#shape-distance-input').fill('5');

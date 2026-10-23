@@ -2,6 +2,10 @@ const EXPECTED_EXTERNAL_RESOURCE_ERROR_PARTS = [
   'net::ERR_NETWORK_ACCESS_DENIED',
   'net::ERR_NO_BUFFER_SPACE',
   'the server responded with a status of 404 (Offline)',
+  'the server responded with a status of 429',
+  'the server responded with a status of 502',
+  'the server responded with a status of 503',
+  'the server responded with a status of 504',
 ];
 
 export function isExpectedExternalResourceNoise(text) {

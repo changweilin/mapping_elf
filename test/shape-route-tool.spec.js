@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openTool } from './helpers/openTool.js';
 import { RoadNetworkGraph } from '../src/modules/gpsArtOptimizer.js';
 import { shapeSimilarity, strokeToLatLngRing, ringRouteDeviation, selectWaypointTs, waypointsFromTs } from '../src/modules/shapeRoutePlanner.js';
 import { shapeStroke } from './helpers/testShapes.mjs';
@@ -41,7 +42,7 @@ test('drawing board opens, generates an O繞 waypoint loop and closes', async ({
 
   const panel = page.locator('#shape-panel');
   await expect(panel).toBeHidden();
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(panel).toBeVisible();
   await expect(page.locator('#btn-shape-tool')).toHaveAttribute('aria-pressed', 'true');
 
@@ -93,12 +94,12 @@ test('drawing board opens, generates an O繞 waypoint loop and closes', async ({
 
 test('measure tool and drawing board never overlap', async ({ page }) => {
   await openApp(page);
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(page.locator('#shape-panel')).toBeVisible();
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
   await expect(page.locator('#shape-panel')).toBeHidden();
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(page.locator('#shape-panel')).toBeVisible();
   await expect(page.locator('#measure-panel')).toBeHidden();
 });
@@ -112,7 +113,7 @@ test('when no waypoints on map, automatically finds the anchor with highest simi
   });
 
   const panel = page.locator('#shape-panel');
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(panel).toBeVisible();
 
   await drawSquare(page);
@@ -141,7 +142,7 @@ test('when no waypoints on map, automatically finds the anchor with highest simi
 
 test('drawing board supports undo/redo, pen/eraser mode, and clear/generate icon buttons', async ({ page }) => {
   await openApp(page);
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   const panel = page.locator('#shape-panel');
   await expect(panel).toBeVisible();
 
@@ -190,6 +191,7 @@ test('drawing board provides 12 preset shapes (愛心, 星星, 月亮, 太陽, �
   await openApp(page);
 
   // Icon of drawing board button is a hand-drawn pony
+  await page.locator('#btn-features-menu').click();
   const toolBtn = page.locator('#btn-shape-tool');
   await expect(toolBtn).toBeVisible();
   const svg = toolBtn.locator('svg');
@@ -260,15 +262,18 @@ test('drawing board anchors at most recently set waypoint without clearing exist
 
   const waypointsBefore = await page.evaluate(() => window.__mappingElfTestHooks.mapManager.waypoints.length);
   expect(waypointsBefore).toBe(3);
+  await page.waitForTimeout(400);
+  await expect.poll(async () => page.evaluate(() => !window.__mappingElfTestHooks?.isRouteWeatherBusy?.()), { timeout: 10000 }).toBe(true);
 
   // 2. Open drawing board and select a preset (e.g. heart)
   const panel = page.locator('#shape-panel');
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(panel).toBeVisible();
 
   const heartChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]');
   await heartChip.click();
   await page.locator('#shape-distance-input').fill('2');
+  await expect.poll(async () => page.evaluate(() => !window.__mappingElfTestHooks?.isRouteWeatherBusy?.()), { timeout: 10000 }).toBe(true);
   await page.locator('#btn-shape-generate').click();
 
   // 3. Verify route generated
@@ -295,8 +300,7 @@ test('drawing board anchors at most recently set waypoint without clearing exist
 test('shape generation completes with "匯出 GPX" button replacing generate button and exports GPX file', async ({ page }) => {
   await openApp(page);
 
-  const toolBtn = page.locator('#btn-shape-tool');
-  await toolBtn.click();
+  await openTool(page, '#btn-shape-tool');
   const panel = page.locator('#shape-panel');
   await expect(panel).toBeVisible();
 
@@ -345,8 +349,7 @@ test('shape generation completes with "匯出 GPX" button replacing generate but
 test('clicking iterate button performs additional calibration pass and updates readout metrics', async ({ page }) => {
   await openApp(page);
 
-  const toolBtn = page.locator('#btn-shape-tool');
-  await toolBtn.click();
+  await openTool(page, '#btn-shape-tool');
 
   const heartChip = page.locator('#shape-preset-chips .shape-preset-chip[data-preset="heart"]');
   await heartChip.click();
@@ -374,8 +377,7 @@ test('clicking iterate button performs additional calibration pass and updates r
 test('drawing board allows selecting travel modes (跑步/單車/機車/汽車) and generates route with selected mode', async ({ page }) => {
   await openApp(page);
 
-  const toolBtn = page.locator('#btn-shape-tool');
-  await toolBtn.click();
+  await openTool(page, '#btn-shape-tool');
   const panel = page.locator('#shape-panel');
   await expect(panel).toBeVisible();
 
@@ -412,8 +414,7 @@ test('drawing board allows selecting travel modes (跑步/單車/機車/汽車) 
 test('drawing board displays mode + direction and distance + angle side-by-side, and supports direction options (順/逆/不限)', async ({ page }) => {
   await openApp(page);
 
-  const toolBtn = page.locator('#btn-shape-tool');
-  await toolBtn.click();
+  await openTool(page, '#btn-shape-tool');
 
   const modeSelect = page.locator('#shape-mode-select');
   const dirSelect = page.locator('#shape-direction-select');
@@ -747,7 +748,7 @@ test('shape similarity severely drops and max deviation increases when route tak
 
 test('drawing board route generation displays progress bar matching magic circle style', async ({ page }) => {
   await openApp(page);
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(page.locator('#shape-panel')).toBeVisible();
 
   await drawSquare(page);

@@ -9,10 +9,23 @@ const MEASURE_CATCHMENT = '#measure-mode-toggle [data-measure-mode="catchment"]'
 const BP_CATCHMENT = '#bp-view-toggle [data-bp-view="catchment"]';
 
 // The switch lives in the map-corner 集水區 tool panel.
+async function openTool(page, sel) {
+  const overlay = page.locator('#radial-menu-overlay');
+  let isOpen = await overlay.evaluate((el) => el.classList.contains('open')).catch(() => false);
+  if (!isOpen) {
+    await page.locator('#btn-features-menu').click();
+    isOpen = await overlay.evaluate((el) => el.classList.contains('open')).catch(() => false);
+    if (!isOpen) {
+      await page.locator('#btn-features-menu').click();
+    }
+  }
+  await page.locator(sel).click();
+}
+
 async function openApp(page) {
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await expect(page.locator('#catchment-enable-block')).toBeVisible();
 }
 
@@ -70,12 +83,12 @@ test('switching off steps the bottom panel out of the 集水區 view', async ({ 
 
 test('switching off drops the 量測工具 out of catchment mode', async ({ page }) => {
   await openApp(page);
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
   await page.locator(MEASURE_CATCHMENT).click();
   await expect(page.locator(MEASURE_CATCHMENT)).toHaveClass(/active/);
 
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await page.locator('#catchment-enable-block').uncheck();
   await expect(page.locator(MEASURE_CATCHMENT)).not.toHaveClass(/active/);
   await expect(page.locator('#measure-mode-toggle [data-measure-mode="segment"]')).toHaveClass(/active/);
@@ -86,15 +99,15 @@ test('the off state persists across a reload and blocks a restored catchment sur
   // Leave both the panel view and the measure tool parked on 集水區 first, so the
   // reload has a saved catchment surface to refuse.
   await page.locator(BP_CATCHMENT).click();
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await page.locator(MEASURE_CATCHMENT).click();
   await expect(page.locator(MEASURE_CATCHMENT)).toHaveClass(/active/);
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await page.locator('#catchment-enable-block').uncheck();
 
   await page.reload();
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await expect(page.locator('#catchment-enable-block')).not.toBeChecked();
   await expect(page.locator(MEASURE_CATCHMENT)).toBeDisabled();
   await expect(page.locator(BP_CATCHMENT)).toBeDisabled();
@@ -107,7 +120,7 @@ test('a locked 集水區 measure mode cannot be entered by clicking the map', as
   await page.route(/api\.open-meteo\.com\/v1\/elevation/, (route) => { elevationCalls++; route.abort(); });
   await openApp(page);
   await page.locator('#catchment-enable-block').uncheck();
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
 
   // force:true bypasses actionability so a genuinely dead button is proven dead

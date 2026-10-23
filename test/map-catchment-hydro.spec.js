@@ -1,3 +1,4 @@
+import { openTool } from "./helpers/openTool.js";
 import { test, expect } from '@playwright/test';
 
 // Verifies the catchment tool's weather + hydrology panel: an adjustable
@@ -101,17 +102,23 @@ async function stubFlood(page) {
 }
 
 async function openCatchmentClick(page, forecastCounter) {
-  await page.addInitScript(() => localStorage.setItem('mappingElf_language', 'zh-TW'));
+  await page.addInitScript(() => {
+    window.__mappingElfTestHooks = { events: [] };
+    localStorage.setItem('mappingElf_language', 'zh-TW');
+  });
   await stubElevation(page);
   await stubFlood(page);
   await page.route(/api\.open-meteo\.com\/v1\/forecast/, makeForecastHandler(forecastCounter));
 
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await page.locator('[data-measure-mode="catchment"]').click();
+  await page.evaluate(() => window.__mappingElfTestHooks?.mapManager?.map?.panBy([300, 0], { animate: false }));
+  await page.waitForTimeout(400);
   const box = await page.locator('#map').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const pt = await page.evaluate((a) => window.__mappingElfTestHooks.mapManager.map.latLngToContainerPoint(a), ANCHOR);
+  await page.mouse.click(Math.round(box.x + pt.x), Math.round(box.y + pt.y));
   await expect(page.locator('#map .leaflet-overlay-pane path')).toHaveCount(1, { timeout: 15_000 });
 }
 

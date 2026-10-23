@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { expect, test } from '@playwright/test';
 import { shapeStroke } from './helpers/testShapes.mjs';
 
@@ -23,7 +24,7 @@ test('live: heart stroke end-to-end against real routing APIs', async ({ page })
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
 
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(page.locator('#shape-panel')).toBeVisible();
 
   const box = await page.locator('#shape-canvas').boundingBox();

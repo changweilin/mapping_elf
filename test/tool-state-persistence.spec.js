@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { expect, test } from '@playwright/test';
 
 // 量測工具 / 繪圖板 暫存: panel state, settings and the user's own data (clicked
@@ -29,7 +30,7 @@ function canvasInk(page) {
 
 test('drawing board keeps its sketch and settings across a reload', async ({ page }) => {
   await openApp(page);
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(page.locator('#shape-panel')).toBeVisible();
 
   const box = await page.locator('#shape-canvas').boundingBox();
@@ -84,7 +85,7 @@ test('segment measurement replays once the restored route lands', async ({ page 
   await page.waitForTimeout(500);
   await page.addStyleTag({ content: '.leaflet-marker-icon, .leaflet-marker-icon *, .leaflet-tooltip-pane, .leaflet-shadow-pane { pointer-events: none !important; }' });
 
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
   const [a, b] = await page.evaluate(() => {
     const path = document.querySelector('#map .leaflet-overlay-pane path');
@@ -114,13 +115,13 @@ test('segment measurement replays once the restored route lands', async ({ page 
 
 test('measure tool keeps mode and clicked points across a reload', async ({ page }) => {
   await openApp(page);
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
   await page.locator('.measure-mode-btn[data-measure-mode="area"]').click();
 
   const map = await page.locator('#map').boundingBox();
   const cx = map.x + map.width / 2, cy = map.y + map.height / 2;
-  for (const [dx, dy] of [[-60, -40], [60, -40], [40, 60]]) {
+  for (const [dx, dy] of [[-200, -100], [-100, -100], [-150, 100]]) {
     await page.mouse.click(cx + dx, cy + dy);
   }
   await expect(page.locator('#measure-readout .mr-row')).toHaveCount(3);

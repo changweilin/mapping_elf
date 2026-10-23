@@ -43,7 +43,7 @@
   --toolbar-height: 56px;
   --bottom-panel-height: 190px;
   /* Reserved space for bottom bar buttons (reset to 0 now that tables are in popups) */
-  --bp-view-toggle-reserve: 0px;
+  --bp-view-toggle-reserve: 108px;
 
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;

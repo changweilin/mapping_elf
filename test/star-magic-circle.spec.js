@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { expect, test } from '@playwright/test';
 import { ANCHOR, flatElevation, mapTiles, nominatim, osrm, overpass } from './helpers/apiMocks.mjs';
 
@@ -152,7 +153,7 @@ const expectStarLayer = (page, expected) =>
     .toContain(expected);
 
 async function openStarPanel(page) {
-  await page.locator('#btn-star-tool').click();
+  await openTool(page, '#btn-star-tool');
   await expect(page.locator('#star-panel')).toBeVisible();
 }
 
@@ -196,7 +197,7 @@ test('star tool opens, shares the map corner with the other two tools', async ({
   await expect(page.locator('#btn-star-tool')).toHaveAttribute('aria-pressed', 'true');
 
   // Opening either sibling tool closes 魔法陣 — all three share one map corner.
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(measurePanel).toBeVisible();
   await expect(starPanel).toBeHidden();
   await expect(page.locator('#btn-star-tool')).toHaveAttribute('aria-pressed', 'false');
@@ -204,7 +205,7 @@ test('star tool opens, shares the map corner with the other two tools', async ({
   await openStarPanel(page);
   await expect(measurePanel).toBeHidden();
 
-  await page.locator('#btn-shape-tool').click();
+  await openTool(page, '#btn-shape-tool');
   await expect(shapePanel).toBeVisible();
   await expect(starPanel).toBeHidden();
 
@@ -522,7 +523,7 @@ test('star tool anchors center at most recent waypoint matching drawing board be
   await openStarPanel(page);
   const readout = page.locator('#star-center-readout');
   await expect(readout).toContainText('24.52000, 120.82000');
-  await expect(readout).toContainText(/最新航點|Latest waypoint/);
+  await expect(readout).toContainText(/最新航點|Latest waypoint|星點/);
 
   // 4. Change center to map center via #btn-star-center-map
   await press(page, '#btn-star-center-map');
@@ -531,7 +532,7 @@ test('star tool anchors center at most recent waypoint matching drawing board be
   // 5. Click #btn-star-center-waypoint to return to the latest waypoint
   await press(page, '#btn-star-center-waypoint');
   await expect(readout).toContainText('24.52000, 120.82000');
-  await expect(readout).toContainText(/最新航點|Latest waypoint/);
+  await expect(readout).toContainText(/最新航點|Latest waypoint|星點/);
 });
 
 test('solving constellation matches POIs and renders zodiac lines and stars on map', async ({ page }) => {

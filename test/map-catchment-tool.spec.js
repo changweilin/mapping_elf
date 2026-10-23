@@ -1,3 +1,4 @@
+import { openTool } from "./helpers/openTool.js";
 import { test, expect } from '@playwright/test';
 
 // Synthetic DEM served to Open-Meteo's elevation endpoint. `shape` decides the
@@ -25,20 +26,30 @@ async function stubElevation(page, shape) {
 }
 
 async function openCatchment(page, shape) {
+  await page.addInitScript(() => { window.__mappingElfTestHooks = { events: [] }; });
   const stats = await stubElevation(page, shape);
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
   await page.locator('[data-measure-mode="catchment"]').click();
   await expect(page.locator('[data-measure-mode="catchment"]')).toHaveClass(/active/);
   return stats;
 }
 
+async function clickMapAnchor(page, anchor = [23.5, 121.0]) {
+  await page.evaluate(() => window.__mappingElfTestHooks?.mapManager?.map?.panBy([300, 0], { animate: false }));
+  await page.waitForTimeout(400);
+  const box = await page.locator('#map').boundingBox();
+  const pt = await page.evaluate((a) => window.__mappingElfTestHooks.mapManager.map.latLngToContainerPoint(a), anchor);
+  const clickPos = { x: Math.round(box.x + pt.x), y: Math.round(box.y + pt.y) };
+  await page.mouse.click(clickPos.x, clickPos.y);
+  return clickPos;
+}
+
 test('catchment: cone terrain draws a basin polygon and reports area', async ({ page }) => {
   const stats = await openCatchment(page, 'cone');
-  const box = await page.locator('#map').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await clickMapAnchor(page);
 
   // A filled polygon lands in the overlay pane and the readout reports an area.
   await expect(page.locator('#map .leaflet-overlay-pane path')).toHaveCount(1, { timeout: 15_000 });
@@ -58,6 +69,7 @@ test('catchment: falls back to cached 3D terrain when offline (no API call)', as
 
   // Seed a cached cone terrain grid over the default centre and force offline.
   await page.addInitScript(([alat, alng]) => {
+    window.__mappingElfTestHooks = { events: [] };
     Object.defineProperty(window.navigator, 'onLine', { configurable: true, get: () => false });
     const G = 25, half = 0.1; // wide enough to cover wherever the map-centre click lands
     const bbox = { minLat: alat - half, maxLat: alat + half, minLng: alng - half, maxLng: alng + half };
@@ -78,11 +90,10 @@ test('catchment: falls back to cached 3D terrain when offline (no API call)', as
 
   await page.goto('/');
   await page.locator('.leaflet-container').waitFor();
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await page.locator('[data-measure-mode="catchment"]').click();
 
-  const box = await page.locator('#map').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await clickMapAnchor(page, ANCHOR);
 
   // Basin drawn from cache, flagged approximate, and the API was never used.
   await expect(page.locator('#map .leaflet-overlay-pane path')).toHaveCount(1, { timeout: 15_000 });
@@ -92,8 +103,7 @@ test('catchment: falls back to cached 3D terrain when offline (no API call)', as
 
 test('catchment: large flat area is marked 平地 after a single probe request', async ({ page }) => {
   const stats = await openCatchment(page, 'flat');
-  const box = await page.locator('#map').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await clickMapAnchor(page);
 
   // The verdict is labelled in the readout (and toasted), and no basin is drawn.
   await expect(page.locator('#measure-readout')).toContainText(/平地|flat|Ebene|plane|llana|piano|평지/, { timeout: 15_000 });
@@ -107,10 +117,8 @@ test('catchment: large flat area is marked 平地 after a single probe request',
 
 test('catchment: a 平地 verdict is cached — clicking again issues no request', async ({ page }) => {
   const stats = await openCatchment(page, 'flat');
-  const box = await page.locator('#map').boundingBox();
-  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const centre = await clickMapAnchor(page);
 
-  await page.mouse.click(centre.x, centre.y);
   await expect(page.locator('#measure-readout')).toContainText(/平地|flat|Ebene|plane|llana|piano|평지/, { timeout: 15_000 });
   const afterFirst = stats.calls;
 

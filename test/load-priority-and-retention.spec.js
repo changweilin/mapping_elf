@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { expect, test } from '@playwright/test';
 import { coneElevation, flood, osrm } from './helpers/apiMocks.mjs';
 
@@ -138,7 +139,7 @@ test('a data-less waypoint is loaded before waypoints that already have data', a
   await page.unroute(/v1\/forecast/);
   order.length = 0;
   await forecast(page, order);
-  await page.locator('#btn-weather-tool').click();
+  await openTool(page, '#btn-weather-tool');
   await page.locator('#btn-weather-quick-fetch').click();
   await overlayHidden(page);
 
@@ -179,7 +180,7 @@ test('catchment terrain data survives a weather-cache age wipe and is not re-dow
   // A forced 取得集水區 reuses the kept geometry: no new elevation request.
   await overlayHidden(page);
   const callsBefore = stats.calls;
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await page.locator('#btn-catchment-quick-fetch').click();
   await overlayHidden(page);
   expect(stats.calls).toBe(callsBefore);
@@ -202,7 +203,7 @@ test('catchment data is kept with the weather cache off, and 清除集水區資�
   // Retention is independent of 啟用天氣快取 — catchment geometry is not weather.
   await expect.poll(() => catchmentCacheSize(page), { timeout: 40000 }).toBeGreaterThan(0);
 
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await page.locator('#btn-catchment-clear').click();
   await expect.poll(() => catchmentCacheSize(page)).toBe(0);
   expect(await page.evaluate(() =>

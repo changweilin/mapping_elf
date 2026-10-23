@@ -67,6 +67,7 @@ test('bottom-panel view switch exchanges panes and survives a reload', async ({ 
 
 test('icon switches keep localized accessible labels', async ({ page }) => {
   await boot(page);
+  await page.locator('#btn-features-menu').click();
   await page.locator('#btn-measure-tool').click();
   const labelled = await page.evaluate(() => [...document.querySelectorAll('.bp-view-btn, .measure-mode-btn')]
     .every((b) => !!b.getAttribute('title') && !!b.getAttribute('aria-label')));
@@ -75,6 +76,7 @@ test('icon switches keep localized accessible labels', async ({ page }) => {
 
 test('measure tool modes still switch as icons', async ({ page }) => {
   await boot(page);
+  await page.locator('#btn-features-menu').click();
   await page.locator('#btn-measure-tool').click();
   await expect(page.locator('#measure-panel')).toBeVisible();
   await expect(page.locator('#measure-mode-toggle .measure-mode-btn svg')).toHaveCount(3);

@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { test, expect } from '@playwright/test';
 
 async function openMeasure(page) {
@@ -7,7 +8,7 @@ async function openMeasure(page) {
   // still covers the map and map clicks are dropped until it lifts. Waiting only
   // on the container made this spec fail on slow CI runners.
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached', timeout: 30_000 });
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
   await expect(page.locator('#btn-measure-tool')).toHaveAttribute('aria-pressed', 'true');
 }
@@ -27,10 +28,10 @@ test('F2: area mode computes length and enclosed area', async ({ page }) => {
   const map = page.locator('#map');
   const box = await map.boundingBox();
   const cx = box.x, cy = box.y;
-  // three distinct points forming a triangle, clear of the left-side panel
-  await page.mouse.click(cx + 450, cy + 200);
-  await page.mouse.click(cx + 650, cy + 210);
-  await page.mouse.click(cx + 640, cy + 400);
+  // three distinct points forming a triangle, clear of the centered panel
+  await page.mouse.click(cx + 250, cy + 200);
+  await page.mouse.click(cx + 400, cy + 210);
+  await page.mouse.click(cx + 350, cy + 400);
   const readout = page.locator('#measure-readout');
   // 3 rows: points count, total length, enclosed area
   await expect(readout.locator('.mr-row')).toHaveCount(3);
@@ -87,7 +88,7 @@ test('F2: segment click on the planned track measures without inserting a waypoi
   await page.addStyleTag({ content: '.leaflet-marker-icon, .leaflet-marker-icon *, .leaflet-tooltip-pane, .leaflet-shadow-pane { pointer-events: none !important; }' });
 
   // Open the measure tool (segment mode is the default).
-  await page.locator('#btn-measure-tool').click();
+  await openTool(page, '#btn-measure-tool');
   await expect(page.locator('#measure-panel')).toBeVisible();
 
   // Sample two on-track screen points from the ACTUAL rendered polyline (the map

@@ -1,3 +1,4 @@
+import { openTool } from './helpers/openTool.js';
 import { expect, test } from '@playwright/test';
 import { coneElevation, flood } from './helpers/apiMocks.mjs';
 
@@ -184,7 +185,7 @@ test('水文資訊 off: the card shows 集水區域 alone, not the side-by-side 
   await expect(card.locator('.wc-catchment')).toContainText('集水區面積', { timeout: 20000 });
   await expect(card.locator('.wc-catchment .wc-catch-col')).toHaveCount(2);
 
-  await page.locator('#btn-catchment-tool').click();
+  await openTool(page, '#btn-catchment-tool');
   await page.locator('#catchment-enable-info').uncheck();
 
   await expect(card.locator('.wc-catchment .wc-catch-pair')).toHaveCount(0);

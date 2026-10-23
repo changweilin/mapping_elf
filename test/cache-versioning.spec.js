@@ -40,6 +40,7 @@ async function openCacheVersionApp(page) {
 
   await page.route('**/v1/forecast**', async (route) => route.fulfill({ json: weatherPayload() }));
   await page.route('**/v1/archive**', async (route) => route.fulfill({ json: weatherPayload() }));
+  await page.route('**://nominatim.openstreetmap.org/**', (route) => route.fulfill({ json: [] }));
 
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
