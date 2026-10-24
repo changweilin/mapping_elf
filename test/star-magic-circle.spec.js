@@ -57,12 +57,13 @@ async function openApp(page, { overpassOpts = {}, nominatimOpts = null } = {}) {
   // Capture page errors too: a control's change handler that throws leaves the
   // circle showing the PREVIOUS render forever, which looks exactly like a slow
   // render from the outside. starLayerState() surfaces these on failure.
-  await page.addInitScript(() => {
+  await page.addInitScript(([lat, lng]) => {
+    localStorage.setItem('mappingElf_mapView', JSON.stringify({ lat, lng, zoom: 12 }));
     window.__mappingElfTestHooks = { events: [] };
     window.__pageErrors = [];
     window.addEventListener('error', (e) => window.__pageErrors.push(String(e.message)));
     window.addEventListener('unhandledrejection', (e) => window.__pageErrors.push('rejection: ' + String(e.reason)));
-  });
+  }, ANCHOR);
   await page.goto('/');
   await expect(page.locator('#map')).toBeVisible();
   await page.locator('#loading-screen.hidden').waitFor({ state: 'attached' });
@@ -292,6 +293,10 @@ test('playback pauses and resumes, and results can be stepped through', async ({
   await press(page, '#btn-star-play');
   await expect(play).toHaveAttribute('aria-pressed', 'true');
   await expectPlayState('running');
+
+  // Pause playback so auto-advance does not race manual stepping
+  await press(page, '#btn-star-play');
+  await expect(play).toHaveAttribute('aria-pressed', 'false');
 
   // Stepping results keeps exactly one star drawn.
   const indexText = () => page.locator('#star-result-index').innerText();

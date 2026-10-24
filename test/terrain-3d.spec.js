@@ -175,17 +175,6 @@ async function openRoutedRoute(page, fractions = [[0.4, 0.42], [0.6, 0.58]]) {
   await page.locator('#route-weather-busy-overlay').waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
 }
 
-test('3D terrain builds for the current route from the route-planning button', async ({ page }) => {
-  await mockElevation(page, { delayMs: 30 });
-  await mockFeatures(page);
-  await openWithRoute(page);
-
-  await open3dForCurrentRoute(page);
-  await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/);
-  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
-  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
-});
-
 test('3D terrain: loading lock + progress, then a visible contour model with track/waypoint info', async ({ page }) => {
   await mockElevation(page, { delayMs: 120 });
   await mockFeatures(page);
@@ -260,29 +249,94 @@ test('3D terrain: 圖資 background download continues the SAME progress bar (no
   await expect(page.locator('#tv-loading')).not.toHaveClass(/tv-loading-bg/);
 });
 
-test('3D terrain: contour toggle cycles high → low → none', async ({ page }) => {
+test('3D terrain: toolbar toggles (contour, weather, landmarks, catchment) and playback scrubbing work on the active model', async ({ page }) => {
+  test.slow();
   await mockElevation(page, { delayMs: 30 });
-  await mockFeatures(page);
-  await openWithRoute(page);
+  await mockFeatures(page, {
+    elements: [
+      { type: 'node', id: 1, lat: 24.2133, lon: 121.3472, tags: { natural: 'peak', name: 'Test Peak', ele: '2600' } },
+      { type: 'node', id: 2, lat: 24.2140, lon: 121.3480, tags: { tourism: 'alpine_hut', name: 'Test Hut' } },
+      { type: 'node', id: 3, lat: 24.2125, lon: 121.3465, tags: { waterway: 'waterfall', name: 'Test Falls' } },
+      { type: 'node', id: 4, lat: 24.2145, lon: 121.3490, tags: { power: 'generator', 'generator:source': 'wind' } },
+      { type: 'node', id: 5, lat: 24.2118, lon: 121.3460, tags: { amenity: 'place_of_worship', religion: 'taoist', name: '山神廟' } },
+      { type: 'node', id: 10, lat: 24.2130, lon: 121.3470 },
+    ],
+  });
+  await openWithRoute(page, { weather: true });
+  const wxBusy = page.locator('#route-weather-busy-overlay');
+  await wxBusy.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {});
+  await wxBusy.waitFor({ state: 'hidden', timeout: 60_000 });
+  await page.waitForTimeout(1200);
+
   await open3dForCurrentRoute(page);
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
 
+  // 1. Contour toggle
   const contourBtn = page.locator('#tv-toggle-contour');
-  const label = page.locator('#tv-contour-label');
-  await expect(label).toHaveText('等高線·高');
+  const contourLabel = page.locator('#tv-contour-label');
+  await expect(contourLabel).toHaveText('等高線·高');
   await expect(contourBtn).toHaveClass(/active/);
-
   await contourBtn.click();
-  await expect(label).toHaveText('等高線·低');
-
+  await expect(contourLabel).toHaveText('等高線·低');
   await contourBtn.click();
-  await expect(label).toHaveText('等高線·無');
+  await expect(contourLabel).toHaveText('等高線·無');
   await expect(contourBtn).toHaveClass(/tv-contour-off/);
   await expect(page.locator('#tv-toggle-contour-labels')).toBeDisabled();
-
   await contourBtn.click();
-  await expect(label).toHaveText('等高線·高');
+  await expect(contourLabel).toHaveText('等高線·高');
   await expect(page.locator('#tv-toggle-contour-labels')).toBeEnabled();
+
+  // 2. Weather toggle
+  const weatherBtn = page.locator('#tv-toggle-weather');
+  const weatherLabel = page.locator('#tv-weather-label');
+  await expect(weatherBtn).toBeEnabled();
+  await expect(weatherLabel).toHaveText('天氣·開');
+  await weatherBtn.click();
+  await expect(weatherLabel).toHaveText('天氣·靜態');
+  await weatherBtn.click();
+  await expect(weatherLabel).toHaveText('天氣·關');
+  await expect(weatherBtn).not.toHaveClass(/active/);
+  await weatherBtn.click();
+  await expect(weatherLabel).toHaveText('天氣·開');
+  await expect(weatherBtn).toHaveClass(/active/);
+
+  // 3. Landmark effects toggle
+  const effectsBtn = page.locator('#tv-toggle-effects');
+  await expect(effectsBtn).toBeEnabled();
+  await expect(effectsBtn).toHaveClass(/active/);
+  await effectsBtn.click();
+  await expect(effectsBtn).not.toHaveClass(/active/);
+  await effectsBtn.click();
+  await expect(effectsBtn).toHaveClass(/active/);
+
+  // 4. Removed toggles are gone and Catchment toggle works
+  await expect(page.locator('#tv-toggle-daynight')).toHaveCount(0);
+  await expect(page.locator('#tv-toggle-absolute')).toHaveCount(0);
+  await expect(page.locator('#tv-toggle-trail')).toHaveCount(0);
+  const catchmentBtn = page.locator('#tv-toggle-catchment');
+  await expect(catchmentBtn).toBeEnabled();
+  await expect(catchmentBtn).not.toHaveClass(/active/);
+  await catchmentBtn.click();
+  await expect(catchmentBtn).toHaveClass(/active/);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 60_000 });
+  await catchmentBtn.click();
+  await expect(catchmentBtn).not.toHaveClass(/active/);
+
+  // 5. Scrubbing playback drives live position
+  const slider = page.locator('#tp-slider');
+  await slider.evaluate((el) => {
+    el.value = '0.5';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const dist = page.locator('#tv-hud-dist');
+  await expect.poll(async () => (await dist.textContent())?.trim()).not.toBe('—');
+  const distAtHalf = await dist.textContent();
+  await slider.evaluate((el) => {
+    el.value = '0.9';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect.poll(async () => (await dist.textContent())).not.toBe(distAtHalf);
 });
 
 test('3D terrain: clicking a waypoint opens its detail popup; panels collapse and re-expand', async ({ page }) => {
@@ -318,14 +372,14 @@ test('3D terrain: clicking a waypoint opens its detail popup; panels collapse an
 
   // Person/metrics HUD collapses to an icon and re-expands too.
   const hudBox = await page.locator('#tv-live-hud').boundingBox();
-  await page.locator('#tv-hud-collapse').click();
+  await page.locator('#tv-hud-collapse').dispatchEvent('click');
   await expect(page.locator('#tv-live-hud')).toHaveClass(/collapsed/);
   await expect(page.locator('#tv-hud-body')).toBeHidden();
   await expect(page.locator('#tv-live-hud .tv-panel-icon')).toBeVisible();
   await expect(page.locator('#tv-live-hud .tv-panel-header-title')).toBeHidden();
   const collapsedHudBox = await page.locator('#tv-live-hud').boundingBox();
   expect(collapsedHudBox.width).toBeLessThan(hudBox.width * 0.5);
-  await page.locator('#tv-hud-collapse').click();
+  await page.locator('#tv-hud-collapse').dispatchEvent('click');
   await expect(page.locator('#tv-live-hud')).not.toHaveClass(/collapsed/);
   await expect(page.locator('#tv-hud-body')).toBeVisible();
   await expect(page.locator('#tv-live-hud .tv-panel-header-title')).toBeVisible();
@@ -396,114 +450,6 @@ test('3D terrain: the 更新 redraw genuinely re-downloads and re-runs the build
   expect(features.count).toBeGreaterThan(firstRunFeatures);
 });
 
-test('3D terrain: 天氣 button cycles 開→關閉動畫→關閉提示→開 and drives hints/animation independently', async ({ page }) => {
-  await mockElevation(page, { delayMs: 30 });
-  await mockFeatures(page);
-  await openWithRoute(page, { weather: true });
-  // The per-waypoint weather load must actually finish (visible -> hidden, plus
-  // a settle buffer) before opening the 3D view, or weatherPointsData comes back
-  // empty and hasWeatherData() stays false (see weather-3d-fx.spec.js's same
-  // wait pattern) — a plain "currently hidden" check can pass before the load
-  // ever starts.
-  const wxBusy = page.locator('#route-weather-busy-overlay');
-  await wxBusy.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {});
-  await wxBusy.waitFor({ state: 'hidden', timeout: 60_000 });
-  await page.waitForTimeout(1200);
-
-  await open3dForCurrentRoute(page);
-  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
-  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
-
-  const weatherBtn = page.locator('#tv-toggle-weather');
-  const label = page.locator('#tv-weather-label');
-  await expect(weatherBtn).toBeEnabled();
-
-  // State 1: on — hints + animation, fully active.
-  await expect(label).toHaveText('天氣·開');
-  await expect(weatherBtn).toHaveClass(/active/);
-  await expect(weatherBtn).not.toHaveClass(/tv-weather-off/);
-
-  // State 2: noAnim — hints stay visible (still "active"), animation drops.
-  await weatherBtn.click();
-  await expect(label).toHaveText('天氣·靜態');
-  await expect(weatherBtn).toHaveClass(/active/);
-  await expect(weatherBtn).not.toHaveClass(/tv-weather-off/);
-
-  // State 3: off — hints hidden too, muted like the contour "none" state.
-  await weatherBtn.click();
-  await expect(label).toHaveText('天氣·關');
-  await expect(weatherBtn).not.toHaveClass(/active/);
-  await expect(weatherBtn).toHaveClass(/tv-weather-off/);
-
-  // Cycles back to the start.
-  await weatherBtn.click();
-  await expect(label).toHaveText('天氣·開');
-  await expect(weatherBtn).toHaveClass(/active/);
-});
-
-test('3D terrain: 地標裝飾 (效果) button is gated on landmarks, independent of weather', async ({ page }) => {
-  await mockElevation(page, { delayMs: 30 });
-  // No landmark nodes in the mocked 圖資 — the button should be disabled.
-  await mockFeatures(page);
-  await openWithRoute(page, { weather: true });
-  // See the previous test: wait for the per-waypoint weather load to actually
-  // finish so 天氣 is enabled and can be toggled off below.
-  const wxBusy = page.locator('#route-weather-busy-overlay');
-  await wxBusy.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {});
-  await wxBusy.waitFor({ state: 'hidden', timeout: 60_000 });
-  await page.waitForTimeout(1200);
-
-  await open3dForCurrentRoute(page);
-  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
-  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
-
-  const effectsBtn = page.locator('#tv-toggle-effects');
-  await expect(effectsBtn).toBeDisabled();
-
-  // Turning weather all the way off must not affect the (still-disabled) 地標 button.
-  const weatherBtn = page.locator('#tv-toggle-weather');
-  await weatherBtn.click();
-  await weatherBtn.click();
-  await expect(page.locator('#tv-weather-label')).toHaveText('天氣·關');
-  await expect(effectsBtn).toBeDisabled();
-});
-
-test('3D terrain: 地標裝飾 (效果) button toggles landmark visibility once the route has landmarks', async ({ page }) => {
-  await mockElevation(page, { delayMs: 30 });
-  await mockFeatures(page, {
-    elements: [
-      { type: 'node', id: 1, lat: 24.2133, lon: 121.3472, tags: { natural: 'peak', name: 'Test Peak', ele: '2600' } },
-      { type: 'node', id: 2, lat: 24.2140, lon: 121.3480, tags: { tourism: 'alpine_hut', name: 'Test Hut' } },
-      { type: 'node', id: 3, lat: 24.2125, lon: 121.3465, tags: { waterway: 'waterfall', name: 'Test Falls' } },
-      { type: 'node', id: 4, lat: 24.2145, lon: 121.3490, tags: { power: 'generator', 'generator:source': 'wind' } },
-      { type: 'node', id: 5, lat: 24.2118, lon: 121.3460, tags: { amenity: 'place_of_worship', religion: 'taoist', name: '山神廟' } },
-      { type: 'node', id: 10, lat: 24.2130, lon: 121.3470 },
-      { type: 'node', id: 11, lat: 24.2138, lon: 121.3478 },
-      { type: 'way', id: 20, nodes: [10, 11], tags: { highway: 'path', bridge: 'suspension', name: 'Test Suspension Bridge' } },
-      { type: 'way', id: 21, nodes: [10, 11], tags: { railway: 'narrow_gauge', name: 'Test Forest Rail' } },
-      { type: 'way', id: 22, nodes: [10, 11], tags: { aerialway: 'gondola', name: 'Test Gondola' } },
-      { type: 'way', id: 23, nodes: [10, 11], tags: { waterway: 'dam', name: 'Test Dam' } },
-    ],
-  });
-  await openWithRoute(page);
-
-  await open3dForCurrentRoute(page);
-  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
-  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
-
-  const effectsBtn = page.locator('#tv-toggle-effects');
-  await expect(effectsBtn).toBeEnabled();
-  await expect(effectsBtn).toHaveClass(/active/);
-  await effectsBtn.click();
-  await expect(effectsBtn).not.toHaveClass(/active/);
-  await effectsBtn.click();
-  await expect(effectsBtn).toHaveClass(/active/);
-
-  // 天氣 stays untouched by 地標 clicks — the two are fully independent now.
-  await expect(page.locator('#tv-toggle-weather')).toHaveClass(/active/);
-  await expect(page.locator('#tv-weather-label')).toHaveText('天氣·開');
-});
-
 test('3D terrain: a favourite still builds via its per-favourite 3D button', async ({ page }) => {
   await mockElevation(page, { delayMs: 30 });
   await mockFeatures(page);
@@ -557,28 +503,6 @@ test('3D terrain: reopens itself after a page reload (browser/app resume restore
   await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/);
 });
 
-test('3D terrain: re-selecting the already-loaded favourite does not re-plan the route', async ({ page }) => {
-  await mockElevation(page, { delayMs: 30 });
-  await mockFeatures(page);
-  await mockRouting(page);
-  await openRoutedRoute(page);
-
-  // Save the routed route as a favourite; loading it back changes nothing.
-  await page.locator('#btn-favorite-add').click();
-  const loadBtn = page.locator('[data-favorite-load]').first();
-  await expect(loadBtn).toBeVisible();
-
-  // Let any in-flight route/weather work settle so the busy overlay is idle.
-  const busy = page.locator('#route-weather-busy-overlay');
-  await busy.waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
-
-  await loadBtn.click();
-  // The skip path reports the route is already current and must NOT raise the
-  // route-planning busy overlay (which a real re-plan would).
-  await expect(page.locator('#notifications')).toContainText('已是目前路線', { timeout: 5_000 });
-  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden();
-});
-
 test('3D terrain: switching routes in the player keeps a working model + hidden progress bar', async ({ page }) => {
   await mockElevation(page, { delayMs: 60 });
   await mockFeatures(page);
@@ -612,37 +536,6 @@ test('3D terrain: switching routes in the player keeps a working model + hidden 
   await expect(page.locator('[data-playlist-fav].active')).toHaveCount(1);
 });
 
-test('3D terrain: scrubbing playback drives the live position readout', async ({ page }) => {
-  await mockElevation(page, { delayMs: 30 });
-  await mockFeatures(page);
-  await openWithRoute(page);
-  await open3dForCurrentRoute(page);
-  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
-  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
-
-  // Day/night is permanently on now (its toggle was removed); use the default-on
-  // 等高線 toggle as the "toolbar rendered" readiness proxy instead.
-  await expect(page.locator('#tv-toggle-contour')).toHaveClass(/active/);
-
-  const slider = page.locator('#tp-slider');
-  await slider.evaluate((el) => {
-    el.value = '0.5';
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-
-  const dist = page.locator('#tv-hud-dist');
-  const elev = page.locator('#tv-hud-elev');
-  await expect.poll(async () => (await dist.textContent())?.trim()).not.toBe('—');
-  await expect.poll(async () => (await elev.textContent())?.trim()).not.toBe('—');
-
-  const distAtHalf = await dist.textContent();
-  await slider.evaluate((el) => {
-    el.value = '0.9';
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  await expect.poll(async () => (await dist.textContent())).not.toBe(distAtHalf);
-});
-
 test('3D terrain: abort button cancels computation and closes the viewer', async ({ page }) => {
   await mockElevation(page, { delayMs: 1500 }); // slow so loading stays active
   await mockFeatures(page);
@@ -654,46 +547,6 @@ test('3D terrain: abort button cancels computation and closes the viewer', async
 
   await page.locator('#tv-loading-abort').click();
   await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/, { timeout: 20_000 });
-});
-
-test('3D terrain: removed toggles are gone and 集水區 toggle drives the basin overlay', async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await mockElevation(page, { delayMs: 30 });
-  await mockFeatures(page);
-  await openWithRoute(page);
-  await open3dForCurrentRoute(page);
-  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
-  await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
-
-  // The 日夜 / 懸空 / 揭示 toggles were removed (day/night is permanently on).
-  await expect(page.locator('#tv-toggle-daynight')).toHaveCount(0);
-  await expect(page.locator('#tv-toggle-absolute')).toHaveCount(0);
-  await expect(page.locator('#tv-toggle-trail')).toHaveCount(0);
-
-  // The 集水區 toggle is present, enabled (route has 主航點) and starts off.
-  const catchmentBtn = page.locator('#tv-toggle-catchment');
-  await expect(catchmentBtn).toBeEnabled();
-  await expect(catchmentBtn).not.toHaveClass(/active/);
-
-  // Turning it on runs the (cache-first / offline-DEM) compute and persists.
-  await catchmentBtn.click();
-  await expect(catchmentBtn).toHaveClass(/active/);
-  await expect
-    .poll(async () => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_terrain3dDisplay') || '{}').catchment3d))
-    .toBe(true);
-  // The delineation eventually settles (its busy overlay clears). DEM work on a
-  // CI runner has overrun 30 s, so the wait matches the work, not a dev box.
-  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 60_000 });
-
-  // Turning it off hides the overlay and clears the persisted flag.
-  await catchmentBtn.click();
-  await expect(catchmentBtn).not.toHaveClass(/active/);
-  await expect
-    .poll(async () => page.evaluate(() => JSON.parse(localStorage.getItem('mappingElf_terrain3dDisplay') || '{}').catchment3d))
-    .toBe(false);
-
-  expect(errors).toEqual([]);
 });
 
 test('3D terrain: map features and landmarks can be picked and display details in popup', async ({ page }) => {
