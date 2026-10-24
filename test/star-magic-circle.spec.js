@@ -406,6 +406,7 @@ test('solving magic circle and exporting GPX preserves existing route waypoints 
 
   await openStarPanel(page);
   await page.evaluate(([lat, lng]) => {
+    window.__mappingElfTestHooks.mapManager.map.stop();
     window.__mappingElfTestHooks.mapManager.map.setView([lat, lng], 12, { animate: false });
   }, ANCHOR);
   await useMapCentreAsStarCentre(page);

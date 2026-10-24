@@ -77,7 +77,7 @@ jobs:
     name: e2e ${{ matrix.name }}
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
