@@ -1649,6 +1649,88 @@ const elevationProfile = new LazyElevationProfile(
 // When user clicks an alternative route on the map
 mapManager.onRouteSelect = (idx) => selectAlternative(idx);
 
+function syncToolsToSelectedWaypoint(wpIndex, isReturn = false) {
+  if (wpIndex == null || wpIndex < 0 || !mapManager?.waypoints?.[wpIndex]) return;
+  const [lat, lng] = mapManager.waypoints[wpIndex];
+  const label = (typeof getWaypointLabel === 'function' ? getWaypointLabel(wpIndex, lat, lng, isReturn) : '')
+    || (typeof getEffectiveName === 'function' ? getEffectiveName(lat, lng) : '')
+    || `航點 ${wpIndex + 1}`;
+
+  updateMapCenterVariables();
+
+  // 1. Star Tool (魔法陣): if open, update center
+  if (typeof starPanel !== 'undefined' && starPanel && !starPanel.classList.contains('hidden')) {
+    setStarCenter({ lat, lng }, label);
+  }
+
+  // 2. Measure Tool (量測工具): if open, set or complete measurement
+  if (typeof measurePanel !== 'undefined' && measurePanel && !measurePanel.classList.contains('hidden')) {
+    if (measureMode === 'segment') {
+      const track = measureTrack();
+      if (track) {
+        if (measurePoints.length === 0) {
+          measurePoints = [[lat, lng]];
+          const dd = (elevationProfile?.distances?.length === track.length)
+            ? elevationProfile.distances : cumulativeDistances(track);
+          const snapped = latLngAtMileage(track, dd, projectMileage(track, [lat, lng], 0).mileage);
+          const layer = ensureMeasureLayer();
+          layer.clearLayers();
+          measureDot(snapped, 'A').addTo(layer);
+          renderMeasureReadout([['提示', '已選取航點為起點，再點一下地圖或點擊另一航點']]);
+        } else if (measurePoints.length === 1) {
+          measurePoints.push([lat, lng]);
+          computeSegmentMeasure();
+          saveMeasureToolState();
+        } else {
+          measurePoints = [[lat, lng]];
+          const dd = (elevationProfile?.distances?.length === track.length)
+            ? elevationProfile.distances : cumulativeDistances(track);
+          const snapped = latLngAtMileage(track, dd, projectMileage(track, [lat, lng], 0).mileage);
+          const layer = ensureMeasureLayer();
+          layer.clearLayers();
+          measureDot(snapped, 'A').addTo(layer);
+          renderMeasureReadout([['提示', '已重設起點，再點一下地圖或點擊另一航點']]);
+          saveMeasureToolState();
+        }
+      }
+    } else if (measureMode === 'catchment') {
+      runCatchment(lat, lng);
+    }
+  }
+
+  // 3. Shape Tool (繪圖板): if open with drawn shape, update preview at this waypoint
+  if (typeof shapePanel !== 'undefined' && shapePanel && !shapePanel.classList.contains('hidden')) {
+    if (shapeStrokes.length > 0 && !shapeGenerating) {
+      const km = readShapeDistanceKm();
+      if (km >= 1 && km <= 50) {
+        const ring = strokeToLatLngRing(shapeAllPoints(), [lat, lng], km * 1000, {
+          rotationDeg: readShapeAngleTolDeg(),
+          direction: readShapeDirection()
+        });
+        if (ring && ring.length >= 3) {
+          drawShapePreview(ring);
+        }
+      }
+    }
+  }
+
+  // 4. Catchment Panel (集水區): if open, run catchment for this waypoint
+  if (typeof catchmentPanel !== 'undefined' && catchmentPanel && !catchmentPanel.classList.contains('hidden')) {
+    if (catchmentEnabled) {
+      runCatchment(lat, lng);
+    }
+  }
+
+  // 5. Weather Panel (天氣資訊): if open, highlight weather column
+  if (typeof weatherPanel !== 'undefined' && weatherPanel && !weatherPanel.classList.contains('hidden')) {
+    const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.wpIndex === wpIndex && !!p.isReturn === isReturn);
+    if (colIdx >= 0) {
+      highlightWeatherColumn(colIdx);
+      centerWeatherColumn(colIdx);
+    }
+  }
+}
+
 // When user clicks a waypoint marker on the map → cross-view highlight
 mapManager.onWaypointSelect = (wpIndex, isReturn = false, shouldToggle = false) => {
   const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.isReturn === isReturn && p.wpIndex === wpIndex);
@@ -1664,6 +1746,7 @@ mapManager.onWaypointSelect = (wpIndex, isReturn = false, shouldToggle = false) 
       item.classList.add('wp-highlight');
       item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
+    syncToolsToSelectedWaypoint(wpIndex, isReturn);
   }
 };
 
@@ -4644,8 +4727,20 @@ function updateMapCenterVariables() {
   const mapEl = document.getElementById('map');
   if (!mapEl) return;
   const rect = mapEl.getBoundingClientRect();
-  const cx = Math.round(rect.left + rect.width / 2);
-  const cy = Math.round(rect.top + rect.height / 2);
+  let cx = Math.round(rect.left + rect.width / 2);
+  let cy = Math.round(rect.top + rect.height / 2);
+
+  const selectedWp = mapManager?.getSelectedWaypoint?.();
+  if (selectedWp && mapManager.map) {
+    try {
+      const pt = mapManager.map.latLngToContainerPoint(selectedWp);
+      if (pt && pt.x >= 0 && pt.x <= rect.width && pt.y >= 0 && pt.y <= rect.height) {
+        cx = Math.round(rect.left + pt.x);
+        cy = Math.round(rect.top + pt.y);
+      }
+    } catch (_) { }
+  }
+
   document.documentElement.style.setProperty('--map-center-x', `${cx}px`);
   document.documentElement.style.setProperty('--map-center-y', `${cy}px`);
   if (radialContainer) {
@@ -4759,11 +4854,37 @@ function closeFeaturePanels() {
 }
 
 btnWeatherTool?.addEventListener('click', () => {
-  setWeatherPanelActive(weatherPanel?.classList.contains('hidden'));
+  const opening = weatherPanel?.classList.contains('hidden');
+  setWeatherPanelActive(opening);
+  if (opening) {
+    const selectedWp = mapManager.getSelectedWaypoint?.();
+    if (selectedWp && mapManager.highlightedWpIndex >= 0) {
+      const isReturn = !!mapManager.highlightedIsReturn;
+      const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.wpIndex === mapManager.highlightedWpIndex && !!p.isReturn === isReturn);
+      if (colIdx >= 0) {
+        setBottomPanelView('weather');
+        highlightPoint(colIdx, false, { centerMap: false });
+      }
+    }
+  }
   closeRadialMenu();
 });
 btnCatchmentTool?.addEventListener('click', () => {
-  setCatchmentPanelActive(catchmentPanel?.classList.contains('hidden'));
+  const opening = catchmentPanel?.classList.contains('hidden');
+  setCatchmentPanelActive(opening);
+  if (opening && catchmentEnabled) {
+    const selectedWp = mapManager.getSelectedWaypoint?.();
+    if (selectedWp && mapManager.highlightedWpIndex >= 0) {
+      runCatchment(selectedWp[0], selectedWp[1]);
+      const isReturn = !!mapManager.highlightedIsReturn;
+      const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.wpIndex === mapManager.highlightedWpIndex && !!p.isReturn === isReturn);
+      if (colIdx >= 0) {
+        setBottomPanelView('catchment');
+        highlightWeatherColumn(colIdx);
+        centerWeatherColumn(colIdx);
+      }
+    }
+  }
   closeRadialMenu();
 });
 document.getElementById('btn-weather-close')?.addEventListener('click', () => setWeatherPanelActive(false));
@@ -5298,6 +5419,24 @@ function setMeasureActive(active) {
     setShapeActive(false);
     setStarActive(false);
     closeFeaturePanels();
+    const targetWp = mapManager.getSelectedWaypoint?.();
+    if (targetWp && measurePoints.length === 0) {
+      if (measureMode === 'segment') {
+        const track = measureTrack();
+        if (track) {
+          measurePoints = [targetWp];
+          const dd = (elevationProfile?.distances?.length === track.length)
+            ? elevationProfile.distances : cumulativeDistances(track);
+          const snapped = latLngAtMileage(track, dd, projectMileage(track, targetWp, 0).mileage);
+          const layer = ensureMeasureLayer();
+          layer.clearLayers();
+          measureDot(snapped, 'A').addTo(layer);
+          renderMeasureReadout([['提示', '已以選取航點為起點，再點一下地圖或點擊另一航點']]);
+        }
+      } else if (measureMode === 'catchment') {
+        runCatchment(targetWp[0], targetWp[1]);
+      }
+    }
   }
   mapManager.measureMode = active ? measureMode : null;
   measurePanel.classList.toggle('hidden', !active);
@@ -5859,6 +5998,19 @@ function setShapeActive(active) {
     hydrateShapeStrokes();
     redrawShapeCanvas();
     updateShapeToolButtons();
+    const targetWp = mapManager.getSelectedWaypoint?.() || mapManager.getRecentWaypoint?.();
+    if (targetWp && shapeStrokes.length > 0) {
+      const km = readShapeDistanceKm();
+      if (km >= 1 && km <= 50) {
+        const ring = strokeToLatLngRing(shapeAllPoints(), targetWp, km * 1000, {
+          rotationDeg: readShapeAngleTolDeg(),
+          direction: readShapeDirection()
+        });
+        if (ring && ring.length >= 3) {
+          drawShapePreview(ring);
+        }
+      }
+    }
   } else {
     cancelShapeGenerate();
     shapePreviewLayer?.clearLayers();
@@ -6340,15 +6492,15 @@ async function generateShapeRoute() {
     let bestAngleDeg = 0;
     let graph = null;
     let optimizer = null;
-    const recentWp = mapManager.getRecentWaypoint?.();
+    const targetWp = mapManager.getSelectedWaypoint?.() || mapManager.getRecentWaypoint?.();
 
     busyTask.set({ detail: translatePhrase('取得周邊路網圖資...'), progress: 5 });
     await new Promise((resolve) => setTimeout(resolve, 0));
     await waitIfLoadPaused(run);
     if (run.cancelled) return;
 
-    if (recentWp) {
-      anchor = recentWp;
+    if (targetWp) {
+      anchor = targetWp;
       let osmCenter = anchor;
       let osmRadiusM = Math.max(1200, Math.min(4500, Math.round(targetM * 0.36)));
       const probeAngles = angleTol > 0 ? rotationCandidates(angleTol) : [0];
@@ -7596,10 +7748,13 @@ function setStarActive(active) {
     closeFeaturePanels();
     ensureStarLayers();
     if (!starResults.length) {
-      const recentWp = mapManager.getRecentWaypoint?.();
-      if (recentWp) {
-        const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
-        setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+      const targetWp = mapManager.getSelectedWaypoint?.() || mapManager.getRecentWaypoint?.();
+      if (targetWp) {
+        const idx = mapManager.highlightedWpIndex >= 0 ? mapManager.highlightedWpIndex : mapManager.waypoints.length - 1;
+        const name = (typeof getWaypointLabel === 'function' ? getWaypointLabel(idx, targetWp[0], targetWp[1], mapManager.highlightedIsReturn) : '')
+          || (typeof getEffectiveName === 'function' ? getEffectiveName(targetWp[0], targetWp[1]) : '')
+          || '選取航點';
+        setStarCenter({ lat: targetWp[0], lng: targetWp[1] }, name);
       }
     }
     syncStarControls();
@@ -7655,10 +7810,13 @@ function hideStarPlaceList() {
 
 function setStarCenterToRecentWaypoint() {
   hideStarPlaceList();
-  const recentWp = mapManager.getRecentWaypoint?.();
-  if (recentWp) {
-    const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
-    setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+  const targetWp = mapManager.getSelectedWaypoint?.() || mapManager.getRecentWaypoint?.();
+  if (targetWp) {
+    const idx = mapManager.highlightedWpIndex >= 0 ? mapManager.highlightedWpIndex : mapManager.waypoints.length - 1;
+    const name = (typeof getWaypointLabel === 'function' ? getWaypointLabel(idx, targetWp[0], targetWp[1], mapManager.highlightedIsReturn) : '')
+      || (typeof getEffectiveName === 'function' ? getEffectiveName(targetWp[0], targetWp[1]) : '')
+      || '選取航點';
+    setStarCenter({ lat: targetWp[0], lng: targetWp[1] }, name);
   } else {
     showNotification('尚未建立任何航點', 'warning', 1800);
   }
@@ -7709,10 +7867,13 @@ async function runStarSolve() {
   if (starSolving) return;
   readStarSettingsFromControls();
   if (!starCenter) {
-    const recentWp = mapManager.getRecentWaypoint?.();
-    if (recentWp) {
-      const name = getEffectiveName(recentWp[0], recentWp[1]) || '最新航點';
-      setStarCenter({ lat: recentWp[0], lng: recentWp[1] }, name);
+    const targetWp = mapManager.getSelectedWaypoint?.() || mapManager.getRecentWaypoint?.();
+    if (targetWp) {
+      const idx = mapManager.highlightedWpIndex >= 0 ? mapManager.highlightedWpIndex : mapManager.waypoints.length - 1;
+      const name = (typeof getWaypointLabel === 'function' ? getWaypointLabel(idx, targetWp[0], targetWp[1], mapManager.highlightedIsReturn) : '')
+        || (typeof getEffectiveName === 'function' ? getEffectiveName(targetWp[0], targetWp[1]) : '')
+        || '選取航點';
+      setStarCenter({ lat: targetWp[0], lng: targetWp[1] }, name);
     }
   }
   if (!starCenter) { showNotification('請先設定搜索中心', 'warning', 2000); return; }
@@ -9340,6 +9501,7 @@ function updateWaypointList(waypoints) {
         mapManager.highlightWaypoint(wpIndex);
         waypointList.querySelectorAll('.waypoint-item').forEach(el => el.classList.remove('wp-highlight'));
         item.classList.add('wp-highlight');
+        syncToolsToSelectedWaypoint(wpIndex, false);
       }
     });
   });
@@ -17379,6 +17541,9 @@ function highlightPoint(colIdx, toggle = false, options = {}) {
   if (waypointCentering && shouldCenterMap) {
     panMapToVisibleCenter([pt.lat, pt.lng]);
   }
+  if (pt.isWaypoint && pt.wpIndex !== undefined) {
+    syncToolsToSelectedWaypoint(pt.wpIndex, !!pt.isReturn);
+  }
 }
 
 /** Remove all cross-view highlights. */
@@ -17397,6 +17562,7 @@ function clearAllHighlights() {
   mapManager.clearWaypointHighlight();
   mapManager.clearHoverMarker();
   elevationProfile.hideCrosshair();
+  updateMapCenterVariables();
 }
 
 function updateElevationMarkers() {
@@ -17832,6 +17998,14 @@ async function init() {
     document.getElementById('btn-weather-quick-view')?.addEventListener('click', openWeatherView);
     document.getElementById('btn-weather-quick-fetch')?.addEventListener('click', () => {
       openWeatherView();
+      if (mapManager.highlightedWpIndex >= 0) {
+        const isReturn = !!mapManager.highlightedIsReturn;
+        const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.wpIndex === mapManager.highlightedWpIndex && !!p.isReturn === isReturn);
+        if (colIdx >= 0) {
+          fetchAllWeatherData({ onlyColIndex: colIdx, force: true });
+          return;
+        }
+      }
       fetchAllWeatherData({ force: true });
     });
   }
@@ -17846,6 +18020,14 @@ async function init() {
     document.getElementById('btn-catchment-quick-fetch')?.addEventListener('click', () => {
       if (!catchmentEnabled) return;
       openCatchmentView();
+      if (mapManager.highlightedWpIndex >= 0) {
+        const isReturn = !!mapManager.highlightedIsReturn;
+        const colIdx = weatherPoints.findIndex(p => p.isWaypoint && p.wpIndex === mapManager.highlightedWpIndex && !!p.isReturn === isReturn);
+        if (colIdx >= 0) {
+          fetchAllCatchmentData({ onlyColIndex: colIdx, force: true });
+          return;
+        }
+      }
       fetchAllCatchmentData({ force: true });
     });
     document.getElementById('btn-catchment-clear')?.addEventListener('click', () => {

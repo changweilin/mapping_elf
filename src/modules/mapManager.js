@@ -720,8 +720,18 @@ export class MapManager {
     return null;
   }
 
+  getSelectedWaypoint() {
+    if (this.highlightedWpIndex >= 0 && this.waypoints[this.highlightedWpIndex]) {
+      return [...this.waypoints[this.highlightedWpIndex]];
+    }
+    return null;
+  }
+
   getRecentWaypoint() {
     if (this.waypoints.length === 0) return null;
+    if (this.highlightedWpIndex >= 0 && this.waypoints[this.highlightedWpIndex]) {
+      return [...this.waypoints[this.highlightedWpIndex]];
+    }
     if (this._lastPlacedCoordinate?.source === 'waypoint') {
       const wp = this.waypoints.find(([la, ln]) =>
         Math.abs(la - this._lastPlacedCoordinate.lat) < 1e-6 &&
@@ -4267,6 +4277,10 @@ export class MapManager {
     this._resetWaypointMarkerZ();
     this.highlightedWpIndex = wpIndex;
     this.highlightedIsReturn = true;
+    if (this.waypoints[wpIndex]) {
+      const [lat, lng] = this.waypoints[wpIndex];
+      this._lastPlacedCoordinate = { lat, lng, time: Date.now(), source: 'waypoint' };
+    }
     const m = this.returnWaypointMarkers.find((x) => x._wpIndex === wpIndex);
     if (m) {
       const el = m.getElement();
