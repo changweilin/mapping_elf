@@ -2231,6 +2231,39 @@ export class TerrainViewer {
     ], elevM);
   }
 
+  // Perennial snow / ice (冰河／終年積雪) tint: cold blue-white, bluer in the
+  // compacted ice of the lower tongue, brighter in high-altitude fresh snow.
+  static _snowRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.80, 0.86, 0.92] },
+      { t: 2500, c: [0.86, 0.91, 0.96] },
+      { t: 3500, c: [0.93, 0.96, 0.99] },
+      { t: 4500, c: [0.97, 0.98, 1.00] },
+    ], elevM);
+  }
+
+  // Row-planted cultivation (果園／茶園／葡萄園) tint: cultivated yellow-green,
+  // lighter than wild scrub because of the exposed soil between the rows.
+  static _orchardRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.40, 0.53, 0.25] },
+      { t: 900,  c: [0.38, 0.51, 0.24] },
+      { t: 1800, c: [0.42, 0.52, 0.27] },
+      { t: 2800, c: [0.52, 0.55, 0.34] },
+    ], elevM);
+  }
+
+  // Field crops / paddies (農田／水田／休耕地) tint: brighter farmed green with a
+  // tilled-earth undertone.
+  static _farmRampColor(elevM) {
+    return TerrainViewer._rampSampleAbs([
+      { t: 0,    c: [0.46, 0.56, 0.28] },
+      { t: 700,  c: [0.45, 0.54, 0.29] },
+      { t: 1600, c: [0.48, 0.54, 0.32] },
+      { t: 2600, c: [0.56, 0.57, 0.38] },
+    ], elevM);
+  }
+
   // Built-up (市區) tint: slate grey, lightening slightly with altitude.
   static _urbanRampColor(elevM) {
     return TerrainViewer._rampSampleAbs([
@@ -2259,6 +2292,17 @@ export class TerrainViewer {
       const u = TerrainViewer._urbanRampColor(elevM);
       const shade = 0.88 + 0.12 * ao;
       return [u[0] * shade, u[1] * shade, u[2] * shade];
+    }
+    if (sub === 'snow') {
+      const sn = TerrainViewer._snowRampColor(elevM);
+      // Snow keeps a very flat shading response (it scatters almost all light),
+      // so only concave hollows read blue-grey.
+      const shade = 0.93 + 0.07 * ao - Math.max(0, -curv) * 0.05;
+      return [
+        Math.min(1, sn[0] * shade),
+        Math.min(1, sn[1] * shade),
+        Math.min(1, sn[2] * shade),
+      ];
     }
     if (sub === 'sand') {
       const sd = TerrainViewer._sandRampColor(elevM);
@@ -2314,6 +2358,10 @@ export class TerrainViewer {
       base = scrub.slice();
     } else if (sub === 'riparian' || sub === 'wetland') {
       base = riparian.slice();
+    } else if (sub === 'orchard') {
+      base = TerrainViewer._orchardRampColor(elevM);
+    } else if (sub === 'farm') {
+      base = TerrainViewer._farmRampColor(elevM);
     } else if (sub === 'grass') {
       base = [
         veg[0] * 1.04,
@@ -2347,6 +2395,7 @@ export class TerrainViewer {
     const ridgeExposure = Math.max(0, curv) * 0.28;
     let rockAmt = Math.max(0, Math.min(1, (s + ridgeExposure - 0.58) / 0.92));
     if (sub === 'forest') rockAmt *= 0.25;
+    else if (sub === 'orchard' || sub === 'farm') rockAmt *= 0.18;
     else if (family === 'green' || sub === 'grass' || sub === 'scrub') rockAmt *= 0.38;
     else rockAmt *= 0.78;
     if (satVeg != null && satVeg < -0.04 && s > 0.28) {
@@ -2375,8 +2424,11 @@ export class TerrainViewer {
   // expected by 3MF export while `sub` drives high-detail surface synthesis.
   static _landCoverFamily(cls) {
     switch (cls) {
+      case 'glacier': return { family: 'soil',  sub: 'snow',   pri: 6 };
       case 'forest':  return { family: 'green', sub: 'forest', pri: 5 };
       case 'scrub':   return { family: 'green', sub: 'scrub',  pri: 4 };
+      case 'orchard': return { family: 'green', sub: 'orchard', pri: 4 };
+      case 'farm':    return { family: 'green', sub: 'farm',   pri: 3 };
       case 'grass':   return { family: 'green', sub: 'grass',  pri: 3 };
       case 'rock':    return { family: 'soil',  sub: 'rock',   pri: 4 };
       case 'sand':    return { family: 'soil',  sub: 'sand',   pri: 3 };
@@ -2554,6 +2606,36 @@ export class TerrainViewer {
       }
     }
 
+    // Satellite land-cover refinement: fill in the cover OSM simply doesn't have.
+    // Snow/ice fields (very bright + almost colourless, only above the montane
+    // belt so bright gravel bars and rooftops aren't mistaken for them) and open
+    // water (dark + distinctly blue) read unambiguously in the imagery, so they
+    // are promoted wherever no higher-priority OSM polygon claimed the cell. This
+    // is what keeps the auto-generated surface matching the real landscape in the
+    // (common) case of sparse OSM coverage.
+    if (this._satImageData) {
+      const elevField = this._field;
+      for (let i = 0; i < N; i++) {
+        const v = i / (N - 1);
+        for (let j = 0; j < N; j++) {
+          const sx = this._sampleSatelliteAtUV(j / (N - 1), v);
+          if (!sx) continue;
+          const mx = Math.max(sx.r, sx.g, sx.b);
+          const mn = Math.min(sx.r, sx.g, sx.b);
+          const satur = mx > 0.01 ? (mx - mn) / mx : 0;
+          const raw = elevField ? elevField[i][j] : null;
+          const elev = this._isHole(raw) ? null : raw;
+          if (sx.luma > 0.8 && satur < 0.08 && Number.isFinite(elev) && elev > 2400 && pri[i][j] < 6) {
+            fam[i][j] = 'soil';
+            sub[i][j] = 'snow';
+            pri[i][j] = 6;
+          } else if (sx.luma < 0.3 && sx.b > sx.r * 1.15 && sx.exg < -0.02) {
+            waterProx[i][j] = Math.max(waterProx[i][j], 0.92);
+          }
+        }
+      }
+    }
+
     this._subBiomeField = sub;
     this._waterDistField = waterProx;
     return fam;
@@ -2660,15 +2742,122 @@ export class TerrainViewer {
     this._rebuildTerrainSurfaceTextures(bbox);
   }
 
-  // Synthesize high-resolution (512×512) Albedo, Bump, and Roughness textures
-  // fusing DEM geomorphology (elevation, slope, ridge/valley curvature, aspect,
-  // dual-azimuth hillshade, valley AO), spatially-feathered OSM land-cover &
-  // riparian corridors, procedural biome micro-textures (3D forest canopy crowns,
-  // stratified bedrock veins, meadow grain), and live Satellite imagery.
+  // Resolution of the synthesized surface textures. 1024² roughly quadruples the
+  // visible micro-detail but also the synthesis cost, so the high-res pass is
+  // spent only on the FINAL fused surface (once the satellite mosaic has landed —
+  // it is the last source to arrive) and only on desktop-class viewports. Every
+  // intermediate refresh, and anything touch-sized, stays on 512².
+  _surfaceTexSize() {
+    const maxTex = this.renderer?.capabilities?.maxTextureSize || 2048;
+    const w = this.container?.clientWidth || window.innerWidth || 0;
+    const coarsePointer = typeof window.matchMedia === 'function'
+      && window.matchMedia('(pointer: coarse)').matches;
+    const hiRes = maxTex >= 4096 && !coarsePointer && w >= 1000 && !!this._satImageData;
+    return hiRes ? 1024 : 512;
+  }
+
+  // Per-mosaic satellite statistics used to fuse the imagery with the DEM relief:
+  //   • lo/hi   — 2nd/98th luma percentiles for a contrast stretch that recovers
+  //               detail from hazy, washed-out aerial tiles.
+  //   • lp grid — a heavily blurred luma field. Subtracting it strips out the
+  //               *imagery's own* illumination (shadows baked in at capture time,
+  //               sun angle, haze gradients) and leaves pure surface detail, which
+  //               is then re-lit by the DEM hillshade. Without this the surface is
+  //               double-shaded and reads flat and muddy.
+  // Cached per satellite mosaic (_satCanvasKey); null when there is no usable
+  // imagery (offline, no coverage, or a fully transparent mosaic).
+  _computeSatelliteStats() {
+    const img = this._satImageData;
+    if (!img || !img.data || !img.width || !img.height) {
+      this._satStats = null;
+      return null;
+    }
+    if (this._satStats && this._satStatsKey === this._satCanvasKey) return this._satStats;
+
+    const data = img.data;
+    const W = img.width;
+    const H = img.height;
+    const LP = 20;
+    const hist = new Float64Array(256);
+    const sum = new Float64Array(LP * LP);
+    const cnt = new Float64Array(LP * LP);
+    // Stride-sample: a mosaic is 512–1536 px per side and the statistics only need
+    // a few tens of thousands of samples.
+    const step = Math.max(1, Math.round(Math.min(W, H) / 256));
+    let n = 0;
+    for (let y = 0; y < H; y += step) {
+      const ly = Math.min(LP - 1, Math.floor(y / H * LP));
+      for (let x = 0; x < W; x += step) {
+        const k = (y * W + x) * 4;
+        if (data[k + 3] < 32) continue;
+        const l = (0.299 * data[k] + 0.587 * data[k + 1] + 0.114 * data[k + 2]) / 255;
+        hist[Math.max(0, Math.min(255, Math.round(l * 255)))]++;
+        const c = ly * LP + Math.min(LP - 1, Math.floor(x / W * LP));
+        sum[c] += l;
+        cnt[c]++;
+        n++;
+      }
+    }
+    if (n < 64) {
+      this._satStats = null;
+      this._satStatsKey = this._satCanvasKey;
+      return null;
+    }
+
+    const pct = (frac) => {
+      const target = n * frac;
+      let acc = 0;
+      for (let i = 0; i < 256; i++) {
+        acc += hist[i];
+        if (acc >= target) return i / 255;
+      }
+      return 1;
+    };
+    const lo = pct(0.02);
+    const hi = Math.max(lo + 0.08, pct(0.98));
+    let mean = 0;
+    for (let i = 0; i < 256; i++) mean += (i / 255) * hist[i];
+    mean /= n;
+
+    const lpRaw = new Float32Array(LP * LP);
+    for (let c = 0; c < lpRaw.length; c++) lpRaw[c] = cnt[c] > 0 ? sum[c] / cnt[c] : mean;
+    // One 3×3 box pass so the illumination field has no visible cell seams.
+    const lp = new Float32Array(LP * LP);
+    for (let i = 0; i < LP; i++) {
+      for (let j = 0; j < LP; j++) {
+        let acc = 0;
+        let w = 0;
+        for (let di = -1; di <= 1; di++) {
+          const ii = Math.max(0, Math.min(LP - 1, i + di));
+          for (let dj = -1; dj <= 1; dj++) {
+            const jj = Math.max(0, Math.min(LP - 1, j + dj));
+            acc += lpRaw[ii * LP + jj];
+            w++;
+          }
+        }
+        lp[i * LP + j] = acc / w;
+      }
+    }
+
+    this._satStats = { lo, hi, mean, lp, lpN: LP };
+    this._satStatsKey = this._satCanvasKey;
+    return this._satStats;
+  }
+
+  // Synthesize the Albedo, Bump, and Roughness surface textures (512² while the
+  // data sources are still arriving, 1024² for the final fused surface) by fusing
+  //   • DEM geomorphology — elevation, slope, ridge/valley curvature, aspect,
+  //     dual-azimuth hillshade, valley AO;
+  //   • OSM land cover — spatially feathered, noise-warped biome fields plus
+  //     riparian corridors, cultivation rows and snow/ice fields;
+  //   • procedural biome micro-texture — 3D forest canopy crowns, stratified
+  //     bedrock veins, meadow grain, furrow/planting grids, wind sastrugi;
+  //   • satellite imagery — contrast-stretched, de-illuminated and re-lit by the
+  //     DEM hillshade, with its high-frequency residual driving the bump map.
   _rebuildTerrainSurfaceTextures(bbox = this._bbox) {
     if (!this.terrainMesh || !this._field || !bbox) return;
     const N = FIELD_SIZE;
-    const TEX = 512;
+    const TEX = this._surfaceTexSize();
     const field = this._field;
     const minElev = this._fieldMinV;
     const slopes = this._slopeField || this._computeFieldSlopes(field, bbox, N);
@@ -2680,13 +2869,17 @@ export class TerrainViewer {
     const waterProx = this._waterDistField;
 
     // 1) Precompute spatially-feathered vertex colours, canopy weight, rock weight,
-    //    water proximity, and analytical hillshade on the N×N grid so the 512×512
-    //    texel pass only needs fast bilinear interpolation + micro-texture noise.
+    //    cultivation / snow weights, water proximity, and analytical hillshade on
+    //    the N×N grid so the per-texel pass only needs fast bilinear interpolation
+    //    + micro-texture noise.
     const gridR = new Float32Array(N * N);
     const gridG = new Float32Array(N * N);
     const gridB = new Float32Array(N * N);
     const gridCanopy = new Float32Array(N * N);
     const gridRock = new Float32Array(N * N);
+    const gridFarm = new Float32Array(N * N);
+    const gridOrchard = new Float32Array(N * N);
+    const gridSnow = new Float32Array(N * N);
     const gridWater = new Float32Array(N * N);
     const gridShade = new Float32Array(N * N);
     const gridElev = new Float32Array(N * N);
@@ -2696,6 +2889,9 @@ export class TerrainViewer {
     const rawB = new Float32Array(N * N);
     const rawCanopy = new Float32Array(N * N);
     const rawRock = new Float32Array(N * N);
+    const rawFarm = new Float32Array(N * N);
+    const rawOrchard = new Float32Array(N * N);
+    const rawSnow = new Float32Array(N * N);
 
     for (let i = 0; i < N; i++) {
       const v = i / (N - 1);
@@ -2719,6 +2915,16 @@ export class TerrainViewer {
         });
         rawR[k] = cr; rawG[k] = cg; rawB[k] = cb;
 
+        // Cultivated cover (row-planted orchards/tea vs furrowed field crops) and
+        // perennial snow/ice. Snow is also inferred above the local snowline so
+        // high peaks read as snowfields even where OSM has no glacier polygon.
+        rawFarm[k] = sb === 'farm' ? 1 : 0;
+        rawOrchard[k] = sb === 'orchard' ? 1 : 0;
+        let snowW = sb === 'snow' ? 1 : 0;
+        if (elev > 3750) snowW = Math.max(snowW, Math.min(1, (elev - 3750) / 260));
+        rawSnow[k] = snowW;
+        const cultivated = rawFarm[k] > 0 || rawOrchard[k] > 0 || snowW > 0.4;
+
         // Canopy fullness (0..1) drives 3D crown mottling and bump amplitude.
         let cw = 0;
         if (sb === 'forest') cw = 0.95;
@@ -2728,9 +2934,13 @@ export class TerrainViewer {
         else if (fm == null && elev < 3300 && s < 0.85) {
           cw = Math.max(0.15, Math.min(0.85, 0.48 - c * 0.25 + wp * 0.3 + (sat ? sat.exg * 0.45 : 0)));
         }
-        if (sat && sat.exg > 0.12 && sb !== 'urban' && sb !== 'rock') {
+        // Satellite greenness can promote canopy on unlabelled ground, but never on
+        // cultivated rows, bare rock, snow or built-up land — those have their own
+        // surface structure and tree-crown mottling would destroy it.
+        if (sat && sat.exg > 0.12 && sb !== 'urban' && sb !== 'rock' && !cultivated) {
           cw = Math.max(cw, Math.min(0.92, 0.35 + sat.exg * 0.85));
         }
+        if (cultivated) cw = Math.min(cw, 0.12);
         rawCanopy[k] = cw;
 
         // Rock / cliff / scree weight (0..1) drives stratified bedrock veins & bump.
@@ -2738,6 +2948,9 @@ export class TerrainViewer {
         const slopeRock = Math.max(0, Math.min(1, (s + Math.max(0, c) * 0.25 - 0.52) / 0.85));
         rw = Math.max(rw, slopeRock * (sb === 'forest' ? 0.35 : 0.88));
         if (sat && sat.exg < -0.05 && s > 0.25) rw = Math.max(rw, Math.min(0.85, (-sat.exg) * 1.3));
+        // Snow and worked fields bury the bedrock texture.
+        if (snowW > 0.2) rw *= Math.max(0, 1 - snowW);
+        if (rawFarm[k] > 0 || rawOrchard[k] > 0) rw *= 0.2;
         rawRock[k] = rw;
         gridWater[k] = wp;
 
@@ -2752,22 +2965,28 @@ export class TerrainViewer {
       }
     }
 
-    // 3×3 spatial feather over the N×N biome arrays so polygon boundaries blend
-    // organically instead of showing grid-aligned steps.
+    // 5×5 spatial feather over the N×N biome arrays (inverse-square weights) so
+    // polygon boundaries dissolve organically instead of showing grid-aligned
+    // steps. The DEM-derived shade/elevation fields are deliberately NOT blurred —
+    // they must stay geometrically true to the terrain.
+    const FEATHER = 2;
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
-        let sr = 0, sg = 0, sb = 0, sc = 0, srk = 0, wSum = 0;
-        for (let di = -1; di <= 1; di++) {
+        let sr = 0, sg = 0, sb = 0, sc = 0, srk = 0, sf = 0, so = 0, sn = 0, wSum = 0;
+        for (let di = -FEATHER; di <= FEATHER; di++) {
           const ii = i + di < 0 ? 0 : (i + di >= N ? N - 1 : i + di);
-          for (let dj = -1; dj <= 1; dj++) {
+          for (let dj = -FEATHER; dj <= FEATHER; dj++) {
             const jj = j + dj < 0 ? 0 : (j + dj >= N ? N - 1 : j + dj);
-            const wt = (di === 0 && dj === 0) ? 4 : ((di === 0 || dj === 0) ? 2 : 1);
+            const wt = 1 / (1 + di * di + dj * dj);
             const nk = ii * N + jj;
             sr += rawR[nk] * wt;
             sg += rawG[nk] * wt;
             sb += rawB[nk] * wt;
             sc += rawCanopy[nk] * wt;
             srk += rawRock[nk] * wt;
+            sf += rawFarm[nk] * wt;
+            so += rawOrchard[nk] * wt;
+            sn += rawSnow[nk] * wt;
             wSum += wt;
           }
         }
@@ -2777,10 +2996,13 @@ export class TerrainViewer {
         gridB[k] = sb / wSum;
         gridCanopy[k] = sc / wSum;
         gridRock[k] = srk / wSum;
+        gridFarm[k] = sf / wSum;
+        gridOrchard[k] = so / wSum;
+        gridSnow[k] = sn / wSum;
       }
     }
 
-    // 2) Synthesize the 512×512 Albedo, Bump, and Roughness canvases.
+    // 2) Synthesize the Albedo, Bump, and Roughness canvases.
     const albedoCanvas = document.createElement('canvas');
     albedoCanvas.width = TEX; albedoCanvas.height = TEX;
     const albedoCtx = albedoCanvas.getContext('2d');
@@ -2800,8 +3022,16 @@ export class TerrainViewer {
     const rData = roughImg.data;
 
     const satImg = this._satImageData;
-    const hasSat = !!(satImg && satImg.data && satImg.width > 0 && satImg.height > 0);
+    const satStats = this._computeSatelliteStats();
+    const hasSat = !!(satImg && satImg.data && satImg.width > 0 && satImg.height > 0 && satStats);
     const satMode = !!this._satelliteEnabled && hasSat;
+    const satLo = satStats ? satStats.lo : 0;
+    const satSpan = satStats ? Math.max(0.08, satStats.hi - satStats.lo) : 1;
+    const satW = satImg ? satImg.width : 0;
+    const satH = satImg ? satImg.height : 0;
+    const satData = satImg ? satImg.data : null;
+    const lpN = satStats ? satStats.lpN : 1;
+    const lpArr = satStats ? satStats.lp : null;
 
     const bilerp = (arr, gi, gj) => {
       const i0 = Math.max(0, Math.min(N - 2, Math.floor(gi)));
@@ -2814,6 +3044,20 @@ export class TerrainViewer {
       return top + (bot - top) * ty;
     };
 
+    // Bilinear sample of the blurred satellite illumination field (v = 1 is north).
+    const lpAt = (u, v) => {
+      const fi = Math.max(0, Math.min(lpN - 1, (1 - v) * (lpN - 1)));
+      const fj = Math.max(0, Math.min(lpN - 1, u * (lpN - 1)));
+      const i0 = Math.max(0, Math.min(lpN - 2, Math.floor(fi)));
+      const j0 = Math.max(0, Math.min(lpN - 2, Math.floor(fj)));
+      const ty = fi - i0;
+      const tx = fj - j0;
+      const k00 = i0 * lpN + j0;
+      const top = lpArr[k00] + (lpArr[k00 + 1] - lpArr[k00]) * tx;
+      const bot = lpArr[k00 + lpN] + (lpArr[k00 + lpN + 1] - lpArr[k00 + lpN]) * tx;
+      return top + (bot - top) * ty;
+    };
+
     for (let py = 0; py < TEX; py++) {
       const v = 1 - py / (TEX - 1); // py=0 is north (v=1, maxLat)
       const gi = v * (N - 1);
@@ -2822,23 +3066,36 @@ export class TerrainViewer {
         const gj = u * (N - 1);
         const pIdx = (py * TEX + px) * 4;
 
-        let r = bilerp(gridR, gi, gj);
-        let g = bilerp(gridG, gi, gj);
-        let b = bilerp(gridB, gi, gj);
-        const canopy = bilerp(gridCanopy, gi, gj);
-        const rock = bilerp(gridRock, gi, gj);
-        const water = bilerp(gridWater, gi, gj);
-        const shade = bilerp(gridShade, gi, gj);
-        const elev = bilerp(gridElev, gi, gj);
-
         // Multi-scale procedural micro-texture:
         //  • nCrown: cellular forest tree-crown domes (sunlit crown tips & dark gaps)
         //  • nPatch: medium landscape patchiness (clearing / meadow / shrub clusters)
-        //  • nStrata: contour-following geological bedrock strata & cliff fractures
+        //  • strataWave: contour-following bedrock strata & cliff fractures
         const nCrown1 = TerrainViewer._valueNoise2D(u * 96, v * 96);
         const nCrown2 = TerrainViewer._valueNoise2D(u * 44 + 17.3, v * 44 + 9.1);
         const crownDome = Math.sin(nCrown1 * Math.PI) * 0.65 + nCrown2 * 0.35; // 0..1
         const nPatch = TerrainViewer._valueNoise2D(u * 18 + 3.7, v * 18 + 11.2) - 0.5;
+
+        // Dissolve the remaining grid alignment of the land-cover polygons: the
+        // biome lookups are warped by a low-frequency noise offset of well under a
+        // grid cell — enough to break the rasteriser's staircase without shifting a
+        // small polygon off its real ground position — while shade/elevation stay
+        // on the true geometry.
+        const bi = Math.max(0, Math.min(N - 1,
+          gi + (TerrainViewer._valueNoise2D(u * 6.5 + 21.3, v * 6.5 + 5.9) - 0.5) * 1.6));
+        const bj = Math.max(0, Math.min(N - 1,
+          gj + (TerrainViewer._valueNoise2D(u * 6.5 + 77.1, v * 6.5 + 41.2) - 0.5) * 1.6));
+
+        let r = bilerp(gridR, bi, bj);
+        let g = bilerp(gridG, bi, bj);
+        let b = bilerp(gridB, bi, bj);
+        const canopy = bilerp(gridCanopy, bi, bj);
+        const rock = bilerp(gridRock, bi, bj);
+        const farm = bilerp(gridFarm, bi, bj);
+        const orchard = bilerp(gridOrchard, bi, bj);
+        const snow = bilerp(gridSnow, bi, bj);
+        const water = bilerp(gridWater, bi, bj);
+        const shade = bilerp(gridShade, gi, gj);
+        const elev = bilerp(gridElev, gi, gj);
         const strataWave = Math.sin((elev * 0.14) + nCrown2 * 4.2) * 0.5 + 0.5;
 
         // Apply organic canopy crown mottling & meadow variation to procedural base.
@@ -2848,9 +3105,44 @@ export class TerrainViewer {
           g += crownDelta * 1.05 + nPatch * 0.06 * canopy;
           b += crownDelta * 0.55;
         } else {
-          // Subtle meadow / soil grain
-          const grain = (nCrown1 - 0.5) * 0.06 + nPatch * 0.04;
+          // Subtle meadow / soil grain, muted over snow.
+          const grain = ((nCrown1 - 0.5) * 0.06 + nPatch * 0.04) * (1 - snow * 0.75);
           r += grain; g += grain; b += grain * 0.85;
+        }
+
+        // Cultivation patterns. The row azimuth is driven by the low-frequency
+        // patch noise so neighbouring fields don't all line up, which is what sells
+        // farmland as farmland from an oblique camera.
+        let rowBump = 0;
+        if (farm > 0.05) {
+          const ang = nPatch * 2.4;
+          const rows = Math.sin((u * Math.cos(ang) + v * Math.sin(ang)) * 430) * 0.5 + 0.5;
+          const furrow = (rows - 0.5) * 0.17 * farm;
+          r += furrow;
+          g += furrow * 0.9;
+          b += furrow * 0.6;
+          rowBump += (rows - 0.5) * 0.5 * farm;
+        }
+        if (orchard > 0.05) {
+          const ang = nPatch * 2.4 + 0.6;
+          const ca = Math.cos(ang);
+          const sa = Math.sin(ang);
+          const crowns = Math.max(0, Math.sin((u * ca + v * sa) * 310))
+            * Math.max(0, Math.sin((v * ca - u * sa) * 310));
+          const d = (crowns - 0.3) * 0.26 * orchard;
+          r += d * 0.7;
+          g += d;
+          b += d * 0.5;
+          rowBump += (crowns - 0.3) * 0.7 * orchard;
+        }
+        if (snow > 0.05) {
+          // Wind-sculpted sastrugi streaks, blue-shadowed in the troughs.
+          const streak = Math.sin((u * 0.8 + v * 0.6) * 160 + nCrown2 * 5) * 0.5 + 0.5;
+          const d = (streak - 0.5) * 0.07 * snow;
+          r += d * 0.8;
+          g += d * 0.9;
+          b += d;
+          rowBump += (streak - 0.5) * 0.3 * snow;
         }
 
         // Apply stratified rock veins & scree texture on steep slopes / cliffs.
@@ -2866,44 +3158,63 @@ export class TerrainViewer {
         g *= shade;
         b *= shade;
 
-        // Fuse with Satellite imagery when available:
+        // Fuse with satellite imagery when available. The imagery is
+        // contrast-stretched, stripped of its own baked-in illumination, and re-lit
+        // by the DEM hillshade, so it reinforces the 3D relief instead of fighting
+        // it — and its high-frequency residual drives the bump map, which is what
+        // gives the surface real-world texture rather than pure procedural noise.
+        let satDetail = 0;
         if (hasSat) {
-          const sx = Math.max(0, Math.min(satImg.width - 1, Math.round(u * (satImg.width - 1))));
-          const sy = Math.max(0, Math.min(satImg.height - 1, Math.round((1 - v) * (satImg.height - 1))));
-          const sIdx = (sy * satImg.width + sx) * 4;
-          const sd = satImg.data;
-          if (sd[sIdx + 3] > 32) {
-            // Contrast-and-saturation enhanced satellite pixel, modulated by DEM relief shade.
-            let sr = sd[sIdx] / 255;
-            let sg = sd[sIdx + 1] / 255;
-            let sb = sd[sIdx + 2] / 255;
-            const sLuma = 0.299 * sr + 0.587 * sg + 0.114 * sb;
-            // Gentle vibrance boost & shadow recovery so aerial haze doesn't wash out the 3D relief.
-            const vib = 1.22;
-            sr = Math.max(0, Math.min(1, sLuma + (sr - sLuma) * vib));
-            sg = Math.max(0, Math.min(1, sLuma + (sg - sLuma) * vib));
-            sb = Math.max(0, Math.min(1, sLuma + (sb - sLuma) * vib));
+          const fx = u * (satW - 1);
+          const fy = (1 - v) * (satH - 1);
+          const sx0 = Math.max(0, Math.min(satW - 1, Math.floor(fx)));
+          const sy0 = Math.max(0, Math.min(satH - 1, Math.floor(fy)));
+          const sx1 = Math.min(satW - 1, sx0 + 1);
+          const sy1 = Math.min(satH - 1, sy0 + 1);
+          const tx = fx - sx0;
+          const ty = fy - sy0;
+          const i00 = (sy0 * satW + sx0) * 4;
+          const i10 = (sy0 * satW + sx1) * 4;
+          const i01 = (sy1 * satW + sx0) * 4;
+          const i11 = (sy1 * satW + sx1) * 4;
+          if (satData[i00 + 3] > 32 && satData[i11 + 3] > 32) {
+            // Bilinear sample so the mosaic doesn't stair-step when stretched over
+            // a 1024² surface texture.
+            const chan = (o) => {
+              const top = satData[i00 + o] + (satData[i10 + o] - satData[i00 + o]) * tx;
+              const bot = satData[i01 + o] + (satData[i11 + o] - satData[i01 + o]) * tx;
+              return (top + (bot - top) * ty) / 255;
+            };
+            const s0 = chan(0);
+            const s1 = chan(1);
+            const s2 = chan(2);
+            const sLuma = 0.299 * s0 + 0.587 * s1 + 0.114 * s2;
 
-            const satRelief = 0.72 + 0.28 * shade;
-            sr *= satRelief;
-            sg *= satRelief;
-            sb *= satRelief;
+            // Percentile stretch, then subtract the local illumination to leave the
+            // surface detail (−0.5..0.5). Only ~55% of the large-scale tone is
+            // flattened out: a dark forest canopy genuinely is darker than a gravel
+            // bar, so fully normalising it would throw away real albedo along with
+            // the baked-in shading. The result is re-lit by the DEM hillshade.
+            const stretched = Math.max(0, Math.min(1, (sLuma - satLo) / satSpan));
+            const localL = Math.max(0, Math.min(1, (lpAt(u, v) - satLo) / satSpan));
+            satDetail = Math.max(-0.5, Math.min(0.5, stretched - localL));
+            const tone = stretched * 0.45 + (0.5 + satDetail * 1.3) * 0.55;
+            const relit = Math.max(0.03, Math.min(1.3, tone * shade * 1.08));
 
-            if (satMode) {
-              // Explicit Satellite Mode: crisp relief-shaded satellite imagery
-              // harmonized with 20% OSM/geomorphology biome tint + canopy micro-detail.
-              const bioMix = 0.20;
-              r = sr * (1 - bioMix) + r * bioMix;
-              g = sg * (1 - bioMix) + g * bioMix;
-              b = sb * (1 - bioMix) + b * bioMix;
-            } else {
-              // Automatic Hybrid Mode: fuse real-world satellite texture & canopy
-              // variations (~30%) into the OSM + geomorphology terrain surface.
-              const autoMix = 0.30;
-              r = r * (1 - autoMix) + sr * autoMix;
-              g = g * (1 - autoMix) + sg * autoMix;
-              b = b * (1 - autoMix) + sb * autoMix;
-            }
+            // Keep the real chroma as an offset around the new luminance, with a
+            // gentle vibrance boost so aerial haze doesn't wash the colours out.
+            const vib = 1.3;
+            const sr = Math.max(0, Math.min(1, relit + (s0 - sLuma) * vib));
+            const sg = Math.max(0, Math.min(1, relit + (s1 - sLuma) * vib));
+            const sb = Math.max(0, Math.min(1, relit + (s2 - sLuma) * vib));
+
+            // Explicit 衛星 mode leans on the imagery and keeps a 20% biome tint;
+            // the automatic hybrid blends ~34% imagery into the OSM/geomorphology
+            // surface so real vegetation density and bare patches come through.
+            const satMix = satMode ? 0.80 : 0.34;
+            r = r * (1 - satMix) + sr * satMix;
+            g = g * (1 - satMix) + sg * satMix;
+            b = b * (1 - satMix) + sb * satMix;
           }
         }
 
@@ -2912,22 +3223,26 @@ export class TerrainViewer {
         aData[pIdx + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
         aData[pIdx + 3] = 255;
 
-        // Bump map height (0..255): 3D canopy domes in forests + craggy strata on rock,
-        // smooth over water channels.
+        // Bump map height (0..255): 3D canopy domes in forests, craggy strata on
+        // rock, planting/furrow relief on cultivated ground, and real-world
+        // micro-relief from the satellite residual; smooth over water channels.
         const waterFlatten = Math.max(0, 1 - water * 0.85);
         const bumpVal = (
           0.5 +
           (crownDome - 0.5) * 0.55 * canopy +
           (strataWave * 0.6 + nCrown1 * 0.4 - 0.5) * 0.65 * rock +
+          rowBump * 0.22 +
+          satDetail * 0.45 +
           (nCrown2 - 0.5) * 0.14
         ) * waterFlatten;
         const bByte = Math.max(0, Math.min(255, Math.round(bumpVal * 255)));
         bData[pIdx] = bData[pIdx + 1] = bData[pIdx + 2] = bByte;
         bData[pIdx + 3] = 255;
 
-        // Roughness map (0..255): water/wetlands are glossy (low roughness),
-        // forest canopy is matte (high roughness), exposed rock has subtle mineral sheen.
-        let rough = 0.86 + canopy * 0.08 - rock * 0.14 - water * 0.52;
+        // Roughness map (0..255): water/wetlands are glossy (low roughness), forest
+        // canopy is matte (high roughness), exposed rock has a subtle mineral sheen
+        // and snow/ice is smoother still.
+        let rough = 0.86 + canopy * 0.08 - rock * 0.14 - water * 0.52 - snow * 0.2;
         rough = Math.max(0.22, Math.min(0.96, rough));
         const rByte = Math.round(rough * 255);
         rData[pIdx] = rData[pIdx + 1] = rData[pIdx + 2] = rByte;
@@ -2960,7 +3275,9 @@ export class TerrainViewer {
     const mat = this.terrainMesh.material;
     mat.map = this._surfaceMap;
     mat.bumpMap = this._surfaceBumpMap;
-    mat.bumpScale = Math.max(2.2, (this._worldSpan || 2000) * 0.0028);
+    // A finer texture resolves finer relief, so it can carry a slightly stronger
+    // bump without turning into aliasing noise.
+    mat.bumpScale = Math.max(2.2, (this._worldSpan || 2000) * 0.0028) * (TEX >= 1024 ? 1.25 : 1);
     mat.roughnessMap = this._surfaceRoughMap;
     mat.roughness = 1.0;
     mat.vertexColors = false;
@@ -3136,7 +3453,9 @@ export class TerrainViewer {
       return;
     }
     try {
-      const canvas = await this._fetchSatelliteCanvas(bbox, { maxTilesPerSide: 3 });
+      // 4 tiles per side (up to ~1024 px of mosaic) so the imagery can actually
+      // feed the 1024² surface synthesis instead of being upsampled into mush.
+      const canvas = await this._fetchSatelliteCanvas(bbox, { maxTilesPerSide: 4 });
       if (!canvas || this._aborted || token !== this._buildToken || !this.terrainMesh) return;
       this._satCanvas = canvas;
       this._satCanvasKey = key;
@@ -4523,6 +4842,21 @@ export class TerrainViewer {
     if (/^(city_wall|retaining_wall|wall)$/.test(tags.barrier || '') || tags.historic === 'citywalls') {
       return { group: 'structure', kind: 'structure', cls: 'wall' };
     }
+    // Light boundary structures: post-and-rail fences / guard rails, clipped
+    // hedgerows, planted tree rows (行道樹／防風林) and surface pipelines. They
+    // read as low 3D ribbons or repeated props rather than solid masonry.
+    if (/^(fence|guard_rail|handrail)$/.test(tags.barrier || '')) {
+      return { group: 'structure', kind: 'structure', cls: 'fence' };
+    }
+    if (tags.barrier === 'hedge' || tags.natural === 'hedge') {
+      return { group: 'structure', kind: 'structure', cls: 'hedge' };
+    }
+    if (tags.natural === 'tree_row') {
+      return { group: 'structure', kind: 'structure', cls: 'tree_row' };
+    }
+    if (mm === 'pipeline' && tags.location !== 'underground') {
+      return { group: 'structure', kind: 'structure', cls: 'pipeline' };
+    }
     if (/^(cliff|ridge|arete)$/.test(tags.natural || '') && tags.area !== 'yes') {
       return { group: 'structure', kind: 'structure', cls: 'cliff' };
     }
@@ -4594,19 +4928,34 @@ export class TerrainViewer {
       || tags.wetland || tags.tidal === 'yes' || tags.landuse === 'salt_pond') {
       return { group: 'area', kind: 'water', cls: 'wetland' };
     }
-    if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir' || tags.landuse === 'basin') {
+    if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir'
+      || tags.landuse === 'basin' || tags.landuse === 'aquaculture') {
       return { group: 'area', kind: 'water', cls: 'water' };
     }
+    // 冰河 / 常年積雪: a cover domain of its own so it renders as snow/ice instead
+    // of being swallowed by the bare-rock ramp.
+    if (tags.natural === 'glacier' || tags.landuse === 'snowfield') {
+      return { group: 'area', kind: 'snow', cls: 'glacier' };
+    }
     if (tags.natural === 'wood' || tags.landuse === 'forest') return { group: 'area', kind: 'green', cls: 'forest' };
-    if (/^(scrub|heath)$/.test(tags.natural || '') || /^(orchard|vineyard|tea)$/.test(tags.landuse || '')) {
+    // Row-planted cultivation (果園／茶園／葡萄園) is kept apart from wild scrub so
+    // the surface synthesis can draw its regular planting grid.
+    if (/^(orchard|vineyard|tea|plant_nursery)$/.test(tags.landuse || '')) {
+      return { group: 'area', kind: 'green', cls: 'orchard' };
+    }
+    if (/^(scrub|heath)$/.test(tags.natural || '')) {
       return { group: 'area', kind: 'green', cls: 'scrub' };
     }
-    if (/^(grass|meadow|village_green|recreation_ground|farmland|farmyard|cemetery|allotments)$/.test(tags.landuse || '')
+    // Field crops (農田／休耕地／溫室園藝) get furrow rows rather than meadow grain.
+    if (/^(farmland|farmyard|allotments|greenhouse_horticulture|paddy)$/.test(tags.landuse || '')) {
+      return { group: 'area', kind: 'green', cls: 'farm' };
+    }
+    if (/^(grass|meadow|village_green|recreation_ground|cemetery)$/.test(tags.landuse || '')
       || /^(grassland|fell)$/.test(tags.natural || '')
       || /^(park|garden|nature_reserve|golf_course|recreation_ground|common)$/.test(tags.leisure || '')) {
       return { group: 'area', kind: 'green', cls: 'grass' };
     }
-    if (/^(bare_rock|scree|rock|cliff)$/.test(tags.natural || '') || tags.landuse === 'quarry') {
+    if (/^(bare_rock|scree|rock|cliff|reef)$/.test(tags.natural || '') || tags.landuse === 'quarry') {
       return { group: 'area', kind: 'waste', cls: 'rock' };
     }
     if (/^(sand|shingle|beach)$/.test(tags.natural || '')) {
@@ -4618,6 +4967,7 @@ export class TerrainViewer {
     }
     // Built-up / urban land cover (matches the tinted urban blocks on the 2D map).
     if (/^(residential|commercial|retail|education|institutional|civic|garages)$/.test(tags.landuse || '')
+      || tags.aeroway === 'apron'
       || tags.place === 'neighbourhood' || tags.place === 'quarter') {
       return { group: 'area', kind: 'urban', cls: 'urban' };
     }
@@ -4645,6 +4995,10 @@ export class TerrainViewer {
     }
     if (/^(cave_entrance|arch|sinkhole)$/.test(nat || '')) return { cls: 'cave' };
     if (nat === 'stone' || nat === 'rock' || tags.historic === 'boundary_stone') return { cls: 'rock' };
+    // 三角點 / 水準點: the summit survey marker Taiwanese hikers tag their peaks by.
+    if (tags.man_made === 'survey_point' || tags.historic === 'survey_point') return { cls: 'survey_point' };
+    // 涉水點 / 過溪踏石: a real route hazard, so it gets its own marker.
+    if ((tags.ford && tags.ford !== 'no') || tags.highway === 'ford') return { cls: 'ford' };
     if (nat === 'tree') {
       const nm = TerrainViewer._featureName(tags) || '';
       if (tags.denotation === 'natural_monument' || tags.denotation === 'landmark'
@@ -4689,7 +5043,16 @@ export class TerrainViewer {
       return { cls: 'temple' };
     }
 
+    // 溫室 / 塑膠布棚 (farm polytunnels).
+    if (/^greenhouse$/.test(bld) || mm === 'greenhouse' || tags.landuse === 'greenhouse_horticulture') {
+      return { cls: 'greenhouse' };
+    }
+
     // Energy, utilities & vertical towers.
+    if (/^(solar|photovoltaic)$/.test(tags['generator:source'] || tags['plant:source'] || '')
+      || /^solar_(panel|thermal_collector)$/.test(tags['generator:method'] || '')) {
+      return { cls: 'solar' };
+    }
     if ((tags.power === 'generator' && (/^(wind|wind_turbine)$/.test(tags['generator:source'] || tags['generator:method'] || '') || !tags['generator:source']))
       || /^(windmill|wind_pump)$/.test(mm || '')) {
       return { cls: 'wind_turbine' };
@@ -4706,6 +5069,16 @@ export class TerrainViewer {
     if (/^(chimney|kiln)$/.test(mm || '')) {
       return { cls: 'chimney' };
     }
+    if (/^(mineshaft|adit)$/.test(mm || '') || tags.historic === 'mine') {
+      return { cls: 'mine' };
+    }
+    if (mm === 'monitoring_station' || tags.amenity === 'ranger_station'
+      || /^(weather|seismic)$/.test(tags['monitoring:type'] || '')) {
+      return { cls: 'monitoring' };
+    }
+    if (/^(flagpole|cross)$/.test(mm || '') || tags.historic === 'wayside_cross') {
+      return { cls: 'flagpole' };
+    }
     if (mm && /^(tower|mast|communications_tower|observatory)$/.test(mm)) {
       return { cls: 'tower' };
     }
@@ -4716,6 +5089,10 @@ export class TerrainViewer {
     }
     if (hist && /^(monument|memorial|archaeological_site|milestone)$/.test(hist)) {
       return { cls: 'monument' };
+    }
+
+    if (hist === 'statue' || /^(statue|sculpture|bust)$/.test(tags.artwork_type || '')) {
+      return { cls: 'statue' };
     }
 
     // Viewpoints, trailheads/guideposts, stations, helipads, parking & picnic sites.
@@ -4744,6 +5121,38 @@ export class TerrainViewer {
       || /^(picnic_table|firepit)$/.test(leis || '')
       || /^(drinking_water|fountain|bench|bbq)$/.test(amen || '')) {
       return { cls: 'picnic' };
+    }
+
+    // Trailside services a route planner actually needs to see: 公車站 / 柵門 /
+    // 廁所 / 補給 / 住宿 / 醫療 / 加油 / 學校 / 遊憩設施.
+    if (tags.highway === 'bus_stop' || /^(platform|stop_position)$/.test(tags.public_transport || '')) {
+      return { cls: 'bus_stop' };
+    }
+    if (/^(gate|lift_gate|swing_gate|hampshire_gate|kissing_gate|stile|cattle_grid|bollard|block)$/.test(tags.barrier || '')) {
+      return { cls: 'gate' };
+    }
+    if (amen === 'toilets' || /^toilets$/.test(bld)) {
+      return { cls: 'toilet' };
+    }
+    if (/^(fuel|charging_station)$/.test(amen || '')) {
+      return { cls: 'fuel' };
+    }
+    if (/^(hospital|clinic|pharmacy|doctors)$/.test(amen || '') || tags.emergency === 'defibrillator'
+      || /^(hospital)$/.test(bld)) {
+      return { cls: 'medical' };
+    }
+    if (/^(hotel|hostel|guest_house|motel|apartment)$/.test(tour || '') || /^(hotel|dormitory)$/.test(bld)) {
+      return { cls: 'lodging' };
+    }
+    if (/^(convenience|supermarket|outdoor|sports|bakery|greengrocer)$/.test(tags.shop || '')
+      || /^(restaurant|cafe|fast_food|marketplace|food_court)$/.test(amen || '')) {
+      return { cls: 'supply' };
+    }
+    if (/^(school|university|college|kindergarten)$/.test(amen || '') || /^(school|university)$/.test(bld)) {
+      return { cls: 'school' };
+    }
+    if (/^(playground|fitness_station)$/.test(leis || '')) {
+      return { cls: 'playground' };
     }
     return null;
   }
@@ -4939,18 +5348,19 @@ export class TerrainViewer {
       `way["aerialway"](${bb});` +
       `way["power"~"line|minor_line"](${bb});` +
       `way["waterway"](${bb});` +
-      `way["man_made"~"bridge|pier|breakwater|groyne|embankment|dyke|tower|mast|communications_tower|water_tower|storage_tank|silo|lighthouse|chimney|windmill|wind_pump|torii"](${bb});` +
-      `way["barrier"~"city_wall|retaining_wall|wall"](${bb});` +
+      `way["man_made"~"bridge|pier|breakwater|groyne|embankment|dyke|tower|mast|communications_tower|water_tower|storage_tank|silo|lighthouse|chimney|windmill|wind_pump|torii|pipeline|survey_point|monitoring_station|mineshaft|adit|greenhouse|flagpole"](${bb});` +
+      `way["barrier"~"city_wall|retaining_wall|wall|fence|hedge|guard_rail|handrail"](${bb});` +
+      `way["natural"="tree_row"](${bb});` +
       `way["historic"~"citywalls|castle|fort|bunker|ruins|city_gate|monument|memorial|archaeological_site|wayside_shrine"](${bb});` +
-      `way["natural"~"water|wood|scrub|heath|grassland|wetland|mud|saltmarsh|bare_rock|scree|sand|shingle|cliff|ridge|arete"](${bb});` +
+      `way["natural"~"water|wood|scrub|heath|grassland|wetland|mud|saltmarsh|bare_rock|scree|sand|shingle|cliff|ridge|arete|glacier|beach|reef"](${bb});` +
       `way["water"](${bb});` +
       `way["wetland"](${bb});` +
       `way["tidal"="yes"](${bb});` +
       `way["landuse"](${bb});` +
-      `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|track|stadium|swimming_pool|recreation_ground|common|pavilion|picnic_table"](${bb});` +
-      `way["tourism"~"alpine_hut|wilderness_hut|chalet|camp_site|caravan_site|viewpoint|attraction|artwork|picnic_site|information"](${bb});` +
-      `way["amenity"~"shelter|place_of_worship|parking|bus_station|drinking_water|fountain|public_bath"](${bb});` +
-      `way["aeroway"~"helipad|heliport|runway|taxiway"](${bb});` +
+      `way["leisure"~"park|garden|nature_reserve|golf_course|pitch|track|stadium|swimming_pool|recreation_ground|common|pavilion|picnic_table|playground|fitness_station"](${bb});` +
+      `way["tourism"~"alpine_hut|wilderness_hut|chalet|camp_site|caravan_site|viewpoint|attraction|artwork|picnic_site|information|hotel|hostel|guest_house|motel"](${bb});` +
+      `way["amenity"~"shelter|place_of_worship|parking|bus_station|drinking_water|fountain|public_bath|toilets|fuel|charging_station|hospital|clinic|school|university|college|ranger_station|restaurant|cafe|marketplace"](${bb});` +
+      `way["aeroway"~"helipad|heliport|runway|taxiway|apron"](${bb});` +
       `way["building"](${bb});` +
       `way["building:part"](${bb});` +
       // Point landmarks (Plan §III-1): peaks, passes, waterfalls, springs, caves,
@@ -4958,21 +5368,24 @@ export class TerrainViewer {
       // power pylons, water towers, towers, lighthouses, chimneys, castles,
       // monuments, viewpoints, trailheads, stations, helipads, parking & picnic areas.
       `node["natural"~"peak|volcano|saddle|tree|spring|hot_spring|geyser|cave_entrance|arch|stone|rock|waterfall"](${bb});` +
+      `node["ford"](${bb});` +
+      `node["barrier"~"gate|lift_gate|stile|cattle_grid|kissing_gate|bollard|block"](${bb});` +
+      `node["shop"~"convenience|supermarket|outdoor|sports|bakery|greengrocer"](${bb});` +
       `node["mountain_pass"="yes"](${bb});` +
       `node["waterway"="waterfall"](${bb});` +
-      `node["man_made"~"tower|mast|communications_tower|water_tower|storage_tank|silo|lighthouse|beacon|chimney|windmill|wind_pump|torii|cairn|observatory"](${bb});` +
+      `node["man_made"~"tower|mast|communications_tower|water_tower|storage_tank|silo|lighthouse|beacon|chimney|windmill|wind_pump|torii|cairn|observatory|survey_point|monitoring_station|mineshaft|adit|flagpole|cross|greenhouse"](${bb});` +
       `node["power"~"tower|pole|generator"](${bb});` +
-      `node["tourism"~"viewpoint|attraction|artwork|alpine_hut|wilderness_hut|chalet|camp_site|caravan_site|picnic_site|information"](${bb});` +
-      `node["amenity"~"shelter|place_of_worship|drinking_water|fountain|bench|parking|bus_station|public_bath"](${bb});` +
-      `node["leisure"~"pavilion|picnic_table"](${bb});` +
-      `node["historic"~"monument|memorial|castle|fort|bunker|ruins|city_gate|archaeological_site|wayside_shrine|boundary_stone"](${bb});` +
-      `node["highway"="trailhead"](${bb});` +
+      `node["tourism"~"viewpoint|attraction|artwork|alpine_hut|wilderness_hut|chalet|camp_site|caravan_site|picnic_site|information|hotel|hostel|guest_house|motel"](${bb});` +
+      `node["amenity"~"shelter|place_of_worship|drinking_water|fountain|bench|parking|bus_station|public_bath|toilets|fuel|charging_station|hospital|clinic|pharmacy|doctors|school|university|college|ranger_station|restaurant|cafe|fast_food|marketplace"](${bb});` +
+      `node["leisure"~"pavilion|picnic_table|playground|fitness_station"](${bb});` +
+      `node["historic"~"monument|memorial|castle|fort|bunker|ruins|city_gate|archaeological_site|wayside_shrine|boundary_stone|statue|mine|wayside_cross"](${bb});` +
+      `node["highway"~"trailhead|bus_stop|ford"](${bb});` +
       `node["information"~"guidepost|board|map"](${bb});` +
       `node["railway"~"station|halt|tram_stop|subway_entrance"](${bb});` +
       `node["aerialway"="station"](${bb});` +
       `node["aeroway"~"helipad|heliport"](${bb});` +
-      `relation["natural"~"water|wetland|wood"](${bb});` +
-      `relation["landuse"~"forest|reservoir|basin|grass|meadow|farmland|orchard"](${bb});` +
+      `relation["natural"~"water|wetland|wood|glacier"](${bb});` +
+      `relation["landuse"~"forest|reservoir|basin|grass|meadow|farmland|orchard|vineyard|aquaculture"](${bb});` +
       `relation["leisure"~"park|nature_reserve|pitch|stadium|golf_course"](${bb});` +
       `);out geom 6000;`;
 
@@ -5209,6 +5622,23 @@ export class TerrainViewer {
       heliport: '停機坪',
       parking: '停車場',
       picnic: '休憩區',
+      survey_point: '三角點',
+      ford: '涉水點',
+      gate: '柵門',
+      toilet: '公廁',
+      supply: '補給站',
+      lodging: '住宿',
+      medical: '醫療站',
+      school: '學校',
+      fuel: '加油站',
+      solar: '太陽光電',
+      mine: '礦坑',
+      monitoring: '監測站',
+      greenhouse: '溫室',
+      flagpole: '旗竿',
+      statue: '雕像',
+      playground: '遊憩設施',
+      bus_stop: '公車站',
     };
     return names[cls] || null;
   }
@@ -5226,6 +5656,10 @@ export class TerrainViewer {
   //   • waterfall / spring / cave / rock — Cascading cliff waterfall / steaming spring / cave / crag
   //   • castle / monument  — Battlemented stone fortress & watchtower / obelisk monument
   //   • viewpoint / trailhead / station / heliport / parking / picnic
+  //   • survey_point / ford / gate — 三角點標石 / 過溪踏石 / 管制柵門
+  //   • toilet / supply / lodging / medical / school / bus_stop — trailside services
+  //   • fuel / solar / mine / monitoring / greenhouse — infrastructure & industry
+  //   • flagpole / statue / playground — civic props
   _buildPointModel(cls, ms, realH, lat = 0, lon = 0) {
     const g = new THREE.Group();
     const add = (mesh, x = 0, y = 0, z = 0) => {
@@ -6044,6 +6478,415 @@ export class TerrainViewer {
       return g;
     }
 
+    if (cls === 'survey_point') {
+      // --- Triangulation / Benchmark Marker (三角點／水準點) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0xc9c4b8, roughness: 0.88, flatShading: true });
+      const capMat = new THREE.MeshStandardMaterial({ color: 0xb0471f, roughness: 0.7, flatShading: true });
+      const brassMat = new THREE.MeshStandardMaterial({ color: 0xd9a84e, roughness: 0.3, metalness: 0.7 });
+      // Rubble apron the marker is bedded into, then the tapered concrete pillar.
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2 + seed * 3;
+        const rk = add(new THREE.Mesh(new THREE.DodecahedronGeometry(0.6 * ms, 0), stoneMat), Math.cos(a) * 1.7 * ms, 0.3 * ms, Math.sin(a) * 1.7 * ms);
+        rk.scale.set(1.2, 0.6, 1.1);
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.5 * ms, 2.8 * ms, 1.5 * ms), stoneMat), 0, 1.4 * ms, 0);
+      // Painted cap + engraved brass disc on top.
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.7 * ms, 0.3 * ms, 1.7 * ms), capMat), 0, 2.95 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.42 * ms, 0.42 * ms, 0.12 * ms, 10), brassMat), 0, 3.16 * ms, 0);
+      return g;
+    }
+
+    if (cls === 'ford') {
+      // --- Stream Ford / Stepping Stones (涉水點／過溪踏石) ---
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8e8a7f, roughness: 0.9, flatShading: true });
+      const wetMat = new THREE.MeshStandardMaterial({ color: 0x4e7f9c, roughness: 0.22, metalness: 0.2, transparent: true, opacity: 0.6 });
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0xe0b23a, roughness: 0.55, flatShading: true });
+      // Shallow water sheet with a line of stepping stones across it.
+      const sheet = add(new THREE.Mesh(new THREE.CylinderGeometry(4.2 * ms, 4.2 * ms, 0.18 * ms, 12), wetMat), 0, 0.12 * ms, 0);
+      sheet.scale.set(1, 1, 0.55);
+      for (let i = -2; i <= 2; i++) {
+        const st = add(new THREE.Mesh(new THREE.DodecahedronGeometry(0.72 * ms, 0), stoneMat), i * 1.35 * ms, 0.4 * ms, (i % 2 ? 0.35 : -0.3) * ms);
+        st.scale.set(1.25, 0.55, 1.1);
+        st.rotation.y = seed * 4 + i;
+      }
+      // Depth marker pole on the bank.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.11 * ms, 0.13 * ms, 3.4 * ms, 6), poleMat), 3.6 * ms, 1.7 * ms, 1.5 * ms);
+      return g;
+    }
+
+    if (cls === 'gate') {
+      // --- Trailhead Gate / Barrier (柵門／管制閘門) ---
+      const postMat = new THREE.MeshStandardMaterial({ color: 0x6b5340, roughness: 0.86, flatShading: true });
+      const barMat = new THREE.MeshStandardMaterial({ color: 0xd8dde3, roughness: 0.5, metalness: 0.35, flatShading: true });
+      const stripeMat = new THREE.MeshStandardMaterial({ color: 0xc1372c, roughness: 0.6, flatShading: true });
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.26 * ms, 0.3 * ms, 3.2 * ms, 6), postMat), sx * 2.4 * ms, 1.6 * ms, 0);
+      }
+      // Swing bar, hinged slightly open, with hazard stripes.
+      const bar = add(new THREE.Mesh(new THREE.BoxGeometry(4.6 * ms, 0.26 * ms, 0.26 * ms), barMat), 0, 2.1 * ms, 0);
+      bar.rotation.y = 0.22;
+      for (const ox of [-1.5, 0, 1.5]) {
+        const sp = add(
+          new THREE.Mesh(new THREE.BoxGeometry(0.5 * ms, 0.3 * ms, 0.3 * ms), stripeMat),
+          Math.cos(0.22) * ox * ms, 2.1 * ms, -Math.sin(0.22) * ox * ms
+        );
+        sp.rotation.y = 0.22;
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.22 * ms, 0.22 * ms, 1.2 * ms), barMat), 0, 1.3 * ms, 0);
+      return g;
+    }
+
+    if (cls === 'toilet') {
+      // --- Trailside Toilet Block (公廁) ---
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xe3ded2, roughness: 0.82, flatShading: true });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0x5a7f8c, roughness: 0.68, flatShading: true });
+      const doorMat = new THREE.MeshStandardMaterial({ color: 0x7a5636, roughness: 0.78, flatShading: true });
+      const signMat = new THREE.MeshStandardMaterial({ color: 0x2f6fb5, emissive: 0x0b1d2e, emissiveIntensity: 0.3, roughness: 0.5 });
+      add(new THREE.Mesh(new THREE.BoxGeometry(4.4 * ms, 0.4 * ms, 3.2 * ms), wallMat), 0, 0.2 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(4.0 * ms, 3.0 * ms, 2.8 * ms), wallMat), 0, 1.9 * ms, 0);
+      // Shallow hipped roof with a vent stack.
+      const roof = add(new THREE.Mesh(new THREE.ConeGeometry(3.2 * ms, 1.1 * ms, 4), roofMat), 0, 3.95 * ms, 0);
+      roof.rotation.y = Math.PI / 4;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.18 * ms, 0.18 * ms, 1.0 * ms, 6), roofMat), 1.1 * ms, 4.5 * ms, 0);
+      // Twin doors + pictogram sign.
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(1.5 * ms, 2.2 * ms, 0.14 * ms), doorMat), sx * 0.95 * ms, 1.5 * ms, 1.45 * ms);
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.6 * ms, 0.7 * ms, 0.12 * ms), signMat), 0, 3.2 * ms, 1.45 * ms);
+      return g;
+    }
+
+    if (cls === 'supply') {
+      // --- Trail Supply Point: Shop / Food Stall (補給站／商店) ---
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xead9bd, roughness: 0.8, flatShading: true });
+      const awnMat = new THREE.MeshStandardMaterial({ color: 0xc8453c, roughness: 0.62, flatShading: true });
+      const awnAltMat = new THREE.MeshStandardMaterial({ color: 0xf3ece0, roughness: 0.62, flatShading: true });
+      const glassMat = new THREE.MeshStandardMaterial({
+        color: 0x8fc4dd, roughness: 0.18, metalness: 0.3, emissive: 0x2a3f4c, emissiveIntensity: 0.4,
+      });
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0x8a6239, roughness: 0.85, flatShading: true });
+      add(new THREE.Mesh(new THREE.BoxGeometry(5.6 * ms, 3.6 * ms, 4.2 * ms), wallMat), 0, 1.8 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(5.9 * ms, 0.4 * ms, 4.5 * ms), woodMat), 0, 3.8 * ms, 0);
+      // Striped shop awning over the counter front.
+      for (let i = 0; i < 6; i++) {
+        const strip = add(
+          new THREE.Mesh(new THREE.BoxGeometry(0.95 * ms, 0.14 * ms, 1.9 * ms), i % 2 ? awnAltMat : awnMat),
+          (-2.5 + i) * ms, 3.1 * ms, 2.75 * ms
+        );
+        strip.rotation.x = -0.32;
+      }
+      // Shopfront glazing + outdoor table.
+      add(new THREE.Mesh(new THREE.BoxGeometry(4.2 * ms, 1.8 * ms, 0.14 * ms), glassMat), 0, 1.9 * ms, 2.12 * ms);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.1 * ms, 1.1 * ms, 0.2 * ms, 10), woodMat), 3.6 * ms, 1.5 * ms, 2.4 * ms);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.16 * ms, 0.2 * ms, 1.5 * ms, 6), woodMat), 3.6 * ms, 0.75 * ms, 2.4 * ms);
+      return g;
+    }
+
+    if (cls === 'lodging') {
+      // --- Guesthouse / Mountain Lodge (住宿／民宿) ---
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xe7dcc6, roughness: 0.82, flatShading: true });
+      const beamMat = new THREE.MeshStandardMaterial({ color: 0x6d4a2c, roughness: 0.86, flatShading: true });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0x8a3f33, roughness: 0.7, flatShading: true });
+      const winMat = new THREE.MeshStandardMaterial({
+        color: 0xffd98a, emissive: 0xffb23c, emissiveIntensity: 0.75, roughness: 0.4,
+      });
+      const bodyH = 5.6 * ms;
+      add(new THREE.Mesh(new THREE.BoxGeometry(7.0 * ms, 0.5 * ms, 5.2 * ms), beamMat), 0, 0.25 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.6 * ms, bodyH, 4.8 * ms), wallMat), 0, 0.5 * ms + bodyH / 2, 0);
+      // Exposed corner timbers.
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.BoxGeometry(0.4 * ms, bodyH, 0.4 * ms), beamMat), sx * 3.2 * ms, 0.5 * ms + bodyH / 2, sz * 2.3 * ms);
+        }
+      }
+      // Two storeys of lit windows + a balcony rail.
+      for (const ly of [2.0, 4.4]) {
+        for (const ox of [-2.1, 0, 2.1]) {
+          add(new THREE.Mesh(new THREE.BoxGeometry(1.2 * ms, 1.1 * ms, 0.14 * ms), winMat), ox * ms, ly * ms, 2.45 * ms);
+        }
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.6 * ms, 0.18 * ms, 0.18 * ms), beamMat), 0, 3.6 * ms, 2.6 * ms);
+      // Gabled tile roof + chimney.
+      const roof = add(new THREE.Mesh(new THREE.ConeGeometry(4.3 * ms, 2.4 * ms, 4), roofMat), 0, 0.5 * ms + bodyH + 1.2 * ms, 0);
+      roof.rotation.y = Math.PI / 4;
+      roof.scale.set(1.08, 1, 0.8);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.7 * ms, 1.8 * ms, 0.7 * ms), beamMat), -2.0 * ms, 0.5 * ms + bodyH + 1.4 * ms, 0);
+      return g;
+    }
+
+    if (cls === 'medical') {
+      // --- Clinic / First-Aid Station (醫療站) ---
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xf2f4f5, roughness: 0.72, flatShading: true });
+      const trimMat = new THREE.MeshStandardMaterial({ color: 0x9aa7b1, roughness: 0.6, flatShading: true });
+      const crossMat = new THREE.MeshStandardMaterial({
+        color: 0xd7342c, emissive: 0x5c0d09, emissiveIntensity: 0.5, roughness: 0.45,
+      });
+      const winMat = new THREE.MeshStandardMaterial({ color: 0x9fd0e3, roughness: 0.22, metalness: 0.28 });
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.0 * ms, 4.6 * ms, 4.4 * ms), wallMat), 0, 2.3 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(6.3 * ms, 0.4 * ms, 4.7 * ms), trimMat), 0, 4.8 * ms, 0);
+      // Entrance canopy.
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.0 * ms, 0.22 * ms, 1.6 * ms), trimMat), 0, 3.1 * ms, 2.9 * ms);
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.12 * ms, 0.12 * ms, 3.0 * ms, 6), trimMat), sx * 1.3 * ms, 1.5 * ms, 3.5 * ms);
+      }
+      // Red cross emblem on the facade.
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.9 * ms, 0.55 * ms, 0.16 * ms), crossMat), 0, 3.9 * ms, 2.25 * ms);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.55 * ms, 1.9 * ms, 0.16 * ms), crossMat), 0, 3.9 * ms, 2.25 * ms);
+      for (const ox of [-1.9, 1.9]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(1.4 * ms, 1.3 * ms, 0.14 * ms), winMat), ox * ms, 2.2 * ms, 2.25 * ms);
+      }
+      return g;
+    }
+
+    if (cls === 'school') {
+      // --- School Campus Block (學校) ---
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xe9ddc4, roughness: 0.82, flatShading: true });
+      const trimMat = new THREE.MeshStandardMaterial({ color: 0xb15f3a, roughness: 0.74, flatShading: true });
+      const winMat = new THREE.MeshStandardMaterial({ color: 0x9cc7dd, roughness: 0.24, metalness: 0.26 });
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0xd4d8dc, roughness: 0.45, metalness: 0.4 });
+      const flagMat = new THREE.MeshStandardMaterial({ color: 0xc8453c, roughness: 0.65, side: THREE.DoubleSide });
+      // Long three-storey teaching block with an arcaded ground floor.
+      add(new THREE.Mesh(new THREE.BoxGeometry(11.0 * ms, 7.5 * ms, 4.6 * ms), wallMat), 0, 3.75 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(11.4 * ms, 0.45 * ms, 5.0 * ms), trimMat), 0, 7.7 * ms, 0);
+      for (const ly of [2.2, 4.4, 6.4]) {
+        for (let i = -2; i <= 2; i++) {
+          add(new THREE.Mesh(new THREE.BoxGeometry(1.5 * ms, 1.3 * ms, 0.14 * ms), winMat), i * 2.1 * ms, ly * ms, 2.4 * ms);
+        }
+      }
+      // Flagpole on the courtyard side.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.14 * ms, 0.16 * ms, 9.0 * ms, 6), poleMat), 7.0 * ms, 4.5 * ms, 2.0 * ms);
+      const flag = add(new THREE.Mesh(new THREE.PlaneGeometry(2.2 * ms, 1.4 * ms), flagMat), 8.15 * ms, 8.1 * ms, 2.0 * ms);
+      flag.rotation.y = Math.PI / 2;
+      return g;
+    }
+
+    if (cls === 'fuel') {
+      // --- Fuel / Charging Station (加油站／充電站) ---
+      const padMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.88, flatShading: true });
+      const canopyMat = new THREE.MeshStandardMaterial({ color: 0xf0f3f5, roughness: 0.6, flatShading: true });
+      const bandMat = new THREE.MeshStandardMaterial({
+        color: 0x2f7d3b, emissive: 0x0d2812, emissiveIntensity: 0.35, roughness: 0.5,
+      });
+      const pumpMat = new THREE.MeshStandardMaterial({ color: 0xd8dde3, roughness: 0.52, metalness: 0.3, flatShading: true });
+      const hoseMat = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.75 });
+      add(new THREE.Mesh(new THREE.BoxGeometry(9.0 * ms, 0.32 * ms, 6.4 * ms), padMat), 0, 0.16 * ms, 0);
+      // Canopy slab on four columns, with a coloured fascia band.
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.CylinderGeometry(0.26 * ms, 0.3 * ms, 5.0 * ms, 8), canopyMat), sx * 3.4 * ms, 2.5 * ms, sz * 2.2 * ms);
+        }
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(9.2 * ms, 0.55 * ms, 6.6 * ms), canopyMat), 0, 5.3 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(9.4 * ms, 0.5 * ms, 6.8 * ms), bandMat), 0, 4.85 * ms, 0);
+      // Two pump islands with hoses.
+      for (const sz of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(2.4 * ms, 0.3 * ms, 1.1 * ms), padMat), 0, 0.42 * ms, sz * 1.6 * ms);
+        add(new THREE.Mesh(new THREE.BoxGeometry(1.1 * ms, 2.0 * ms, 0.8 * ms), pumpMat), 0, 1.55 * ms, sz * 1.6 * ms);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.1 * ms, 0.1 * ms, 1.2 * ms, 5), hoseMat), 0.7 * ms, 1.7 * ms, sz * 1.6 * ms);
+      }
+      return g;
+    }
+
+    if (cls === 'solar') {
+      // --- Solar PV Array (太陽光電板陣列) ---
+      const frameMat = new THREE.MeshStandardMaterial({ color: 0xaeb6bd, roughness: 0.46, metalness: 0.52, flatShading: true });
+      const panelMat = new THREE.MeshStandardMaterial({
+        color: 0x16304f, roughness: 0.16, metalness: 0.52,
+        emissive: 0x0b1a2c, emissiveIntensity: 0.35, flatShading: true,
+      });
+      const gridMat = new THREE.MeshStandardMaterial({ color: 0x5b7fa8, roughness: 0.3, metalness: 0.4 });
+      // Three south-tilted rows of panels on braced frames.
+      for (let row = 0; row < 3; row++) {
+        const z = (row - 1) * 3.4 * ms;
+        for (const sx of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.CylinderGeometry(0.14 * ms, 0.16 * ms, 1.9 * ms, 6), frameMat), sx * 2.4 * ms, 0.95 * ms, z + 0.7 * ms);
+          add(new THREE.Mesh(new THREE.CylinderGeometry(0.14 * ms, 0.16 * ms, 3.1 * ms, 6), frameMat), sx * 2.4 * ms, 1.55 * ms, z - 0.7 * ms);
+        }
+        const panel = add(new THREE.Mesh(new THREE.BoxGeometry(6.0 * ms, 0.14 * ms, 2.6 * ms), panelMat), 0, 1.85 * ms, z);
+        panel.rotation.x = -0.42;
+        // Cell busbars catching the light along the panel.
+        for (const ox of [-2, 0, 2]) {
+          const bar = add(new THREE.Mesh(new THREE.BoxGeometry(0.08 * ms, 0.16 * ms, 2.6 * ms), gridMat), ox * ms, 1.86 * ms, z);
+          bar.rotation.x = -0.42;
+        }
+      }
+      return g;
+    }
+
+    if (cls === 'mine') {
+      // --- Mine Adit / Shaft Portal (礦坑／坑口) ---
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x6e675d, roughness: 0.93, flatShading: true });
+      const timberMat = new THREE.MeshStandardMaterial({ color: 0x5f4426, roughness: 0.88, flatShading: true });
+      const darkMat = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.95 });
+      const railMat = new THREE.MeshStandardMaterial({ color: 0x6b5a4a, roughness: 0.6, metalness: 0.4 });
+      // Spoil-heap hillside the portal is cut into.
+      const face = add(new THREE.Mesh(new THREE.DodecahedronGeometry(4.6 * ms, 0), rockMat), 0, 1.5 * ms, -1.6 * ms);
+      face.scale.set(1.3, 0.9, 1.0);
+      face.rotation.y = seed * 5;
+      // Timber-framed portal mouth.
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(0.42 * ms, 3.2 * ms, 0.42 * ms), timberMat), sx * 1.5 * ms, 1.6 * ms, 1.4 * ms);
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.6 * ms, 0.45 * ms, 0.5 * ms), timberMat), 0, 3.4 * ms, 1.4 * ms);
+      add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 2.9 * ms, 0.3 * ms), darkMat), 0, 1.45 * ms, 1.25 * ms);
+      // Narrow-gauge tramway running out of the mouth.
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(0.14 * ms, 0.12 * ms, 6.0 * ms), railMat), sx * 0.6 * ms, 0.1 * ms, 4.0 * ms);
+      }
+      for (let i = 0; i < 5; i++) {
+        add(new THREE.Mesh(new THREE.BoxGeometry(1.8 * ms, 0.12 * ms, 0.3 * ms), timberMat), 0, 0.06 * ms, (1.6 + i * 1.2) * ms);
+      }
+      return g;
+    }
+
+    if (cls === 'monitoring') {
+      // --- Monitoring / Weather Station (監測站／氣象站) ---
+      const boxMat = new THREE.MeshStandardMaterial({ color: 0xe8ebee, roughness: 0.7, flatShading: true });
+      const mastMat = new THREE.MeshStandardMaterial({ color: 0xaeb6bd, roughness: 0.42, metalness: 0.55 });
+      const panelMat = new THREE.MeshStandardMaterial({ color: 0x16304f, roughness: 0.18, metalness: 0.5 });
+      const cupMat = new THREE.MeshStandardMaterial({ color: 0xd94e34, roughness: 0.5, flatShading: true });
+      // Louvred instrument shelter on legs.
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.8 * ms, 1.6 * ms, 1.4 * ms), boxMat), -1.6 * ms, 2.1 * ms, 0);
+      for (const sx of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.1 * ms, 0.1 * ms, 1.4 * ms, 5), mastMat), -1.6 * ms + sx * 0.6 * ms, 0.7 * ms, 0);
+      }
+      // Guyed instrument mast with an anemometer and a solar panel.
+      const mastH = 9.0 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.13 * ms, 0.2 * ms, mastH, 8), mastMat), 1.2 * ms, mastH / 2, 0);
+      const pv = add(new THREE.Mesh(new THREE.BoxGeometry(1.7 * ms, 0.1 * ms, 1.1 * ms), panelMat), 1.2 * ms, mastH * 0.52, 1.0 * ms);
+      pv.rotation.x = -0.5;
+      // 3-cup anemometer + wind vane at the top.
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2;
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.26 * ms, 7, 5), cupMat), 1.2 * ms + Math.cos(a) * 0.85 * ms, mastH + 0.3 * ms, Math.sin(a) * 0.85 * ms);
+      }
+      const vane = add(new THREE.Mesh(new THREE.BoxGeometry(1.3 * ms, 0.5 * ms, 0.08 * ms), mastMat), 1.2 * ms, mastH - 0.9 * ms, 0);
+      vane.rotation.y = seed * 6;
+      return g;
+    }
+
+    if (cls === 'greenhouse') {
+      // --- Polytunnel Greenhouse (溫室／塑膠布棚) ---
+      const hoopMat = new THREE.MeshStandardMaterial({ color: 0xbfc6cc, roughness: 0.45, metalness: 0.4 });
+      const skinMat = new THREE.MeshStandardMaterial({
+        color: 0xdff0ea, roughness: 0.22, metalness: 0.1,
+        transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+      });
+      const soilMat = new THREE.MeshStandardMaterial({ color: 0x5d4528, roughness: 0.92, flatShading: true });
+      const cropMat = new THREE.MeshStandardMaterial({ color: 0x3f7f32, roughness: 0.84, flatShading: true });
+      // Two translucent barrel-vault tunnels over planted beds.
+      for (const sz of [-1, 1]) {
+        const z = sz * 2.6 * ms;
+        // The tube is centred at grade so its lower half is buried by the
+        // terrain, leaving a barrel vault standing on the bed.
+        const vault = add(new THREE.Mesh(new THREE.CylinderGeometry(2.1 * ms, 2.1 * ms, 8.0 * ms, 14, 1, true), skinMat), 0, 0.15 * ms, z);
+        vault.rotation.z = Math.PI / 2;
+        for (let i = -2; i <= 2; i++) {
+          const hoop = add(new THREE.Mesh(new THREE.TorusGeometry(2.1 * ms, 0.07 * ms, 5, 16), hoopMat), i * 2.0 * ms, 0.15 * ms, z);
+          hoop.rotation.y = Math.PI / 2;
+        }
+        add(new THREE.Mesh(new THREE.BoxGeometry(8.0 * ms, 0.3 * ms, 3.0 * ms), soilMat), 0, 0.15 * ms, z);
+        for (let i = -3; i <= 3; i++) {
+          add(new THREE.Mesh(new THREE.SphereGeometry(0.45 * ms, 6, 5), cropMat), i * 1.1 * ms, 0.55 * ms, z);
+        }
+      }
+      return g;
+    }
+
+    if (cls === 'flagpole') {
+      // --- Flagpole / Summit Cross (旗竿／山頂十字架) ---
+      const baseMat = new THREE.MeshStandardMaterial({ color: 0xb6b0a4, roughness: 0.88, flatShading: true });
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0xe2e6ea, roughness: 0.4, metalness: 0.5 });
+      const flagMat = new THREE.MeshStandardMaterial({
+        color: seed > 0.5 ? 0xc8453c : 0x2f6fb5, roughness: 0.65, side: THREE.DoubleSide,
+      });
+      const poleH = 11.0 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(1.1 * ms, 1.4 * ms, 0.8 * ms, 8), baseMat), 0, 0.4 * ms, 0);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.13 * ms, 0.2 * ms, poleH, 8), poleMat), 0, 0.8 * ms + poleH / 2, 0);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.3 * ms, 8, 6), poleMat), 0, 0.8 * ms + poleH + 0.25 * ms, 0);
+      // Furled-looking flag hanging from the upper mast.
+      const flag = add(new THREE.Mesh(new THREE.PlaneGeometry(2.8 * ms, 1.8 * ms), flagMat), 1.5 * ms, 0.8 * ms + poleH * 0.86, 0);
+      flag.rotation.y = Math.PI / 2 + seed * 0.5;
+      return g;
+    }
+
+    if (cls === 'statue') {
+      // --- Statue / Sculpture on a Plinth (雕像／塑像) ---
+      const plinthMat = new THREE.MeshStandardMaterial({ color: 0xc3bdb0, roughness: 0.86, flatShading: true });
+      const bronzeMat = new THREE.MeshStandardMaterial({
+        color: 0x7a6338, roughness: 0.38, metalness: 0.62,
+        emissive: 0x241b08, emissiveIntensity: 0.2, flatShading: true,
+      });
+      const plaqueMat = new THREE.MeshStandardMaterial({ color: 0x8a6b2e, roughness: 0.4, metalness: 0.6 });
+      // Stepped stone plinth.
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.4 * ms, 0.45 * ms, 3.4 * ms), plinthMat), 0, 0.22 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 0.4 * ms, 2.6 * ms), plinthMat), 0, 0.65 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.9 * ms, 2.8 * ms, 1.9 * ms), plinthMat), 0, 2.25 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.1 * ms, 0.6 * ms, 0.1 * ms), plaqueMat), 0, 2.2 * ms, 0.98 * ms);
+      // Simplified bronze standing figure.
+      const baseY = 3.65 * ms;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.42 * ms, 0.55 * ms, 2.0 * ms, 8), bronzeMat), 0, baseY + 1.0 * ms, 0);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.46 * ms, 9, 7), bronzeMat), 0, baseY + 2.4 * ms, 0);
+      const armL = add(new THREE.Mesh(new THREE.CylinderGeometry(0.16 * ms, 0.16 * ms, 1.7 * ms, 6), bronzeMat), -0.55 * ms, baseY + 1.5 * ms, 0.1 * ms);
+      armL.rotation.z = 0.75;
+      const armR = add(new THREE.Mesh(new THREE.CylinderGeometry(0.16 * ms, 0.16 * ms, 1.7 * ms, 6), bronzeMat), 0.6 * ms, baseY + 1.9 * ms, 0.1 * ms);
+      armR.rotation.z = -1.25;
+      return g;
+    }
+
+    if (cls === 'playground') {
+      // --- Playground / Fitness Station (遊憩設施) ---
+      const matMat = new THREE.MeshStandardMaterial({ color: 0x9d6a52, roughness: 0.9, flatShading: true });
+      const frameMat = new THREE.MeshStandardMaterial({ color: 0x3f7fb5, roughness: 0.5, metalness: 0.3, flatShading: true });
+      const slideMat = new THREE.MeshStandardMaterial({ color: 0xf0c53c, roughness: 0.35, flatShading: true });
+      const seatMat = new THREE.MeshStandardMaterial({ color: 0xd94e34, roughness: 0.6, flatShading: true });
+      add(new THREE.Mesh(new THREE.CylinderGeometry(4.4 * ms, 4.6 * ms, 0.3 * ms, 10), matMat), 0, 0.15 * ms, 0);
+      // Slide tower with a chute.
+      add(new THREE.Mesh(new THREE.BoxGeometry(1.8 * ms, 0.25 * ms, 1.8 * ms), frameMat), -1.6 * ms, 2.4 * ms, 0);
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.CylinderGeometry(0.11 * ms, 0.11 * ms, 2.4 * ms, 5), frameMat), -1.6 * ms + sx * 0.7 * ms, 1.2 * ms, sz * 0.7 * ms);
+        }
+      }
+      const chute = add(new THREE.Mesh(new THREE.BoxGeometry(0.9 * ms, 0.14 * ms, 3.4 * ms), slideMat), -1.6 * ms, 1.4 * ms, 2.0 * ms);
+      chute.rotation.x = 0.6;
+      // Swing frame with two seats.
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.16 * ms, 0.16 * ms, 3.2 * ms), frameMat), 2.2 * ms, 2.7 * ms, 0);
+      for (const sz of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.1 * ms, 0.1 * ms, 2.8 * ms, 5), frameMat), 2.2 * ms, 1.35 * ms, sz * 1.5 * ms);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.04 * ms, 0.04 * ms, 1.6 * ms, 4), frameMat), 2.2 * ms, 1.9 * ms, sz * 0.7 * ms);
+        add(new THREE.Mesh(new THREE.BoxGeometry(0.7 * ms, 0.1 * ms, 0.35 * ms), seatMat), 2.2 * ms, 1.1 * ms, sz * 0.7 * ms);
+      }
+      return g;
+    }
+
+    if (cls === 'bus_stop') {
+      // --- Bus Stop Shelter & Sign (公車站) ---
+      const postMat = new THREE.MeshStandardMaterial({ color: 0xbfc6cc, roughness: 0.45, metalness: 0.4 });
+      const glassMat = new THREE.MeshStandardMaterial({
+        color: 0xc3dfe9, roughness: 0.16, metalness: 0.2,
+        transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+      });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0x3d6f8f, roughness: 0.6, flatShading: true });
+      const signMat = new THREE.MeshStandardMaterial({
+        color: 0xf0c53c, emissive: 0x4a3a08, emissiveIntensity: 0.3, roughness: 0.5, side: THREE.DoubleSide,
+      });
+      const benchMat = new THREE.MeshStandardMaterial({ color: 0x8a6239, roughness: 0.84, flatShading: true });
+      // Open shelter: back glazing, canopy, bench.
+      for (const sz of [-1, 1]) {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.1 * ms, 0.12 * ms, 3.0 * ms, 6), postMat), -1.2 * ms, 1.5 * ms, sz * 1.5 * ms);
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.1 * ms, 0.12 * ms, 3.0 * ms, 6), postMat), 1.2 * ms, 1.5 * ms, sz * 1.5 * ms);
+      }
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.0 * ms, 2.4 * ms, 0.1 * ms), glassMat), 0, 1.7 * ms, -1.55 * ms);
+      add(new THREE.Mesh(new THREE.BoxGeometry(3.4 * ms, 0.2 * ms, 3.6 * ms), roofMat), 0, 3.1 * ms, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(2.6 * ms, 0.16 * ms, 0.6 * ms), benchMat), 0, 1.0 * ms, -1.1 * ms);
+      // Roadside sign pole with a flag plate.
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.09 * ms, 0.11 * ms, 4.2 * ms, 6), postMat), 2.6 * ms, 2.1 * ms, 1.4 * ms);
+      const plate = add(new THREE.Mesh(new THREE.PlaneGeometry(1.2 * ms, 0.85 * ms), signMat), 3.15 * ms, 3.9 * ms, 1.4 * ms);
+      plate.rotation.y = Math.PI / 2;
+      return g;
+    }
+
     // --- Viewpoint / Attraction: Timber Observation Deck + Binocular Telescope (觀景點) ---
     const woodDeckMat = new THREE.MeshStandardMaterial({ color: 0xa67244, roughness: 0.82, flatShading: true });
     const woodPostMat = new THREE.MeshStandardMaterial({ color: 0x6e4726, roughness: 0.86, flatShading: true });
@@ -6377,14 +7220,49 @@ export class TerrainViewer {
     addLinePass(bridgeParapetVerts, 0xe2e8f0, 1.5, 0.88);
     addLinePass(railSleeperVerts, 0x5c4033, 2.2, 0.88);
 
-    // ----- 3D Civil & Natural Linear/Polygon Structures (dams, piers, breakwaters, walls, cliffs) -----
+    // ----- 3D Civil & Natural Linear/Polygon Structures -----
+    // dams / piers / breakwaters / masonry walls / cliffs, plus the light boundary
+    // structures that give a cultivated landscape its grain: post-and-rail fences,
+    // clipped hedgerows, planted tree rows and surface pipelines.
     const structMaterials = {
       dam:        new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.78, metalness: 0.08, flatShading: true, side: THREE.DoubleSide }),
       pier:       new THREE.MeshStandardMaterial({ color: 0x9c7a54, roughness: 0.85, metalness: 0.04, flatShading: true, side: THREE.DoubleSide }),
       breakwater: new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.92, metalness: 0.04, flatShading: true, side: THREE.DoubleSide }),
       wall:       new THREE.MeshStandardMaterial({ color: 0xa89f91, roughness: 0.88, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
       cliff:      new THREE.MeshStandardMaterial({ color: 0x736b60, roughness: 0.92, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+      fence:      new THREE.MeshStandardMaterial({ color: 0x8a7f6d, roughness: 0.86, metalness: 0.06, flatShading: true, side: THREE.DoubleSide }),
+      hedge:      new THREE.MeshStandardMaterial({ color: 0x3f7336, roughness: 0.9, metalness: 0.02, flatShading: true, side: THREE.DoubleSide }),
+      tree_row:   new THREE.MeshStandardMaterial({ color: 0x2f6b2b, roughness: 0.86, metalness: 0.02, flatShading: true }),
+      pipeline:   new THREE.MeshStandardMaterial({ color: 0xb8bfc6, roughness: 0.42, metalness: 0.55, flatShading: true }),
     };
+    const rowTrunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4728, roughness: 0.9, flatShading: true });
+    const STRUCT_CFG = {
+      dam:        { halfW: 2.6 * ms,  h: 9.5 * ms },
+      pier:       { halfW: 1.5 * ms,  h: 1.4 * ms },
+      breakwater: { halfW: 2.2 * ms,  h: 3.2 * ms },
+      wall:       { halfW: 0.75 * ms, h: 2.4 * ms },
+      cliff:      { halfW: 0.75 * ms, h: 2.4 * ms },
+      fence:      { halfW: 0.1 * ms,  h: 1.7 * ms },
+      hedge:      { halfW: 0.85 * ms, h: 1.9 * ms },
+      tree_row:   { halfW: 0.5 * ms,  h: 1.0 * ms },
+      pipeline:   { halfW: 0.5 * ms,  h: 1.2 * ms },
+    };
+    const STRUCT_CATEGORY = {
+      dam: '水壩 / 水利設施', cliff: '懸崖 / 斷崖', pier: '碼頭',
+      breakwater: '防波堤 / 堤岸', wall: '牆垣 / 石牆',
+      fence: '圍籬 / 護欄', hedge: '樹籬', tree_row: '行道樹 / 防風林',
+      pipeline: '管線',
+    };
+    const STRUCT_ICON = {
+      dam: '🧱', cliff: '🧗', pier: '⚓',
+      pipeline: '🛢️', hedge: '🌿', tree_row: '🌳',
+      fence: '🚧',
+    };
+    // Repeated structure props (fence posts, hedge blobs, roadside trees, pipe
+    // saddles) share one geometry per kind, built on first use, so a long fence
+    // doesn't allocate hundreds of buffers.
+    const propGeo = {};
+    const geoFor = (key, make) => (propGeo[key] || (propGeo[key] = make()));
     const buildRibbon3D = (pts3D, halfW, height, mat) => {
       if (pts3D.length < 2) return;
       const positions = [];
@@ -6416,16 +7294,15 @@ export class TerrainViewer {
     };
 
     const cliffLineVerts = [];
+    const fenceRailVerts = [];
     let cliffToothCount = 0;
+    let fencePostCount = 0;
+    let hedgeBlobCount = 0;
+    let treeRowCount = 0;
+    let pipeSegCount = 0;
     for (const st of (data.structures || [])) {
       const mat = structMaterials[st.cls] || structMaterials.wall;
-      const cfg = st.cls === 'dam'
-        ? { halfW: 2.6 * ms, h: 9.5 * ms }
-        : st.cls === 'pier'
-          ? { halfW: 1.5 * ms, h: 1.4 * ms }
-          : st.cls === 'breakwater'
-            ? { halfW: 2.2 * ms, h: 3.2 * ms }
-            : { halfW: 0.75 * ms, h: 2.4 * ms };
+      const cfg = STRUCT_CFG[st.cls] || STRUCT_CFG.wall;
 
       const runs = this._clipPolylineToBbox(st.pts, bbox)
         .flatMap((run) => this._splitPolylineAtHoles(run));
@@ -6450,8 +7327,104 @@ export class TerrainViewer {
               this.featureGroup.add(crag);
             }
           }
+        } else if (st.cls === 'fence') {
+          // Post-and-rail: a top and mid rail drawn as draped lines, with posts
+          // at a fixed ground spacing.
+          let acc = 0;
+          for (let i = 0; i < w.length - 1; i++) {
+            fenceRailVerts.push(
+              w[i].x, w[i].y + cfg.h, w[i].z,
+              w[i + 1].x, w[i + 1].y + cfg.h, w[i + 1].z
+            );
+            fenceRailVerts.push(
+              w[i].x, w[i].y + cfg.h * 0.55, w[i].z,
+              w[i + 1].x, w[i + 1].y + cfg.h * 0.55, w[i + 1].z
+            );
+            acc += w[i].distanceTo(w[i + 1]);
+            if ((i === 0 || acc >= 4 * ms) && fencePostCount < 160) {
+              acc = 0;
+              fencePostCount++;
+              const post = new THREE.Mesh(
+                geoFor('fencePost', () => new THREE.BoxGeometry(0.17 * ms, cfg.h * 1.15, 0.17 * ms)),
+                mat
+              );
+              post.position.set(w[i].x, w[i].y + cfg.h * 0.5, w[i].z);
+              post.castShadow = true;
+              this.featureGroup.add(post);
+            }
+          }
+        } else if (st.cls === 'tree_row') {
+          // Planted avenue / windbreak: a trunk + crown prop every few metres.
+          let acc = 0;
+          for (let i = 0; i < w.length; i++) {
+            if (i > 0) acc += w[i].distanceTo(w[i - 1]);
+            if ((i === 0 || acc >= 7 * ms) && treeRowCount < 100) {
+              acc = 0;
+              treeRowCount++;
+              const trunk = new THREE.Mesh(
+                geoFor('rowTrunk', () => new THREE.CylinderGeometry(0.22 * ms, 0.3 * ms, 2.4 * ms, 5)),
+                rowTrunkMat
+              );
+              trunk.position.set(w[i].x, w[i].y + 1.2 * ms, w[i].z);
+              const crown = new THREE.Mesh(
+                geoFor('rowCrown', () => new THREE.SphereGeometry(1.7 * ms, 8, 6)),
+                mat
+              );
+              crown.position.set(w[i].x, w[i].y + 3.5 * ms, w[i].z);
+              crown.scale.set(1, 0.82, 1);
+              crown.rotation.y = treeRowCount * 0.7;
+              crown.castShadow = true;
+              this.featureGroup.add(trunk);
+              this.featureGroup.add(crown);
+            }
+          }
+        } else if (st.cls === 'pipeline') {
+          // Above-ground pipe: one oriented cylinder per segment on short saddles.
+          for (let i = 0; i < w.length - 1; i++) {
+            if (pipeSegCount >= 120) break;
+            const a = w[i];
+            const bEnd = w[i + 1];
+            const len = a.distanceTo(bEnd);
+            if (len < 0.01) continue;
+            pipeSegCount++;
+            const pipe = new THREE.Mesh(new THREE.CylinderGeometry(cfg.halfW, cfg.halfW, len, 7), mat);
+            pipe.position.set((a.x + bEnd.x) / 2, (a.y + bEnd.y) / 2 + cfg.h, (a.z + bEnd.z) / 2);
+            pipe.quaternion.setFromUnitVectors(
+              new THREE.Vector3(0, 1, 0),
+              new THREE.Vector3(bEnd.x - a.x, bEnd.y - a.y, bEnd.z - a.z).normalize()
+            );
+            pipe.castShadow = true;
+            this.featureGroup.add(pipe);
+            if (i % 4 === 0) {
+              const saddle = new THREE.Mesh(
+                geoFor('pipeSaddle', () => new THREE.BoxGeometry(0.3 * ms, cfg.h, 0.3 * ms)),
+                mat
+              );
+              saddle.position.set(a.x, a.y + cfg.h * 0.5, a.z);
+              this.featureGroup.add(saddle);
+            }
+          }
         } else {
           buildRibbon3D(w, cfg.halfW, cfg.h, mat);
+          if (st.cls === 'hedge') {
+            // Clipped hedgerow: overlapping foliage blobs riding the ribbon top.
+            let acc = 0;
+            for (let i = 0; i < w.length; i++) {
+              if (i > 0) acc += w[i].distanceTo(w[i - 1]);
+              if ((i === 0 || acc >= 2.6 * ms) && hedgeBlobCount < 120) {
+                acc = 0;
+                hedgeBlobCount++;
+                const blob = new THREE.Mesh(
+                  geoFor('hedgeBlob', () => new THREE.SphereGeometry(1.05 * ms, 7, 5)),
+                  mat
+                );
+                blob.position.set(w[i].x, w[i].y + cfg.h * 0.95, w[i].z);
+                blob.scale.set(0.92, 0.6, 0.92);
+                blob.castShadow = true;
+                this.featureGroup.add(blob);
+              }
+            }
+          }
           if (st.cls === 'pier') {
             let acc = 0;
             for (let i = 0; i < w.length; i++) {
@@ -6466,11 +7439,13 @@ export class TerrainViewer {
           }
         }
       }
-      if (st.name && labelPt) {
+      // Fences, hedges and tree rows are named often enough to flood the label
+      // list with boundary clutter, so they render without one.
+      if (st.name && labelPt && !/^(fence|hedge|tree_row)$/.test(st.cls)) {
         const stElev = typeof this._sampleGridElevation === 'function' && st.pts && st.pts[0]
           ? Math.round(this._sampleGridElevation(st.pts[0][0], st.pts[0][1])) : null;
-        const stCategory = st.cls === 'dam' ? '水壩 / 水利設施' : (st.cls === 'cliff' ? '懸崖 / 斷崖' : (st.cls === 'pier' ? '碼頭' : '結構設施'));
-        const stIcon = st.cls === 'dam' ? '🧱' : (st.cls === 'cliff' ? '🧗' : '🏛️');
+        const stCategory = STRUCT_CATEGORY[st.cls] || '結構設施';
+        const stIcon = STRUCT_ICON[st.cls] || '🏛️';
         const stDetail = {
           type: 'feature',
           kind: 'structure',
@@ -6487,6 +7462,7 @@ export class TerrainViewer {
       }
     }
     addLinePass(cliffLineVerts, 0x57534e, 2.4, 0.85);
+    addLinePass(fenceRailVerts, 0xb3ab9b, 1.4, 0.8);
 
     // ----- Land cover & civic grounds (water, wetland, swimming pools, sports pitches) -----
     const AREA_STYLE = {
@@ -6496,7 +7472,10 @@ export class TerrainViewer {
       pitch:   { color: 0x2ea043, opacity: 0.82, roughness: 0.72, metalness: 0.02, outline: 0xffffff, outlineW: 1.8, lift: baseLift * 1.12, labelColor: 0xbbf7d0, pri: 4 },
       forest:  { labelColor: 0x9be07a, pri: 2 },
       scrub:   { labelColor: 0xb6e488, pri: 2 },
+      orchard: { labelColor: 0xd7ee8e, pri: 3 },
+      farm:    { labelColor: 0xe3efa0, pri: 3 },
       grass:   { labelColor: 0xc7f29a, pri: 2 },
+      glacier: { labelColor: 0xe6f3ff, pri: 2 },
       rock:    { labelColor: 0xd9d2c7, pri: 4 },
       sand:    { labelColor: 0xf0deb4, pri: 4 },
       waste:   { labelColor: 0xe6d3a0, pri: 4 },
@@ -6787,7 +7766,7 @@ export class TerrainViewer {
       }
     }
 
-    // ----- Point landmarks: 22 procedural diorama 3D landmark categories -----
+    // ----- Point landmarks: 44 procedural diorama 3D landmark categories -----
     const LANDMARK_CATEGORY_LABELS = {
       peak: '山峰', saddle: '鞍部', waterfall: '瀑布', spring: '湧泉 / 溫泉',
       cave: '岩洞 / 洞穴', rock: '奇岩 / 巨石', tree: '地標樹木', sacred_tree: '神木 / 巨木',
@@ -6796,6 +7775,12 @@ export class TerrainViewer {
       lighthouse: '燈塔', chimney: '煙囪', tower: '高塔 / 瞭望塔', castle: '古蹟 / 城堡 / 砲台',
       monument: '紀念碑 / 地標', viewpoint: '觀景點', trailhead: '登山口', station: '車站',
       heliport: '停機坪', parking: '停車場', picnic: '休憩區',
+      survey_point: '三角點 / 基準點', ford: '涉水點 / 過溪', gate: '柵門 / 管制閘門',
+      toilet: '公廁', supply: '補給站 / 商店', lodging: '住宿 / 山莊',
+      medical: '醫療站', school: '學校', fuel: '加油站 / 充電站',
+      solar: '太陽光電', mine: '礦坑 / 坑口', monitoring: '監測站 / 氣象站',
+      greenhouse: '溫室', flagpole: '旗竿 / 十字架', statue: '雕像 / 塑像',
+      playground: '遊憩設施', bus_stop: '公車站',
     };
     const LANDMARK_ICONS = {
       peak: '⛰️', saddle: '〰️', waterfall: '🌊', spring: '♨️',
@@ -6805,6 +7790,11 @@ export class TerrainViewer {
       lighthouse: '🏮', chimney: '🏭', tower: '🗼', castle: '🏰',
       monument: '🗿', viewpoint: '🔭', trailhead: '🥾', station: '🚉',
       heliport: '🚁', parking: '🅿️', picnic: '🧺',
+      survey_point: '📐', ford: '💦', gate: '🚧', toilet: '🚻',
+      supply: '🏪', lodging: '🏨', medical: '🏥', school: '🏫',
+      fuel: '⛽', solar: '🔆', mine: '⛏️', monitoring: '📡',
+      greenhouse: '🌱', flagpole: '🚩', statue: '🗽', playground: '🎠',
+      bus_stop: '🚏',
     };
     const POINT_PRIORITY = {
       peak: 1, waterfall: 1, lighthouse: 1, castle: 1, temple: 2, church: 2,
@@ -6812,6 +7802,11 @@ export class TerrainViewer {
       chimney: 3, viewpoint: 3, pavilion: 3, trailhead: 3, station: 3, monument: 3,
       spring: 4, cave: 4, camp_site: 4, heliport: 4, power_tower: 5, rock: 5,
       picnic: 5, parking: 5, tree: 9,
+      // Trail-critical services rank with the huts/trailheads a planner looks for;
+      // scenery and infrastructure props rank below them.
+      survey_point: 2, ford: 2, lodging: 3, medical: 3, supply: 3, toilet: 4,
+      gate: 4, monitoring: 4, mine: 4, statue: 4, bus_stop: 5, fuel: 5,
+      school: 5, solar: 5, flagpole: 5, greenhouse: 6, playground: 6,
     };
     const POINT_LABEL_COLOR = {
       peak: 0xffd9a0, saddle: 0xffd9a0, rock: 0xd9d2c7, cave: 0xd9d2c7,
@@ -6819,6 +7814,11 @@ export class TerrainViewer {
       sacred_tree: 0xa7f3d0, tree: 0xa7f3d0,
       temple: 0xfca5a5, church: 0xfde68a, castle: 0xfde68a, monument: 0xfde68a,
       hut: 0xfcd34d, pavilion: 0xfcd34d, camp_site: 0xfcd34d, trailhead: 0xfcd34d,
+      survey_point: 0xffd9a0, ford: 0x9fd8ff, lodging: 0xfcd34d,
+      medical: 0xfda4af, supply: 0xfdba74, toilet: 0xbfdbfe, gate: 0xfecaca,
+      monitoring: 0xbae6fd, mine: 0xd9d2c7, statue: 0xfde68a,
+      bus_stop: 0xbfdbfe, fuel: 0xbbf7d0, school: 0xfde68a, solar: 0x93c5fd,
+      flagpole: 0xfecdd3, greenhouse: 0xa7f3d0, playground: 0xfdba74,
     };
     const allPoints = (data.points || []).slice().sort((a, b) => (POINT_PRIORITY[a.cls] || 6) - (POINT_PRIORITY[b.cls] || 6));
     const nonTree = allPoints.filter((p) => p.cls !== 'tree');

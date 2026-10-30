@@ -549,6 +549,88 @@ test('3D terrain: abort button cancels computation and closes the viewer', async
   await expect(page.locator('#terrain-viewer')).toHaveClass(/hidden/, { timeout: 20_000 });
 });
 
+// Every point-landmark class, linear structure and cultivated land cover added to
+// the 圖資 layer has its own procedural model builder, and _buildMapFeatures is
+// wrapped in a try/catch that only console.warns — so a broken builder would
+// silently drop the WHOLE feature layer rather than fail a test. This feeds one
+// element per newly supported OSM category through the real build and asserts the
+// layer survived it.
+test('3D terrain: the extended OSM object set (services, structures, cultivated cover) builds without dropping the layer', async ({ page }) => {
+  const errors = [];
+  const warnings = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() === 'warning' || m.type() === 'error') warnings.push(m.text());
+  });
+  await mockElevation(page, { delayMs: 10 });
+
+  // The route bbox is lat [24.170, 24.231] / lng [121.308, 121.376], so everything
+  // below sits well inside it. Point landmarks are spread on a grid coarser than
+  // the ~22 m placement de-duplication cell so none of them is skipped.
+  const anchorLat = 24.2100;
+  const anchorLon = 121.3440;
+  const pointTags = [
+    { man_made: 'survey_point', name: '三角點' },
+    { ford: 'yes' },
+    { barrier: 'gate' },
+    { amenity: 'toilets' },
+    { shop: 'convenience' },
+    { tourism: 'guest_house' },
+    { amenity: 'clinic' },
+    { amenity: 'school' },
+    { amenity: 'fuel' },
+    { power: 'generator', 'generator:source': 'solar' },
+    { man_made: 'adit' },
+    { man_made: 'monitoring_station' },
+    { building: 'greenhouse' },
+    { man_made: 'flagpole' },
+    { historic: 'statue' },
+    { leisure: 'playground' },
+    { highway: 'bus_stop' },
+  ];
+  const elements = pointTags.map((tags, i) => ({
+    type: 'node',
+    id: 9000 + i,
+    lat: anchorLat + (i % 5) * 0.0008,
+    lon: anchorLon + Math.floor(i / 5) * 0.0008,
+    tags,
+  }));
+
+  const polyline = (lat, lon) => Array.from({ length: 6 }, (_, k) => ({
+    lat: lat + k * 0.0004,
+    lon: lon + k * 0.00016,
+  }));
+  const ring = (lat, lon) => {
+    const d = 0.0012;
+    return [
+      { lat, lon }, { lat: lat + d, lon }, { lat: lat + d, lon: lon + d },
+      { lat, lon: lon + d }, { lat, lon },
+    ];
+  };
+  elements.push(
+    { type: 'way', id: 9100, tags: { barrier: 'fence' }, geometry: polyline(24.2060, 121.3400) },
+    { type: 'way', id: 9101, tags: { barrier: 'hedge' }, geometry: polyline(24.2064, 121.3406) },
+    { type: 'way', id: 9102, tags: { natural: 'tree_row' }, geometry: polyline(24.2068, 121.3412) },
+    { type: 'way', id: 9103, tags: { man_made: 'pipeline' }, geometry: polyline(24.2072, 121.3418) },
+    { type: 'way', id: 9110, tags: { natural: 'glacier', name: '冰河' }, geometry: ring(24.2020, 121.3400) },
+    { type: 'way', id: 9111, tags: { landuse: 'orchard', name: '果園' }, geometry: ring(24.2024, 121.3420) },
+    { type: 'way', id: 9112, tags: { landuse: 'farmland', name: '農田' }, geometry: ring(24.2028, 121.3440) },
+  );
+
+  await mockFeatures(page, { delayMs: 10, elements });
+  await openWithRoute(page);
+  await open3dForCurrentRoute(page);
+  await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator('#terrain-canvas-wrap canvas')).toBeVisible();
+
+  // 特效 is enabled only when the build actually placed point landmarks, so this
+  // proves the new node classes were classified, modelled and added to the scene.
+  await expect(page.locator('#tv-toggle-effects')).toBeEnabled({ timeout: 20_000 });
+
+  expect(errors).toEqual([]);
+  expect(warnings.filter((w) => /map features failed/.test(w))).toEqual([]);
+});
+
 test('3D terrain: map features and landmarks can be picked and display details in popup', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
