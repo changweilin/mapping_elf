@@ -14,12 +14,18 @@ const assetsDir = path.resolve('dist', 'assets');
 // lowered to the new measurement rather than left as headroom. Re-baseline
 // deliberately (measure, then set ≈5% above) when a feature legitimately grows
 // a chunk — never to silence an unexplained jump.
-// Measured 2026-10-19: index 860.5 kB, three 606.6 kB.
+// Measured 2026-10-31: index 925.6 kB, three 592.4 kB.
 // index moved 735.1 → 860.5 kB with 3D diorama/chibi hiker redesign, shape-route
-// search upgrades, and bottom-left weather/catchment tool panels.
+// search upgrades, and bottom-left weather/catchment tool panels, then
+// 860.5 → 925.6 kB with the wider OSM object catalogue (17 point-landmark
+// classes, 4 linear structures) and the satellite+DEM surface synthesis in
+// terrainViewer.js. That module is statically imported by main.js, so its code
+// lands in index-*; giving it a chunk group would move the bytes without making
+// them any cheaper. Deferring it behind a dynamic import in openTerrainViewer()
+// would — and would take the 592 kB Three.js chunk off the initial load with it.
 const DEFAULT_MAX_KB = 500;
 const ALLOWANCES_KB = [
-  { pattern: /^index-/, maxKB: 905 },
+  { pattern: /^index-/, maxKB: 970 },
   { pattern: /^three-/, maxKB: 620 },
 ];
 
