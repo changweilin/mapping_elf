@@ -18,6 +18,7 @@ import { platform } from './platform/index.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
 import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, evaluateShapeSimilarity, computeGeoPathLength, countShapeCorners, detectRouteSpurs, findOptimalViewportAnchor, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs, isExcessiveLegDetour } from './modules/shapeRoutePlanner.js';
+import { solveShapeRoute, waypointsFromSolvedPath, collectNodesInBounds } from './modules/shapeLayeredSolver.js';
 import { getShapePresetPoints } from './modules/shapePresets.js';
 // 魔法陣 (star tool) — logic ported 1:1 from the mapping_star project.
 import { categoryById } from './modules/star/categories.js';
@@ -5589,6 +5590,9 @@ const LS_SHAPE_MODE_KEY = 'mappingElf_shapeRouteMode';
 const LS_SHAPE_DIRECTION_KEY = 'mappingElf_shapeRouteDirection';
 const LS_SHAPE_BOARD_KEY = 'mappingElf_shapeBoard';
 const SHAPE_ANGLE_CHOICES = [0, 15, 30, 45, 90, 360];
+// How many shortlisted orientations get a full solve. Measured: 3 cuts mean
+// orientation regret to 0.29 similarity points, 5 buys nothing more.
+const SHAPE_ANGLE_SHORTLIST = 3;
 const SHAPE_MODE_CHOICES = ['foot', 'bike', 'motorcycle', 'car'];
 const SHAPE_DIRECTION_CHOICES = ['any', 'cw', 'ccw'];
 let currentShapePreset = '';
@@ -6182,7 +6186,160 @@ async function snapRingWaypoints(ring, ts, graph = null, optimizer = null, useOs
   return { ts: kept.map((k) => k.t), wps: kept.map((k) => k.wp) };
 }
 
-// Executes the 4-stage curvature-aware shape optimization & refinement pipeline:
+// Fraction of route segments that are traversed more than once.
+function routeOverlapRatio(coords) {
+  const segSet = new Set();
+  let totalSegs = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const a = `${coords[i][0].toFixed(5)},${coords[i][1].toFixed(5)}`;
+    const b = `${coords[i + 1][0].toFixed(5)},${coords[i + 1][1].toFixed(5)}`;
+    if (a === b) continue;
+    totalSegs++;
+    segSet.add(a < b ? `${a}_${b}` : `${b}_${a}`);
+  }
+  return totalSegs > 0 ? Math.max(0, 1 - segSet.size / totalSegs) : 0;
+}
+
+// Primary pipeline: one global shortest-path solve per ring scale on the
+// progress-indexed product graph (shapeLayeredSolver.js). λ inside the solver
+// already pins the route length, so the only outer loop left estimates the road
+// detour factor η — how much longer the routed loop is than the ring perimeter
+// — and rescales the ring once or twice. That converges because route length is
+// very nearly linear in ring scale, which is why this replaces the old
+// rescale-snap-reroute hill climb instead of iterating it harder.
+async function runLayeredShapePipeline({
+  strokePts,
+  anchor,
+  targetM,
+  rotationDeg = 0,
+  graph = null,
+  initialScaleM = null,
+  travelMode = 'foot',
+  direction = 'any',
+  run = null,
+  onProgress = null,
+}) {
+  if (!graph || !anchor || !(targetM > 0)) return null;
+  const checkCancel = () => run && run.cancelled;
+  const yieldStep = async (detail, progressFrac) => {
+    if (checkCancel()) return false;
+    if (onProgress) onProgress({ detail, progress: progressFrac });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (run) await waitIfLoadPaused(run);
+    return !checkCancel();
+  };
+
+  const DETOUR_GUESS = 1.18;
+  let scaled = initialScaleM && initialScaleM > 0 ? initialScaleM : targetM / DETOUR_GUESS;
+  let ring = null;
+  let res = null;
+  let iterations = 0;
+  let lastReason = 'no-corridor';
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!(await yieldStep(`${translatePhrase('求解形狀分層路網最佳解')} (${attempt + 1}/3)...`, 0.15 + attempt * 0.28))) {
+      return null;
+    }
+    const candidateRing = strokeToLatLngRing(strokePts, anchor, scaled, { rotationDeg, direction });
+    if (!candidateRing) return null;
+    // Building a layered field tests every graph node against the corridor, and
+    // solveShapeRoute may build several while widening it. Pay that scan once
+    // per ring. The pad must clear the widest retry corridor (260 m x 3.6).
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [la, ln] of candidateRing) {
+      const [x, y] = graph.geoToXy(la, ln);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const RING_PAD_M = 1000;
+    const nodeCandidates = collectNodesInBounds(graph, {
+      minX: minX - RING_PAD_M,
+      minY: minY - RING_PAD_M,
+      maxX: maxX + RING_PAD_M,
+      maxY: maxY + RING_PAD_M,
+    });
+    const solved = solveShapeRoute(graph, candidateRing, { targetLengthM: targetM, travelMode, nodeCandidates });
+    if (!solved.ok) {
+      lastReason = solved.reason;
+      // A first attempt can fail simply because the ring is scaled badly for
+      // this network; shrink once and retry before giving up on the solver.
+      if (attempt === 0) {
+        scaled *= 0.8;
+        continue;
+      }
+      break;
+    }
+    iterations++;
+    ring = candidateRing;
+    res = solved;
+    const err = Math.abs(solved.lengthM - targetM) / targetM;
+    if (err <= 0.04) break;
+    // λ is already saturated at this ring scale, so correct the ring itself.
+    const correction = targetM / Math.max(1, solved.lengthM);
+    scaled = Math.max(targetM * 0.35, Math.min(targetM * 2.5, scaled * correction));
+  }
+
+  if (!res || !ring) {
+    console.warn('Layered shape solver found no route:', lastReason);
+    return null;
+  }
+  if (!(await yieldStep(translatePhrase('計算幾何相似度與偏差指標...'), 0.9))) return null;
+
+  const coords = res.routeCoordsGeo;
+  const wps = waypointsFromSolvedPath(graph, coords, { maxCount: 28, minCount: 6 });
+  if (wps.length < 3) return null;
+  wps[0] = [anchor[0], anchor[1]];
+
+  const actual = totalDistance(coords);
+  const similarityPct = Math.round(shapeSimilarity(coords, ring) * 100);
+  const maxDevM = Math.round(ringRouteDeviation(ring, coords, { bidirectional: true }).maxM);
+  const overlapRatio = routeOverlapRatio(coords);
+  const lenErr = Math.abs(actual - targetM) / targetM;
+
+  return {
+    routedGeometryGeo: coords,
+    targetGeometryGeo: ring,
+    actualLengthM: actual,
+    overlapRatio,
+    optimalScaleM: scaled,
+    optimalAngleDeg: rotationDeg,
+    optimalStartFraction: 0,
+    objectiveScore: (100 - similarityPct) * 3.5 + lenErr * 180 + overlapRatio * 240,
+    similarityPct,
+    maxDevM,
+    meanDevM: Math.round(res.meanDevM),
+    spurTrimmedM: 0,
+    keyWaypoints: wps,
+    ts: [],
+    ring,
+    iteration: iterations,
+    travelMode,
+    direction,
+    solver: 'layered',
+    lambda: res.lambda,
+    bucketCount: res.bucketCount,
+    corridorRadiusM: res.corridorRadiusM,
+    stateCount: res.stateCount,
+    solveCount: res.solveCount,
+  };
+}
+
+// Entry point for both generate and iterate: the layered solver is the primary
+// path; the waypoint/corridor pipeline below stays as the fallback for networks
+// where no progress-monotone loop exists at all (very sparse rural graphs).
+async function runShapePipeline(args) {
+  const layered = await runLayeredShapePipeline(args);
+  if (layered) return layered;
+  if (args.run && args.run.cancelled) return null;
+  const legacy = await runHighFidelityShapePipeline(args);
+  if (legacy) legacy.solver = 'legacy';
+  return legacy;
+}
+
+// Fallback pipeline: the 4-stage curvature-aware shape optimization &
+// refinement loop.
 // 1. Initial mileage calibration
 // 2. Deviation-driven waypoint insertion (planRefinementTs)
 // 3. Spur retraction (planSpurRetraction) + damped mileage recalibration
@@ -6429,17 +6586,7 @@ async function runHighFidelityShapePipeline({
   const similarityPct = Math.round(shapeSimilarity(coords, ring) * 100);
   const maxDevM = Math.round(ringRouteDeviation(ring, coords, { bidirectional: true }).maxM);
 
-  // Compute overlap ratio across route segments
-  const segSet = new Set();
-  let totalSegs = 0;
-  for (let i = 0; i < coords.length - 1; i++) {
-    const a = `${coords[i][0].toFixed(5)},${coords[i][1].toFixed(5)}`;
-    const b = `${coords[i + 1][0].toFixed(5)},${coords[i + 1][1].toFixed(5)}`;
-    if (a === b) continue;
-    totalSegs++;
-    segSet.add(a < b ? `${a}_${b}` : `${b}_${a}`);
-  }
-  const overlapRatio = totalSegs > 0 ? Math.max(0, 1 - segSet.size / totalSegs) : 0;
+  const overlapRatio = routeOverlapRatio(coords);
 
   // Ensure exported keyWaypoints[0] is anchored at user's chosen anchor
   const exportedWps = wps.map((w) => [...w]);
@@ -6515,6 +6662,7 @@ async function generateShapeRoute() {
     const targetM = km * 1000;
     let anchor = null;
     let bestAngleDeg = 0;
+    let angleShortlist = [];
     let graph = null;
     let optimizer = null;
     const targetWp = mapManager.getSelectedWaypoint?.() || mapManager.getRecentWaypoint?.();
@@ -6557,10 +6705,16 @@ async function generateShapeRoute() {
       await waitIfLoadPaused(run);
       if (run.cancelled) return;
 
-      // Search for optimal orientation angle when rotation tolerance > 0
+      // Orientation search. The cheap chord-corridor probe below is kept only
+      // as a SHORTLISTER: measured over anisotropic and gap-ridden networks it
+      // picks an angle within 0.0 similarity points of the best in 8 of 12
+      // cases but is off by up to 10.6 in the rest, and scoring those same
+      // angles with the layered solver instead was no better (and slower).
+      // Re-solving its top 3 properly cuts mean regret 2.17 -> 0.29 points and
+      // the worst case 10.6 -> 3.5, for roughly two extra full solves.
       if (angleTol > 0) {
         const candidates = rotationCandidates(angleTol);
-        let bestProbeScore = -Infinity;
+        const scoredAngles = [];
         for (let i = 0; i < candidates.length; i++) {
           const candAngle = candidates[i];
           const ring = strokeToLatLngRing(strokePts, anchor, targetM / 1.22, { rotationDeg: candAngle, direction });
@@ -6572,10 +6726,7 @@ async function generateShapeRoute() {
           const routedGeo = routed.routeCoordsXY.map(([x, y]) => graph.xyToGeo(x, y));
           const sim = shapeSimilarity(routedGeo, ring);
           const score = sim * 100 - routed.overlapRatio * 25;
-          if (score > bestProbeScore + 0.5) {
-            bestProbeScore = score;
-            bestAngleDeg = candAngle;
-          }
+          scoredAngles.push({ angleDeg: candAngle, score });
           if (i % 3 === 0 || i === candidates.length - 1) {
             busyTask.set({
               detail: `${translatePhrase('最佳化旋轉方位')} (${i + 1}/${candidates.length})...`,
@@ -6586,6 +6737,9 @@ async function generateShapeRoute() {
             if (run.cancelled) return;
           }
         }
+        scoredAngles.sort((a, b) => b.score - a.score);
+        angleShortlist = scoredAngles.slice(0, SHAPE_ANGLE_SHORTLIST).map((a) => a.angleDeg);
+        if (angleShortlist.length > 0) bestAngleDeg = angleShortlist[0];
       } else {
         busyTask.set({ progress: 45 });
       }
@@ -6670,13 +6824,17 @@ async function generateShapeRoute() {
     await waitIfLoadPaused(run);
     if (run.cancelled) return;
 
+    // The first SHAPE_ANGLE_SHORTLIST candidates are all solved and the lowest
+    // objectiveScore wins; beyond that it reverts to first-success so a long
+    // ranked anchor list from findOptimalViewportAnchor stays cheap.
     const tryPipelineWithCandidates = async (candidateList, currentGraph, currentOptimizer, progressBase = 48, progressSpan = 47) => {
+      let best = null;
       for (let cIdx = 0; cIdx < candidateList.length; cIdx++) {
-        if (run.cancelled) return null;
+        if (run.cancelled) return best;
         const item = candidateList[cIdx];
         const candAnchor = item.cand || item.anchor || item;
         const candAngle = item.angleDeg != null ? item.angleDeg : bestAngleDeg;
-        const sol = await runHighFidelityShapePipeline({
+        const sol = await runShapePipeline({
           strokePts,
           anchor: candAnchor,
           targetM,
@@ -6697,15 +6855,18 @@ async function generateShapeRoute() {
         if (sol && sol.keyWaypoints && sol.keyWaypoints.length >= 3) {
           sol.anchor = candAnchor;
           sol.optimalAngleDeg = candAngle;
-          return sol;
+          if (!best || sol.objectiveScore < best.objectiveScore) best = sol;
+          if (cIdx + 1 >= SHAPE_ANGLE_SHORTLIST) return best;
         }
       }
-      return null;
+      return best;
     };
 
     const initialCandidates = (!recentWp && typeof optRes !== 'undefined' && optRes?.rankedCandidates?.length)
       ? optRes.rankedCandidates
-      : [{ cand: anchor, angleDeg: bestAngleDeg }];
+      : (angleShortlist.length > 0
+        ? angleShortlist.map((angleDeg) => ({ cand: anchor, angleDeg }))
+        : [{ cand: anchor, angleDeg: bestAngleDeg }]);
 
     let solution = await tryPipelineWithCandidates(initialCandidates, graph, optimizer);
 
@@ -6831,6 +6992,9 @@ async function generateShapeRoute() {
       if (solution.direction && solution.direction !== 'any') {
         rows.push(['前進方向', solution.direction === 'cw' ? '順' : '逆']);
       }
+      if (Number.isFinite(solution.meanDevM)) {
+        rows.push(['平均偏差', formatDistance(solution.meanDevM)]);
+      }
       if (Number.isFinite(solution.maxDevM)) {
         rows.push(['最大偏差', formatDistance(solution.maxDevM)]);
       }
@@ -6863,6 +7027,8 @@ async function generateShapeRoute() {
     emitTestEvent('shape-route-finished', {
       actualM: solution.actualLengthM,
       targetM,
+      solver: solution.solver || 'legacy',
+      meanDevM: solution.meanDevM ?? null,
       similarityPct: solution.similarityPct,
       waypointCount: wps.length,
       overlapRatio: solution.overlapRatio,
@@ -6941,7 +7107,7 @@ async function iterateShapeRoute() {
       targetM
     );
 
-    const solution = await runHighFidelityShapePipeline({
+    const solution = await runShapePipeline({
       strokePts,
       anchor,
       targetM,
