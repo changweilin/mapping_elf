@@ -2627,7 +2627,6 @@ btnTogglePanel.addEventListener('click', () => sidePanel.classList.toggle('open'
 
 // =========== 3D Terrain Viewer ===========
 const btnFavoriteQuick = document.getElementById('btn-favorite-quick');
-const btnView2d = document.getElementById('btn-view-2d');
 const btnView3d = document.getElementById('btn-view-3d');
 const tvView2d = document.getElementById('tv-view-2d');
 const terrainViewerEl = document.getElementById('terrain-viewer');
@@ -3616,11 +3615,11 @@ async function refreshTerrainViewer() {
 }
 
 btnFavoriteQuick?.addEventListener('click', handleAddFavorite);
-// Segmented 2D/3D switch: the toolbar's 3D side builds the current route's
-// terrain; the mirrored control inside the viewer flips back to the 2D map.
-btnView3d?.addEventListener('click', build3dForCurrentRoute);
-btnView2d?.addEventListener('click', () => {
-  if (!terrainViewerEl?.classList.contains('hidden')) closeTerrainViewer();
+// 3D lives in the 環狀功能選單 alongside the other map features: picking it builds
+// the current route's terrain, and the pill inside the viewer flips back to 2D.
+btnView3d?.addEventListener('click', () => {
+  closeRadialMenu();
+  build3dForCurrentRoute();
 });
 tvView2d?.addEventListener('click', closeTerrainViewer);
 tvRedrawBtn?.addEventListener('click', refreshTerrainViewer);
@@ -3910,6 +3909,7 @@ function update3dButtonBadge() {
     btnView3d.disabled = disabled;
     // Disabled state explains itself instead of looking broken.
     btnView3d.title = disabled ? '規劃路線後即可切換 3D' : '建立 3D 地形';
+    btnView3d.setAttribute('aria-disabled', String(disabled));
   }
 }
 

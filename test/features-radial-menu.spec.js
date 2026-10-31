@@ -7,7 +7,7 @@ async function boot(page) {
 }
 
 test.describe('環狀功能選單 (Radial Features Menu)', () => {
-  test('功能按鍵整合 5 大功能區並能展開/收回環狀選單', async ({ page }) => {
+  test('功能按鍵整合 6 大功能區並能展開/收回環狀選單', async ({ page }) => {
     await boot(page);
 
     const btnFeatures = page.locator('#btn-features-menu');
@@ -25,18 +25,20 @@ test.describe('環狀功能選單 (Radial Features Menu)', () => {
     await expect(btnFeatures).toHaveAttribute('aria-expanded', 'true');
     await expect(btnCenter).toBeVisible();
 
-    // 5 個功能按鈕皆存在於環狀選單中
+    // 6 個功能按鈕皆存在於環狀選單中
     const measureBtn = page.locator('#btn-measure-tool');
     const shapeBtn = page.locator('#btn-shape-tool');
     const starBtn = page.locator('#btn-star-tool');
     const weatherBtn = page.locator('#btn-weather-tool');
     const catchmentBtn = page.locator('#btn-catchment-tool');
+    const view3dBtn = page.locator('#btn-view-3d');
 
     await expect(measureBtn).toBeVisible();
     await expect(shapeBtn).toBeVisible();
     await expect(starBtn).toBeVisible();
     await expect(weatherBtn).toBeVisible();
     await expect(catchmentBtn).toBeVisible();
+    await expect(view3dBtn).toBeVisible();
 
     // 驗證叉叉鍵剛好在地圖畫面的最中間
     const mapBox = await page.locator('#map').boundingBox();
@@ -49,8 +51,8 @@ test.describe('環狀功能選單 (Radial Features Menu)', () => {
     // 等待展開動畫（0.38s + delay）完成定點
     await page.waitForTimeout(450);
 
-    // 驗證 5 個功能鍵以叉叉鍵為圓心，半徑一致
-    for (const btn of [measureBtn, shapeBtn, starBtn, weatherBtn, catchmentBtn]) {
+    // 驗證 6 個功能鍵以叉叉鍵為圓心，半徑一致
+    for (const btn of [measureBtn, shapeBtn, starBtn, weatherBtn, catchmentBtn, view3dBtn]) {
       const box = await btn.boundingBox();
       const pt = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       const dist = Math.hypot(pt.x - btnCenterPoint.x, pt.y - btnCenterPoint.y);
@@ -103,7 +105,7 @@ test.describe('環狀功能選單 (Radial Features Menu)', () => {
     await expect(overlay).not.toHaveClass(/open/);
     await expect(btnFeatures).toHaveAttribute('aria-pressed', 'false');
 
-    // 9. 環狀選單的 5 個功能鍵各自對應一個專屬顏色
+    // 9. 環狀選單的 6 個功能鍵各自對應一個專屬顏色
     await btnFeatures.click();
     await expect(overlay).toHaveClass(/open/);
     const colors = await Promise.all([
@@ -112,11 +114,12 @@ test.describe('環狀功能選單 (Radial Features Menu)', () => {
       starBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
       weatherBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
       catchmentBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
+      view3dBtn.evaluate((el) => getComputedStyle(el).getPropertyValue('--radial-item-color').trim()),
     ]);
     // 每個按鍵都有定義顏色且彼此獨立互不相同
     expect(colors.every(c => !!c)).toBe(true);
     const uniqueColors = new Set(colors);
-    expect(uniqueColors.size).toBe(5);
+    expect(uniqueColors.size).toBe(6);
 
     // 收回環狀選單
     await btnCenter.click();
@@ -141,12 +144,32 @@ test.describe('環狀功能選單 (Radial Features Menu)', () => {
     expect(Math.abs(btnCenterPoint.x - mapCenter.x)).toBeLessThanOrEqual(2);
     expect(Math.abs(btnCenterPoint.y - mapCenter.y)).toBeLessThanOrEqual(2);
 
-    for (const id of ['#btn-measure-tool', '#btn-shape-tool', '#btn-star-tool', '#btn-weather-tool', '#btn-catchment-tool']) {
+    for (const id of ['#btn-measure-tool', '#btn-shape-tool', '#btn-star-tool', '#btn-weather-tool', '#btn-catchment-tool', '#btn-view-3d']) {
       const box = await page.locator(id).boundingBox();
       const pt = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       const dist = Math.hypot(pt.x - btnCenterPoint.x, pt.y - btnCenterPoint.y);
       expect(Math.abs(dist - 108)).toBeLessThanOrEqual(3);
     }
+  });
+
+  test('3D 地形成為功能選單的一項，地圖上不再有獨立的 2D/3D 切換', async ({ page }) => {
+    await boot(page);
+
+    // 舊的浮動 2D/3D 膠囊已移除
+    await expect(page.locator('#view-mode-toggle')).toHaveCount(0);
+
+    // 功能鍵圖示的圓點數跟環狀選單的項目數一致
+    await expect(page.locator('#btn-features-menu svg circle[r="1.9"]')).toHaveCount(6);
+
+    await page.locator('#btn-features-menu').click();
+    await expect(page.locator('#radial-menu-overlay')).toHaveClass(/open/);
+
+    // 未規劃路線前預設鎖定，但標籤仍讀得到
+    const btn3d = page.locator('#btn-view-3d');
+    await expect(btn3d).toBeVisible();
+    await expect(btn3d).toBeDisabled();
+    await expect(btn3d).toHaveAttribute('aria-disabled', 'true');
+    await expect(btn3d.locator('.radial-btn-label')).toBeVisible();
   });
 
   test('各功能頁面上方標題列貼齊頂部且不遮住下方操作區塊', async ({ page }) => {

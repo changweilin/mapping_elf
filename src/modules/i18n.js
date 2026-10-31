@@ -55,6 +55,7 @@ const PHRASES = {
   '衛星圖': { en: 'Satellite map', ja: '衛星地図', ko: '위성 지도', fr: 'Carte satellite', de: 'Satellitenkarte', es: 'Mapa satelital', it: 'Mappa satellitare' },
   '2D 地圖': { en: '2D map', ja: '2Dマップ', ko: '2D 지도', fr: 'Carte 2D', de: '2D-Karte', es: 'Mapa 2D', it: 'Mappa 2D' },
   '返回 2D 地圖': { en: 'Back to 2D map', ja: '2Dマップに戻る', ko: '2D 지도로 돌아가기', fr: 'Retour à la carte 2D', de: 'Zurück zur 2D-Karte', es: 'Volver al mapa 2D', it: 'Torna alla mappa 2D' },
+  '3D 地形': { en: '3D terrain', ja: '3D地形', ko: '3D 지형', fr: 'Terrain 3D', de: '3D-Gelände', es: 'Terreno 3D', it: 'Terreno 3D' },
   '建立 3D 地形': { en: 'Build 3D terrain', ja: '3D地形を作成', ko: '3D 지형 생성', fr: 'Créer le terrain 3D', de: '3D-Gelände erstellen', es: 'Crear terreno 3D', it: 'Crea terreno 3D' },
   '規劃路線後即可切換 3D': { en: 'Plan a route to switch to 3D', ja: 'ルートを作成すると3Dに切り替えられます', ko: '경로를 계획하면 3D로 전환할 수 있습니다', fr: 'Planifiez un itinéraire pour passer en 3D', de: 'Route planen, um zu 3D zu wechseln', es: 'Planifica una ruta para cambiar a 3D', it: 'Pianifica un percorso per passare al 3D' },
   '運鏡跟隨（播放時鏡頭自動跟拍人物）': { en: 'Follow camera (chases the hiker during playback)', ja: 'カメラ追従（再生中に人物を自動で追いかけます）', ko: '카메라 팔로우 (재생 중 인물을 자동 추적)', fr: 'Caméra suiveuse (suit le randonneur pendant la lecture)', de: 'Verfolgerkamera (folgt der Figur während der Wiedergabe)', es: 'Cámara de seguimiento (sigue al personaje durante la reproducción)', it: 'Telecamera a inseguimento (segue il personaggio durante la riproduzione)' },
