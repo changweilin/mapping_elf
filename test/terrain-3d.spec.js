@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openTool } from './helpers/openTool.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -108,10 +109,9 @@ async function ensurePanelOpen(page) {
   await expect(page.locator('#side-panel')).toHaveClass(/open/);
 }
 
-// Build the current route's 3D terrain via the route-planning button.
+// Build the current route's 3D terrain from the 3D item in the 環狀功能選單.
 async function open3dForCurrentRoute(page) {
-  await ensurePanelOpen(page);
-  await page.locator('#btn-view-3d').click();
+  await openTool(page, '#btn-view-3d');
 }
 
 // Mock the OSRM routing service so planning a routed (non-imported) route is
@@ -409,7 +409,7 @@ test('3D terrain: the route caches its elevation grid + 圖資 so reopening skip
   // Reopen the same route: cached grid + 圖資 (Cache-API-backed, see
   // saveTerrainFeaturesEntry) are both reused — no new elevation or Overpass
   // requests, and the page never re-hits the network for either.
-  await page.locator('#btn-view-3d').click();
+  await open3dForCurrentRoute(page);
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
   await expect(page.locator('#terrain-canvas-wrap canvas')).toHaveCount(1);
   expect(elevation.count).toBe(firstRunElevation);

@@ -8,6 +8,7 @@
 // behaviour there, and overlay-on-top-of-a-built-model behaviour here.
 import { expect, test } from '@playwright/test';
 import { osrm } from './helpers/apiMocks.mjs';
+import { openTool } from './helpers/openTool.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -82,7 +83,7 @@ async function waitForWeatherLoad(page) {
 
 async function open3d(page) {
   await expect(page.locator('#btn-view-3d')).toBeEnabled({ timeout: 20_000 });
-  await page.locator('#btn-view-3d').click();
+  await openTool(page, '#btn-view-3d');
   await expect(page.locator('#terrain-viewer')).not.toHaveClass(/hidden/);
   await expect(page.locator('#tv-loading')).toBeHidden({ timeout: 20_000 });
 }

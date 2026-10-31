@@ -12,7 +12,8 @@ Guidelines for maintaining the UI, CSS patterns, and responsive behaviors in Map
 2. **Z-Index Layering**
    - Leaflet map layers often conflict with UI modals. Ensure Modals have a high `z-index` (e.g., `1000`+) and the overlay backdrop correctly blocks map interactions.
    - Known trap (CLAUDE.md INC-325): the 3D viewer's `canvas-wrap` needs `z-index:1` to keep the loading overlay below toolbar dropdowns. Any overlay/dropdown style change must verify both stacking contexts.
-   - The floating 2D/3D pill (`.view-mode-toggle`, `position:fixed`, z:940) occupies the band right under the toolbar in **both** views. Anything that expands into that band — the 設置面板, the 3D toolbar's 列印 dropdown — must sit above z:940 or it gets covered and its taps swallowed. Guarded by `test/panel-overlay-bounds.spec.js` + `test/bottom-bar-icon-toggles.spec.js`.
+   - The 2D/3D pill (`.view-mode-toggle`, `position:fixed`, z:940) now lives **only inside the 3D viewer** — the 2D map enters 3D from the 環狀功能選單 (`#btn-view-3d` is the 6th `.radial-btn`). Anything that expands into the band under the viewer toolbar — the 3D toolbar's 列印 dropdown — must sit above z:940 or it gets covered and its taps swallowed. Guarded by `test/panel-overlay-bounds.spec.js`.
+   - The 環狀功能選單 is the single home for map features: add one `.radial-menu-item`, re-space **every** `--angle` to `360/n` and give the new item its own `--radial-item-color` plus a matching dot in `#btn-features-menu`'s glyph. Guarded by `test/features-radial-menu.spec.js`.
 
 5. **Floating panels vs. the bottom panel**
    - Panels anchored off `--bottom-panel-height` (set by the 分割線 drag) must clamp against the viewport, or dragging the divider up pushes them — and their close button — off the top of the screen. `.measure-panel` pairs a `--mp-bottom` clamp with a matching `max-height` and pins its head `position:sticky`; phones drop the anchor entirely and overlay `#bottom-panel` (z:620 > z:200).

@@ -85,20 +85,3 @@ test('measure tool modes still switch as icons', async ({ page }) => {
   await expect(page.locator('[data-measure-mode="catchment"]')).toHaveClass(/active/);
   await expect(page.locator('[data-measure-mode="segment"]')).not.toHaveClass(/active/);
 });
-
-test('expanded settings panel covers the 2D/3D pill on phones', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await boot(page);
-  const pill = await page.locator('#view-mode-toggle').boundingBox();
-  const centre = { x: pill.x + pill.width / 2, y: pill.y + pill.height / 2 };
-
-  // Panel closed: the pill owns its own spot.
-  await page.locator('#side-panel').evaluate((el) => el.classList.remove('open'));
-  expect(await page.evaluate((p) => !!document.elementFromPoint(p.x, p.y)?.closest('#view-mode-toggle'), centre)).toBe(true);
-
-  // Panel open (full-width on phones): the panel owns that spot instead.
-  await page.locator('#btn-toggle-panel').click();
-  await expect(page.locator('#side-panel')).toHaveClass(/open/);
-  await expect.poll(async () => page.evaluate((p) => !!document.elementFromPoint(p.x, p.y)?.closest('#side-panel'), centre))
-    .toBe(true);
-});

@@ -1078,10 +1078,9 @@ body.weather-card-busy .weather-edit-control:disabled {
   box-shadow: 0 2px 8px rgba(110, 231, 183, 0.3);
 }
 
-/* 2D / 3D view switcher — one segmented pill, fixed at the same viewport spot
-   in both the 2D map and the 3D viewer (both containers are unfiltered
-   position:fixed, so `fixed` here means viewport coordinates in each), so it
-   reads as a single persistent control that survives the dimension flip. */
+/* 2D / 3D view switcher — the segmented pill inside the 3D viewer (the 2D map
+   enters 3D from the 環狀功能選單 instead, so it needs no pill of its own). The
+   viewer overlay is unfiltered, so `fixed` here means viewport coordinates. */
 .view-mode-toggle {
   position: fixed;
   top: calc(var(--toolbar-height) + 10px);
@@ -1098,14 +1097,6 @@ body.weather-card-busy .weather-edit-control:disabled {
   border: 1px solid var(--border);
   box-shadow: var(--shadow-md);
   transition: opacity 0.2s ease, visibility 0.2s ease;
-}
-
-body.radial-menu-active .view-mode-toggle,
-body.feature-panel-active .view-mode-toggle,
-body:has(#btn-features-menu.has-active-feature) .view-mode-toggle {
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
 }
 
 .view-mode-btn {
@@ -1445,6 +1436,10 @@ body.radial-menu-active .map-action-btns,
   --radial-item-color: #06b6d4; /* Cyan */
 }
 
+#btn-view-3d {
+  --radial-item-color: #f43f5e; /* Rose */
+}
+
 /* Matching accent colors for expanded feature panels */
 #measure-panel {
   --panel-accent-color: #6366f1;
@@ -1545,6 +1540,39 @@ body.radial-menu-active .map-action-btns,
   color: #0f172a;
   border-color: color-mix(in srgb, var(--radial-item-color, rgba(0, 0, 0, 0.15)) 40%, rgba(0, 0, 0, 0.15));
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Locked ring item (3D waits for a planned route): drops its accent colour so
+   it reads as "not yet" rather than broken, while the label stays readable and
+   the title says what unlocks it. */
+.radial-btn:disabled,
+.radial-btn:disabled:hover {
+  transform: translate(-50%, -50%);
+  cursor: not-allowed;
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  border-color: var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+}
+
+.radial-btn:disabled svg {
+  opacity: 0.6;
+}
+
+.radial-btn:disabled .radial-btn-label {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #cbd5e1;
+}
+
+.light-theme .radial-btn:disabled,
+.light-theme .radial-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+
+.light-theme .radial-btn:disabled .radial-btn-label {
+  border-color: rgba(0, 0, 0, 0.14);
+  color: #64748b;
 }
 
 #btn-features-menu.has-active-feature {
