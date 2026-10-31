@@ -528,8 +528,22 @@ test('star tool anchors center at most recent waypoint matching drawing board be
   // 3. Open star tool: center should automatically be set to the latest waypoint (24.520, 120.820)
   await openStarPanel(page);
   const readout = page.locator('#star-center-readout');
-  await expect(readout).toContainText('24.52000, 120.82000');
-  await expect(readout).toContainText(/最新航點|Latest waypoint|星點/);
+  // Since 9eefed2 the feature tools name the waypoint they anchor to rather than
+  // the generic source, so the readout is "<label> · 24.52000, 120.82000".
+  //
+  // Which label is deliberately NOT asserted. The Overpass stub ignores the
+  // query bbox and always answers with the ring around ANCHOR, so the app's
+  // nearby-POI naming resolves these coordinates to "星點 1" a moment after
+  // the waypoints are added; until it lands getWaypointLabel returns
+  // 終點/Finish. Pinning either name is a race on that fetch (it is what made
+  // this test pass or fail by timing). What must hold is that the centre sits on
+  // the latest waypoint and the readout still names it, so a regression to a
+  // coords-only readout, or one left on the map centre, fails here.
+  const expectAnchoredToLatestWaypoint = async () => {
+    await expect(readout).toHaveText(/^.+ · 24\.52000, 120\.82000$/);
+    await expect(readout).not.toContainText(/地圖中心|Map centre/);
+  };
+  await expectAnchoredToLatestWaypoint();
 
   // 4. Change center to map center via #btn-star-center-map
   await press(page, '#btn-star-center-map');
@@ -537,8 +551,7 @@ test('star tool anchors center at most recent waypoint matching drawing board be
 
   // 5. Click #btn-star-center-waypoint to return to the latest waypoint
   await press(page, '#btn-star-center-waypoint');
-  await expect(readout).toContainText('24.52000, 120.82000');
-  await expect(readout).toContainText(/最新航點|Latest waypoint|星點/);
+  await expectAnchoredToLatestWaypoint();
 });
 
 test('solving constellation matches POIs and renders zodiac lines and stars on map', async ({ page }) => {
