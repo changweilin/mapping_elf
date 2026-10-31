@@ -15,7 +15,6 @@ import { RESET_STATE_KEYS } from './modules/stateKeys.js';
 import { estimateMapPackTiles } from './modules/tileEstimator.js';
 import { buildWeatherPointsFromState } from './modules/weatherPointBuilder.js';
 import { platform } from './platform/index.js';
-import { TerrainViewer } from './modules/terrainViewer.js';
 import { computeCatchment } from './modules/catchmentEngine.js';
 import { fetchHydroData, computeHydroIndicators, computeGeometryRows } from './modules/catchmentHydro.js';
 import { GPSArtOptimizer, RoadNetworkGraph, RouteConstraints, evaluateShapeSimilarity, computeGeoPathLength, countShapeCorners, detectRouteSpurs, findOptimalViewportAnchor, needsDistanceCalibration, nextCalibratedTarget, pickShapeWaypoints, planRefinementTs, planSpurRetraction, ringRouteDeviation, rotationCandidates, selectWaypointTs, shapeSimilarity, strokeToLatLngRing, suggestWaypointCount, totalSpurLengthM, trimRouteSpurs, waypointsFromTs, isExcessiveLegDetour } from './modules/shapeRoutePlanner.js';
@@ -2700,6 +2699,31 @@ let tvWpCardLeaveTimer = null;
 let tvWpCardHideTimer = null;
 
 let terrainViewer = null;
+// The 3D stack (terrainViewer.js plus the ~592 kB Three.js chunk it pulls in) is
+// the largest thing in the bundle and does nothing until the viewer opens, so it
+// is imported on demand instead of at first paint. The promise is memoised so
+// reopening never refetches, and a FAILED import clears the memo — otherwise one
+// bad network moment would cache the rejection and 3D would stay broken for the
+// rest of the session.
+let terrainViewerModulePromise = null;
+function ensureTerrainViewerModule() {
+  if (!terrainViewerModulePromise) {
+    terrainViewerModulePromise = import('./modules/terrainViewer.js')
+      .catch((err) => { terrainViewerModulePromise = null; throw err; });
+  }
+  return terrainViewerModulePromise;
+}
+// Warm it once the app is idle. Offline 3D (replaying a route whose terrain is
+// already in the Cache API) used to work because the static import had fetched
+// Three.js at page load; without this the user could go offline having never
+// opened 3D and find the chunk unfetched. Deferring to idle keeps it off the
+// first-paint path while costing the same bytes it always did. Failures are
+// swallowed here — the on-demand import retries.
+if (typeof requestIdleCallback === 'function') {
+  requestIdleCallback(() => { ensureTerrainViewerModule().catch(() => {}); }, { timeout: 8000 });
+} else {
+  setTimeout(() => { ensureTerrainViewerModule().catch(() => {}); }, 4000);
+}
 // True while the toolbar "更新" rebuild is running. A redraw must never kick the
 // user out of the viewer: if the rebuild fails or is aborted we keep the model
 // that's already on screen instead of closing back to the planning page.
@@ -3345,6 +3369,7 @@ async function openTerrainViewer(cacheKey = null, opts = {}) {
     }
 
     if (!terrainViewer) {
+      const { TerrainViewer } = await ensureTerrainViewerModule();
       terrainViewer = new TerrainViewer(terrainCanvasWrap);
     }
 
