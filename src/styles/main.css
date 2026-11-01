@@ -42,6 +42,10 @@
   --panel-width: 380px;
   --toolbar-height: 56px;
   --bottom-panel-height: 190px;
+  /* How much height the floating UI yields to the bottom panel: the panel's own
+     height, capped so a fully expanded panel cannot push the map buttons and the
+     centred 功能面板 off the top of the screen (set in main.js). */
+  --bottom-panel-offset: 190px;
   /* Reserved space for bottom bar buttons (reset to 0 now that tables are in popups) */
   --bp-view-toggle-reserve: 108px;
 
@@ -1215,11 +1219,13 @@ body.weather-card-busy .weather-edit-control:disabled {
   z-index: 1;
 }
 
-/* Floating map action buttons — left side to stay clear of the side panel */
+/* Floating map action buttons — left side to stay clear of the side panel.
+   Rides the clamped offset, not the raw panel height: dragging the 分割線 to the
+   top used to carry these buttons off the screen with it. */
 .map-action-btns {
   position: fixed;
   left: 10px;
-  bottom: calc(var(--bottom-panel-height) + 10px);
+  bottom: calc(var(--bottom-panel-offset) + 10px);
   z-index: 600;
   display: flex;
   flex-direction: column;
@@ -1305,7 +1311,7 @@ body.radial-menu-active .map-action-btns,
 
 .radial-menu-container {
   position: fixed;
-  top: var(--radial-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-height)) / 2));
+  top: var(--radial-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-offset)) / 2));
   left: var(--radial-center-x, 50%);
   width: 0;
   height: 0;
@@ -1586,10 +1592,10 @@ body.radial-menu-active .map-action-btns,
 .measure-panel {
   position: fixed;
   left: var(--map-center-x, 50%);
-  top: var(--map-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-height)) / 2));
+  top: var(--map-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-offset)) / 2));
   transform: translate(-50%, -50%);
   bottom: auto;
-  max-height: min(calc(100dvh - var(--toolbar-height) - 32px), max(220px, calc(100dvh - var(--toolbar-height) - var(--bottom-panel-height) - 24px)));
+  max-height: min(calc(100dvh - var(--toolbar-height) - 32px), max(220px, calc(100dvh - var(--toolbar-height) - var(--bottom-panel-offset) - 24px)));
   overflow-y: auto;
   overscroll-behavior: contain;
   z-index: 950;
@@ -2033,6 +2039,11 @@ body.radial-menu-active .map-action-btns,
      positioned over this same row — without it the chips scroll under the pill. */
   padding: 2px var(--bp-view-toggle-reserve) 7px 12px;
   overflow-x: auto;
+  /* Never shrink: in elevation mode this is a flex item of .bp-chart-row, and a
+     short panel squashed the chips to a clipped sliver — which also made the
+     panel's default height (measured from this strip) depend on the panel's
+     current height. */
+  flex-shrink: 0;
 }
 
 .rsb-chip {
@@ -2922,7 +2933,10 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   position: fixed;
   top: var(--toolbar-height);
   right: 0;
-  bottom: var(--bottom-panel-height);
+  /* Full height: #bottom-panel stops at this panel's edge while it is open, so
+     there is nothing left to yield to. Dragging the 分割線 up no longer eats the
+     設置面板. */
+  bottom: 0;
   width: var(--panel-width);
   /* Above the floating 2D/3D pill (z:940) — the pill is fixed under the toolbar
      and used to punch through this panel (full-width on phones), covering its
@@ -6012,6 +6026,18 @@ body.is-resizing {
   user-select: none;
 }
 
+/* Tile with the 設置面板 instead of fighting it (right-rail layouts only — on
+   phones the side panel is a full-screen sheet that covers this one anyway).
+   The side panel used to give up its height to this panel, so 全展開 shrank it to
+   nothing; letting it keep full height instead would park its sticky header on
+   top of the 分割線 (z:950 vs 200) and swallow the clicks that bring the panel
+   back. Stopping at the panel edge settles both. */
+@media (min-width: 769px) {
+  body:has(#side-panel.open) #bottom-panel {
+    right: var(--panel-width);
+  }
+}
+
 .bp-resize-handle {
   height: 18px;
   cursor: ns-resize;
@@ -6146,6 +6172,26 @@ body.is-resizing {
 
 .bottom-panel:not(.bp-mode-catchment) .bp-catchment-scroll {
   display: none;
+}
+
+/* Fully collapsed (drag past the floor, or the dbl-click cycle's 全收起): the
+   panel is a bare grab bar, so the map and every floating panel get the whole
+   screen. The body is display:none rather than clipped — at 18px tall the chart
+   row would otherwise hang outside the panel (overflow is visible, for the
+   weather-table trash zone) and keep swallowing taps. Declared after the
+   bp-mode-* rules: same specificity, and the later rule has to win. */
+.bottom-panel.bp-collapsed > *:not(.bp-resize-handle) {
+  display: none;
+}
+
+.bottom-panel.bp-collapsed {
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.22);
+}
+
+.bottom-panel.bp-collapsed .bp-resize-handle::after {
+  width: 60px;
+  background: var(--accent-primary);
+  opacity: 0.75;
 }
 
 .bp-catchment-scroll {
@@ -7634,7 +7680,10 @@ body.modal-open {
 .weather-popup .weather-card.full,
 .wp-weather-card-slot .weather-card.full {
   width: min(280px, calc(100vw - var(--panel-width) - 80px));
-  max-height: calc(100vh - var(--toolbar-height) - var(--bottom-panel-height) - 80px);
+  /* max() floor: a tall bottom panel drives the subtraction negative, which used
+     to squash the card to nothing. It paints above the panel (z:1000), so a
+     minimum height is safe. */
+  max-height: max(220px, calc(100vh - var(--toolbar-height) - var(--bottom-panel-height) - 80px));
   overflow-y: auto;
 }
 

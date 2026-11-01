@@ -4749,6 +4749,16 @@ function closeAllFeaturePanels() {
   }
 }
 
+// Floating UI (map action buttons, centred 功能面板, 環狀選單) yields to the bottom
+// panel through --bottom-panel-offset instead of its real height: a fully
+// expanded panel would otherwise shove them off the top of the screen. The panel
+// paints below them (z:200), so overlapping it is the safe failure mode.
+const BOTTOM_PANEL_CLEARANCE = 300;
+function bottomPanelLayoutOffset(panelH) {
+  const toolbarH = document.querySelector('.toolbar')?.offsetHeight || 0;
+  return Math.max(0, Math.min(panelH, window.innerHeight - toolbarH - BOTTOM_PANEL_CLEARANCE));
+}
+
 function updateMapCenterVariables() {
   const mapEl = document.getElementById('map');
   if (!mapEl) return;
@@ -4766,6 +4776,17 @@ function updateMapCenterVariables() {
       }
     } catch (_) { }
   }
+
+  // Keep the centre inside the band the floating panels may centre in. With the
+  // 分割線 dragged near the toolbar the map rect is a sliver, and a panel centred
+  // on it hangs off the top of the screen, close X included.
+  const toolbarH = document.querySelector('.toolbar')?.offsetHeight || 0;
+  const panelH = document.getElementById('bottom-panel')?.offsetHeight || 0;
+  const bandBottom = Math.max(toolbarH + 2, window.innerHeight - bottomPanelLayoutOffset(panelH));
+  // Half of the tallest panel that has to fit, or half the band when it is
+  // shorter than that — in a cramped band the centre is the only safe spot.
+  const half = Math.min(200, (bandBottom - toolbarH) / 2);
+  cy = Math.round(Math.min(Math.max(cy, toolbarH + half), bandBottom - half));
 
   document.documentElement.style.setProperty('--map-center-x', `${cx}px`);
   document.documentElement.style.setProperty('--map-center-y', `${cy}px`);
@@ -13422,6 +13443,9 @@ function initWeatherControls() {
   // Helpers: save/restore panel height as a viewport ratio so portrait↔landscape
   // transitions maintain the same proportional split.
   const MIN_H = 56;
+  // Fully collapsed = the grab bar alone. It has to stay on screen: it is the
+  // only thing that brings the panel back.
+  const getCollapseH = () => handle?.offsetHeight || 18;
   // Hard upper bound: divider must never hide behind the fixed toolbar.
   const getMaxPanelH = () => {
     const toolbar = document.querySelector('.toolbar');
@@ -13430,14 +13454,30 @@ function initWeatherControls() {
     const gap = window.innerWidth <= 768 ? 12 : 0;
     return Math.max(MIN_H, window.innerHeight - toolbarH - gap);
   };
-  const isElevationChartExpanded = () => {
-    const chart = panel.querySelector('#elevation-chart-container');
-    return chart && !chart.classList.contains('collapsed');
+  const setPanelHeightVars = (h) => {
+    const root = document.documentElement.style;
+    root.setProperty('--bottom-panel-height', `${h}px`);
+    root.setProperty('--bottom-panel-offset', `${bottomPanelLayoutOffset(h)}px`);
   };
-  const getChartOnlyPanelH = () => {
-    const chartRow = panel.querySelector('.bp-chart-row');
-    const chartH = chartRow?.offsetHeight || 0;
-    return Math.max(MIN_H, Math.min(getMaxPanelH(), (handle?.offsetHeight || 18) + chartH));
+  // Hides the panel body so a collapsed panel is a bare grab bar instead of a
+  // stub of clipped chrome.
+  const syncCollapsedState = (h) => {
+    panel.classList.toggle('bp-collapsed', h <= getCollapseH() + 2);
+  };
+  // Designed default = grab bar + summary chips + the chart's CSS height. The
+  // chart height is read from flex-basis/height, not offsetHeight: in elevation
+  // mode the chart flexes to fill the panel, so measuring an expanded panel
+  // would report the expanded size instead of the default.
+  const getDefaultPanelH = () => {
+    const summaryBar = panel.querySelector('#route-summary-bar');
+    const chart = panel.querySelector('#elevation-chart-container');
+    let chartH = 0;
+    if (chart) {
+      const cs = getComputedStyle(chart);
+      chartH = parseFloat(cs.flexBasis) || parseFloat(cs.height) || 0;
+    }
+    const h = getCollapseH() + (summaryBar?.offsetHeight || 0) + (chartH || 148) + 16;
+    return Math.max(MIN_H, Math.min(getMaxPanelH(), h));
   };
   const savePanelRatio = () => {
     const ratio = panel.offsetHeight / window.innerHeight;
@@ -13453,21 +13493,18 @@ function initWeatherControls() {
     } else if (legacyH > 0) {
       h = legacyH;
     } else {
-      // Default: handle + summary chips + elevation-chart height. Measured from
-      // the always-visible summary bar plus the chart so the default stays right
-      // regardless of the active view (F5 toggle) — the chart's offsetHeight is 0
-      // while hidden in weather mode, so fall back to a sensible constant then.
-      const summaryBar = panel.querySelector('#route-summary-bar');
-      const chart = panel.querySelector('#elevation-chart-container');
-      const chartH = chart?.offsetHeight || 148;
-      h = (handle.offsetHeight || 18) + (summaryBar?.offsetHeight || 0) + chartH + 16;
+      h = getDefaultPanelH();
     }
 
     if (h > 0) {
-      // Allow full range so dbl-click collapsed/expanded states persist across reloads.
-      const clamped = Math.max(0, Math.min(getMaxPanelH(), h));
+      // Allow the full range so the dbl-click cycle's collapsed / expanded states
+      // persist across reloads and orientation changes. Anything under the drag
+      // floor is a collapsed panel: snap it shut rather than restore a stub whose
+      // content spills out of it.
+      const clamped = h < MIN_H ? getCollapseH() : Math.min(getMaxPanelH(), h);
       panel.style.height = `${clamped}px`;
-      document.documentElement.style.setProperty('--bottom-panel-height', `${clamped}px`);
+      setPanelHeightVars(clamped);
+      syncCollapsedState(clamped);
     }
   };
 
@@ -13478,7 +13515,7 @@ function initWeatherControls() {
   new ResizeObserver(entries => {
     const h = Math.round(entries[0]?.contentRect.height || 0);
     if (h > 0 && !panel._resizing) {
-      document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+      setPanelHeightVars(h);
       updateMapCenterVariables();
     }
     // Redraw chart so it fills the container correctly after layout changes.
@@ -13511,9 +13548,13 @@ function initWeatherControls() {
     if (pendingClientY == null) return;
     const clientY = pendingClientY;
     pendingClientY = null;
-    const h = Math.max(MIN_H, Math.min(getMaxPanelH(), window.innerHeight - clientY));
+    // Dragged past the floor the panel shuts completely instead of parking at a
+    // content stub that shows nothing useful.
+    const raw = window.innerHeight - clientY;
+    const h = raw < MIN_H ? getCollapseH() : Math.min(getMaxPanelH(), raw);
     panel.style.height = `${h}px`;
-    document.documentElement.style.setProperty('--bottom-panel-height', `${h}px`);
+    setPanelHeightVars(h);
+    syncCollapsedState(h);
     invalidateMapSize();
   };
   const scheduleHeight = (clientY) => {
@@ -13596,22 +13637,26 @@ function initWeatherControls() {
     document.addEventListener('touchcancel', onEnd);
   }, { passive: false });
 
-  // --- Double-click toggle: 0:10 ↔ 10:0 ---
-  // Collapsed state keeps the handle bar visible so it remains clickable;
-  // expanded state lets the panel fill the whole viewport.
-  const COLLAPSE_H = handle.offsetHeight || 18;
+  // --- Divider dbl-click cycle: 預設 → 全展開 → 全收起 → 預設 ---
+  const PANEL_CYCLE = ['default', 'expanded', 'collapsed'];
+  const panelStateH = (state) => state === 'expanded' ? getMaxPanelH()
+    : state === 'collapsed' ? getCollapseH()
+      : getDefaultPanelH();
+  // Which stop are we parked on? A hand-dragged height matches none of them, and
+  // the cycle then restarts at 預設 — the least surprising place to land.
+  const currentPanelState = () => PANEL_CYCLE.find(
+    (s) => Math.abs(panel.offsetHeight - panelStateH(s)) <= 4
+  );
   const togglePanel = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const viewH = window.innerHeight;
-    const expandH = getMaxPanelH();
     const currentH = panel.offsetHeight;
-    const targetH = currentH > viewH / 2
-      ? (isElevationChartExpanded() ? getChartOnlyPanelH() : COLLAPSE_H)
-      : expandH;
-    panel.style.transition = 'height 0.25s ease';
-    panel.style.height = `${targetH}px`;
-    document.documentElement.style.setProperty('--bottom-panel-height', `${targetH}px`);
+    const from = currentPanelState();
+    const next = from ? PANEL_CYCLE[(PANEL_CYCLE.indexOf(from) + 1) % PANEL_CYCLE.length] : 'default';
+    // Un-collapse first: the default height is measured from the summary bar,
+    // which is display:none while the panel is collapsed.
+    if (next !== 'collapsed') panel.classList.remove('bp-collapsed');
+    const targetH = panelStateH(next);
     const onEnd = () => {
       panel.style.transition = '';
       panel.removeEventListener('transitionend', onEnd);
@@ -13619,7 +13664,14 @@ function initWeatherControls() {
       invalidateMapSizeAfterLayout();
       requestAnimationFrame(() => elevationProfile?.chart?.resize());
     };
-    panel.addEventListener('transitionend', onEnd);
+    panel.style.transition = 'height 0.25s ease';
+    panel.style.height = `${targetH}px`;
+    setPanelHeightVars(targetH);
+    syncCollapsedState(targetH);
+    // No height change means no transitionend, which would leave the inline
+    // transition (and this listener) hanging around.
+    if (Math.abs(currentH - targetH) < 1) onEnd();
+    else panel.addEventListener('transitionend', onEnd);
   };
   handle.addEventListener('dblclick', togglePanel);
   // Touch: detect double-tap within 300ms on the handle
