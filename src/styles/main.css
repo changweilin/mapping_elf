@@ -5362,7 +5362,11 @@ body.route-list-dragging {
 
 .notifications {
   position: fixed;
-  bottom: 20px;
+  /* Stack above the 下方面板 rather than on top of its lowest rows: at a flat
+     bottom:20px a 45px-tall toast covered the weather table / 高度圖 band for
+     3.5 s on phones. Clamped at 45dvh so a 全展開 panel (or a landscape phone,
+     where the panel is most of the screen) cannot push the stack off screen. */
+  bottom: calc(min(var(--bottom-panel-height), 45dvh) + 20px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;
@@ -5385,7 +5389,11 @@ body.route-list-dragging {
   color: var(--text-primary);
   font-size: 13px;
   white-space: nowrap;
-  pointer-events: all;
+  /* Informational only — showNotification() builds two <span>s and no handler,
+     so there is nothing here to click. With pointer-events:all it spent 3.5 s
+     eating every tap that landed on it: panel rows, the map, and a feature
+     panel's action row on landscape phones. */
+  pointer-events: none;
   animation: notifyIn 0.35s ease;
 }
 
@@ -6123,7 +6131,11 @@ body.is-resizing {
   position: absolute;
   top: 4px;
   right: 10px;
-  z-index: 6;
+  /* Above .bp-resize-handle (z:10): the handle's ::before grab area reaches
+     12px INTO the panel, which swallowed the pill's top ~7px — a tap there
+     started a resize drag instead of switching views. The handle keeps its fat
+     target everywhere else on the row. */
+  z-index: 11;
   display: inline-flex;
   flex-shrink: 0;
   border: 1px solid var(--border);

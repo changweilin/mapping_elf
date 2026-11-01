@@ -27,3 +27,10 @@ Guidelines for maintaining the UI, CSS patterns, and responsive behaviors in Map
 
 4. **DOM Updates**
    - Avoid aggressive re-rendering. Update only necessary nodes to prevent map flickering.
+
+6. **Transient overlays and invisible hit areas**
+   - Anything that appears over the UI without being asked for — toasts (`.notification`), the busy progress card (`.app-busy-overlay`) — must be `pointer-events: none` unless it owns a control. A toast had `pointer-events: all` with nothing clickable inside it and spent 3.5 s eating taps aimed at the panel rows, the map and (on landscape phones) a feature panel's action row. Only the progress card's own 暫停/停止 buttons may re-enable it, on those buttons.
+   - Toasts anchor off `min(var(--bottom-panel-height), 45dvh)` so they stack **above** `#bottom-panel` instead of over its lowest rows; the `min()` keeps them on screen when the panel is 全展開 or the device is a landscape phone.
+   - Watch invisible grab areas. `.bp-resize-handle::before` stretches the 分割線 12px in each direction, which reached **into** the panel and stole the top ~7px of the 檢視切換 pill (`.bp-view-toggle`) — a tap there started a resize drag instead of switching views. The pill wins with `z-index: 11` (handle is 10) rather than by shrinking the grab area. Any new control parked on the divider row needs the same treatment.
+   - Guarded by `test/device-interaction-audit.spec.js`: for five device classes (360×640 up to 1440×900, portrait and landscape) it opens every 環狀選單 tool and hit-tests the close X, 功能選單 and 分割線 against the 設置面板, a 全展開 panel, a 全收起 panel and a live toast. Hit-test (`document.elementFromPoint`) rather than compare boxes — overlap is normal here and z-index decides; what is never acceptable is a control that cannot take the tap.
+   - Test trap: `.side-panel` slides for ~0.3 s after `.open` flips, and a GPX import re-opens it via `openRouteLibrary()`. Measuring or clicking inside that window hits a half-on-screen panel and looks exactly like a stacking bug; wait for the class **and** the settled rect.
