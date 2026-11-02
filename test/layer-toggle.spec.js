@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { reverseGeocode } from './helpers/apiMocks.mjs';
 
 const VISIBLE_ROUTE_PATH_SELECTOR = '.leaflet-overlay-pane path:not(.route-hit-line)';
 const LONG_PRESS_MS = 650;
@@ -28,6 +29,12 @@ async function openLayerTestApp(page, options = {}) {
       localStorage.setItem('mappingElf_weatherCells', JSON.stringify(weatherCells));
     }
   }, { roundTrip, oLoop, importedTrackSession, weatherCells });
+
+  // Waypoint naming is not this spec's subject, but it shares the progress
+  // readout with route/weather work: left unstubbed its lookups run to their
+  // timeout against the live internet, so "the overlay is hidden" stops meaning
+  // "the route plan finished".
+  await reverseGeocode(page);
 
   await page.route('**/route/v1/**', async (route) => {
     const url = new URL(route.request().url());
@@ -816,7 +823,10 @@ test('opening a restored track shows weather loading progress', async ({ page })
   });
 
   await expect(page.locator('#route-weather-busy-overlay')).toBeVisible();
-  await expect(page.locator('#route-weather-busy-title')).toHaveText(/天氣/);
+  // The readout localises its title (updateRouteWeatherBusyOverlay translates on
+  // the way to the DOM) and this spec runs in the browser's own locale, so match
+  // the weather task by either wording rather than pinning one language.
+  await expect(page.locator('#route-weather-busy-title')).toHaveText(/天氣|weather/i);
   await expect(page.locator('#route-weather-busy-progress')).not.toHaveText('0%');
 
   const box = await page.locator('#map').boundingBox();

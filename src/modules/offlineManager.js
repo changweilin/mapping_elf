@@ -39,6 +39,11 @@ export class OfflineManager {
     this._importOfflineMapBtn = document.getElementById('btn-import-offline-map-source');
     this._offlineMapDownloadLinks = document.getElementById('offline-map-download-links');
 
+    // main.js owns the progress readout (it owns all UI state wiring), so it
+    // injects beginRouteWeatherBusyTask here. Null until then: the no-op
+    // fallback below keeps these handlers working without it.
+    this._beginProgressTask = null;
+
     this._unsubscribeNetworkStatus = platform.subscribeNetworkStatus?.((status) => {
       this._updateStatus(status.connected);
     }) || null;
@@ -110,6 +115,16 @@ export class OfflineManager {
     rawShowNotification(translatePhrase(message), type, duration);
   }
 
+  /** main.js hands over its beginRouteWeatherBusyTask so offline work shows in
+   *  the same progress readout as everything else. */
+  setProgressTaskFactory(fn) {
+    this._beginProgressTask = typeof fn === 'function' ? fn : null;
+  }
+
+  _beginProgress(options) {
+    return this._beginProgressTask?.(options) || { set() {}, end() {} };
+  }
+
   destroy() {
     this._unsubscribeNetworkStatus?.();
     this._unsubscribeNetworkStatus = null;
@@ -121,6 +136,9 @@ export class OfflineManager {
     const packId = button.dataset.deletePackId;
     if (!packId) return;
     button.disabled = true;
+    const task = this._beginProgress({
+      title: '刪除圖磚包', detail: '刪除圖磚快取...', lockScope: 'none',
+    });
     try {
       const result = await deleteOfflineTilePack(packId);
       await this.updateCacheInfo();
@@ -129,12 +147,20 @@ export class OfflineManager {
       console.error('Offline tile pack delete failed:', err);
       this._notify('刪除圖磚包失敗', 'error');
       button.disabled = false;
+    } finally {
+      task.end();
     }
   }
 
   async _handleClearAllClick() {
     if (!('caches' in window)) return;
     if (this._clearCacheBtn) this._clearCacheBtn.disabled = true;
+    // Dropping a cache holding tens of thousands of tiles takes a while, and a
+    // greyed-out button was the only sign of it. Display-only ('none'): tiles
+    // are independent of the route, so editing stays free.
+    const task = this._beginProgress({
+      title: '清除離線圖磚', detail: '刪除圖磚快取...', lockScope: 'none',
+    });
     try {
       await this.clearCache();
       this._notify('已清除全部離線圖磚', 'success');
@@ -142,6 +168,7 @@ export class OfflineManager {
       console.error('Offline tile cache clear failed:', err);
       this._notify('清除全部圖磚失敗', 'error');
     } finally {
+      task.end();
       await this.updateCacheInfo();
     }
   }
@@ -208,9 +235,16 @@ export class OfflineManager {
     }
 
     if (this._importOfflineMapBtn) this._importOfflineMapBtn.disabled = true;
+    // Copying a Mapsforge .map base map out of the picker runs to hundreds of
+    // megabytes. The task is raised only after the picker returns, so the
+    // progress readout never covers the native file chooser.
+    let task = null;
     try {
       const nativeSource = await platform.importOfflineMapSource();
       if (nativeSource?.cancelled) return;
+      task = this._beginProgress({
+        title: '匯入離線底圖', detail: '註冊底圖來源...', lockScope: 'none',
+      });
       const source = await addOfflineMapSource({
         ...nativeSource,
         source: 'native-import',
@@ -223,6 +257,7 @@ export class OfflineManager {
       console.error('Offline map source import failed:', err);
       this._notify(err.message || '離線底圖匯入失敗', 'error');
     } finally {
+      task?.end();
       await this.updateOfflineMapSourceInfo();
     }
   }

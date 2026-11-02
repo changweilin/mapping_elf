@@ -42,6 +42,10 @@
   --panel-width: 380px;
   --toolbar-height: 56px;
   --bottom-panel-height: 190px;
+  /* How much height the floating UI yields to the bottom panel: the panel's own
+     height, capped so a fully expanded panel cannot push the map buttons and the
+     centred 功能面板 off the top of the screen (set in main.js). */
+  --bottom-panel-offset: 190px;
   /* Reserved space for bottom bar buttons (reset to 0 now that tables are in popups) */
   --bp-view-toggle-reserve: 108px;
 
@@ -794,6 +798,54 @@ html.light-theme .app-busy-overlay .loading-content {
   white-space: nowrap;
 }
 
+/* Inline readout — the smallest member of the progress family. Used where a
+   load fills a slot that is already on screen (集水區 sections, search
+   results, weather table cells) and a card or a strip would be too much. */
+.progress-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.progress-inline::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(148, 163, 184, 0.3);
+  border-top-color: var(--accent-primary);
+  animation: progressSpin 0.8s linear infinite;
+}
+
+/* Touch devices: 停止/繼續 and the X-cancel are the only controls on the
+   progress readout, and the desktop sizes (an 11px pill, a 20px X) are well
+   under a finger. The X grows its hit area through a pseudo-element because
+   its box is centred inside a 26px spinner ring on the pill variant. */
+@media (pointer: coarse) {
+  .progress-toggle-btn {
+    min-height: 30px;
+    padding: 4px 14px;
+    font-size: 12px;
+  }
+
+  .progress-spinner-cancel::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+}
+
+/* Very narrow phones: title + percent + bar carry the readout on their own;
+   the detail line has no width left to say anything useful. */
+@media (max-width: 380px) {
+  .app-busy-overlay .progress-detail {
+    display: none;
+  }
+}
+
 body.route-weather-busy .weather-popup .weather-card,
 body.route-weather-busy .wp-weather-card-slot .weather-card {
   filter: saturate(0.75);
@@ -1215,11 +1267,13 @@ body.weather-card-busy .weather-edit-control:disabled {
   z-index: 1;
 }
 
-/* Floating map action buttons — left side to stay clear of the side panel */
+/* Floating map action buttons — left side to stay clear of the side panel.
+   Rides the clamped offset, not the raw panel height: dragging the 分割線 to the
+   top used to carry these buttons off the screen with it. */
 .map-action-btns {
   position: fixed;
   left: 10px;
-  bottom: calc(var(--bottom-panel-height) + 10px);
+  bottom: calc(var(--bottom-panel-offset) + 10px);
   z-index: 600;
   display: flex;
   flex-direction: column;
@@ -1305,7 +1359,7 @@ body.radial-menu-active .map-action-btns,
 
 .radial-menu-container {
   position: fixed;
-  top: var(--radial-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-height)) / 2));
+  top: var(--radial-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-offset)) / 2));
   left: var(--radial-center-x, 50%);
   width: 0;
   height: 0;
@@ -1586,10 +1640,10 @@ body.radial-menu-active .map-action-btns,
 .measure-panel {
   position: fixed;
   left: var(--map-center-x, 50%);
-  top: var(--map-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-height)) / 2));
+  top: var(--map-center-y, calc(var(--toolbar-height) + (100dvh - var(--toolbar-height) - var(--bottom-panel-offset)) / 2));
   transform: translate(-50%, -50%);
   bottom: auto;
-  max-height: min(calc(100dvh - var(--toolbar-height) - 32px), max(220px, calc(100dvh - var(--toolbar-height) - var(--bottom-panel-height) - 24px)));
+  max-height: min(calc(100dvh - var(--toolbar-height) - 32px), max(220px, calc(100dvh - var(--toolbar-height) - var(--bottom-panel-offset) - 24px)));
   overflow-y: auto;
   overscroll-behavior: contain;
   z-index: 950;
@@ -1767,6 +1821,8 @@ body.radial-menu-active .map-action-btns,
 .risk-chip.risk-ext { background: #dc2626; }
 .risk-chip.risk-na { background: var(--border); color: var(--text-secondary); }
 
+/* .ct-loading also carries .progress-inline (the shared spinner+label format);
+   only the no-data twin needs plain text. */
 .ct-loading,
 .ct-nodata {
   font-size: 12px;
@@ -2033,6 +2089,11 @@ body.radial-menu-active .map-action-btns,
      positioned over this same row — without it the chips scroll under the pill. */
   padding: 2px var(--bp-view-toggle-reserve) 7px 12px;
   overflow-x: auto;
+  /* Never shrink: in elevation mode this is a flex item of .bp-chart-row, and a
+     short panel squashed the chips to a clipped sliver — which also made the
+     panel's default height (measured from this strip) depend on the panel's
+     current height. */
+  flex-shrink: 0;
 }
 
 .rsb-chip {
@@ -2922,7 +2983,10 @@ html.light-theme .waypoint-trash-zone.is-table-drag .waypoint-drop-cancel.is-hov
   position: fixed;
   top: var(--toolbar-height);
   right: 0;
-  bottom: var(--bottom-panel-height);
+  /* Full height: #bottom-panel stops at this panel's edge while it is open, so
+     there is nothing left to yield to. Dragging the 分割線 up no longer eats the
+     設置面板. */
+  bottom: 0;
   width: var(--panel-width);
   /* Above the floating 2D/3D pill (z:940) — the pill is fixed under the toolbar
      and used to punch through this panel (full-width on phones), covering its
@@ -5073,6 +5137,13 @@ body.route-list-dragging {
   color: var(--text-muted);
 }
 
+/* .search-result-loading also carries .progress-inline; centre its spinner+label
+   inside the result list instead of letting the inline-flex box hug the left. */
+.search-result-loading.progress-inline {
+  display: flex;
+  justify-content: center;
+}
+
 .search-tools {
   display: flex;
   flex-direction: column;
@@ -5348,7 +5419,11 @@ body.route-list-dragging {
 
 .notifications {
   position: fixed;
-  bottom: 20px;
+  /* Stack above the 下方面板 rather than on top of its lowest rows: at a flat
+     bottom:20px a 45px-tall toast covered the weather table / 高度圖 band for
+     3.5 s on phones. Clamped at 45dvh so a 全展開 panel (or a landscape phone,
+     where the panel is most of the screen) cannot push the stack off screen. */
+  bottom: calc(min(var(--bottom-panel-height), 45dvh) + 20px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;
@@ -5371,7 +5446,11 @@ body.route-list-dragging {
   color: var(--text-primary);
   font-size: 13px;
   white-space: nowrap;
-  pointer-events: all;
+  /* Informational only — showNotification() builds two <span>s and no handler,
+     so there is nothing here to click. With pointer-events:all it spent 3.5 s
+     eating every tap that landed on it: panel rows, the map, and a feature
+     panel's action row on landscape phones. */
+  pointer-events: none;
   animation: notifyIn 0.35s ease;
 }
 
@@ -5450,26 +5529,8 @@ body.route-list-dragging {
     font-size: 26px;
   }
 
-  .app-busy-overlay {
-    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 8px);
-    left: 56px;
-    right: 56px;
-  }
-
-  .app-busy-overlay .loading-content {
-    width: min(300px, 100%);
-    gap: 3px 8px;
-    padding: 6px 8px 7px;
-  }
-
-  .app-busy-overlay .loading-content h2,
-  .app-busy-overlay .loading-progress-text {
-    font-size: 11px;
-  }
-
-  .app-busy-overlay .loading-content p {
-    font-size: 10px;
-  }
+  /* The progress strip is shared by both phone orientations — see the combined
+     media query after this block. */
 
   .toolbar {
     padding: 0 10px;
@@ -5644,15 +5705,8 @@ body.route-list-dragging {
     --toolbar-height: 46px;
   }
 
-  .app-busy-overlay {
-    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 50px);
-    left: 56px;
-    right: 56px;
-  }
-
-  .app-busy-overlay .loading-content {
-    width: min(320px, 100%);
-  }
+  /* The progress strip is shared by both phone orientations — see the combined
+     media query after this block. */
 
   .side-panel {
     top: var(--toolbar-height);
@@ -5692,6 +5746,63 @@ body.route-list-dragging {
   }
   .map-action-btns::-webkit-scrollbar {
     display: none;
+  }
+}
+
+/* ======== Phone progress strip ========
+   Both phone orientations get an edge-to-edge strip docked to the toolbar
+   instead of the desktop floating pill: inset between the Leaflet zoom stack
+   and the screen edge the pill had ~190px left for text, so the detail line was
+   always ellipsised away before it could be read. The strip takes that top band
+   outright and slides its two occupants clear of it — the Leaflet zoom stack on
+   the 2D map, and the fixed 檢視切換 pill inside the 3D viewer, which the
+   readout also paints over (overlay z:10020 vs viewer z:10000). Keyed on the
+   body.route-weather-progress-busy class main.js already toggles for every
+   task, so the shift lasts exactly as long as the readout. The query is a comma
+   list (OR) because a phone in landscape is wider than 768px. */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .app-busy-overlay {
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px));
+    left: 0;
+    right: 0;
+  }
+
+  .app-busy-overlay .loading-content {
+    width: 100%;
+    gap: 1px 8px;
+    padding: 7px 12px 9px;
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+
+  /* Scoped to the card: the hidden brand-reserve block holds a .loading-bar too,
+     and it must not be yanked to the bottom of the centred brand panel. */
+  .app-busy-overlay .loading-content .loading-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: 3px;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .app-busy-overlay .loading-content h2,
+  .app-busy-overlay .loading-progress-text {
+    font-size: 11px;
+  }
+
+  .app-busy-overlay .loading-content p {
+    font-size: 10px;
+  }
+
+  body.route-weather-progress-busy .view-mode-toggle {
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 54px);
+  }
+
+  body.route-weather-progress-busy #map .leaflet-top {
+    margin-top: 46px;
   }
 }
 
@@ -6012,6 +6123,18 @@ body.is-resizing {
   user-select: none;
 }
 
+/* Tile with the 設置面板 instead of fighting it (right-rail layouts only — on
+   phones the side panel is a full-screen sheet that covers this one anyway).
+   The side panel used to give up its height to this panel, so 全展開 shrank it to
+   nothing; letting it keep full height instead would park its sticky header on
+   top of the 分割線 (z:950 vs 200) and swallow the clicks that bring the panel
+   back. Stopping at the panel edge settles both. */
+@media (min-width: 769px) {
+  body:has(#side-panel.open) #bottom-panel {
+    right: var(--panel-width);
+  }
+}
+
 .bp-resize-handle {
   height: 18px;
   cursor: ns-resize;
@@ -6097,7 +6220,11 @@ body.is-resizing {
   position: absolute;
   top: 4px;
   right: 10px;
-  z-index: 6;
+  /* Above .bp-resize-handle (z:10): the handle's ::before grab area reaches
+     12px INTO the panel, which swallowed the pill's top ~7px — a tap there
+     started a resize drag instead of switching views. The handle keeps its fat
+     target everywhere else on the row. */
+  z-index: 11;
   display: inline-flex;
   flex-shrink: 0;
   border: 1px solid var(--border);
@@ -6146,6 +6273,26 @@ body.is-resizing {
 
 .bottom-panel:not(.bp-mode-catchment) .bp-catchment-scroll {
   display: none;
+}
+
+/* Fully collapsed (drag past the floor, or the dbl-click cycle's 全收起): the
+   panel is a bare grab bar, so the map and every floating panel get the whole
+   screen. The body is display:none rather than clipped — at 18px tall the chart
+   row would otherwise hang outside the panel (overflow is visible, for the
+   weather-table trash zone) and keep swallowing taps. Declared after the
+   bp-mode-* rules: same specificity, and the later rule has to win. */
+.bottom-panel.bp-collapsed > *:not(.bp-resize-handle) {
+  display: none;
+}
+
+.bottom-panel.bp-collapsed {
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.22);
+}
+
+.bottom-panel.bp-collapsed .bp-resize-handle::after {
+  width: 60px;
+  background: var(--accent-primary);
+  opacity: 0.75;
 }
 
 .bp-catchment-scroll {
@@ -7634,7 +7781,10 @@ body.modal-open {
 .weather-popup .weather-card.full,
 .wp-weather-card-slot .weather-card.full {
   width: min(280px, calc(100vw - var(--panel-width) - 80px));
-  max-height: calc(100vh - var(--toolbar-height) - var(--bottom-panel-height) - 80px);
+  /* max() floor: a tall bottom panel drives the subtraction negative, which used
+     to squash the card to nothing. It paints above the panel (z:1000), so a
+     minimum height is safe. */
+  max-height: max(220px, calc(100vh - var(--toolbar-height) - var(--bottom-panel-height) - 80px));
   overflow-y: auto;
 }
 
@@ -9515,7 +9665,8 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
    stops blocking interaction — the terrain model stays interactive underneath. */
 .tv-loading-overlay.tv-loading-bg {
   align-items: flex-end;
-  padding-bottom: 18px;
+  /* The inset is 0 off-device; on a phone it clears the home indicator. */
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

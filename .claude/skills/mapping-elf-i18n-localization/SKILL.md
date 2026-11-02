@@ -30,6 +30,9 @@ Do not use this skill for CSS layout, event wiring, route math, or market resear
 - Keep `translatePhrase`, `MutationObserver`, and `data-i18n-*` flows compatible with dynamic DOM updates.
 - Every new phrase should either have full language coverage or a documented fallback reason.
 - Weather descriptions must remain compatible with `tWmo`, `translateWeatherText`, and `translateWmoDescription`.
+- `PHRASES` is one object literal, so a duplicate key silently wins by being LAST. Before adding entries, check: `node -e "const s=require('fs').readFileSync('src/modules/i18n.js','utf8');const m=new Map();for(const x of s.matchAll(/^  '([^']+)': \{/gm)){if(m.has(x[1]))console.log('DUP',x[1]);m.set(x[1],1)}"`. Three pre-existing duplicates are intentional overrides (`匯入離線地圖包`, `地形`, `集水區域`) — same source string, different UI meaning.
+- `translatePattern` ends with a generic `"<label> n/m"` rule for progress counters: it translates `<label>` through `PHRASES`/`STRINGS` and re-attaches the count. A new counted readout needs only its label as a normal phrase entry — do not add a regex per counter. Patterns must return falsy for `zh-TW` so the raw string passes through, the way `withNum` does.
+- The progress readout (`updateRouteWeatherBusyOverlay`, `handleTerrainLoadState`) translates on the way to the DOM, so call sites may pass raw zh-TW. Playwright runs in **en**, so a spec asserting readout text must set `mappingElf_language` in `addInitScript` — not with `page.evaluate` before a reload, which the init script overwrites.
 
 ## Handoff Format
 
