@@ -202,3 +202,27 @@ export function flood(page, { stats = null, discharge = () => 5, mean = () => 4 
     });
   });
 }
+
+/**
+ * Waypoint place-name sweep: Nominatim REVERSE plus the Overpass POI lookup
+ * fetchPlaceName fires alongside it. Defaults to "reachable, but nothing named
+ * here", which leaves waypoint labels exactly as an unstubbed spec sees them
+ * while removing the live-network dependency — each lookup otherwise runs to its
+ * 4s timeout and holds the progress readout up for seconds per waypoint.
+ */
+export function reverseGeocode(page, { name = null, address = {}, stats = null } = {}) {
+  return Promise.all([
+    page.route(/nominatim.*\/reverse/, (route) => {
+      if (stats) stats.reverseCalls = (stats.reverseCalls || 0) + 1;
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ lat: '0', lon: '0', ...(name ? { name } : {}), address }),
+      });
+    }),
+    page.route(/overpass/, (route) => {
+      if (stats) stats.poiCalls = (stats.poiCalls || 0) + 1;
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ elements: [] }) });
+    }),
+  ]);
+}

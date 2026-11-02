@@ -26,6 +26,9 @@ Operational runbooks and product verification procedures. Mapping Elf is a PWA w
 - Playwright shards **whole files** while `fullyParallel` is false, so a single heavy file pins one job: all terrain-3d tests landed on shard 4 and it ran 29 min against another shard's 2 min. `fullyParallel: true` + `workers: 1` splits shards per test without letting anything run concurrently — every spec here owns its own `page` fixture, so per-test splitting is safe.
 - Retries multiply the cost of a genuinely broken heavy test (1.5 min × 3 attempts). If a shard's wall-clock jumps, read the log for repeated `(retry #N)` lines before assuming the suite grew.
 
+### 6. Stub the place-name sweep, not just route/weather
+- Adding a waypoint runs `geocodeWaypoints` → Nominatim reverse + Overpass, and that work shares the one progress readout. A spec that stubs OSRM and forecast but not geocoding therefore has `#route-weather-busy-overlay` still visible *for naming* long after the route is drawn, at ~4s (the lookup timeout) per unnamed point against the live internet. `layer-toggle.spec.js:762` failed exactly that way. Use `reverseGeocode(page)` from `test/helpers/apiMocks.mjs` — it answers "reachable, nothing named here", so labels stay as the spec expects. Asserting "the overlay is hidden" only means "the route plan finished" once naming is stubbed.
+
 ## Debugging Workflow
 1. "Blank page on load" → console errors around imports and Vite base path (CLAUDE.md INC-278); hand off to `mapping-elf-deploy` if deploy-related.
 2. "Map not loading" → tile-server/Nominatim rate limits, or offline mode toggle left on.

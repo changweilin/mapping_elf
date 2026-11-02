@@ -30,11 +30,11 @@ async function openRaceApp(page, options = {}) {
 
   await page.route('**/route/v1/**', async (route) => {
     const url = new URL(route.request().url());
-    routeEvents.push({ type: 'start', url: route.request().url() });
+    routeEvents.push({ type: 'start', url: route.request().url(), at: Date.now() });
     const coordPart = url.pathname.split('/').pop();
     const coords = coordPart.split(';').map((coord) => coord.split(',').map(Number));
     if (routeDelayMs > 0) await wait(routeDelayMs);
-    routeEvents.push({ type: 'finish', url: route.request().url() });
+    routeEvents.push({ type: 'finish', url: route.request().url(), at: Date.now() });
     await route.fulfill({
       json: {
         code: 'Ok',
@@ -198,4 +198,69 @@ test('stale geocode result is discarded after waypoint state changes', async ({ 
 
   await expectHookEvent(page, 'geocode-stale-discard');
   await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(0);
+});
+
+// --- Continuous waypoint placement -------------------------------------------
+// Placing points one after another used to serialise badly: the route plan took
+// the full 'route' lock, which froze the map (so the next click was refused with
+// a "處理中" toast), and the superseded plan ran its route+elevation requests to
+// completion before the fresh plan was allowed to start.
+
+test('a waypoint can still be appended by map-click while a route plan is in flight', async ({ page }) => {
+  const routeEvents = [];
+  await openRaceApp(page, { routeDelayMs: 4000, routeEvents });
+
+  await addWaypointsAtFractions(page, [[0.40, 0.50], [0.58, 0.50]]);
+  await expect.poll(() => routeEvents.filter((event) => event.type === 'start').length).toBe(1);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeVisible();
+
+  // The map is frozen (the plan holds the route lock) but append is exempt.
+  expect(await page.evaluate(() => ({
+    frozen: window.__mappingElfTestHooks?.mapManager?.isFrozen ?? null,
+    allowAppend: window.__mappingElfTestHooks?.mapManager?.allowAppendWhileFrozen ?? null,
+  }))).toEqual({ frozen: true, allowAppend: true });
+
+  const box = await page.locator('#map').boundingBox();
+  await page.mouse.click(box.x + box.width * 0.49, box.y + box.height * 0.64);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);
+});
+
+test('a superseded route request is aborted instead of blocking the fresh plan', async ({ page }) => {
+  const routeEvents = [];
+  await openRaceApp(page, { routeDelayMs: 6000, routeEvents });
+
+  await addWaypointsAtFractions(page, [[0.40, 0.50], [0.58, 0.50]]);
+  await expect.poll(() => routeEvents.filter((event) => event.type === 'start').length).toBe(1);
+
+  const box = await page.locator('#map').boundingBox();
+  await page.mouse.click(box.x + box.width * 0.49, box.y + box.height * 0.64);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);
+
+  // The 3-point plan must start WITHOUT waiting out the 6s 2-point request: the
+  // only thing between the two is the waypoint tap delay plus the 500ms plan
+  // debounce. Before the abort landed this gap was the stub's full delay.
+  await expect.poll(
+    () => routeEvents.filter((event) => event.type === 'start').length,
+    { timeout: 4000 },
+  ).toBe(2);
+  const starts = routeEvents.filter((event) => event.type === 'start');
+  expect(starts[1].at - starts[0].at).toBeLessThan(3000);
+  await expectHookEvent(page, 'route-plan-stale-discard');
+});
+
+test('the brand splash is for the cold first plan only, not every re-plan', async ({ page }) => {
+  const routeEvents = [];
+  await openRaceApp(page, { routeDelayMs: 900, routeEvents });
+
+  const brand = page.locator('#route-weather-busy-brand');
+  await addWaypointsAtFractions(page, [[0.40, 0.50], [0.58, 0.50]]);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeVisible();
+  await expect(brand).toBeVisible();
+  await expect(page.locator('#route-weather-busy-overlay')).toBeHidden({ timeout: 20_000 });
+
+  const box = await page.locator('#map').boundingBox();
+  await page.mouse.click(box.x + box.width * 0.49, box.y + box.height * 0.64);
+  await expect(page.locator('#waypoint-list .waypoint-item')).toHaveCount(3);
+  await expect(page.locator('#route-weather-busy-overlay')).toBeVisible();
+  await expect(brand).toBeHidden();
 });

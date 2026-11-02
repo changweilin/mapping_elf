@@ -33,6 +33,7 @@ Do not use this skill for route math itself; hand off numeric model questions to
 - Do not persist generated interval weather times as if they were waypoint user input.
 - Changing `.melmap` state requires backward-compatible import behavior.
 - Reset defaults must clear or restore all related fields as a coherent group.
+- **Never cache a failure as data.** `fetchPlaceName` persists `waypointPlaceNames[k]` (`LS_GEOCODE_KEY`) and consults that cache before doing any work, so writing `null` when both Nominatim and Overpass were *unreachable* made one outage permanent for that waypoint. It now throws instead, and `geocodeWaypoints` gives up the sweep after two unreachable lookups in a row — the points stay uncached and retry on the next waypoint change. A cached null must mean "asked, genuinely nameless", never "could not ask".
 
 ## Handoff Format
 

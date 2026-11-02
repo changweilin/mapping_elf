@@ -229,6 +229,23 @@ function isDataLoadEditMode() {
   return tasks.some(task => task.lockScope === 'edit');
 }
 
+// True while everything holding the lock is work the NEXT waypoint supersedes
+// anyway: a running route plan (which flags itself allowAppend) or a data load.
+// Appending by map-click stays live then — the moment the waypoint lands the
+// plan's snapshot goes stale and its requests are aborted, so refusing the click
+// only makes the user wait out a result already being discarded. That is what
+// made continuous placement feel blocked: every plan froze the map for its whole
+// duration. Drag, insert and reorder stay refused (they rewrite geometry that is
+// mid-computation), and so does anything else holding a 'route' lock — a GPX
+// import or map-pack restore is applying waypoints of its own.
+function isAppendableRouteLock() {
+  if (importedTrackMode) return false;
+  const locking = Array.from(routeWeatherBusyTasks.values())
+    .filter(task => task.lockScope !== 'none' && task.lockScope !== 'weather-card');
+  return locking.length > 0
+    && locking.every(task => task.allowAppend === true || task.lockScope === 'edit');
+}
+
 function showRouteWeatherBusyNotice(duration = 2200) {
   const now = Date.now();
   if (now - busyInteractionNoticeAt < 900) return;
@@ -380,8 +397,9 @@ function updateRouteWeatherBusyOverlay() {
 
   if (typeof mapManager !== 'undefined' && mapManager) {
     mapManager.setFrozen(!!importedTrackMode || routeLocked);
-    // Map-click append stays live while a data load holds the (relaxed) lock.
-    mapManager.allowAppendWhileFrozen = dataLoadEdit;
+    // Map-click append stays live while a data load holds the (relaxed) lock, and
+    // while a route plan runs — the new waypoint just supersedes it.
+    mapManager.allowAppendWhileFrozen = dataLoadEdit || isAppendableRouteLock();
   }
   // Undo/redo live/disabled state is owned here (they were removed from the blunt
   // disable selector): recompute on every busy transition, not just when going idle.
@@ -399,9 +417,9 @@ function updateRouteWeatherBusyOverlay() {
   }
 }
 
-function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null, lockScope = 'route', centerBrand = false } = {}) {
+function beginRouteWeatherBusyTask({ title = '處理中', detail = '請稍候...', progress = null, lockScope = 'route', centerBrand = false, allowAppend = false } = {}) {
   const id = `busy_${++busyTaskSeq}`;
-  routeWeatherBusyTasks.set(id, { title, detail, progress, lockScope, centerBrand });
+  routeWeatherBusyTasks.set(id, { title, detail, progress, lockScope, centerBrand, allowAppend });
   updateRouteWeatherBusyOverlay();
   let ended = false;
   return {
@@ -1165,6 +1183,7 @@ let waypointVersion = 0;
 let paceVersion = 0;
 let elevationVersion = 0;
 let routePlanRunSeq = 0;
+let activeRoutePlanAbort = null;   // AbortController for the in-flight route plan
 let geocodeRunSeq = 0;
 
 function bumpRouteVersion() {
@@ -1331,6 +1350,16 @@ mapManager.onWaypointDragEnd = () => {
 
 function invalidateRoutePlanRun() {
   routePlanRunSeq += 1;
+  // Drop the superseded plan's requests on the spot. Marking the snapshot stale
+  // alone still let BRouter + elevation run to completion, and because plans are
+  // serialised through isProcessing the FRESH plan could not start until that
+  // dead one returned — the user sat watching a progress bar for a route already
+  // being thrown away. Whichever plan is running re-queues itself via
+  // pendingUpdate, so aborting loses nothing but the wait.
+  if (activeRoutePlanAbort) {
+    activeRoutePlanAbort.abort();
+    activeRoutePlanAbort = null;
+  }
 }
 
 function createRoutePlanSnapshot(waypoints) {
@@ -9488,15 +9517,25 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
   isProcessing = true;
   pendingUpdate = false;
   const routePlanSnapshot = createRoutePlanSnapshot(waypoints);
+  const planAbort = new AbortController();
+  activeRoutePlanAbort = planAbort;
   const busyTask = beginRouteWeatherBusyTask({
     title: '正在規劃路線',
     detail: '準備路線與高度資料...',
     progress: 8,
-    centerBrand: true,
+    // Full-screen brand splash only for the cold first plan. A re-plan while the
+    // user keeps placing waypoints gets the compact readout: a 256px logo over
+    // the map on every single click is what "stuck on the loading bar" looks
+    // like, even though the map underneath stayed clickable.
+    centerBrand: allAlternatives.length === 0,
+    allowAppend: true,
   });
 
   try {
-    showNotification('規劃最佳路徑中...', 'info', 1500);
+    // Only on the cold first plan: the readout above already says 正在規劃路線 in
+    // the user's language, so a re-plan per click would stack duplicate toasts
+    // over the map while they are still placing points.
+    if (allAlternatives.length === 0) showNotification('規劃最佳路徑中...', 'info', 1500);
 
     busyTask.set({ detail: '清除舊的天氣圖示...', progress: 15 });
 
@@ -9511,7 +9550,7 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
       : (oLoopMode && !isLoop && waypoints.length >= 2)
         ? [...waypoints, waypoints[0]]
         : waypoints;
-    const routeAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints);
+    const routeAlternatives = await routeEngine.getAlternativeRoutes(routeWaypoints, { signal: planAbort.signal });
     if (isRoutePlanSnapshotStale(routePlanSnapshot)) {
       emitTestEvent('route-plan-stale-discard', {
         waypointCount: mapManager.waypoints.length,
@@ -9576,10 +9615,19 @@ const debouncedCalculateRoute = debounce(async (waypoints) => {
       showNotification(message, 'error');
       abandonShapeRunOnPlanFailure(waypoints);
     } else {
+      // An aborted plan unwinds through here instead of the stale check after
+      // getAlternativeRoutes, so emit the same discard event either way.
+      if (isRoutePlanSnapshotStale(routePlanSnapshot)) {
+        emitTestEvent('route-plan-stale-discard', {
+          waypointCount: mapManager.waypoints.length,
+          importedTrackMode,
+        });
+      }
       pendingUpdate = true;
     }
   }
 
+  if (activeRoutePlanAbort === planAbort) activeRoutePlanAbort = null;
   isProcessing = false;
   busyTask.set({ detail: '完成', progress: 100 });
 
@@ -12649,6 +12697,15 @@ out center 20;`;
     }).then(r => r.ok ? r.json() : null),
   ]);
 
+  // Both sources unreachable — offline, DNS failure, or the 4s timeout firing on
+  // each. Do NOT fall through to the null-cache below: this function consults
+  // waypointPlaceNames before doing any work, so persisting "no name" here makes
+  // one outage permanent for this point. Throwing leaves it unnamed and
+  // retryable, and lets the caller tell a dead network from a nameless spot.
+  if (nomRes.status === 'rejected' && ovpRes.status === 'rejected') {
+    throw new Error('geocode sources unreachable');
+  }
+
   const nomData = nomRes.status === 'fulfilled' ? nomRes.value : null;
   const ovpData = ovpRes.status === 'fulfilled' ? ovpRes.value : null;
 
@@ -12767,6 +12824,11 @@ async function geocodeWaypoints(waypoints) {
     })
     : null;
   let done = 0;
+  // With nothing reachable every remaining point burns its full lookup timeout
+  // for a name it will not get, and the readout sits there for all of them. Two
+  // unreachable lookups in a row is enough to call it; the points stay uncached,
+  // so the next waypoint change retries them.
+  let unreachable = 0;
 
   try {
     for (let i = 0; i < waypoints.length; i++) {
@@ -12777,7 +12839,13 @@ async function geocodeWaypoints(waypoints) {
       const [lat, lng] = waypoints[i];
       try {
         await enqueueGeocode(lat, lng);
-      } catch (_) { /* swallow; next point still queues */ }
+        unreachable = 0;
+      } catch (_) {
+        if (++unreachable >= 2) {
+          emitTestEvent('geocode-unreachable-abort', { index: i, done });
+          return;
+        }
+      }
       if (isStale()) {
         emitTestEvent('geocode-stale-discard', { index: i });
         return;
