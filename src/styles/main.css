@@ -798,6 +798,54 @@ html.light-theme .app-busy-overlay .loading-content {
   white-space: nowrap;
 }
 
+/* Inline readout — the smallest member of the progress family. Used where a
+   load fills a slot that is already on screen (集水區 sections, search
+   results, weather table cells) and a card or a strip would be too much. */
+.progress-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.progress-inline::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(148, 163, 184, 0.3);
+  border-top-color: var(--accent-primary);
+  animation: progressSpin 0.8s linear infinite;
+}
+
+/* Touch devices: 停止/繼續 and the X-cancel are the only controls on the
+   progress readout, and the desktop sizes (an 11px pill, a 20px X) are well
+   under a finger. The X grows its hit area through a pseudo-element because
+   its box is centred inside a 26px spinner ring on the pill variant. */
+@media (pointer: coarse) {
+  .progress-toggle-btn {
+    min-height: 30px;
+    padding: 4px 14px;
+    font-size: 12px;
+  }
+
+  .progress-spinner-cancel::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+}
+
+/* Very narrow phones: title + percent + bar carry the readout on their own;
+   the detail line has no width left to say anything useful. */
+@media (max-width: 380px) {
+  .app-busy-overlay .progress-detail {
+    display: none;
+  }
+}
+
 body.route-weather-busy .weather-popup .weather-card,
 body.route-weather-busy .wp-weather-card-slot .weather-card {
   filter: saturate(0.75);
@@ -1773,6 +1821,8 @@ body.radial-menu-active .map-action-btns,
 .risk-chip.risk-ext { background: #dc2626; }
 .risk-chip.risk-na { background: var(--border); color: var(--text-secondary); }
 
+/* .ct-loading also carries .progress-inline (the shared spinner+label format);
+   only the no-data twin needs plain text. */
 .ct-loading,
 .ct-nodata {
   font-size: 12px;
@@ -5087,6 +5137,13 @@ body.route-list-dragging {
   color: var(--text-muted);
 }
 
+/* .search-result-loading also carries .progress-inline; centre its spinner+label
+   inside the result list instead of letting the inline-flex box hug the left. */
+.search-result-loading.progress-inline {
+  display: flex;
+  justify-content: center;
+}
+
 .search-tools {
   display: flex;
   flex-direction: column;
@@ -5472,26 +5529,8 @@ body.route-list-dragging {
     font-size: 26px;
   }
 
-  .app-busy-overlay {
-    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 8px);
-    left: 56px;
-    right: 56px;
-  }
-
-  .app-busy-overlay .loading-content {
-    width: min(300px, 100%);
-    gap: 3px 8px;
-    padding: 6px 8px 7px;
-  }
-
-  .app-busy-overlay .loading-content h2,
-  .app-busy-overlay .loading-progress-text {
-    font-size: 11px;
-  }
-
-  .app-busy-overlay .loading-content p {
-    font-size: 10px;
-  }
+  /* The progress strip is shared by both phone orientations — see the combined
+     media query after this block. */
 
   .toolbar {
     padding: 0 10px;
@@ -5666,15 +5705,8 @@ body.route-list-dragging {
     --toolbar-height: 46px;
   }
 
-  .app-busy-overlay {
-    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 50px);
-    left: 56px;
-    right: 56px;
-  }
-
-  .app-busy-overlay .loading-content {
-    width: min(320px, 100%);
-  }
+  /* The progress strip is shared by both phone orientations — see the combined
+     media query after this block. */
 
   .side-panel {
     top: var(--toolbar-height);
@@ -5714,6 +5746,63 @@ body.route-list-dragging {
   }
   .map-action-btns::-webkit-scrollbar {
     display: none;
+  }
+}
+
+/* ======== Phone progress strip ========
+   Both phone orientations get an edge-to-edge strip docked to the toolbar
+   instead of the desktop floating pill: inset between the Leaflet zoom stack
+   and the screen edge the pill had ~190px left for text, so the detail line was
+   always ellipsised away before it could be read. The strip takes that top band
+   outright and slides its two occupants clear of it — the Leaflet zoom stack on
+   the 2D map, and the fixed 檢視切換 pill inside the 3D viewer, which the
+   readout also paints over (overlay z:10020 vs viewer z:10000). Keyed on the
+   body.route-weather-progress-busy class main.js already toggles for every
+   task, so the shift lasts exactly as long as the readout. The query is a comma
+   list (OR) because a phone in landscape is wider than 768px. */
+@media (max-width: 768px), (max-height: 500px) and (orientation: landscape) {
+  .app-busy-overlay {
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px));
+    left: 0;
+    right: 0;
+  }
+
+  .app-busy-overlay .loading-content {
+    width: 100%;
+    gap: 1px 8px;
+    padding: 7px 12px 9px;
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+
+  /* Scoped to the card: the hidden brand-reserve block holds a .loading-bar too,
+     and it must not be yanked to the bottom of the centred brand panel. */
+  .app-busy-overlay .loading-content .loading-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: 3px;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .app-busy-overlay .loading-content h2,
+  .app-busy-overlay .loading-progress-text {
+    font-size: 11px;
+  }
+
+  .app-busy-overlay .loading-content p {
+    font-size: 10px;
+  }
+
+  body.route-weather-progress-busy .view-mode-toggle {
+    top: calc(var(--toolbar-height) + env(safe-area-inset-top, 0px) + 54px);
+  }
+
+  body.route-weather-progress-busy #map .leaflet-top {
+    margin-top: 46px;
   }
 }
 
@@ -9576,7 +9665,8 @@ html.light-theme .tv-hud-fatigue-bar { background: rgba(0,0,0,0.1); }
    stops blocking interaction — the terrain model stays interactive underneath. */
 .tv-loading-overlay.tv-loading-bg {
   align-items: flex-end;
-  padding-bottom: 18px;
+  /* The inset is 0 off-device; on a phone it clears the home indicator. */
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

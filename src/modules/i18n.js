@@ -65,6 +65,59 @@ const PHRASES = {
   '準備資料...': { en: 'Preparing data...', ja: 'データを準備中...', ko: '데이터 준비 중...', fr: 'Préparation des données...', de: 'Daten werden vorbereitet...', es: 'Preparando datos...', it: 'Preparazione dei dati...' },
   '打包中...': { en: 'Packaging...', ja: '圧縮中...', ko: '압축 중...', fr: 'Compression...', de: 'Wird verpackt...', es: 'Empaquetando...', it: 'Creazione pacchetto...' },
   '準備還原...': { en: 'Preparing restore...', ja: '復元を準備中...', ko: '복원 준비 중...', fr: 'Préparation de la restauration...', de: 'Wiederherstellung wird vorbereitet...', es: 'Preparando restauración...', it: 'Preparazione ripristino...' },
+  // ---- Progress readout: titles. Every long-running action names itself here;
+  // updateRouteWeatherBusyOverlay / handleTerrainLoadState translate on the way
+  // to the DOM, so these cover both the busy pill and the 3D build card. ----
+  '處理中': { en: 'Working', ja: '処理中', ko: '처리 중', fr: 'Traitement', de: 'In Arbeit', es: 'Procesando', it: 'Elaborazione' },
+  '正在規劃路線': { en: 'Planning the route', ja: 'ルートを計画中', ko: '경로 계획 중', fr: 'Planification de l’itinéraire', de: 'Route wird geplant', es: 'Planificando la ruta', it: 'Pianificazione del percorso' },
+  '正在載入天氣資訊': { en: 'Loading weather', ja: '天気を読み込み中', ko: '날씨 불러오는 중', fr: 'Chargement de la météo', de: 'Wetter wird geladen', es: 'Cargando el tiempo', it: 'Caricamento meteo' },
+  '正在計算集水區': { en: 'Computing catchments', ja: '集水域を計算中', ko: '유역 계산 중', fr: 'Calcul des bassins', de: 'Einzugsgebiete werden berechnet', es: 'Calculando cuencas', it: 'Calcolo bacini' },
+  '匯出路線檔案': { en: 'Exporting route file', ja: 'ルートファイルを書き出し中', ko: '루트 파일 내보내는 중', fr: 'Export du fichier d’itinéraire', de: 'Routendatei wird exportiert', es: 'Exportando archivo de ruta', it: 'Esportazione file percorso' },
+  '匯入路線檔案': { en: 'Importing route file', ja: 'ルートファイルを読み込み中', ko: '루트 파일 가져오는 중', fr: 'Import du fichier d’itinéraire', de: 'Routendatei wird importiert', es: 'Importando archivo de ruta', it: 'Importazione file percorso' },
+  '讀取離線地圖包': { en: 'Reading offline map pack', ja: 'オフライン地図パックを読み込み中', ko: '오프라인 지도 팩 읽는 중', fr: 'Lecture du pack de cartes hors ligne', de: 'Offline-Kartenpaket wird gelesen', es: 'Leyendo paquete de mapas sin conexión', it: 'Lettura pacchetto mappe offline' },
+  '正在取得地名': { en: 'Fetching place names', ja: '地名を取得中', ko: '지명 가져오는 중', fr: 'Récupération des lieux', de: 'Ortsnamen werden abgerufen', es: 'Obteniendo nombres de lugar', it: 'Recupero nomi dei luoghi' },
+  '匯出 3D 列印模型': { en: 'Exporting 3D print model', ja: '3Dプリントモデルを書き出し中', ko: '3D 프린트 모델 내보내는 중', fr: 'Export du modèle d’impression 3D', de: '3D-Druckmodell wird exportiert', es: 'Exportando modelo de impresión 3D', it: 'Esportazione modello per stampa 3D' },
+  '載入校正軌跡': { en: 'Loading calibration tracks', ja: '補正軌跡を読み込み中', ko: '보정 트랙 불러오는 중', fr: 'Chargement des traces de calibration', de: 'Kalibrier-Tracks werden geladen', es: 'Cargando tracks de calibración', it: 'Caricamento tracce di calibrazione' },
+  '清除離線圖磚': { en: 'Clearing offline tiles', ja: 'オフラインタイルを削除中', ko: '오프라인 타일 삭제 중', fr: 'Suppression des tuiles hors ligne', de: 'Offline-Kacheln werden gelöscht', es: 'Borrando teselas sin conexión', it: 'Eliminazione tile offline' },
+  '匯入離線底圖': { en: 'Importing offline base map', ja: 'オフライン背景地図を読み込み中', ko: '오프라인 배경 지도 가져오는 중', fr: 'Import du fond de carte hors ligne', de: 'Offline-Basiskarte wird importiert', es: 'Importando mapa base sin conexión', it: 'Importazione mappa base offline' },
+  '刪除圖磚包': { en: 'Deleting tile pack', ja: 'タイルパックを削除中', ko: '타일 팩 삭제 중', fr: 'Suppression du pack de tuiles', de: 'Kachelpaket wird gelöscht', es: 'Eliminando paquete de teselas', it: 'Eliminazione pacchetto tile' },
+  '正在定位': { en: 'Locating you', ja: '現在地を取得中', ko: '위치 확인 중', fr: 'Localisation en cours', de: 'Standort wird ermittelt', es: 'Localizando', it: 'Localizzazione' },
+  // ---- Progress readout: detail lines ----
+  '請稍候...': { en: 'Please wait...', ja: 'お待ちください...', ko: '잠시 기다려 주세요...', fr: 'Veuillez patienter...', de: 'Bitte warten...', es: 'Por favor, espera...', it: 'Attendere...' },
+  '準備路線與高度資料...': { en: 'Preparing route and elevation data...', ja: 'ルートと標高データを準備中...', ko: '경로·고도 데이터 준비 중...', fr: 'Préparation de l’itinéraire et de l’altitude...', de: 'Route und Höhendaten werden vorbereitet...', es: 'Preparando ruta y altitud...', it: 'Preparazione percorso e quote...' },
+  '清除舊的天氣圖示...': { en: 'Clearing old weather icons...', ja: '古い天気アイコンを消去中...', ko: '기존 날씨 아이콘 정리 중...', fr: 'Suppression des anciennes icônes météo...', de: 'Alte Wettersymbole werden entfernt...', es: 'Borrando iconos del tiempo antiguos...', it: 'Rimozione vecchie icone meteo...' },
+  '取得路線與高度資料...': { en: 'Fetching route and elevation data...', ja: 'ルートと標高データを取得中...', ko: '경로·고도 데이터 가져오는 중...', fr: 'Récupération de l’itinéraire et de l’altitude...', de: 'Route und Höhendaten werden abgerufen...', es: 'Obteniendo ruta y altitud...', it: 'Recupero percorso e quote...' },
+  '繪製路線與高度圖...': { en: 'Drawing route and profile...', ja: 'ルートと標高図を描画中...', ko: '경로·고도 그래프 그리는 중...', fr: 'Tracé de l’itinéraire et du profil...', de: 'Route und Profil werden gezeichnet...', es: 'Dibujando ruta y perfil...', it: 'Disegno percorso e profilo...' },
+  '更新路線統計與天氣欄位...': { en: 'Updating stats and weather columns...', ja: '統計と天気列を更新中...', ko: '통계·날씨 열 업데이트 중...', fr: 'Mise à jour des stats et des colonnes météo...', de: 'Statistik und Wetterspalten werden aktualisiert...', es: 'Actualizando estadísticas y columnas del tiempo...', it: 'Aggiornamento statistiche e colonne meteo...' },
+  '完成': { en: 'Done', ja: '完了', ko: '완료', fr: 'Terminé', de: 'Fertig', es: 'Listo', it: 'Completato' },
+  '取得周邊地標...': { en: 'Fetching nearby landmarks...', ja: '周辺のランドマークを取得中...', ko: '주변 랜드마크 가져오는 중...', fr: 'Récupération des points d’intérêt...', de: 'Umliegende Landmarken werden abgerufen...', es: 'Obteniendo puntos cercanos...', it: 'Recupero punti di interesse...' },
+  '計算集水區範圍中…': { en: 'Computing the catchment area...', ja: '集水域の範囲を計算中…', ko: '유역 범위 계산 중…', fr: 'Calcul de l’étendue du bassin…', de: 'Einzugsgebiet wird berechnet…', es: 'Calculando el área de la cuenca…', it: 'Calcolo dell’area del bacino…' },
+  '載入天氣資訊…': { en: 'Loading weather...', ja: '天気を読み込み中…', ko: '날씨 불러오는 중…', fr: 'Chargement de la météo…', de: 'Wetter wird geladen…', es: 'Cargando el tiempo…', it: 'Caricamento meteo…' },
+  '下載高程資料中…': { en: 'Downloading elevation data...', ja: '標高データをダウンロード中…', ko: '고도 데이터 내려받는 중…', fr: 'Téléchargement des données d’altitude…', de: 'Höhendaten werden geladen…', es: 'Descargando datos de altitud…', it: 'Download dati di quota…' },
+  '產生 GPX...': { en: 'Generating GPX...', ja: 'GPXを生成中...', ko: 'GPX 생성 중...', fr: 'Génération du GPX...', de: 'GPX wird erzeugt...', es: 'Generando GPX...', it: 'Generazione GPX...' },
+  '產生 KML...': { en: 'Generating KML...', ja: 'KMLを生成中...', ko: 'KML 생성 중...', fr: 'Génération du KML...', de: 'KML wird erzeugt...', es: 'Generando KML...', it: 'Generazione KML...' },
+  '準備分享...': { en: 'Preparing to share...', ja: '共有を準備中...', ko: '공유 준비 중...', fr: 'Préparation du partage...', de: 'Freigabe wird vorbereitet...', es: 'Preparando para compartir...', it: 'Preparazione condivisione...' },
+  '準備下載...': { en: 'Preparing download...', ja: 'ダウンロードを準備中...', ko: '다운로드 준비 중...', fr: 'Préparation du téléchargement...', de: 'Download wird vorbereitet...', es: 'Preparando la descarga...', it: 'Preparazione download...' },
+  '讀取檔案...': { en: 'Reading the file...', ja: 'ファイルを読み込み中...', ko: '파일 읽는 중...', fr: 'Lecture du fichier...', de: 'Datei wird gelesen...', es: 'Leyendo el archivo...', it: 'Lettura del file...' },
+  '解析軌跡資料...': { en: 'Parsing track data...', ja: '軌跡データを解析中...', ko: '트랙 데이터 분석 중...', fr: 'Analyse des données de trace...', de: 'Trackdaten werden geparst...', es: 'Analizando datos del track...', it: 'Analisi dati traccia...' },
+  '套用到地圖...': { en: 'Applying to the map...', ja: '地図に適用中...', ko: '지도에 적용 중...', fr: 'Application sur la carte...', de: 'Wird auf die Karte angewendet...', es: 'Aplicando al mapa...', it: 'Applicazione alla mappa...' },
+  '解壓縮檔案...': { en: 'Unzipping the file...', ja: 'ファイルを解凍中...', ko: '파일 압축 해제 중...', fr: 'Décompression du fichier...', de: 'Datei wird entpackt...', es: 'Descomprimiendo el archivo...', it: 'Decompressione del file...' },
+  '等待 GPS 訊號...': { en: 'Waiting for a GPS fix...', ja: 'GPS信号を待っています...', ko: 'GPS 신호 대기 중...', fr: 'Attente du signal GPS...', de: 'Warten auf GPS-Signal...', es: 'Esperando señal GPS...', it: 'In attesa del segnale GPS...' },
+  '刪除圖磚快取...': { en: 'Deleting the tile cache...', ja: 'タイルキャッシュを削除中...', ko: '타일 캐시 삭제 중...', fr: 'Suppression du cache de tuiles...', de: 'Kachel-Cache wird gelöscht...', es: 'Borrando la caché de teselas...', it: 'Eliminazione cache tile...' },
+  '註冊底圖來源...': { en: 'Registering the base map...', ja: '背景地図を登録中...', ko: '배경 지도 등록 중...', fr: 'Enregistrement du fond de carte...', de: 'Basiskarte wird registriert...', es: 'Registrando el mapa base...', it: 'Registrazione mappa base...' },
+  // ---- Progress readout: counter labels. These appear as "<label> 3/12";
+  // translatePattern translates the label and re-attaches the count, so each
+  // one needs an entry here and nothing more. ----
+  '載入集水區域': { en: 'Loading catchments', ja: '集水域を読み込み', ko: '유역 불러오기', fr: 'Chargement des bassins', de: 'Einzugsgebiete laden', es: 'Cargando cuencas', it: 'Caricamento bacini' },
+  '重試載入集水區域': { en: 'Retrying catchments', ja: '集水域を再試行', ko: '유역 재시도', fr: 'Nouvelle tentative bassins', de: 'Einzugsgebiete erneut', es: 'Reintentando cuencas', it: 'Nuovo tentativo bacini' },
+  '載入水文資訊': { en: 'Loading hydrology', ja: '水文情報を読み込み', ko: '수문 정보 불러오기', fr: 'Chargement hydrologie', de: 'Hydrologie laden', es: 'Cargando hidrología', it: 'Caricamento idrologia' },
+  '重試載入水文資訊': { en: 'Retrying hydrology', ja: '水文情報を再試行', ko: '수문 정보 재시도', fr: 'Nouvelle tentative hydrologie', de: 'Hydrologie erneut', es: 'Reintentando hidrología', it: 'Nuovo tentativo idrologia' },
+  '計算集水區': { en: 'Computing catchments', ja: '集水域を計算', ko: '유역 계산', fr: 'Calcul des bassins', de: 'Einzugsgebiete berechnen', es: 'Calculando cuencas', it: 'Calcolo bacini' },
+  '準備天氣欄位': { en: 'Preparing weather columns', ja: '天気列を準備', ko: '날씨 열 준비', fr: 'Préparation des colonnes météo', de: 'Wetterspalten vorbereiten', es: 'Preparando columnas del tiempo', it: 'Preparazione colonne meteo' },
+  '網頁開啟時載入天氣資訊': { en: 'Loading weather on startup', ja: '起動時に天気を読み込み', ko: '시작 시 날씨 불러오기', fr: 'Chargement météo au démarrage', de: 'Wetter beim Start laden', es: 'Cargando el tiempo al inicio', it: 'Caricamento meteo all’avvio' },
+  '重試載入天氣資訊': { en: 'Retrying weather', ja: '天気を再試行', ko: '날씨 재시도', fr: 'Nouvelle tentative météo', de: 'Wetter erneut', es: 'Reintentando el tiempo', it: 'Nuovo tentativo meteo' },
+  '取得地名': { en: 'Fetching place names', ja: '地名を取得', ko: '지명 가져오기', fr: 'Récupération des lieux', de: 'Ortsnamen abrufen', es: 'Obteniendo nombres', it: 'Recupero nomi' },
+  '讀取軌跡': { en: 'Reading tracks', ja: '軌跡を読み込み', ko: '트랙 읽기', fr: 'Lecture des traces', de: 'Tracks lesen', es: 'Leyendo tracks', it: 'Lettura tracce' },
   '還原中...': { en: 'Restoring...', ja: '復元中...', ko: '복원 중...', fr: 'Restauration...', de: 'Wird wiederhergestellt...', es: 'Restaurando...', it: 'Ripristino...' },
   '全部回到預設': { en: 'Reset all defaults', ja: 'すべて既定値に戻す', ko: '모두 기본값으로 재설정', fr: 'Réinitialiser tous les réglages', de: 'Alles zurücksetzen', es: 'Restablecer todo', it: 'Ripristina tutto' },
   '匯入路線（GPX / KML）': { en: 'Import route (GPX / KML)', ja: 'ルートをインポート（GPX / KML）', ko: '루트 가져오기 (GPX / KML)', fr: 'Importer un itinéraire (GPX / KML)', de: 'Route importieren (GPX / KML)', es: 'Importar ruta (GPX / KML)', it: 'Importa percorso (GPX / KML)' },
@@ -1324,6 +1377,20 @@ function translatePattern(text) {
   if (m) return withNum('Shape similarity {n}%', '形状類似度 {n}%', '모양 유사도 {n}%', 'Similarité de forme {n}%', 'Formähnlichkeit {n}%', 'Similitud de forma {n}%', 'Somiglianza della forma {n}%', m[1]);
   m = text.match(/^已自動選取畫面中最高相似度起點 \(相似度 (\d+)%\)$/);
   if (m) return withNum('Auto-selected start point with highest similarity ({n}%)', '画面内で最高類似度の起点を自動選択しました（類似度 {n}%）', '화면 내 최고 유사도 시작점 자동 선택됨 (유사도 {n}%)', 'Point de départ à plus forte similarité sélectionné automatiquement ({n} %)', 'Startpunkt mit höchster Ähnlichkeit automatisch ausgewählt ({n} %)', 'Punto de inicio con mayor similitud seleccionado automáticamente ({n} %)', 'Punto di partenza con la massima somiglianza selezionato automaticamente ({n} %)', m[1]);
+  m = text.match(/^產生 (\S+) 網格\.\.\.$/);
+  if (m) return phraseWithText('Generating the {x} mesh...', '{x}メッシュを生成中...', '{x} 메시 생성 중...', 'Génération du maillage {x}...', '{x}-Netz wird erzeugt...', 'Generando la malla {x}...', 'Generazione mesh {x}...', m[1]);
+  // Progress-readout counters — "<label> 3/12", the shape every long-running
+  // task's detail line uses. The labels are ordinary PHRASES entries, so
+  // translate the label and re-attach the count rather than adding a regex (and
+  // eight translations) per task. Returning null for zh-TW lets the raw string
+  // through untouched, same as withNum does.
+  m = text.match(/^(.+?) (\d+\/\d+)$/);
+  if (m) {
+    const lang = translationLanguageOverride || currentLanguage;
+    const entry = PHRASES[m[1]] || STRINGS[m[1]];
+    const label = lang === 'zh-TW' ? null : entry?.[lang];
+    if (label) return `${label} ${m[2]}`;
+  }
   return null;
 }
 

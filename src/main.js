@@ -156,12 +156,14 @@ const ROUTE_WEATHER_BUSY_BLOCK_SELECTOR = [
   '.search-result-add',
 ].join(',');
 
+// #btn-fit-route and #btn-my-location are deliberately NOT here: they only move
+// the map view and depend on nothing a route plan or data load is writing, so
+// they stay live while a progress readout is up. Only the controls that would
+// race the running task for the same data are locked.
 const ROUTE_WEATHER_BUSY_DISABLE_SELECTOR = [
   '#btn-clear-route',
   '#btn-replan-route',
   '#btn-reverse-replan-route',
-  '#btn-fit-route',
-  '#btn-my-location',
   '#btn-import-gpx',
   '#waypoint-list button:not(.wp-remove-live)',
   '#weather-table-container button',
@@ -306,19 +308,29 @@ function updateRouteWeatherBusyOverlay() {
       brandEl.setAttribute('aria-hidden', showCenterBrand ? 'false' : 'true');
     }
     if (brandTextEl) {
-      brandTextEl.textContent = showCenterBrand
+      brandTextEl.textContent = translatePhrase(showCenterBrand
         ? (task?.title || brandTextEl.dataset.defaultText || brandTextEl.textContent)
-        : (brandTextEl.dataset.defaultText || brandTextEl.textContent);
+        : (brandTextEl.dataset.defaultText || brandTextEl.textContent));
     }
-    if (titleEl) titleEl.textContent = task?.title || '處理中';
-    if (detailEl) detailEl.textContent = task?.detail || '請稍候...';
+    // Translate HERE, not at the call sites: some pass raw zh-TW, some pass
+    // translatePhrase(...) output already. translatePhrase passes an unknown
+    // string through untouched, so a pre-translated title survives and a raw one
+    // finally gets localised — one rule for every progress readout.
+    if (titleEl) titleEl.textContent = translatePhrase(task?.title || '處理中');
+    if (detailEl) detailEl.textContent = translatePhrase(task?.detail || '請稍候...');
     if (countEl) {
       // The pill shows the newest task; surface how many more run behind it.
-      const extra = routeWeatherBusyTasks.size - 1;
+      // Independent tasks ('none' scope) routinely overlap, so the badge names
+      // them on hover/long-press instead of leaving the user guessing at "+2".
+      const all = Array.from(routeWeatherBusyTasks.values());
+      const extra = all.length - 1;
       countEl.classList.toggle('hidden', extra < 1);
-      if (extra >= 1) countEl.textContent = `+${extra}`;
+      if (extra >= 1) {
+        countEl.textContent = `+${extra}`;
+        countEl.title = all.map((t) => translatePhrase(t.title || '處理中')).join('\n');
+      }
     }
-    if (progressEl) progressEl.textContent = progress == null ? '處理中' : `${Math.round(progress)}%`;
+    if (progressEl) progressEl.textContent = progress == null ? translatePhrase('處理中') : `${Math.round(progress)}%`;
     if (fillEl) {
       fillEl.classList.toggle('is-determinate', progress != null);
       fillEl.style.setProperty('--busy-progress', `${progress ?? 0}%`);
@@ -1278,10 +1290,17 @@ function getPaceComputation(elevs, dists, activity = speedActivity, params = pac
 const routeEngine = new RouteEngine();
 const weatherService = new WeatherService();
 const offlineManager = new OfflineManager();
+// Offline cache work (clear-all, pack delete, base-map import) reports into the
+// same progress readout as everything else. Wired here because main.js owns all
+// UI state; the manager falls back to a no-op task if this never runs.
+offlineManager.setProgressTaskFactory((options) => beginRouteWeatherBusyTask(options));
 const mapManager = new MapManager('map', onWaypointsChanged);
 if (typeof window !== 'undefined' && window.__mappingElfTestHooks) {
   window.__mappingElfTestHooks.mapManager = mapManager;
   window.__mappingElfTestHooks.isRouteWeatherBusy = isRouteWeatherBusy;
+  // Lets a spec raise a progress readout on its own, so the shared card's
+  // per-device layout can be asserted without faking a whole data load.
+  window.__mappingElfTestHooks.beginBusyTask = beginRouteWeatherBusyTask;
   Object.defineProperty(window.__mappingElfTestHooks, 'lastShapeOptimizationResult', {
     get: () => lastShapeOptimizationResult,
     configurable: true,
@@ -2072,14 +2091,35 @@ async function loadPaceCalibrationFiles(files) {
   const selected = incoming.slice(0, remainingSlots);
   if (incoming.length > selected.length) showNotification('已達 5 條上限，只載入前幾條軌跡', 'warning');
 
+  // Each file is read, parsed and summarised (distance/ascent/pace) — seconds
+  // apiece on a long track. Display-only ('none'): calibration tracks are
+  // separate data from the current route, so editing stays free.
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '載入校正軌跡',
+    detail: `讀取軌跡 0/${selected.length}`,
+    progress: 0,
+    lockScope: 'none',
+  });
   const loaded = [];
-  for (const file of selected) {
-    try {
-      loaded.push(await parseCalibrationFile(file));
-    } catch (err) {
-      console.error('Calibration track parse failed:', file.name, err);
-      showNotification(`校正軌跡讀取失敗：${file.name}`, 'error');
+  try {
+    // Counts files attempted, not files kept — a rejected track must still
+    // advance the bar instead of stalling it.
+    let processed = 0;
+    for (const file of selected) {
+      try {
+        loaded.push(await parseCalibrationFile(file));
+      } catch (err) {
+        console.error('Calibration track parse failed:', file.name, err);
+        showNotification(`校正軌跡讀取失敗：${file.name}`, 'error');
+      }
+      processed++;
+      busyTask.set({
+        detail: `讀取軌跡 ${processed}/${selected.length}`,
+        progress: (processed / selected.length) * 100,
+      });
     }
+  } finally {
+    busyTask.end();
   }
   if (loaded.length > 0) {
     paceCalibration.tracks = [...(paceCalibration.tracks || []), ...loaded].slice(0, 5);
@@ -2969,8 +3009,10 @@ function handleTerrainLoadState(state) {
     const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
     if (tvLoadingFill) tvLoadingFill.style.width = `${pct}%`;
     if (tvLoadingPercent) tvLoadingPercent.textContent = `${pct}%`;
-    if (state.title && tvLoadingTitle) tvLoadingTitle.textContent = state.title;
-    if (state.detail && tvLoadingDetail) tvLoadingDetail.textContent = state.detail;
+    // Same rule as the busy pill: translate on the way to the DOM, so both
+    // progress hosts localise regardless of what the producer handed over.
+    if (state.title && tvLoadingTitle) tvLoadingTitle.textContent = translatePhrase(state.title);
+    if (state.detail && tvLoadingDetail) tvLoadingDetail.textContent = translatePhrase(state.detail);
     const bar = tvLoading?.querySelector('.loading-bar');
     if (bar) bar.setAttribute('aria-valuenow', String(pct));
     // 停止/繼續 only applies to the blocking elevation-download phase (see
@@ -3848,16 +3890,25 @@ async function exportTerrainModel(format) {
     .replace(/[^\w一-龥-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'mapping-elf-terrain';
   terrainExportBusy = true;
   tvExportBtn?.classList.add('tv-redraw-spin');
+  // Meshing a print model takes tens of seconds on a large grid; the export
+  // source is snapshotted above, so this is display-only ('none').
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '匯出 3D 列印模型',
+    detail: `產生 ${format.toUpperCase()} 網格...`,
+    progress: 20,
+    lockScope: 'none',
+  });
   try {
-    showNotification(`正在產生 ${format.toUpperCase()} 列印模型…`, 'info');
     const { TerrainExporter } = await import('./modules/terrainExporter.js');
     const payload = await TerrainExporter.export(source, format, base);
+    busyTask.set({ detail: '準備下載...', progress: 85 });
     await TerrainExporter.download(payload);
     showNotification(`已匯出 ${payload.filename}`, 'success');
   } catch (err) {
     console.error('3D export failed:', err);
     showNotification(`匯出失敗：${err?.message || err}`, 'error');
   } finally {
+    busyTask.end();
     terrainExportBusy = false;
     tvExportBtn?.classList.remove('tv-redraw-spin');
   }
@@ -4697,13 +4748,19 @@ document.getElementById('map').addEventListener('click', () => {
 }, true);
 
 btnMyLocation.addEventListener('click', async () => {
-  showNotification('正在定位...', 'info');
+  // A cold GPS fix takes tens of seconds; display-only ('none') because panning
+  // the map to the user touches nothing the route or weather tasks own.
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '正在定位', detail: '等待 GPS 訊號...', lockScope: 'none',
+  });
   try {
     await mapManager.goToMyLocation();
   } catch (err) {
     console.warn('Failed to get current location:', err);
     showLocationPermissionHelp();
     showNotification('無法取得目前位置，請確認定位權限已開啟', 'error');
+  } finally {
+    busyTask.end();
   }
 });
 
@@ -5349,9 +5406,9 @@ function renderCatchmentBase(result) {
       <select id="ct-hour" class="ct-hour-select">${hourOpts}</select>
     </div>
     <div class="mr-section">天氣</div>
-    <div class="ct-sec" id="ct-weather"><div class="ct-loading">載入天氣與水文中…</div></div>
+    <div class="ct-sec" id="ct-weather"><div class="ct-loading progress-inline">載入天氣與水文中…</div></div>
     <div class="mr-section">水文</div>
-    <div class="ct-sec" id="ct-hydro"><div class="ct-loading">載入天氣與水文中…</div></div>
+    <div class="ct-sec" id="ct-hydro"><div class="ct-loading progress-inline">載入天氣與水文中…</div></div>
     <div class="ct-disclaimer">水文指標為粗略估算，僅供參考</div>`;
 
   const onChange = () => {
@@ -5369,7 +5426,7 @@ function renderCatchmentBase(result) {
 function setCatchmentSectionsLoading() {
   for (const id of ['ct-weather', 'ct-hydro']) {
     const el = document.getElementById(id);
-    if (el) el.innerHTML = '<div class="ct-loading">載入天氣與水文中…</div>';
+    if (el) el.innerHTML = '<div class="ct-loading progress-inline">載入天氣與水文中…</div>';
   }
 }
 
@@ -8924,6 +8981,11 @@ function formatMappackImportMeta(parsed) {
 }
 
 async function openMappackImportModal(file) {
+  // Unzipping a tile-bearing .melmap takes seconds before the modal can open;
+  // display-only ('none') because nothing is applied until the user confirms.
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '讀取離線地圖包', detail: '解壓縮檔案...', lockScope: 'none',
+  });
   try {
     const { MapPackImporter } = await ensureMapPackModules();
     const parsed = await MapPackImporter.parse(file);
@@ -8957,6 +9019,8 @@ async function openMappackImportModal(file) {
   } catch (err) {
     showNotification(err.message || '檔案解析失敗', 'error');
     console.error(err);
+  } finally {
+    busyTask.end();
   }
 }
 
@@ -8974,9 +9038,16 @@ document.getElementById('btn-mappack-import-confirm')?.addEventListener('click',
   const parsed = _pendingMappack;
   _closeMappackImportModal(); // Centralized close path handles body class removal
 
-  // Display-only progress (the pre-unification widget never locked editing
-  // during restore either; route apply below drives its own busy tasks).
-  const busyTask = beginRouteWeatherBusyTask({ title: '匯入離線地圖包', detail: '準備還原...', lockScope: 'none' });
+  // A route/state restore overwrites waypoints under the user's hands, so it
+  // takes the route lock while it applies. A tiles-only restore touches nothing
+  // the user can edit, so it stays display-only and leaves editing free. Like a
+  // GPX import this supersedes rather than refuses: the route apply below runs
+  // through applyImportedResult, which cancels any in-flight plan.
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '匯入離線地圖包',
+    detail: '準備還原...',
+    lockScope: (restoreRoute || restoreState) ? 'route' : 'none',
+  });
 
   try {
     const { MapPackImporter } = await ensureMapPackModules();
@@ -11518,22 +11589,37 @@ async function doExport(fmt, plan = readExportPlan()) {
   const filename = buildExportFilenameBase();
   const includeWeather = plan.includeWeather !== false;
 
-  const wpData = collectExportData();
-  const { exportCoords, exportElevations } = getExportRouteData();
-  const { GpxExporter, KmlExporter } = await ensureRouteExporters();
+  // Serialising a multi-thousand-point track (plus the native share sheet) runs
+  // long enough to look stuck. The route data is snapshotted below before any
+  // await, so this is display-only ('none') — route editing stays free.
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '匯出路線檔案', detail: '準備資料...', progress: 0, lockScope: 'none',
+  });
 
-  if (fmt === 'gpx' || fmt === 'all') {
-    const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
-    await platform.shareFile(GpxExporter.createDownloadPayload(gpx, `${filename}.gpx`));
+  try {
+    const wpData = collectExportData();
+    const { exportCoords, exportElevations } = getExportRouteData();
+    const { GpxExporter, KmlExporter } = await ensureRouteExporters();
+
+    if (fmt === 'gpx' || fmt === 'all') {
+      busyTask.set({ detail: '產生 GPX...', progress: fmt === 'all' ? 20 : 40 });
+      const gpx = GpxExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
+      busyTask.set({ detail: '準備分享...', progress: fmt === 'all' ? 45 : 80 });
+      await platform.shareFile(GpxExporter.createDownloadPayload(gpx, `${filename}.gpx`));
+    }
+
+    if (fmt === 'kml' || fmt === 'all') {
+      busyTask.set({ detail: '產生 KML...', progress: fmt === 'all' ? 60 : 40 });
+      const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
+      busyTask.set({ detail: '準備分享...', progress: 85 });
+      await platform.shareFile(KmlExporter.createDownloadPayload(kml, `${filename}.kml`));
+    }
+
+    const label = fmt === 'all' ? 'GPX + KML' : fmt.toUpperCase();
+    showNotification(`${label} 檔案已準備分享${includeWeather ? '（含天氣）' : '（只含路線）'}`, 'success');
+  } finally {
+    busyTask.end();
   }
-
-  if (fmt === 'kml' || fmt === 'all') {
-    const kml = KmlExporter.generate(wpData, exportCoords, exportElevations, routeName, { includeWeather });
-    await platform.shareFile(KmlExporter.createDownloadPayload(kml, `${filename}.kml`));
-  }
-
-  const label = fmt === 'all' ? 'GPX + KML' : fmt.toUpperCase();
-  showNotification(`${label} 檔案已準備分享${includeWeather ? '（含天氣）' : '（只含路線）'}`, 'success');
 }
 
 /**
@@ -11772,11 +11858,28 @@ async function detectImportFileKind(file) {
 async function handleImportFile(file) {
   const kind = await detectImportFileKind(file);
   if (kind === 'melmap' || kind === 'zip') {
+    // Opening the map-pack modal only previews the archive — nothing is applied
+    // until the user confirms, and THAT handler carries the dependency guard. So
+    // this path stays available even while a load runs.
     openMappackImportModal(file);
     return;
   }
+  // A GPX/KML import REPLACES the route, so it is highly dependent and takes the
+  // route lock ('route') while it applies — no interleaved edits against a
+  // half-applied track. It deliberately does NOT refuse while another task runs:
+  // an import SUPERSEDES an in-flight plan (onWaypointsChanged cancels and
+  // invalidates it), which is the intended flow — see test/request-race.spec.js
+  // "stale route result is discarded when a track is imported during planning".
+  // Entry-point locking is the disabled #btn-import-gpx, not a refusal here.
+  //
+  // Parsing a multi-thousand-point GPX plus applying it (polyline, markers,
+  // elevation profile) blocks for seconds with no sign of life otherwise.
+  const busyTask = beginRouteWeatherBusyTask({
+    title: '匯入路線檔案', detail: '讀取檔案...', progress: 10, lockScope: 'route',
+  });
   try {
     const text = await platform.readFileAsText(file);
+    busyTask.set({ detail: '解析軌跡資料...', progress: 35 });
     const { GpxExporter, KmlExporter } = await ensureRouteExporters();
     let result;
     if (kind === 'gpx') {
@@ -11787,10 +11890,13 @@ async function handleImportFile(file) {
       showNotification('不支援的檔案格式', 'error');
       return;
     }
+    busyTask.set({ detail: '套用到地圖...', progress: 70 });
     await applyImportedResult(result);
   } catch (err) {
     showNotification('檔案解析失敗', 'error');
     console.error(err);
+  } finally {
+    busyTask.end();
   }
 }
 
@@ -12641,20 +12747,52 @@ async function geocodeWaypoints(waypoints) {
     || runWaypointVersion !== waypointVersion
     || waypointKey !== getWaypointSnapshotKey(mapManager.waypoints);
 
-  for (let i = 0; i < waypoints.length; i++) {
-    if (isStale()) {
-      emitTestEvent('geocode-stale-discard', { index: i });
-      return;
+  // Nominatim is rate-limited to one request per GEOCODE_MIN_INTERVAL_MS, so a
+  // freshly imported 20-waypoint track spends well over half a minute filling in
+  // names with nothing on screen to say so. Display-only ('none'): naming is
+  // independent of the route geometry, so editing stays free throughout. Only
+  // the uncached points count, and a handful resolves too fast to be worth a bar.
+  const pendingKeys = new Set(
+    waypoints
+      .map(([lat, lng]) => _geocodeKey(lat, lng))
+      .filter((k) => !(k in waypointPlaceNames) && !(k in waypointCustomNames))
+  );
+  const pending = pendingKeys.size;
+  const busyTask = pending >= 3
+    ? beginRouteWeatherBusyTask({
+      title: '正在取得地名',
+      detail: `取得地名 0/${pending}`,
+      progress: 0,
+      lockScope: 'none',
+    })
+    : null;
+  let done = 0;
+
+  try {
+    for (let i = 0; i < waypoints.length; i++) {
+      if (isStale()) {
+        emitTestEvent('geocode-stale-discard', { index: i });
+        return;
+      }
+      const [lat, lng] = waypoints[i];
+      try {
+        await enqueueGeocode(lat, lng);
+      } catch (_) { /* swallow; next point still queues */ }
+      if (isStale()) {
+        emitTestEvent('geocode-stale-discard', { index: i });
+        return;
+      }
+      _applyPlaceNameToDOM();
+      // Already-cached points resolve instantly and are not part of the count —
+      // ticking on them would run the bar to 100% before the real work is done.
+      const key = _geocodeKey(lat, lng);
+      if (pendingKeys.delete(key)) {
+        done++;
+        busyTask?.set({ detail: `取得地名 ${done}/${pending}`, progress: (done / pending) * 100 });
+      }
     }
-    const [lat, lng] = waypoints[i];
-    try {
-      await enqueueGeocode(lat, lng);
-    } catch (_) { /* swallow; next point still queues */ }
-    if (isStale()) {
-      emitTestEvent('geocode-stale-discard', { index: i });
-      return;
-    }
-    _applyPlaceNameToDOM();
+  } finally {
+    busyTask?.end();
   }
 }
 /** Re-render labels locally after a geocode result or custom name save to avoid UI flashing */
@@ -18706,7 +18844,7 @@ function initKeywordSearch() {
       return;
     }
 
-    resultsEl.innerHTML = '<div class="search-result-loading">搜尋中…</div>';
+    resultsEl.innerHTML = '<div class="search-result-loading progress-inline">搜尋中…</div>';
     resultsEl.style.display = '';
     try {
       const items = await searchByKeyword(q, mapManager.map.getBounds());

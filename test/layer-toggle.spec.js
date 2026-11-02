@@ -816,7 +816,10 @@ test('opening a restored track shows weather loading progress', async ({ page })
   });
 
   await expect(page.locator('#route-weather-busy-overlay')).toBeVisible();
-  await expect(page.locator('#route-weather-busy-title')).toHaveText(/天氣/);
+  // The readout localises its title (updateRouteWeatherBusyOverlay translates on
+  // the way to the DOM) and this spec runs in the browser's own locale, so match
+  // the weather task by either wording rather than pinning one language.
+  await expect(page.locator('#route-weather-busy-title')).toHaveText(/天氣|weather/i);
   await expect(page.locator('#route-weather-busy-progress')).not.toHaveText('0%');
 
   const box = await page.locator('#map').boundingBox();
